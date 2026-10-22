@@ -1,0 +1,20 @@
+{
+    "Plugins": [
+        {
+            "Info": {
+                "Types": {
+                    "HdVkRendererPlugin": {
+                        "bases": ["HdRendererPlugin"],
+                        "displayName": "HdVk",
+                        "priority": 99
+                    }
+                }
+            },
+            "LibraryPath": "$<TARGET_FILE_NAME:hdVk>",
+            "Name": "hdVk",
+            "ResourcePath": ".",
+            "Root": ".",
+            "Type": "library"
+        }
+    ]
+}
