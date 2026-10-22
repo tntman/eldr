@@ -1,5 +1,6 @@
 #include "mesh.h"
 
+#include "instancer.h"
 #include "material.h"
 #include "scene.h"
 
@@ -130,11 +131,12 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
     return HdChangeTracker::InitRepr | HdChangeTracker::DirtyPoints |
            HdChangeTracker::DirtyTopology | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
-           HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId;
+           HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
+           HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex;
 }
 
 // ponytail: renders the subdivision cage, reads only the "st" primvar for
-// texcoords and constant displayColor, ignores render tags and instancers.
+// texcoords and constant displayColor, ignores render tags.
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
@@ -165,9 +167,25 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _Flatten();
     }
 
-    if (HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
-        const GfMatrix4f xf(sceneDelegate->GetTransform(id));
-        std::copy(xf.data(), xf.data() + 16, m.transform);
+    // Instancers are synced by the rprims that use them (as in hdEmbree);
+    // the helper locks, so parallel rprim syncs are fine.
+    _UpdateInstancer(sceneDelegate, dirtyBits);
+    HdInstancer::_SyncInstancerAndParents(sceneDelegate->GetRenderIndex(), GetInstancerId());
+    if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        const GfMatrix4d xf = sceneDelegate->GetTransform(id);
+        VtMatrix4dArray instances(1, GfMatrix4d(1));
+        if (!GetInstancerId().IsEmpty()) {
+            auto *instancer = static_cast<HdVkInstancer *>(
+                sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()));
+            instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
+        }
+        m.transforms.resize(instances.size() * 16);
+        for (size_t i = 0; i < instances.size(); ++i) {
+            const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
+            std::copy(world.data(), world.data() + 16, m.transforms.data() + i * 16);
+        }
     }
 
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {

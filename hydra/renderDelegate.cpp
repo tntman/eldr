@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 
+#include "instancer.h"
 #include "light.h"
 #include "material.h"
 #include "mesh.h"
@@ -19,7 +20,7 @@ namespace {
 
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh};
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera, HdPrimTypeTokens->material,
-                                   HdPrimTypeTokens->distantLight};
+                                   HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
 
 } // namespace
@@ -69,8 +70,11 @@ HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(
     return std::make_shared<HdVkRenderPass>(index, collection, *_scene, _renderer.get());
 }
 
-// Hydra only asks for listed types, so unlisted ones never reach these.
-HdInstancer *HdVkRenderDelegate::CreateInstancer(HdSceneDelegate *, SdfPath const &) { return nullptr; }
+HdInstancer *HdVkRenderDelegate::CreateInstancer(HdSceneDelegate *delegate, SdfPath const &id)
+{
+    return new HdVkInstancer(delegate, id);
+}
+
 void HdVkRenderDelegate::DestroyInstancer(HdInstancer *instancer) { delete instancer; }
 
 HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &rprimId)
@@ -91,8 +95,8 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
     if (typeId == HdPrimTypeTokens->material) {
         return new HdVkMaterial(sprimId, _textures.get());
     }
-    if (typeId == HdPrimTypeTokens->distantLight) {
-        return new HdVkLight(sprimId, _scene.get());
+    if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight) {
+        return new HdVkLight(sprimId, typeId, _scene.get(), _textures.get());
     }
     return nullptr;
 }

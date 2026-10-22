@@ -1,0 +1,27 @@
+// Per-frame data shared by all passes. std140 mirror of FrameData in renderer.cpp.
+const uint kNone = 0xFFFFFFFFu;
+const float PI = 3.14159265359;
+
+layout(std140, set = 0, binding = 3) uniform FrameData {
+    mat4 viewProj;
+    mat4 invViewProj;
+    vec4 cameraPos;      // xyz
+    vec4 cameraForward;  // xyz
+    vec4 viewport;       // width, height
+    uvec4 counts;        // lightCount, shadowLight, envLevels, envLatlong (kNone = none)
+    mat4 cascadeViewProj[4];
+    vec4 cascadeSplits;  // far view depth of each cascade
+    vec4 cascadeTexel;   // world size of one shadow texel per cascade
+    vec4 envSh[9];       // irradiance SH, dome-local space
+    mat4 envWorldToLocal;
+    vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
+} frame;
+
+layout(set = 0, binding = 0) uniform sampler2D textures[];
+
+// UsdLux/Storm latlong mapping; texture rows are stored bottom-up.
+vec2 LatlongUv(vec3 local)
+{
+    return vec2(atan(local.z, local.x) / (2.0 * PI) + 0.25,
+                1.0 - acos(clamp(local.y, -1.0, 1.0)) / PI);
+}

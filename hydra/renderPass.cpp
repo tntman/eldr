@@ -4,6 +4,8 @@
 
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/imaging/hd/renderBuffer.h"
+#include "pxr/imaging/hd/renderDelegate.h"
+#include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/tokens.h"
 
@@ -56,8 +58,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
 
     const GfMatrix4d view = state->GetWorldToViewMatrix();
-    const GfMatrix4f viewProj(view * state->GetProjectionMatrix());
-    std::copy(viewProj.data(), viewProj.data() + 16, frame.viewProj);
+    const GfMatrix4d viewProj = view * state->GetProjectionMatrix();
+    const GfMatrix4f viewProjF(viewProj), invViewProjF(viewProj.GetInverse());
+    std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
+    std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
+    frame.showEnvironment = GetRenderIndex()->GetRenderDelegate()->GetRenderSetting<bool>(
+        HdRenderSettingsTokens->domeLightCameraVisibility, true);
     const GfVec3d eye = view.GetInverse().ExtractTranslation();
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);

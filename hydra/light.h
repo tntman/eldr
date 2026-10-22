@@ -5,17 +5,21 @@
 
 namespace vkr {
 class Scene;
+struct Dome;
 struct Light;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// UsdLuxDistantLight (and usdview's camera light, which Hydra hands
-// non-Storm renderers as a distantLight).
+class HdVkTextureCache;
+
+// UsdLuxDistantLight (also usdview's camera light, which Hydra hands
+// non-Storm renderers as a distantLight) and UsdLuxDomeLight.
 class HdVkLight final : public HdLight
 {
 public:
-    HdVkLight(SdfPath const &id, vkr::Scene *scene);
+    HdVkLight(SdfPath const &id, TfToken const &type, vkr::Scene *scene,
+              HdVkTextureCache *textures);
     ~HdVkLight() override;
 
     HdDirtyBits GetInitialDirtyBitsMask() const override { return AllDirty; }
@@ -24,7 +28,9 @@ public:
 
 private:
     vkr::Scene *_scene;
-    vkr::Light *_light;
+    HdVkTextureCache *_textures;
+    vkr::Light *_light = nullptr;  // distant
+    vkr::Dome *_dome = nullptr;    // dome
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

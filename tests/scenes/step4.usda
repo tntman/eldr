@@ -1,0 +1,175 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 3, 11)
+    float xformOp:rotateX = -12
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+# StinsonBeach.hdr ships with USD; usdenv.cmd adds its folder to the
+# resolver search path.
+def DomeLight "env"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 1
+}
+
+# Casts the cascaded shadows (shadow:enable defaults to true).
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 35, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "ground"
+    {
+        token outputs:surface.connect = </mtl/ground/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.9
+            token outputs:surface
+        }
+    }
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.08
+            token outputs:surface
+        }
+    }
+    def Material "gold"
+    {
+        token outputs:surface.connect = </mtl/gold/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 0.78, 0.34)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.45
+            token outputs:surface
+        }
+    }
+    def Material "plastic"
+    {
+        token outputs:surface.connect = </mtl/plastic/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.35, 0.8)
+            float inputs:roughness = 0.35
+            token outputs:surface
+        }
+    }
+    def Material "stone"
+    {
+        token outputs:surface.connect = </mtl/stone/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.75, 0.7, 0.62)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+}
+
+def Plane "ground" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    uniform token axis = "Y"
+    double width = 30
+    double length = 30
+    rel material:binding = </mtl/ground>
+}
+
+def Sphere "chromeBall" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 0.9
+    rel material:binding = </mtl/chrome>
+    double3 xformOp:translate = (-1.6, 0.9, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "goldBall" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 0.9
+    rel material:binding = </mtl/gold>
+    double3 xformOp:translate = (1.6, 0.9, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# Point instancer: two prototypes, per-instance orientation and scale.
+def PointInstancer "scatter"
+{
+    rel prototypes = [</scatter/protos/ball>, </scatter/protos/box>]
+    int[] protoIndices = [0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0]
+    point3f[] positions = [(-5, 0.35, -1.5), (-3, 0.35, -1.5), (-1, 0.35, -1.5), (1, 0.35, -1.5), (3, 0.35, -1.5), (5, 0.35, -1.5), (-5, 0.35, 0.2), (-3, 0.35, 0.2), (-1, 0.35, 0.2), (1, 0.35, 0.2), (3, 0.35, 0.2), (5, 0.35, 0.2)]
+    quath[] orientations = [(1, 0, 0, 0), (0.924, 0, 0.383, 0), (1, 0, 0, 0), (0.966, 0, 0.259, 0), (1, 0, 0, 0), (0.707, 0, 0.707, 0), (0.966, 0.259, 0, 0), (1, 0, 0, 0), (0.924, 0, 0.383, 0), (1, 0, 0, 0), (0.966, 0, -0.259, 0), (1, 0, 0, 0)]
+    float3[] scales = [(1, 1, 1), (1, 1, 1), (0.8, 0.8, 0.8), (1, 1.6, 1), (1.2, 1.2, 1.2), (1, 1, 1), (1, 1, 1), (0.6, 0.6, 0.6), (1, 1, 1), (1, 1, 1), (1, 0.5, 1), (1, 1, 1)]
+
+    def Scope "protos"
+    {
+        def Sphere "ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double radius = 0.35
+            rel material:binding = </mtl/plastic>
+        }
+        def Cube "box" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            double size = 0.6
+            rel material:binding = </mtl/stone>
+        }
+    }
+}
+
+# Native instancing: instanceable references to one prototype.
+class Xform "_pillar"
+{
+    def Cylinder "shaft" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.3
+        double height = 3
+        uniform token axis = "Y"
+        rel material:binding = </mtl/stone>
+        double3 xformOp:translate = (0, 1.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def Xform "pillars"
+{
+    def Xform "a" (instanceable = true
+        prepend references = </_pillar>)
+    {
+        double3 xformOp:translate = (-4, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Xform "b" (instanceable = true
+        prepend references = </_pillar>)
+    {
+        double3 xformOp:translate = (0, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Xform "c" (instanceable = true
+        prepend references = </_pillar>)
+    {
+        double3 xformOp:translate = (4, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device.h"
+#include "ibl.h"
 
 #include <memory>
 #include <unordered_map>
@@ -63,7 +64,8 @@ struct Mesh {
     std::vector<float> points;   // xyz per corner
     std::vector<float> normals;  // xyz per corner, or empty (flat shading)
     std::vector<float> uvs;      // st per corner, or empty
-    float transform[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // USD row-vector order
+    // One world transform per instance, 16 floats each, USD row-vector order.
+    std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     std::shared_ptr<Material> material;
     bool visible = true;
@@ -74,12 +76,26 @@ private:
     size_t _slot = 0;
     uint32_t _firstVertex = 0;
     uint32_t _vertexCount = 0;
+    float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
 };
 
 // Distant light. Same threading rules as Mesh.
 struct Light {
     float direction[3] = {0, 0, 1};      // world space, pointing at the light
     float irradiance[3] = {1, 1, 1};     // linear RGB, all scaling applied
+    bool visible = true;
+    bool castShadows = false;            // the first visible caster gets the CSM
+
+private:
+    friend class Scene;
+    size_t _slot = 0;
+};
+
+// Dome light (environment). The first visible one lights the scene.
+struct Dome {
+    std::shared_ptr<Texture> texture;    // latlong, see BuildEnvironment; null = uniform
+    float radiance[3] = {1, 1, 1};       // texture multiplier: intensity * 2^exposure * color
+    float worldToLocal[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // USD order
     bool visible = true;
 
 private:
@@ -99,11 +115,12 @@ struct Instance {
     uint32_t material;  // kNoMaterial: color + default material
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
+constexpr uint32_t kNone = 0xFFFFFFFFu;
 constexpr uint32_t kMaxTextures = 4096;
 
 // Owns meshes, lights and their GPU copy: one vertex pool, one instance
-// buffer, one indirect-draw buffer, material/light tables and textures.
-// Add*/Remove*/Commit are single-threaded.
+// buffer, one indirect-draw buffer, material/light tables, textures and the
+// active environment. Add*/Remove*/Commit are single-threaded.
 class Scene {
 public:
     explicit Scene(Device *device);  // null device: CPU mirror only
@@ -113,6 +130,8 @@ public:
     void RemoveMesh(Mesh *mesh);
     Light *AddLight();
     void RemoveLight(Light *light);
+    Dome *AddDome();
+    void RemoveDome(Dome *dome);
 
     // Uploads dirty data. The GPU must be idle.
     void Commit();
@@ -126,6 +145,18 @@ public:
         uint32_t drawCount = 0;
         uint32_t lightCount = 0;
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
+
+        uint32_t shadowLight = kNone;       // index into lights
+        float shadowDirection[3] = {0, 0, 1};
+        bool hasBounds = false;
+        float boundsMin[3] = {}, boundsMax[3] = {};  // world space, all instances
+
+        VkImageView environment = VK_NULL_HANDLE;  // prefiltered cube; null if no dome
+        uint32_t environmentLevels = 0;
+        uint32_t environmentLatlong = kNone;  // bindless index of the dome texture
+        float environmentSh[9][3] = {};
+        float environmentRadiance[3] = {};
+        float environmentWorldToLocal[16] = {};
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -133,13 +164,26 @@ private:
     void _RebuildVertexPool();
     void _Upload(Texture &texture);
     int32_t _TextureIndex(const TextureRef &ref);
+    void _UpdateEnvironment(const Dome *dome);
+    void _DestroyEnvironment();
+    template <typename T>
+    static void _RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item);
 
     Device *_device;
     std::vector<std::unique_ptr<Mesh>> _meshes;
     std::vector<std::unique_ptr<Light>> _lights;
+    std::vector<std::unique_ptr<Dome>> _domes;
     bool _poolDirty = true;
     Buffer _vertices, _instances, _indirect, _materials, _lightBuffer, _staging;
     std::unordered_map<const Texture *, int32_t> _textureSlots;  // rebuilt per Commit
+
+    // Environment built from this texture (kept alive so the pointer stays unique).
+    std::shared_ptr<Texture> _envSource;
+    bool _envBuilt = false;
+    VkImage _envImage = VK_NULL_HANDLE;
+    VkDeviceMemory _envMemory = VK_NULL_HANDLE;
+    VkImageView _envView = VK_NULL_HANDLE;
+
     Gpu _gpu;
 };
 
