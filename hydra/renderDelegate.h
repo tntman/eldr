@@ -13,6 +13,8 @@ class Scene;
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+class HdVkTextureCache;
+
 class HdVkRenderDelegate final : public HdRenderDelegate
 {
 public:
@@ -52,6 +54,7 @@ private:
     std::unique_ptr<vkr::Device> _device;     // null if Vulkan init failed
     std::unique_ptr<vkr::Scene> _scene;       // always present (CPU mirror)
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
+    std::unique_ptr<HdVkTextureCache> _textures;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -11,7 +11,7 @@ public:
         uint32_t width = 0;
         uint32_t height = 0;
         float viewProj[16];       // USD row-vector order, GL clip space
-        float cameraPos[3];
+        float cameraPos[3];       // world space
         float clearColor[4] = {0, 0, 0, 0};
         float clearDepth = 1.0f;
     };
@@ -42,7 +42,13 @@ private:
     Image _CreateImage(VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect);
     void _Destroy(Image &image);
 
+    void _UpdateDescriptors(const Scene::Gpu &gpu);
+
     Device &_dev;
+    VkSampler _sampler = VK_NULL_HANDLE;
+    VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
+    VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
+    VkDescriptorSet _set = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;
     VkCommandPool _pool = VK_NULL_HANDLE;

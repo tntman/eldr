@@ -4,12 +4,18 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace vkr {
 
 // Throws std::runtime_error naming `what` unless r == VK_SUCCESS.
 void Check(VkResult r, const char *what);
+
+void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range,
+                  VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                  VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+                  VkImageLayout oldLayout, VkImageLayout newLayout);
 
 struct DeviceInfo {
     bool supported = false;
@@ -43,6 +49,9 @@ public:
     void Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage);
     void Destroy(Buffer &b);
 
+    // Records one command buffer with `record`, submits it and waits.
+    void Submit(const std::function<void(VkCommandBuffer)> &record);
+
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
@@ -51,6 +60,9 @@ public:
 
 private:
     void _Release();
+
+    VkCommandPool _submitPool = VK_NULL_HANDLE;
+    VkFence _submitFence = VK_NULL_HANDLE;
 };
 
 } // namespace vkr

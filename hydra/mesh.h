@@ -26,8 +26,19 @@ protected:
     void _InitRepr(TfToken const &, HdDirtyBits *) override {}
 
 private:
+    void _Flatten();
+
     vkr::Scene *_scene;
     vkr::Mesh *_mesh;
+
+    // Hydra-side data kept to rebuild the per-corner arrays when any part changes.
+    HdMeshTopology _topology;
+    VtVec3iArray _triangles;
+    VtIntArray _primitiveParams;
+    VtVec3fArray _points;
+    VtValue _normals, _uvs;
+    HdInterpolation _normalsInterp = HdInterpolationVertex;
+    HdInterpolation _uvsInterp = HdInterpolationVertex;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -1,5 +1,7 @@
 #include "renderDelegate.h"
 
+#include "light.h"
+#include "material.h"
 #include "mesh.h"
 #include "renderBuffer.h"
 #include "renderPass.h"
@@ -16,7 +18,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 namespace {
 
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh};
-const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera};
+const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera, HdPrimTypeTokens->material,
+                                   HdPrimTypeTokens->distantLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
 
 } // namespace
@@ -34,6 +37,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
         _device.reset();
     }
     _scene = std::make_unique<vkr::Scene>(_device.get());
+    _textures = std::make_unique<HdVkTextureCache>();
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate() = default;
@@ -83,6 +87,12 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
 {
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdCamera(sprimId);
+    }
+    if (typeId == HdPrimTypeTokens->material) {
+        return new HdVkMaterial(sprimId, _textures.get());
+    }
+    if (typeId == HdPrimTypeTokens->distantLight) {
+        return new HdVkLight(sprimId, _scene.get());
     }
     return nullptr;
 }

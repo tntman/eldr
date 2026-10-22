@@ -1,0 +1,324 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 3, 12)
+    float xformOp:rotateX = -10
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+# Shines down its local -Z: here from above, in front and to the right.
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "ground"
+    {
+        token outputs:surface.connect = </mtl/ground/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.45, 0.45, 0.45)
+            float inputs:roughness = 0.9
+            token outputs:surface
+        }
+    }
+
+    # Sphere grid: dielectric red (top row) and gold metal (bottom row),
+    # roughness 0.1 .. 0.9 left to right.
+    class Material "_dielectric"
+    {
+        token outputs:surface.connect = </mtl/_dielectric/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.05, 0.05)
+            float inputs:metallic = 0
+            token outputs:surface
+        }
+    }
+    class Material "_metal"
+    {
+        token outputs:surface.connect = </mtl/_metal/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1.0, 0.78, 0.34)
+            float inputs:metallic = 1
+            token outputs:surface
+        }
+    }
+    def Material "d1" (inherits = </mtl/_dielectric>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.1
+        }
+    }
+    def Material "d3" (inherits = </mtl/_dielectric>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.3
+        }
+    }
+    def Material "d5" (inherits = </mtl/_dielectric>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.5
+        }
+    }
+    def Material "d7" (inherits = </mtl/_dielectric>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.7
+        }
+    }
+    def Material "d9" (inherits = </mtl/_dielectric>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.9
+        }
+    }
+    def Material "m1" (inherits = </mtl/_metal>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.1
+        }
+    }
+    def Material "m3" (inherits = </mtl/_metal>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.3
+        }
+    }
+    def Material "m5" (inherits = </mtl/_metal>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.5
+        }
+    }
+    def Material "m7" (inherits = </mtl/_metal>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.7
+        }
+    }
+    def Material "m9" (inherits = </mtl/_metal>)
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.9
+        }
+    }
+
+    # Bottom-left red, bottom-right green, top-left blue, top-right white.
+    def Material "textured"
+    {
+        token outputs:surface.connect = </mtl/textured/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/textured/tex.outputs:rgb>
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/textured/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # Vertical ridges from a raw tangent-space normal map.
+    def Material "bumpy"
+    {
+        token outputs:surface.connect = </mtl/bumpy/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.75, 0.75, 0.75)
+            float inputs:roughness = 0.35
+            normal3f inputs:normal.connect = </mtl/bumpy/nrm.outputs:rgb>
+            token outputs:surface
+        }
+        def Shader "nrm"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/ridges_normal.png@
+            token inputs:sourceColorSpace = "raw"
+            float4 inputs:scale = (2, 2, 2, 1)
+            float4 inputs:bias = (-1, -1, -1, 0)
+            float2 inputs:st.connect = </mtl/bumpy/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    # diffuseColor from the bound prim's displayColor (common DCC export).
+    def Material "fromDisplayColor"
+    {
+        token outputs:surface.connect = </mtl/fromDisplayColor/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/fromDisplayColor/dc.outputs:result>
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+        def Shader "dc"
+        {
+            uniform token info:id = "UsdPrimvarReader_float3"
+            string inputs:varname = "displayColor"
+            float3 outputs:result
+        }
+    }
+}
+
+def Plane "ground" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    uniform token axis = "Y"
+    double width = 18
+    double length = 18
+    rel material:binding = </mtl/ground>
+}
+
+def Xform "spheres"
+{
+    def Sphere "d1" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/d1>
+        double3 xformOp:translate = (-2.4, 1.9, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "d3" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/d3>
+        double3 xformOp:translate = (-1.2, 1.9, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "d5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/d5>
+        double3 xformOp:translate = (0, 1.9, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "d7" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/d7>
+        double3 xformOp:translate = (1.2, 1.9, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "d9" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/d9>
+        double3 xformOp:translate = (2.4, 1.9, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "m1" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/m1>
+        double3 xformOp:translate = (-2.4, 0.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "m3" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/m3>
+        double3 xformOp:translate = (-1.2, 0.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "m5" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/m5>
+        double3 xformOp:translate = (0, 0.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "m7" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/m7>
+        double3 xformOp:translate = (1.2, 0.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    def Sphere "m9" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.5
+        rel material:binding = </mtl/m9>
+        double3 xformOp:translate = (2.4, 0.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+# faceVarying st on a quad facing the camera.
+def Mesh "texQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/textured>
+    double3 xformOp:translate = (-5, 1.5, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "bumpQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/bumpy>
+    double3 xformOp:translate = (5, 1.5, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "box" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 0.8
+    color3f[] primvars:displayColor = [(1, 0.45, 0.05)]
+    rel material:binding = </mtl/fromDisplayColor>
+    double3 xformOp:translate = (3.3, 0.4, 2.2)
+    float xformOp:rotateY = 25
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}

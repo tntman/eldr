@@ -1,6 +1,7 @@
 #include "renderer.h"
 
 #include <cstring>
+#include <vector>
 
 namespace vkr {
 
@@ -15,7 +16,8 @@ const uint32_t kMeshFrag[] =
 
 struct PushConstants {
     float viewProj[16];
-    float cameraPos[4];
+    float cameraPos[3];
+    uint32_t lightCount;
 };
 
 VkShaderModule CreateShader(VkDevice device, const uint32_t *code, size_t bytes)
@@ -28,25 +30,9 @@ VkShaderModule CreateShader(VkDevice device, const uint32_t *code, size_t bytes)
     return module;
 }
 
-void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
-                  VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                  VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
-                  VkImageLayout oldLayout, VkImageLayout newLayout)
+VkImageSubresourceRange Whole(VkImageAspectFlags aspect)
 {
-    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    b.srcStageMask = srcStage;
-    b.srcAccessMask = srcAccess;
-    b.dstStageMask = dstStage;
-    b.dstAccessMask = dstAccess;
-    b.oldLayout = oldLayout;
-    b.newLayout = newLayout;
-    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = image;
-    b.subresourceRange = {aspect, 0, 1, 0, 1};
-    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.imageMemoryBarrierCount = 1;
-    dep.pImageMemoryBarriers = &b;
-    vkCmdPipelineBarrier2(cmd, &dep);
+    return {aspect, 0, 1, 0, 1};
 }
 
 } // namespace
@@ -68,6 +54,49 @@ Renderer::Renderer(Device &device)
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     Check(vkCreateFence(_dev.device, &fci, nullptr, &_fence), "vkCreateFence");
 
+    // ponytail: one sampler (trilinear, 16x aniso, repeat) for every texture;
+    // UsdUVTexture wrapS/wrapT are ignored.
+    VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.anisotropyEnable = VK_TRUE;
+    sci.maxAnisotropy = 16.0f;
+    sci.maxLod = VK_LOD_CLAMP_NONE;
+    Check(vkCreateSampler(_dev.device, &sci, nullptr, &_sampler), "vkCreateSampler");
+
+    // Bindless: binding 0 is a partially bound array indexed by material data.
+    const VkDescriptorSetLayoutBinding bindings[3] = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+    };
+    const VkDescriptorBindingFlags bindingFlags[3] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, 0, 0};
+    VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+    flags.bindingCount = 3;
+    flags.pBindingFlags = bindingFlags;
+    VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
+    slci.bindingCount = 3;
+    slci.pBindings = bindings;
+    Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
+          "vkCreateDescriptorSetLayout");
+
+    const VkDescriptorPoolSize sizes[2] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2},
+    };
+    VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    dpci.maxSets = 1;
+    dpci.poolSizeCount = 2;
+    dpci.pPoolSizes = sizes;
+    Check(vkCreateDescriptorPool(_dev.device, &dpci, nullptr, &_descriptorPool),
+          "vkCreateDescriptorPool");
+    VkDescriptorSetAllocateInfo dsai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    dsai.descriptorPool = _descriptorPool;
+    dsai.descriptorSetCount = 1;
+    dsai.pSetLayouts = &_setLayout;
+    Check(vkAllocateDescriptorSets(_dev.device, &dsai, &_set), "vkAllocateDescriptorSets");
+
     _CreatePipeline();
 }
 
@@ -79,6 +108,9 @@ Renderer::~Renderer()
     _dev.Destroy(_readback);
     vkDestroyPipeline(_dev.device, _pipeline, nullptr);
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
+    vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(_dev.device, _setLayout, nullptr);
+    vkDestroySampler(_dev.device, _sampler, nullptr);
     vkDestroyFence(_dev.device, _fence, nullptr);
     vkDestroyCommandPool(_dev.device, _pool, nullptr);
 }
@@ -88,6 +120,8 @@ void Renderer::_CreatePipeline()
     VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                               0, sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    lci.setLayoutCount = 1;
+    lci.pSetLayouts = &_setLayout;
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
@@ -102,21 +136,24 @@ void Renderer::_CreatePipeline()
     };
 
     const VkVertexInputBindingDescription bindings[2] = {
-        {0, 3 * sizeof(float), VK_VERTEX_INPUT_RATE_VERTEX},
+        {0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX},
         {1, sizeof(Instance), VK_VERTEX_INPUT_RATE_INSTANCE},
     };
-    const VkVertexInputAttributeDescription attributes[6] = {
-        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0},
-        {1, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
-        {2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
-        {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
-        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48},
-        {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Instance, color)},
+    const VkVertexInputAttributeDescription attributes[9] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
+        {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
+        {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
+        {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
+        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
+        {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
+        {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48},
+        {7, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Instance, color)},
+        {8, 1, VK_FORMAT_R32_UINT, offsetof(Instance, material)},
     };
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     vertexInput.vertexBindingDescriptionCount = 2;
     vertexInput.pVertexBindingDescriptions = bindings;
-    vertexInput.vertexAttributeDescriptionCount = 6;
+    vertexInput.vertexAttributeDescriptionCount = 9;
     vertexInput.pVertexAttributeDescriptions = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
@@ -128,7 +165,7 @@ void Renderer::_CreatePipeline()
 
     VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     raster.polygonMode = VK_POLYGON_MODE_FILL;
-    raster.cullMode = VK_CULL_MODE_NONE;  // doubleSided/culling comes with materials
+    raster.cullMode = VK_CULL_MODE_NONE;  // ponytail: all double-sided; honor doubleSided later
     raster.lineWidth = 1.0f;
 
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
@@ -198,7 +235,7 @@ Renderer::Image Renderer::_CreateImage(VkFormat format, VkImageUsageFlags usage,
     vci.image = img.image;
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = format;
-    vci.subresourceRange = {aspect, 0, 1, 0, 1};
+    vci.subresourceRange = Whole(aspect);
     Check(vkCreateImageView(_dev.device, &vci, nullptr, &img.view), "vkCreateImageView");
     return img;
 }
@@ -227,6 +264,35 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 }
 
+// The GPU is idle here (Render waits for every frame), so rewriting the set
+// in place is legal without update-after-bind.
+void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
+{
+    std::vector<VkDescriptorImageInfo> images(gpu.textures.size());
+    for (size_t i = 0; i < images.size(); ++i) {
+        images[i] = {_sampler, gpu.textures[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    }
+    const VkDescriptorBufferInfo materials{gpu.materials, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo lights{gpu.lights, 0, VK_WHOLE_SIZE};
+
+    VkWriteDescriptorSet writes[3] = {};
+    for (VkWriteDescriptorSet &w : writes) {
+        w.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        w.dstSet = _set;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    }
+    writes[0].dstBinding = 1;
+    writes[0].pBufferInfo = &materials;
+    writes[1].dstBinding = 2;
+    writes[1].pBufferInfo = &lights;
+    writes[2].dstBinding = 0;
+    writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[2].descriptorCount = uint32_t(images.size());
+    writes[2].pImageInfo = images.data();
+    vkUpdateDescriptorSets(_dev.device, images.empty() ? 2 : 3, writes, 0, nullptr);
+}
+
 // ponytail: synchronous, one frame in flight, CPU readback every frame.
 // GL interop (step 7) removes the readback; frames in flight come with it.
 void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float *depth)
@@ -239,18 +305,21 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
     }
     const Scene::Gpu &gpu = scene.GetGpu();
     const VkDeviceSize colorBytes = VkDeviceSize(_width) * _height * 8;
+    if (gpu.drawCount > 0) {
+        _UpdateDescriptors(gpu);
+    }
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
 
-    ImageBarrier(_cmd, _color.image, VK_IMAGE_ASPECT_COLOR_BIT,
+    ImageBarrier(_cmd, _color.image, Whole(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    ImageBarrier(_cmd, _depth.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+    ImageBarrier(_cmd, _depth.image, Whole(VK_IMAGE_ASPECT_DEPTH_BIT),
                  VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -285,29 +354,28 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
         vkCmdSetViewport(_cmd, 0, 1, &vp);
         vkCmdSetScissor(_cmd, 0, 1, &scissor);
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
 
         PushConstants pc;
         std::memcpy(pc.viewProj, frame.viewProj, sizeof(pc.viewProj));
-        std::memcpy(pc.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
-        pc.cameraPos[3] = 1.0f;
+        std::memcpy(pc.cameraPos, frame.cameraPos, sizeof(pc.cameraPos));
+        pc.lightCount = gpu.lightCount;
         vkCmdPushConstants(_cmd, _layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                            0, sizeof(pc), &pc);
 
         const VkBuffer vbs[2] = {gpu.vertices, gpu.instances};
         const VkDeviceSize offsets[2] = {0, 0};
         vkCmdBindVertexBuffers(_cmd, 0, 2, vbs, offsets);
-        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexedIndirect(_cmd, gpu.indirect, 0, gpu.drawCount,
-                                 sizeof(VkDrawIndexedIndirectCommand));
+        vkCmdDrawIndirect(_cmd, gpu.indirect, 0, gpu.drawCount, sizeof(VkDrawIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
 
-    ImageBarrier(_cmd, _color.image, VK_IMAGE_ASPECT_COLOR_BIT,
+    ImageBarrier(_cmd, _color.image, Whole(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    ImageBarrier(_cmd, _depth.image, VK_IMAGE_ASPECT_DEPTH_BIT,
+    ImageBarrier(_cmd, _depth.image, Whole(VK_IMAGE_ASPECT_DEPTH_BIT),
                  VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,

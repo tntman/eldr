@@ -14,6 +14,27 @@ void Check(VkResult r, const char *what)
     }
 }
 
+void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range,
+                  VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                  VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
+                  VkImageLayout oldLayout, VkImageLayout newLayout)
+{
+    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    b.oldLayout = oldLayout;
+    b.newLayout = newLayout;
+    b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = image;
+    b.subresourceRange = range;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
 // Keep in sync with the features enabled in Device::Device().
 static std::string MissingFeatures(VkPhysicalDevice pd)
 {
@@ -30,6 +51,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     };
     need(f.features.multiDrawIndirect, "multiDrawIndirect");
     need(f.features.drawIndirectFirstInstance, "drawIndirectFirstInstance");
+    need(f.features.samplerAnisotropy, "samplerAnisotropy");
     need(f12.drawIndirectCount, "drawIndirectCount");
     need(f12.runtimeDescriptorArray, "runtimeDescriptorArray");
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");
@@ -147,12 +169,20 @@ Device::Device()
         VkPhysicalDeviceFeatures2 f{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12};
         f.features.multiDrawIndirect = VK_TRUE;
         f.features.drawIndirectFirstInstance = VK_TRUE;
+        f.features.samplerAnisotropy = VK_TRUE;
 
         VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f};
         dci.queueCreateInfoCount = 1;
         dci.pQueueCreateInfos = &qci;
         Check(vkCreateDevice(physical, &dci, nullptr, &device), "vkCreateDevice");
         vkGetDeviceQueue(device, queueFamily, 0, &queue);
+
+        VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pci.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        pci.queueFamilyIndex = queueFamily;
+        Check(vkCreateCommandPool(device, &pci, nullptr, &_submitPool), "vkCreateCommandPool");
+        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        Check(vkCreateFence(device, &fci, nullptr, &_submitFence), "vkCreateFence");
     } catch (...) {
         _Release();
         throw;
@@ -167,6 +197,8 @@ Device::~Device()
 void Device::_Release()
 {
     if (device) {
+        vkDestroyFence(device, _submitFence, nullptr);
+        vkDestroyCommandPool(device, _submitPool, nullptr);
         vkDestroyDevice(device, nullptr);
     }
     if (instance) {
@@ -198,7 +230,7 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
 // Device-local + staging ring in step 6 when scenes get big.
 void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage)
 {
-    if (b.size >= bytes) {
+    if (b.buffer && b.size >= bytes) {
         return;
     }
     const VkDeviceSize size = std::max<VkDeviceSize>({bytes, b.size + b.size / 2, 256});
@@ -215,6 +247,38 @@ void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage)
     Check(vkBindBufferMemory(device, b.buffer, b.memory, 0), "vkBindBufferMemory");
     Check(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped), "vkMapMemory");
     b.size = size;
+}
+
+void Device::Submit(const std::function<void(VkCommandBuffer)> &record)
+{
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = _submitPool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    Check(vkAllocateCommandBuffers(device, &ai, &cmd), "vkAllocateCommandBuffers");
+
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    VkResult r = vkBeginCommandBuffer(cmd, &bi);
+    if (r == VK_SUCCESS) {
+        record(cmd);
+        r = vkEndCommandBuffer(cmd);
+    }
+    if (r == VK_SUCCESS) {
+        VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+        cbi.commandBuffer = cmd;
+        VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+        si.commandBufferInfoCount = 1;
+        si.pCommandBufferInfos = &cbi;
+        r = vkQueueSubmit2(queue, 1, &si, _submitFence);
+        if (r == VK_SUCCESS) {
+            r = vkWaitForFences(device, 1, &_submitFence, VK_TRUE, UINT64_MAX);
+            vkResetFences(device, 1, &_submitFence);
+        }
+    }
+    vkFreeCommandBuffers(device, _submitPool, 1, &cmd);
+    Check(r, "Device::Submit");
 }
 
 void Device::Destroy(Buffer &b)

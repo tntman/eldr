@@ -7,6 +7,12 @@
                         "bases": ["HdRendererPlugin"],
                         "displayName": "HdVk",
                         "priority": 99
+                    },
+                    "HdVk_ImplicitSurfaceSceneIndexPlugin": {
+                        "bases": ["HdSceneIndexPlugin"],
+                        "loadWithRenderer": "HdVk",
+                        "priority": 0,
+                        "displayName": "Implicit surfaces to meshes for HdVk"
                     }
                 }
             },
