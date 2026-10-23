@@ -16,6 +16,8 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
+TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+
 namespace {
 
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh};
@@ -39,6 +41,8 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     }
     _scene = std::make_unique<vkr::Scene>(_device.get());
     _textures = std::make_unique<HdVkTextureCache>();
+    // Apps (usdview's settings menu) read these back before ever setting them.
+    _PopulateDefaultSettings(GetRenderSettingDescriptors());
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate() = default;
@@ -67,6 +71,19 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
     return HdAovDescriptor();
+}
+
+// Shown in usdview's Hydra Settings menu; defaults match vkr::PostProcess::Settings.
+HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() const
+{
+    const vkr::PostProcess::Settings defaults;
+    return {
+        {"Post Processing (exposure, bloom, tonemap)", HdVkRenderSettingsTokens->postProcess, VtValue(true)},
+        {"Auto Exposure", HdVkRenderSettingsTokens->autoExposure, VtValue(defaults.autoExposure)},
+        {"Exposure Compensation (EV)", HdVkRenderSettingsTokens->exposureCompensation,
+         VtValue(defaults.exposureCompensation)},
+        {"Bloom Intensity", HdVkRenderSettingsTokens->bloomIntensity, VtValue(defaults.bloomIntensity)},
+    };
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(

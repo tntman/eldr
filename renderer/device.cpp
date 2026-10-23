@@ -14,6 +14,16 @@ void Check(VkResult r, const char *what)
     }
 }
 
+VkShaderModule CreateShaderModule(VkDevice device, const uint32_t *code, size_t bytes)
+{
+    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    ci.codeSize = bytes;
+    ci.pCode = code;
+    VkShaderModule module = VK_NULL_HANDLE;
+    Check(vkCreateShaderModule(device, &ci, nullptr, &module), "vkCreateShaderModule");
+    return module;
+}
+
 void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range,
                   VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
@@ -279,6 +289,44 @@ void Device::Submit(const std::function<void(VkCommandBuffer)> &record)
     }
     vkFreeCommandBuffers(device, _submitPool, 1, &cmd);
     Check(r, "Device::Submit");
+}
+
+Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint32_t layers,
+                          uint32_t mips, VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                          VkImageViewType viewType, VkImageCreateFlags flags)
+{
+    Image img;
+    VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ci.flags = flags;
+    ci.imageType = VK_IMAGE_TYPE_2D;
+    ci.format = format;
+    ci.extent = {width, height, 1};
+    ci.mipLevels = mips;
+    ci.arrayLayers = layers;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ci.usage = usage;
+    Check(vkCreateImage(device, &ci, nullptr, &img.image), "vkCreateImage");
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device, img.image, &req);
+    img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkBindImageMemory(device, img.image, img.memory, 0), "vkBindImageMemory");
+
+    VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vci.image = img.image;
+    vci.viewType = viewType;
+    vci.format = format;
+    vci.subresourceRange = {aspect, 0, mips, 0, layers};
+    Check(vkCreateImageView(device, &vci, nullptr, &img.view), "vkCreateImageView");
+    return img;
+}
+
+void Device::Destroy(Image &img)
+{
+    vkDestroyImageView(device, img.view, nullptr);
+    vkDestroyImage(device, img.image, nullptr);
+    vkFreeMemory(device, img.memory, nullptr);
+    img = Image();
 }
 
 void Device::Destroy(Buffer &b)

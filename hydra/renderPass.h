@@ -16,6 +16,9 @@ public:
     HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &collection,
                    vkr::Scene &scene, vkr::Renderer *renderer);
 
+    // Not converged while auto-exposure adapts, so the app keeps drawing.
+    bool IsConverged() const override;
+
 protected:
     void _Execute(HdRenderPassStateSharedPtr const &renderPassState,
                   TfTokenVector const &renderTags) override;

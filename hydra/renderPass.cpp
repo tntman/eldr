@@ -1,5 +1,6 @@
 #include "renderPass.h"
 
+#include "renderDelegate.h"
 #include "renderer.h"
 
 #include "pxr/base/gf/matrix4f.h"
@@ -19,6 +20,11 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
     , _scene(scene)
     , _renderer(renderer)
 {
+}
+
+bool HdVkRenderPass::IsConverged() const
+{
+    return !_renderer || _renderer->IsConverged();
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -70,8 +76,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const GfMatrix4f viewProjF(viewProj), invViewProjF(viewProj.GetInverse());
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
-    frame.showEnvironment = GetRenderIndex()->GetRenderDelegate()->GetRenderSetting<bool>(
+    HdRenderDelegate *delegate = GetRenderIndex()->GetRenderDelegate();
+    frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
+    frame.postProcess = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->postProcess, true);
+    frame.post.autoExposure = delegate->GetRenderSetting<bool>(
+        HdVkRenderSettingsTokens->autoExposure, frame.post.autoExposure);
+    frame.post.exposureCompensation = delegate->GetRenderSetting<float>(
+        HdVkRenderSettingsTokens->exposureCompensation, frame.post.exposureCompensation);
+    frame.post.bloomIntensity = delegate->GetRenderSetting<float>(
+        HdVkRenderSettingsTokens->bloomIntensity, frame.post.bloomIntensity);
     const GfVec3d eye = view.GetInverse().ExtractTranslation();
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);

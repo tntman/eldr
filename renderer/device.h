@@ -12,6 +12,8 @@ namespace vkr {
 // Throws std::runtime_error naming `what` unless r == VK_SUCCESS.
 void Check(VkResult r, const char *what);
 
+VkShaderModule CreateShaderModule(VkDevice device, const uint32_t *code, size_t bytes);
+
 void ImageBarrier(VkCommandBuffer cmd, VkImage image, VkImageSubresourceRange range,
                   VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess,
@@ -28,6 +30,13 @@ struct DeviceInfo {
 // renderer needs: Vulkan 1.3, bindless descriptor indexing, multi-draw
 // indirect with count, dynamic rendering, synchronization2.
 DeviceInfo ProbeDevice();
+
+// Device-local image with one view over all of it.
+struct Image {
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+};
 
 // Host-visible, coherent, persistently mapped buffer.
 struct Buffer {
@@ -48,6 +57,11 @@ public:
     // Grows `b` to hold at least `bytes`, discarding its contents. GPU must be idle.
     void Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage);
     void Destroy(Buffer &b);
+
+    Image CreateImage(VkFormat format, uint32_t width, uint32_t height, uint32_t layers,
+                      uint32_t mips, VkImageUsageFlags usage, VkImageAspectFlags aspect,
+                      VkImageViewType viewType, VkImageCreateFlags flags = 0);
+    void Destroy(Image &image);
 
     // Records one command buffer with `record`, submits it and waits.
     void Submit(const std::function<void(VkCommandBuffer)> &record);

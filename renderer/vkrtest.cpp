@@ -51,6 +51,7 @@ static vkr::Renderer::Frame IdentityFrame()
     frame.cameraPos[0] = frame.cameraPos[1] = 0;
     frame.cameraPos[2] = -2;
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
+    frame.postProcess = false;  // exact linear values; post has its own tests
     return frame;
 }
 
@@ -99,6 +100,30 @@ static vkr::Mesh *AddQuad(vkr::Scene &scene, float x0, float y0, float x1, float
     quad->points = {x0, y0, z, x1, y0, z, x1, y1, z, x0, y0, z, x1, y1, z, x0, y1, z};
     quad->uvs = {0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1};
     return quad;
+}
+
+// Black, unlit quad that only emits `radiance`.
+static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, float y1, float z,
+                             float radiance)
+{
+    vkr::Mesh *quad = AddQuad(scene, x0, y0, x1, y1, z);
+    auto material = std::make_shared<vkr::Material>();
+    std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+    std::fill(material->emissive, material->emissive + 3, radiance);
+    quad->material = material;
+    return quad;
+}
+
+// Post-processed render through a fresh renderer (exposure starts unadapted).
+static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f)
+{
+    vkr::Renderer renderer(device);
+    vkr::Renderer::Frame frame = IdentityFrame();
+    frame.postProcess = true;
+    frame.post.bloomIntensity = bloom;
+    Image img = Render(renderer, scene, frame);
+    Expect(renderer.IsConverged(), "first post frame snaps exposure");
+    return img;
 }
 
 int main()
@@ -243,6 +268,41 @@ int main()
             // (Bilinear filtering still mixes in ~12% of the red bottom row up here.)
             Expect(img.At(60, 60, 1) > 0.8f && img.At(60, 60, 2) < 0.1f, "upper right is u < 0.5");
             Expect(img.At(3, 60, 1) > 0.8f && img.At(3, 60, 2) > 0.75f, "upper left is u > 0.5");
+        }
+
+        {
+            // Auto-exposure maps a uniform screen to middle gray whatever its
+            // brightness: ACES(0.18) = 0.106 for both.
+            for (float radiance : {1.0f, 100.0f}) {
+                vkr::Scene scene(&device);
+                AddEmitter(scene, -1, -1, 1, 1, 0, radiance);
+                scene.Commit();
+                const float v = RenderPost(device, scene).At(32, 32, 1);
+                Expect(std::abs(v - 0.106f) < 0.01f, radiance > 1 ? "exposure: bright screen -> 0.106"
+                                                                   : "exposure: dim screen -> 0.106");
+            }
+        }
+
+        {
+            // The app's background colour passes through and doesn't steer
+            // exposure: geometry covers the lower half only.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 0, 0, 50.0f);
+            scene.Commit();
+            const Image img = RenderPost(device, scene);
+            Expect(img.At(32, 60, 2) == 1.0f && img.At(32, 60, 0) == 0.0f, "background passes through");
+            Expect(std::abs(img.At(32, 8, 1) - 0.106f) < 0.01f, "exposure from geometry only");
+        }
+
+        {
+            // Bloom: a tiny very bright spot on a dim screen spreads light.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0.5f, 0.01f);
+            AddEmitter(scene, -0.06f, -0.06f, 0.06f, 0.06f, 0, 1000.0f);
+            scene.Commit();
+            const float off = RenderPost(device, scene, 0.0f).At(32, 44, 1);
+            const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
+            Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

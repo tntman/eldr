@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 
 #include <memory>
@@ -12,6 +13,14 @@ class Scene;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+#define HDVK_RENDER_SETTING_TOKENS                           \
+    ((postProcess, "hdvk:postProcess"))                      \
+    ((autoExposure, "hdvk:autoExposure"))                    \
+    ((exposureCompensation, "hdvk:exposureCompensation"))    \
+    ((bloomIntensity, "hdvk:bloomIntensity"))
+
+TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
 class HdVkTextureCache;
 
@@ -26,6 +35,7 @@ public:
     const TfTokenVector &GetSupportedBprimTypes() const override;
     HdResourceRegistrySharedPtr GetResourceRegistry() const override;
     HdAovDescriptor GetDefaultAovDescriptor(TfToken const &name) const override;
+    HdRenderSettingDescriptorList GetRenderSettingDescriptors() const override;
 
     HdRenderPassSharedPtr CreateRenderPass(
         HdRenderIndex *index, HdRprimCollection const &collection) override;

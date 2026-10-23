@@ -1,7 +1,10 @@
 #pragma once
 
 #include "device.h"
+#include "post.h"
 #include "scene.h"
+
+#include <chrono>
 
 namespace vkr {
 
@@ -18,6 +21,8 @@ public:
         float clearColor[4] = {0, 0, 0, 0};
         float clearDepth = 1.0f;
         bool showEnvironment = true;  // draw the dome texture as background
+        bool postProcess = true;      // false: color is the raw linear HDR scene
+        PostProcess::Settings post;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -43,25 +48,23 @@ public:
     // Draws `scene` and blocks until the requested outputs are in `out`.
     void Render(const Scene &scene, const Frame &frame, const Targets &out);
 
-private:
-    struct Image {
-        VkImage image = VK_NULL_HANDLE;
-        VkDeviceMemory memory = VK_NULL_HANDLE;
-        VkImageView view = VK_NULL_HANDLE;
-    };
+    // False while auto-exposure is still adapting: keep rendering frames.
+    bool IsConverged() const;
 
+private:
     void _CreateDescriptors();
     void _CreatePipelines();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
-    Image _CreateImage(VkFormat format, uint32_t width, uint32_t height, uint32_t layers,
-                       VkImageUsageFlags usage, VkImageAspectFlags aspect, VkImageViewType viewType,
-                       VkImageCreateFlags flags = 0);
-    void _Destroy(Image &image);
     void _UpdateDescriptors(const Scene::Gpu &gpu);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
 
     Device &_dev;
+    PostProcess _post;
+    std::chrono::steady_clock::time_point _lastFrame;
+    bool _hasLastFrame = false;
+    bool _adapting = false;       // last frame ran auto-exposure
+    bool _lastAutoExposure = false;
     VkSampler _sampler = VK_NULL_HANDLE;        // materials: trilinear, aniso, repeat
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare

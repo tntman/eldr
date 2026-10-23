@@ -32,24 +32,14 @@ const uint32_t kMeshVert[] =
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
 ;
-const uint32_t kSkyVert[] =
-#include "sky.vert.inc"
+const uint32_t kFullscreenVert[] =
+#include "fullscreen.vert.inc"
 ;
 const uint32_t kSkyFrag[] =
 #include "sky.frag.inc"
 ;
 
 constexpr uint32_t kBrdfLutSize = 64;
-
-VkShaderModule CreateShader(VkDevice device, const uint32_t *code, size_t bytes)
-{
-    VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    ci.codeSize = bytes;
-    ci.pCode = code;
-    VkShaderModule module = VK_NULL_HANDLE;
-    Check(vkCreateShaderModule(device, &ci, nullptr, &module), "vkCreateShaderModule");
-    return module;
-}
 
 VkImageSubresourceRange Range(VkImageAspectFlags aspect, uint32_t layers = 1)
 {
@@ -67,6 +57,7 @@ Mat4 ToMat4(const float *m)
 
 Renderer::Renderer(Device &device)
     : _dev(device)
+    , _post(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -91,15 +82,12 @@ Renderer::Renderer(Device &device)
 Renderer::~Renderer()
 {
     vkDeviceWaitIdle(_dev.device);
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth}) {
-        _Destroy(*img);
-    }
-    _Destroy(_shadowMap);
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
-    _Destroy(_brdfLut);
-    _Destroy(_blackCube);
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_shadowMap, &_brdfLut, &_blackCube}) {
+        _dev.Destroy(*img);
+    }
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
     for (VkPipeline p : {_pipeline, _shadowPipeline, _skyPipeline}) {
@@ -192,10 +180,10 @@ void Renderer::_CreatePipelines()
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
     const VkDevice device = _dev.device;
-    VkShaderModule meshVert = CreateShader(device, kMeshVert, sizeof(kMeshVert));
-    VkShaderModule meshFrag = CreateShader(device, kMeshFrag, sizeof(kMeshFrag));
-    VkShaderModule skyVert = CreateShader(device, kSkyVert, sizeof(kSkyVert));
-    VkShaderModule skyFrag = CreateShader(device, kSkyFrag, sizeof(kSkyFrag));
+    VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
+    VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
+    VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
+    VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
     auto stage = [](VkShaderStageFlagBits s, VkShaderModule m) {
         return VkPipelineShaderStageCreateInfo{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
                                                nullptr, 0, s, m, "main"};
@@ -315,51 +303,12 @@ void Renderer::_CreatePipelines()
     Check(r, "vkCreateGraphicsPipelines");
 }
 
-Renderer::Image Renderer::_CreateImage(VkFormat format, uint32_t width, uint32_t height,
-                                       uint32_t layers, VkImageUsageFlags usage,
-                                       VkImageAspectFlags aspect, VkImageViewType viewType,
-                                       VkImageCreateFlags flags)
-{
-    Image img;
-    VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ci.flags = flags;
-    ci.imageType = VK_IMAGE_TYPE_2D;
-    ci.format = format;
-    ci.extent = {width, height, 1};
-    ci.mipLevels = 1;
-    ci.arrayLayers = layers;
-    ci.samples = VK_SAMPLE_COUNT_1_BIT;
-    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ci.usage = usage;
-    Check(vkCreateImage(_dev.device, &ci, nullptr, &img.image), "vkCreateImage");
-    VkMemoryRequirements req;
-    vkGetImageMemoryRequirements(_dev.device, img.image, &req);
-    img.memory = _dev.Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    Check(vkBindImageMemory(_dev.device, img.image, img.memory, 0), "vkBindImageMemory");
-
-    VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
-    vci.image = img.image;
-    vci.viewType = viewType;
-    vci.format = format;
-    vci.subresourceRange = Range(aspect, layers);
-    Check(vkCreateImageView(_dev.device, &vci, nullptr, &img.view), "vkCreateImageView");
-    return img;
-}
-
-void Renderer::_Destroy(Image &img)
-{
-    vkDestroyImageView(_dev.device, img.view, nullptr);
-    vkDestroyImage(_dev.device, img.image, nullptr);
-    vkFreeMemory(_dev.device, img.memory, nullptr);
-    img = Image();
-}
-
 // Shadow cascades, BRDF LUT and the no-dome placeholder never change size.
 void Renderer::_CreateConstantImages()
 {
-    _shadowMap = _CreateImage(kDepthFormat, kShadowSize, kShadowSize, kCascades,
-                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                              VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    _shadowMap = _dev.CreateImage(kDepthFormat, kShadowSize, kShadowSize, kCascades, 1,
+                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                  VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     for (uint32_t c = 0; c < kCascades; ++c) {
         VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
         vci.image = _shadowMap.image;
@@ -369,13 +318,13 @@ void Renderer::_CreateConstantImages()
         Check(vkCreateImageView(_dev.device, &vci, nullptr, &_shadowLayers[c]), "vkCreateImageView");
     }
 
-    _brdfLut = _CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1,
-                            VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                            VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _blackCube = _CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1, 6,
-                              VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                              VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_CUBE,
-                              VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
+    _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
+                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _blackCube = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1, 6, 1,
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_CUBE,
+                                  VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
     const std::vector<float> lut = BuildBrdfLut(kBrdfLutSize);
     Buffer staging;
@@ -409,22 +358,25 @@ void Renderer::_CreateConstantImages()
 void Renderer::_Resize(uint32_t width, uint32_t height)
 {
     for (Image *img : {&_color, &_primId, &_instanceId, &_depth}) {
-        _Destroy(*img);
+        _dev.Destroy(*img);
     }
     _width = width;
     _height = height;
-    constexpr VkImageUsageFlags kTarget = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-    _color = _CreateImage(kColorFormat, width, height, 1, kTarget,
-                          VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _primId = _CreateImage(kIdFormat, width, height, 1, kTarget,
-                           VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _instanceId = _CreateImage(kIdFormat, width, height, 1, kTarget,
+    constexpr VkImageUsageFlags kTarget = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    _color = _dev.CreateImage(kColorFormat, width, height, 1, 1, kTarget,
+                              VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _primId = _dev.CreateImage(kIdFormat, width, height, 1, 1, kTarget,
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _depth = _CreateImage(kDepthFormat, width, height, 1,
-                          VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-                          VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _instanceId = _dev.CreateImage(kIdFormat, width, height, 1, 1, kTarget,
+                                   VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _depth = _dev.CreateImage(kDepthFormat, width, height, 1, 1,
+                              VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                              VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    _post.Resize(width, height, _color.view, _depth.view);
 }
 
 // The GPU is idle here (Render waits for every frame), so rewriting the set
@@ -550,6 +502,11 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
     data->cameraForward[1] = forward.y;
     data->cameraForward[2] = forward.z;
     return true;
+}
+
+bool Renderer::IsConverged() const
+{
+    return !_adapting || _post.ExposureConverged();
 }
 
 // ponytail: synchronous, one frame in flight, CPU readback every frame.
@@ -694,32 +651,67 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     vkCmdEndRendering(_cmd);
 
+    constexpr VkPipelineStageFlags2 kPostStages =
+        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    _adapting = frame.postProcess && frame.post.autoExposure;
+    if (frame.postProcess) {
+        // HDR color and depth (depth marks background) feed the post passes.
+        ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        // Adaptation runs on wall-clock time; the first frame (or toggling
+        // auto-exposure) snaps straight to the target.
+        const auto now = std::chrono::steady_clock::now();
+        const float dt = _hasLastFrame
+            ? std::min(std::chrono::duration<float>(now - _lastFrame).count(), 0.1f) : 0.0f;
+        const bool reset = !_hasLastFrame || frame.post.autoExposure != _lastAutoExposure;
+        _lastFrame = now;
+        _hasLastFrame = true;
+        _lastAutoExposure = frame.post.autoExposure;
+        _post.Record(_cmd, frame.post, sky, dt, reset);
+    }
+
+    // Everything that may be read back goes to TRANSFER_SRC (with post on,
+    // color comes from the post output, already in TRANSFER_SRC).
     for (const Image *img : colorTargets) {
+        if (img == &_color && frame.postProcess) {
+            continue;
+        }
         ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
-                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
-    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    if (frame.postProcess) {
+        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                     kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    } else {
+        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    }
 
     // Copy only what the caller asked for, packed one after another.
     struct Output {
-        const Image *image;
+        VkImage image;
         VkImageAspectFlags aspect;
         VkDeviceSize bytesPerPixel;
         void *dst;
         VkDeviceSize offset;
     };
     Output outputs[4] = {
-        {&_color, VK_IMAGE_ASPECT_COLOR_BIT, 8, out.color, 0},
-        {&_depth, VK_IMAGE_ASPECT_DEPTH_BIT, 4, out.depth, 0},
-        {&_primId, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.primId, 0},
-        {&_instanceId, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
+        {frame.postProcess ? _post.Output() : _color.image, VK_IMAGE_ASPECT_COLOR_BIT, 8, out.color, 0},
+        {_depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, 4, out.depth, 0},
+        {_primId.image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.primId, 0},
+        {_instanceId.image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
     };
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {
@@ -731,7 +723,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         copy.bufferOffset = offset;
         copy.imageSubresource = {o.aspect, 0, 0, 1};
         copy.imageExtent = {_width, _height, 1};
-        vkCmdCopyImageToBuffer(_cmd, o.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        vkCmdCopyImageToBuffer(_cmd, o.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                _readback.buffer, 1, &copy);
         offset += o.bytesPerPixel * _width * _height;
     }

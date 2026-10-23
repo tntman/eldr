@@ -1,0 +1,39 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define POST_WRITABLE
+#include "post.glsl"
+
+// Turns the histogram into an exposure and adapts towards it over time.
+// a = (dt seconds, compensation EV, auto exposure, reset), b = (minLogLum, logLumRange)
+layout(local_size_x = 1) in;
+
+void main()
+{
+    float target = pc.a.y;
+    if (pc.a.z > 0.5) {
+        float total = 0.0;
+        for (int i = 0; i < 256; ++i) {
+            total += float(bins[i]);
+        }
+        if (total > 0.0) {
+            // Mean log luminance of the 10%..90% part of the histogram
+            // (Unreal's default percentiles), mapped to middle gray.
+            float lo = 0.1 * total, hi = 0.9 * total;
+            float acc = 0.0, sum = 0.0, weight = 0.0;
+            for (int i = 0; i < 256; ++i) {
+                float c = float(bins[i]);
+                float w = clamp(acc + c, lo, hi) - clamp(acc, lo, hi);
+                acc += c;
+                float logLum = i == 0 ? pc.b.x : pc.b.x + (float(i) - 0.5) / 254.0 * pc.b.y;
+                sum += w * logLum;
+                weight += w;
+            }
+            exposure.avgLogLum = sum / max(weight, 1.0);
+            target += log2(0.18) - exposure.avgLogLum;
+        }
+    }
+    target = clamp(target, -16.0, 16.0);
+    exposure.targetEv = target;
+    exposure.ev = pc.a.w > 0.5 ? target
+                               : exposure.ev + (target - exposure.ev) * (1.0 - exp(-2.0 * pc.a.x));
+}
