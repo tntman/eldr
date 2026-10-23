@@ -533,9 +533,14 @@ int main()
                 light->castShadows = true;
                 scene.Commit();
                 const Image shadowed = Render(renderer, scene);
+                vkr::Renderer::Frame noLocalShadows = IdentityFrame();
+                noLocalShadows.localShadows = false;
+                const Image disabled = Render(renderer, scene, noLocalShadows);
                 light->castShadows = false;
                 scene.Commit();
                 const Image open = Render(renderer, scene);
+                Expect(std::abs(disabled.At(32, 32, 0) - open.At(32, 32, 0)) < 0.01f * open.At(41, 32, 0),
+                       "Frame::localShadows off: no local light shadows");
                 Expect(shadowed.At(32, 32, 0) < 0.2f * shadowed.At(41, 32, 0),
                        cone < 90 ? "spot light shadow (atlas tile)" : "point light shadow (cube faces)");
                 Expect(open.At(32, 32, 0) > 0.5f * open.At(41, 32, 0) &&
@@ -546,12 +551,14 @@ int main()
 
             // A big sphere light (same power) softens the shadow's edges:
             // many more partly lit pixels along the row than from a point.
-            auto penumbra = [&](float radius) {
+            auto penumbra = [&](float radius, bool soft) {
                 vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, radius, 0.16f / (radius * radius));
                 light->point = radius < 0.05f;
                 light->castShadows = true;
                 scene.Commit();
-                const Image img = Render(renderer, scene);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.softShadows = soft;
+                const Image img = Render(renderer, scene, frame);
                 const float open = img.At(41, 32, 0);
                 int partial = 0;
                 for (int x = 22; x < 42; ++x) {
@@ -561,8 +568,9 @@ int main()
                 scene.RemoveLight(light);
                 return partial;
             };
-            const int hard = penumbra(0.02f), soft = penumbra(0.15f);
+            const int hard = penumbra(0.02f, true), soft = penumbra(0.15f, true);
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
+            Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
         }
 
         {
@@ -579,6 +587,9 @@ int main()
             const float shadowed = img.At(3, 32, 0), lit = img.At(51, 32, 0);
             Expect(lit > 0.3f, "ground outside the shadow is lit");
             Expect(shadowed < 0.1f * lit, "ground behind the occluder is shadowed");
+            vkr::Renderer::Frame noShadows = IdentityFrame();
+            noShadows.shadows = false;
+            Expect(Render(renderer, scene, noShadows).At(3, 32, 0) > 0.9f * lit, "Frame::shadows off: no sun shadow");
         }
 
         {
