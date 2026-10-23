@@ -4,6 +4,7 @@
 #include "material.h"
 #include "renderDelegate.h"
 #include "scene.h"
+#include "subdivision.h"
 
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
@@ -143,7 +144,8 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyTopology | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
-           HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex;
+           HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
+           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags;
 }
 
 void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -155,8 +157,7 @@ void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderP
     }
 }
 
-// ponytail: renders the subdivision cage, reads only the "st" primvar for
-// texcoords.
+// ponytail: reads only the "st" primvar for texcoords.
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
@@ -168,13 +169,22 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // Skinned meshes get points and topology dirtied with every new pose
     // (UsdSkelImaging's own points come from the pose), while HdVk's are
     // the rest points: re-flatten only on a real change.
-    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
+    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id) || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) {
         HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
+        topology.SetSubdivTags(GetSubdivTags(sceneDelegate));  // creases, corners, boundary rules
         if (!(topology == _topology)) {
             _topology = topology;
             HdMeshUtil(&_topology, id).ComputeTriangleIndices(&_triangles, &_primitiveParams);
             geometryDirty = true;
         }
+    }
+    // Subdivision surfaces: refined to the display style's level (usdview's
+    // Complexity) when flattened. The render delegate re-dirties the
+    // display style when the subdivision settings change.
+    if (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id)) {
+        const int level = _RefineLevel(sceneDelegate);
+        geometryDirty |= level != _refineLevel && _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
+        _refineLevel = level;
     }
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         const VtValue value = GetPoints(sceneDelegate);
@@ -286,7 +296,8 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         }
         _programPrimvarNames = programNames;
     }
-    if (geometryDirty) {
+    // Subdivision surfaces flatten their refined mesh (subdivision.cpp).
+    if (geometryDirty && !_FlattenRefined()) {
         _Flatten();
         _SplitSubsets();
     }
@@ -431,6 +442,7 @@ void HdVkMesh::_SplitSubsets()
         d->blendOffsets = m.blendOffsets;
         d->jointCount = m.jointCount;
         d->geometryDirty = true;
+        HdVkSplitIndexed(m, tris, d);  // refined subdivision surfaces are indexed
     };
     for (size_t i = 0; i < _subsetMeshes.size(); ++i) {
         split(parts[i + 1], _subsetMeshes[i]);
@@ -445,6 +457,7 @@ void HdVkMesh::_SplitSubsets()
     m.jointWeights = std::move(rest.jointWeights);
     m.blendRanges = std::move(rest.blendRanges);
     m.primvars = std::move(rest.primvars);
+    m.indices = std::move(rest.indices);
 }
 
 // Subset meshes share everything but their triangles and material.

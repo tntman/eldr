@@ -3,6 +3,7 @@
 #include "pxr/pxr.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
+#include "pxr/imaging/hd/sceneIndex.h"
 
 #include <memory>
 
@@ -45,13 +46,19 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((softShadowSamples, "hdvk:softShadowSamples"))          \
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
-    ((anisotropy, "hdvk:anisotropy"))
+    ((anisotropy, "hdvk:anisotropy"))                        \
+    ((subdivision, "hdvk:subdivision"))                      \
+    ((maxRefineLevel, "hdvk:maxRefineLevel"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
+
+// Dirties every mesh's display style in the scene upstream of `terminal` (a
+// render index's), so they sync again (sceneIndexPlugin.cpp).
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
 
 class HdVkTextureCache;
 
@@ -92,6 +99,9 @@ public:
     // and HdVk's stats window (usdview/hdvkUsdview) read it, and Houdini's
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
+    // Settings the meshes read when they sync (subdivision) re-sync them.
+    void SetRenderSetting(TfToken const &key, VtValue const &value) override;
+    void SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex) override;
 
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
@@ -102,6 +112,7 @@ private:
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    HdSceneIndexBasePtr _terminalSceneIndex;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

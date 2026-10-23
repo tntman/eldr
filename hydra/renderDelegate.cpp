@@ -8,6 +8,7 @@
 #include "renderBuffer.h"
 #include "renderPass.h"
 #include "renderer.h"
+#include "subdivision.h"
 
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
@@ -108,6 +109,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Depth Prepass (off: no AO, no SSR)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
+        {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
+        {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
@@ -138,6 +141,23 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
         {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
     };
+}
+
+void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &value)
+{
+    const auto &t = *HdVkRenderSettingsTokens;
+    const bool geometry = (key == t.subdivision || key == t.maxRefineLevel) && GetRenderSetting(key) != value;
+    HdRenderDelegate::SetRenderSetting(key, value);
+    // Through the scene: a scene index render index's change tracker can't
+    // dirty prims, and nothing may during a sync (this runs between frames).
+    if (geometry && _terminalSceneIndex) {
+        HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+    }
+}
+
+void HdVkRenderDelegate::SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex)
+{
+    _terminalSceneIndex = terminalSceneIndex;
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(

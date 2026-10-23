@@ -4,6 +4,8 @@
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/imaging/hd/mesh.h"
 
+#include <memory>
+
 namespace vkr {
 class Scene;
 struct Mesh;
@@ -11,6 +13,8 @@ struct Primvar;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+class HdVkSubdivision;
 
 // Sync() only copies scene data into its vkr::Mesh; no Vulkan here.
 class HdVkMesh final : public HdMesh
@@ -86,6 +90,13 @@ private:
     std::vector<TfToken> _programPrimvarNames;
     std::vector<ProgramPrimvar> _programPrimvars;
     std::vector<vkr::Primvar> _instancePrimvars;
+
+    // Subdivision surfaces (subdivision.cpp): _Flatten for the cage refined
+    // to _refineLevel (0: the cage), the refiner kept for animated points.
+    int _RefineLevel(HdSceneDelegate *sceneDelegate) const;
+    bool _FlattenRefined();
+    int _refineLevel = 0;
+    std::shared_ptr<HdVkSubdivision> _subdivision;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

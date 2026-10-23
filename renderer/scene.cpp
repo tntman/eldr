@@ -91,12 +91,17 @@ struct VertexKey {
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
+    // Eight bytes a step (FNV-1a byte by byte was a good part of a big
+    // scene's upload time).
     size_t operator()(const VertexKey &k) const
     {
-        uint64_t h = 1469598103934665603ull;  // FNV-1a
+        uint64_t h = 1469598103934665603ull;
         const auto *p = reinterpret_cast<const uint8_t *>(&k);
-        for (size_t i = 0; i < sizeof(VertexKey); ++i) {
-            h = (h ^ p[i]) * 1099511628211ull;
+        for (size_t i = 0; i < sizeof(VertexKey); i += 8) {
+            uint64_t w = 0;
+            std::memcpy(&w, p + i, std::min<size_t>(8, sizeof(VertexKey) - i));
+            h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+            h ^= h >> 29;
         }
         return size_t(h);
     }
