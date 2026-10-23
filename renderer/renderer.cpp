@@ -38,6 +38,45 @@ const uint32_t kFullscreenVert[] =
 const uint32_t kSkyFrag[] =
 #include "sky.frag.inc"
 ;
+const uint32_t kCullComp[] =
+#include "cull.comp.inc"
+;
+
+// Push constants of cull.comp; the vertex stages read only the first 64 bytes
+// (mat4 viewProj) of the same range.
+struct CullParams {
+    float planes[6][4];
+    uint32_t instanceCapacity;
+    uint32_t drawCount;
+    uint32_t pad[2];
+};
+constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+// World-space frustum planes (xyz . p + w >= 0 inside) of a GL clip-space
+// viewProj in row-vector order (Gribb/Hartmann).
+void FrustumPlanes(const float *vp, float planes[6][4])
+{
+    auto column = [&](int j, float out[4]) {
+        for (int i = 0; i < 4; ++i) {
+            out[i] = vp[i * 4 + j];
+        }
+    };
+    float c[4][4];
+    for (int j = 0; j < 4; ++j) {
+        column(j, c[j]);
+    }
+    for (int p = 0; p < 6; ++p) {
+        const float sign = (p % 2 == 0) ? 1.0f : -1.0f;  // left/right, bottom/top, near/far
+        for (int i = 0; i < 4; ++i) {
+            planes[p][i] = c[3][i] + sign * c[p / 2][i];
+        }
+        const float len = std::sqrt(planes[p][0] * planes[p][0] + planes[p][1] * planes[p][1] +
+                                    planes[p][2] * planes[p][2]);
+        for (int i = 0; i < 4; ++i) {
+            planes[p][i] /= len > 0 ? len : 1.0f;
+        }
+    }
+}
 
 constexpr uint32_t kBrdfLutSize = 64;
 
@@ -90,7 +129,8 @@ Renderer::~Renderer()
     }
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
-    for (VkPipeline p : {_pipeline, _shadowPipeline, _skyPipeline}) {
+    _dev.Destroy(_commands);
+    for (VkPipeline p : {_pipeline, _shadowPipeline, _skyPipeline, _cullPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -131,8 +171,11 @@ void Renderer::_CreateDescriptors()
     Check(vkCreateSampler(_dev.device, &sci, nullptr, &_shadowSampler), "vkCreateSampler");
 
     constexpr VkShaderStageFlags kFragment = VK_SHADER_STAGE_FRAGMENT_BIT;
-    // Binding 0 is the bindless array, partially bound and indexed by material data.
-    const VkDescriptorSetLayoutBinding bindings[7] = {
+    constexpr VkShaderStageFlags kGeometry = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+    // Binding 0 is the bindless array, partially bound and indexed by material
+    // data. 7..10 are the GPU-driven scene: instances, draw infos, visible
+    // lists and the culled indirect commands.
+    const VkDescriptorSetLayoutBinding bindings[11] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -140,20 +183,24 @@ void Renderer::_CreateDescriptors()
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[7] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[11] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 7;
+    flags.bindingCount = 11;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 7;
+    slci.bindingCount = 11;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 3},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -171,7 +218,9 @@ void Renderer::_CreateDescriptors()
 
 void Renderer::_CreatePipelines()
 {
-    VkPushConstantRange range{VK_SHADER_STAGE_VERTEX_BIT, 0, 64};  // mat4 viewProj
+    // One range for both users (vertex: mat4 viewProj; cull: CullParams), so
+    // every push names the same stages and the ranges never partly overlap.
+    VkPushConstantRange range{kPushStages, 0, sizeof(CullParams)};
     VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     lci.setLayoutCount = 1;
     lci.pSetLayouts = &_setLayout;
@@ -180,6 +229,16 @@ void Renderer::_CreatePipelines()
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
     const VkDevice device = _dev.device;
+    {
+        VkShaderModule cull = CreateShaderModule(device, kCullComp, sizeof(kCullComp));
+        VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                     VK_SHADER_STAGE_COMPUTE_BIT, cull, "main"};
+        cci.layout = _layout;
+        const VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_cullPipeline);
+        vkDestroyShaderModule(device, cull, nullptr);
+        Check(r, "vkCreateComputePipelines");
+    }
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
@@ -189,27 +248,17 @@ void Renderer::_CreatePipelines()
                                                nullptr, 0, s, m, "main"};
     };
 
-    const VkVertexInputBindingDescription bindings[2] = {
-        {0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX},
-        {1, sizeof(Instance), VK_VERTEX_INPUT_RATE_INSTANCE},
-    };
-    const VkVertexInputAttributeDescription attributes[11] = {
+    // Per-instance data comes from SSBOs (scene.glsl), not vertex attributes.
+    const VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
+    const VkVertexInputAttributeDescription attributes[3] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
-        {3, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 0},
-        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 16},
-        {5, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
-        {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48},
-        {7, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Instance, color)},
-        {8, 1, VK_FORMAT_R32_UINT, offsetof(Instance, material)},
-        {9, 1, VK_FORMAT_R32_SINT, offsetof(Instance, primId)},
-        {10, 1, VK_FORMAT_R32_SINT, offsetof(Instance, instanceId)},
     };
     VkPipelineVertexInputStateCreateInfo meshInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    meshInput.vertexBindingDescriptionCount = 2;
-    meshInput.pVertexBindingDescriptions = bindings;
-    meshInput.vertexAttributeDescriptionCount = 11;
+    meshInput.vertexBindingDescriptionCount = 1;
+    meshInput.pVertexBindingDescriptions = &binding;
+    meshInput.vertexAttributeDescriptionCount = 3;
     meshInput.pVertexAttributeDescriptions = attributes;
     VkPipelineVertexInputStateCreateInfo noInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 
@@ -395,6 +444,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorImageInfo env{_clampSampler, gpu.environment ? gpu.environment : _blackCube.view,
                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo lut{_clampSampler, _brdfLut.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorBufferInfo instances{gpu.instances, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo draws{gpu.draws, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo visible{gpu.visible, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo commands{_commands.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -414,6 +467,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadow);
     write(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &env);
     write(6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &lut);
+    write(7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &instances, nullptr);
+    write(8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &draws, nullptr);
+    write(9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &visible, nullptr);
+    write(10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &commands, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -509,6 +566,16 @@ bool Renderer::IsConverged() const
     return !_adapting || _post.ExposureConverged();
 }
 
+uint32_t Renderer::VisibleInstances() const
+{
+    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
+    uint32_t total = 0;
+    for (uint32_t i = 0; i < _lastDrawCount; ++i) {
+        total += commands[i].instanceCount;
+    }
+    return total;
+}
+
 // ponytail: synchronous, one frame in flight, CPU readback every frame.
 // GL interop (step 7) removes the readback; frames in flight come with it.
 void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
@@ -528,7 +595,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
     fd.viewport[0] = float(_width);
     fd.viewport[1] = float(_height);
-    const bool shadows = gpu.drawCount > 0 && _FitCascades(gpu, frame, &fd);
+    const bool shadows = gpu.drawCount > 0 && gpu.instanceCapacity > 0 && _FitCascades(gpu, frame, &fd);
     fd.counts[0] = gpu.lightCount;
     fd.counts[1] = shadows ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
@@ -542,15 +609,55 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.envRadiance[3] = 1.0f;
     }
     const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
+    // Culling output; host-visible so VisibleInstances() can read it back.
+    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand),
+                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     _UpdateDescriptors(gpu);
+    const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
+    _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
 
-    const VkBuffer vbs[2] = {gpu.vertices, gpu.instances};
-    const VkDeviceSize offsets[2] = {0, 0};
+    const VkDeviceSize vertexOffset = 0;
+    if (draw) {
+        // GPU culling: reset the commands from the scene's template, then one
+        // invocation per instance slot appends survivors and counts them.
+        const VkBufferCopy reset{0, 0, VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand)};
+        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1, &reset);
+        VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        toCull.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        toCull.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        toCull.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        toCull.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &toCull;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+
+        CullParams cull{};
+        FrustumPlanes(frame.viewProj, cull.planes);
+        cull.instanceCapacity = gpu.instanceCapacity;
+        cull.drawCount = gpu.drawCount;
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
+        vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+
+        VkMemoryBarrier2 toDraw{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        toDraw.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        toDraw.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        toDraw.dstStageMask = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT |
+                              VK_PIPELINE_STAGE_2_HOST_BIT;
+        toDraw.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                               VK_ACCESS_2_HOST_READ_BIT;
+        dep.pMemoryBarriers = &toDraw;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+    }
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
 
     // Shadow cascades. Without a shadow light the map is only transitioned so
     // its descriptor is valid; the shader never samples it.
@@ -578,9 +685,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
             vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
-            vkCmdPushConstants(_cmd, _layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, fd.cascadeViewProj[c]);
-            vkCmdBindVertexBuffers(_cmd, 0, 2, vbs, offsets);
-            vkCmdDrawIndirect(_cmd, gpu.indirect, 0, gpu.drawCount, sizeof(VkDrawIndirectCommand));
+            vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, fd.cascadeViewProj[c]);
+            vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+            vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+            // ponytail: shadows draw every instance; per-cascade culling later.
+            vkCmdDrawIndexedIndirect(_cmd, gpu.shadowCommands, 0, gpu.drawCount,
+                                     sizeof(VkDrawIndexedIndirectCommand));
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -638,12 +748,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const VkRect2D scissor{{0, 0}, {_width, _height}};
     vkCmdSetViewport(_cmd, 0, 1, &vp);
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
-    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-    if (gpu.drawCount > 0) {
+    if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
-        vkCmdPushConstants(_cmd, _layout, VK_SHADER_STAGE_VERTEX_BIT, 0, 64, frame.viewProj);
-        vkCmdBindVertexBuffers(_cmd, 0, 2, vbs, offsets);
-        vkCmdDrawIndirect(_cmd, gpu.indirect, 0, gpu.drawCount, sizeof(VkDrawIndirectCommand));
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, frame.viewProj);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
+                                 sizeof(VkDrawIndexedIndirectCommand));
     }
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);

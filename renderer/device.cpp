@@ -291,6 +291,21 @@ void Device::Submit(const std::function<void(VkCommandBuffer)> &record)
     Check(r, "Device::Submit");
 }
 
+Buffer Device::CreateDeviceBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage)
+{
+    Buffer b;
+    VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    ci.size = std::max<VkDeviceSize>(bytes, 256);
+    ci.usage = usage;
+    Check(vkCreateBuffer(device, &ci, nullptr, &b.buffer), "vkCreateBuffer");
+    VkMemoryRequirements req;
+    vkGetBufferMemoryRequirements(device, b.buffer, &req);
+    b.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkBindBufferMemory(device, b.buffer, b.memory, 0), "vkBindBufferMemory");
+    b.size = ci.size;
+    return b;
+}
+
 Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint32_t layers,
                           uint32_t mips, VkImageUsageFlags usage, VkImageAspectFlags aspect,
                           VkImageViewType viewType, VkImageCreateFlags flags)

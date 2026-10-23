@@ -187,6 +187,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
             std::copy(world.data(), world.data() + 16, m.transforms.data() + i * 16);
         }
+        m.transformsDirty = true;
     }
 
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {

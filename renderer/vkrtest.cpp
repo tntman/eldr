@@ -158,9 +158,9 @@ int main()
             bad->points = {0, 0, 0, 1, 0, 0, 0, 1, 0};
             bad->uvs = {0, 0};
             scene.Commit();
-            Expect(scene.GetGpu().drawCount == 1, "inconsistent mesh skipped");
 
             const Image img = Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 1, "inconsistent mesh skipped");
             // Default material (roughness 0.5, f0 0.04) at normal incidence:
             // diffuse = 1, specular = D*V*F*E = (1/(pi*a^2)) * 0.25 * 0.04 * pi = 0.16.
             Expect(std::abs(img.At(32, 32, 0) - 1.16f) < 0.02f, "red = albedo + specular");
@@ -178,17 +178,66 @@ int main()
             // Two instances of the triangle, shifted left and right: one draw.
             tri->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5f, 0, 0, 1,
                                1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5f, 0, 0, 1};
+            tri->transformsDirty = true;
             scene.Commit();
-            Expect(scene.GetGpu().drawCount == 1, "instanced mesh is one draw");
             const Image twice = Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 2, "both instances survive culling");
             Expect(twice.At(16, 32, 0) > 0.5f && twice.At(48, 32, 0) > 0.5f, "both instances drawn");
             Expect(twice.At(32, 50, 2) == 1, "gap between instances");
             Expect(twice.Inst(16, 32) == 0 && twice.Inst(48, 32) == 1, "instanceId follows transforms order");
             Expect(twice.Prim(16, 32) == 7 && twice.Prim(48, 32) == 7, "both instances keep the primId");
 
+            // A third instance far off to the side is culled, not drawn.
+            tri->transforms.insert(tri->transforms.end(),
+                                   {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 50.0f, 0, 0, 1});
+            tri->transformsDirty = true;
+            scene.Commit();
+            Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 2, "off-screen instance culled");
+
+            // Editing geometry in place: the same mesh now covers the top.
+            tri->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            tri->transformsDirty = true;
+            tri->points = {-1, 0.5f, 0, 1, 0.5f, 0, 0, 1, 0};
+            tri->geometryDirty = true;
+            scene.Commit();
+            const Image edited = Render(renderer, scene);
+            Expect(edited.Prim(32, 56) == 7 && edited.Prim(32, 20) == -1, "geometry edit uploaded");
+
             scene.RemoveMesh(tri);
             scene.Commit();
-            Expect(scene.GetGpu().drawCount == 0, "removed mesh not drawn");
+            Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 0, "removed mesh not drawn");
+
+            // A new mesh reuses the freed pool ranges and draws correctly.
+            vkr::Mesh *again = scene.AddMesh();
+            again->points = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0, 0.5f, 0};
+            again->primId = 9;
+            scene.Commit();
+            const Image reused = Render(renderer, scene);
+            Expect(reused.Prim(32, 32) == 9 && renderer.VisibleInstances() == 1, "freed ranges reused");
+        }
+
+        {
+            // Many meshes and instances: forces the pools to grow past their
+            // first capacity (1024) while earlier contents must survive.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            for (int i = 0; i < 40; ++i) {
+                vkr::Mesh *m = AddQuad(scene, -0.06f, -0.06f, 0.06f, 0.06f, 0);
+                m->primId = i;
+                m->transforms.clear();
+                for (int k = 0; k < 64; ++k) {  // 40 * 64 = 2560 instances
+                    const float x = -0.9f + 1.8f * float(k % 8) / 7.0f, y = -0.9f + 1.8f * float(k / 8) / 7.0f;
+                    m->transforms.insert(m->transforms.end(), {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0,
+                                                               x, y, float(i) * 0.001f, 1});
+                }
+            }
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 2560, "pool growth keeps every instance");
+            // Pixel 3 is centered at NDC -0.89, inside the first grid quad.
+            Expect(img.Prim(3, 3) == 0, "nearest mesh wins the depth test after growth");
         }
 
         {

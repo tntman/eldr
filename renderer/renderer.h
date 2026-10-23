@@ -51,6 +51,9 @@ public:
     // False while auto-exposure is still adapting: keep rendering frames.
     bool IsConverged() const;
 
+    // Instances that survived culling in the last frame (main view).
+    uint32_t VisibleInstances() const;
+
 private:
     void _CreateDescriptors();
     void _CreatePipelines();
@@ -75,6 +78,9 @@ private:
     VkPipeline _pipeline = VK_NULL_HANDLE;
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
+    VkPipeline _cullPipeline = VK_NULL_HANDLE;
+    Buffer _commands;               // culled indirect commands, one per mesh slot
+    uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;

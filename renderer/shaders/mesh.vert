@@ -1,20 +1,15 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 
-// Shared by the main pass (camera viewProj) and the shadow pass (cascade
-// viewProj); the shadow pipeline has no fragment shader.
+#include "scene.glsl"
+
+// Shared by the main pass (camera viewProj, culled instance lists) and the
+// shadow pass (cascade viewProj, identity lists); the shadow pipeline has no
+// fragment shader. gl_InstanceIndex includes the command's firstInstance,
+// so it indexes the visible list directly.
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUv;
-// Per-instance (firstInstance + instance index). USD matrices are row-major
-// row-vector; loading rows as columns yields the transpose GLSL needs.
-layout(location = 3) in vec4 inModel0;
-layout(location = 4) in vec4 inModel1;
-layout(location = 5) in vec4 inModel2;
-layout(location = 6) in vec4 inModel3;
-layout(location = 7) in vec3 inColor;
-layout(location = 8) in uint inMaterial;
-layout(location = 9) in int inPrimId;
-layout(location = 10) in int inInstanceId;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
@@ -30,16 +25,17 @@ layout(location = 6) flat out int outInstanceId;
 
 void main()
 {
-    mat4 model = mat4(inModel0, inModel1, inModel2, inModel3);
-    vec4 world = model * vec4(inPosition, 1.0);
+    Instance inst = instances[visible[gl_InstanceIndex]];
+    DrawInfo d = draws[inst.draw];
+    vec4 world = inst.transform * vec4(inPosition, 1.0);
     gl_Position = pc.viewProj * world;
     // Hydra hands us GL clip space (z in [-w, w]); Vulkan clips z to [0, w].
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
     outWorldPos = world.xyz;
-    outNormal = transpose(inverse(mat3(model))) * inNormal;
+    outNormal = transpose(inverse(mat3(inst.transform))) * inNormal;
     outUv = inUv;
-    outColor = inColor;
-    outMaterial = inMaterial;
-    outPrimId = inPrimId;
-    outInstanceId = inInstanceId;
+    outColor = d.color.rgb;
+    outMaterial = d.material;
+    outPrimId = d.primId;
+    outInstanceId = inst.index;
 }

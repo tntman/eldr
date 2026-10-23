@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 namespace vkr {
@@ -28,6 +29,9 @@ struct GpuLight {
     float irradiance[4];
 };
 
+constexpr VkBufferUsageFlags kPoolUsage =
+    VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
 VkFormat ToVk(Texture::Format f)
 {
     switch (f) {
@@ -48,7 +52,90 @@ size_t BytesPerPixel(Texture::Format f)
     }
 }
 
+void MemoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                   VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+{
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+// Hashable bit pattern of one vertex, for deduplicating corners.
+struct VertexKey {
+    Vertex v;
+    bool operator==(const VertexKey &o) const { return std::memcmp(&v, &o.v, sizeof(Vertex)) == 0; }
+};
+struct VertexKeyHash {
+    size_t operator()(const VertexKey &k) const
+    {
+        uint64_t h = 1469598103934665603ull;  // FNV-1a
+        const auto *p = reinterpret_cast<const uint8_t *>(&k.v);
+        for (size_t i = 0; i < sizeof(Vertex); ++i) {
+            h = (h ^ p[i]) * 1099511628211ull;
+        }
+        return size_t(h);
+    }
+};
+
 } // namespace
+
+// ponytail: first fit over a sorted free list, O(free ranges) per call.
+// Size classes or a TLSF allocator if heavy churn ever shows in profiles.
+bool RangeAllocator::Allocate(uint32_t count, uint32_t *offset)
+{
+    if (count == 0) {
+        *offset = 0;
+        return true;
+    }
+    for (auto it = _free.begin(); it != _free.end(); ++it) {
+        if (it->second >= count) {
+            *offset = it->first;
+            const uint32_t restOffset = it->first + count, rest = it->second - count;
+            _free.erase(it);
+            if (rest > 0) {
+                _free.emplace(restOffset, rest);
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+void RangeAllocator::Free(uint32_t offset, uint32_t count)
+{
+    if (count == 0) {
+        return;
+    }
+    auto next = _free.lower_bound(offset);
+    if (next != _free.begin()) {
+        const auto prev = std::prev(next);
+        if (prev->first + prev->second == offset) {
+            offset = prev->first;
+            count += prev->second;
+            _free.erase(prev);
+        }
+    }
+    if (next != _free.end() && offset + count == next->first) {
+        count += next->second;
+        _free.erase(next);
+    }
+    _free.emplace(offset, count);
+}
+
+void RangeAllocator::Grow(uint32_t capacity)
+{
+    if (capacity > _capacity) {
+        const uint32_t old = _capacity;
+        _capacity = capacity;
+        Free(old, capacity - old);
+    }
+}
 
 template <typename T>
 void Scene::_RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item)
@@ -76,7 +163,8 @@ Scene::Scene(Device *device)
 Scene::~Scene()
 {
     if (_device) {
-        for (Buffer *b : {&_vertices, &_instances, &_indirect, &_materials, &_lightBuffer, &_staging}) {
+        for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_draws, &_commandTemplate,
+                          &_shadowCommands, &_materials, &_lightBuffer, &_staging}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -87,14 +175,23 @@ Mesh *Scene::AddMesh()
 {
     _meshes.push_back(std::make_unique<Mesh>());
     _meshes.back()->_slot = _meshes.size() - 1;
-    _poolDirty = true;
     return _meshes.back().get();
 }
 
 void Scene::RemoveMesh(Mesh *mesh)
 {
+    // Only bookkeeping here; the freed instance slots are invalidated on the
+    // GPU at the next Commit.
+    if (_device) {
+        _vertexAlloc.Free(mesh->_vertexOffset, mesh->_vertexCount);
+        _indexAlloc.Free(mesh->_firstIndex, mesh->_indexCount);
+        _FreeInstances(*mesh);
+    }
+    const size_t slot = mesh->_slot;
     _RemoveSlot(_meshes, mesh);
-    _poolDirty = true;
+    if (slot < _meshes.size()) {
+        _meshes[slot]->transformsDirty = true;  // moved: its instances must name the new slot
+    }
 }
 
 Light *Scene::AddLight()
@@ -121,56 +218,213 @@ void Scene::RemoveDome(Dome *dome)
     _RemoveSlot(_domes, dome);
 }
 
-// ponytail: any geometry edit re-packs every mesh, and corners are not
-// shared (3 vertices per triangle). Sub-allocate and re-index when big
-// scenes make this slow or memory-heavy.
-void Scene::_RebuildVertexPool()
+VkDeviceSize Scene::_Stage(const void *data, VkDeviceSize size)
 {
-    size_t total = 0;
-    for (const auto &m : _meshes) {
-        total += m->points.size() / 3;
-    }
-    _device->Reserve(_vertices, total * sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    const VkDeviceSize offset = (_stagingBytes.size() + 15) & ~VkDeviceSize(15);
+    _stagingBytes.resize(size_t(offset + size));
+    std::memcpy(_stagingBytes.data() + offset, data, size_t(size));
+    return offset;
+}
 
-    auto *dst = static_cast<Vertex *>(_vertices.mapped);
-    uint32_t first = 0;
-    for (const auto &m : _meshes) {
-        m->geometryDirty = false;
-        const size_t n = m->points.size() / 3;
-        // Sizes come from scene data: skip a mesh whose arrays disagree
-        // rather than read past them.
-        const bool valid = m->points.size() % 9 == 0 &&
-                           (m->normals.empty() || m->normals.size() == m->points.size()) &&
-                           (m->uvs.empty() || m->uvs.size() == n * 2);
-        if (!valid) {
-            m->_vertexCount = 0;
-            continue;
-        }
-        std::fill(m->_boundsMin, m->_boundsMin + 3, std::numeric_limits<float>::max());
-        std::fill(m->_boundsMax, m->_boundsMax + 3, std::numeric_limits<float>::lowest());
-        for (size_t i = 0; i < n; ++i) {
-            Vertex &v = dst[first + i];
-            std::memcpy(v.position, &m->points[i * 3], sizeof(v.position));
-            for (int k = 0; k < 3; ++k) {
-                m->_boundsMin[k] = std::min(m->_boundsMin[k], v.position[k]);
-                m->_boundsMax[k] = std::max(m->_boundsMax[k], v.position[k]);
-            }
-            if (m->normals.empty()) {
-                std::fill(v.normal, v.normal + 3, 0.0f);
-            } else {
-                std::memcpy(v.normal, &m->normals[i * 3], sizeof(v.normal));
-            }
-            if (m->uvs.empty()) {
-                std::fill(v.uv, v.uv + 2, 0.0f);
-            } else {
-                std::memcpy(v.uv, &m->uvs[i * 2], sizeof(v.uv));
-            }
-        }
-        m->_firstVertex = first;
-        m->_vertexCount = uint32_t(n);
-        first += uint32_t(n);
+// ponytail: one synchronous submit per Commit (plus one per pool growth).
+// A persistent staging ring with frames in flight comes with GL interop.
+void Scene::_Flush()
+{
+    if (_copies.empty() && _fills.empty()) {
+        return;
     }
-    _poolDirty = false;
+    if (!_stagingBytes.empty()) {
+        _device->Reserve(_staging, _stagingBytes.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memcpy(_staging.mapped, _stagingBytes.data(), _stagingBytes.size());
+    }
+    _device->Submit([&](VkCommandBuffer cmd) {
+        // Fills invalidate freed instance slots; copies may reuse them, so
+        // they must land after the fills.
+        for (const Fill &f : _fills) {
+            vkCmdFillBuffer(cmd, f.dst, f.offset, f.size, 0xFFFFFFFFu);
+        }
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        for (const Copy &c : _copies) {
+            const VkBufferCopy region{c.srcOffset, c.dstOffset, c.size};
+            vkCmdCopyBuffer(cmd, _staging.buffer, c.dst, 1, &region);
+        }
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+    });
+    _stagingBytes.clear();
+    _copies.clear();
+    _fills.clear();
+}
+
+// Makes room for a further `needed` elements: doubles the pool, copies the
+// old contents over on the GPU and, for the instance pool, marks the new
+// slots free and rebuilds the visible buffer's identity half.
+void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t needed,
+                            VkDeviceSize elementSize, VkBufferUsageFlags usage, bool instances)
+{
+    _Flush();  // pending copies/fills target the old buffer
+    const uint32_t old = alloc.Capacity();
+    const uint32_t capacity = std::max({old * 2, old + needed, 1024u});
+    Buffer grown = _device->CreateDeviceBuffer(capacity * elementSize, usage | kPoolUsage);
+    _device->Submit([&](VkCommandBuffer cmd) {
+        if (old > 0) {
+            const VkBufferCopy region{0, 0, old * elementSize};
+            vkCmdCopyBuffer(cmd, buffer.buffer, grown.buffer, 1, &region);
+        }
+        if (instances) {
+            vkCmdFillBuffer(cmd, grown.buffer, old * elementSize, (capacity - old) * elementSize, 0xFFFFFFFFu);
+        }
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+    });
+    _device->Destroy(buffer);
+    buffer = grown;
+    alloc.Grow(capacity);
+
+    if (instances) {
+        _device->Destroy(_visible);
+        _visible = _device->CreateDeviceBuffer(VkDeviceSize(capacity) * 2 * sizeof(uint32_t),
+                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | kPoolUsage);
+        std::vector<uint32_t> identity(capacity);
+        for (uint32_t i = 0; i < capacity; ++i) {
+            identity[i] = i;
+        }
+        _copies.push_back({_visible.buffer, VkDeviceSize(capacity) * sizeof(uint32_t),
+                           _Stage(identity.data(), identity.size() * sizeof(uint32_t)),
+                           identity.size() * sizeof(uint32_t)});
+    }
+}
+
+void Scene::_UploadGeometry(Mesh &m)
+{
+    _vertexAlloc.Free(m._vertexOffset, m._vertexCount);
+    _indexAlloc.Free(m._firstIndex, m._indexCount);
+    m._vertexCount = m._indexCount = 0;
+    m.geometryDirty = false;
+
+    const size_t corners = m.points.size() / 3;
+    // Sizes come from scene data: skip a mesh whose arrays disagree rather
+    // than read past them.
+    const bool valid = m.points.size() % 9 == 0 &&
+                       (m.normals.empty() || m.normals.size() == m.points.size()) &&
+                       (m.uvs.empty() || m.uvs.size() == corners * 2);
+    if (!valid || corners == 0) {
+        return;
+    }
+
+    // Corners sharing position, normal and uv become one indexed vertex.
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices(corners);
+    std::unordered_map<VertexKey, uint32_t, VertexKeyHash> unique;
+    unique.reserve(corners);
+    std::fill(m._boundsMin, m._boundsMin + 3, std::numeric_limits<float>::max());
+    std::fill(m._boundsMax, m._boundsMax + 3, std::numeric_limits<float>::lowest());
+    for (size_t i = 0; i < corners; ++i) {
+        VertexKey key{};
+        std::memcpy(key.v.position, &m.points[i * 3], sizeof(key.v.position));
+        if (!m.normals.empty()) {
+            std::memcpy(key.v.normal, &m.normals[i * 3], sizeof(key.v.normal));
+        }
+        if (!m.uvs.empty()) {
+            std::memcpy(key.v.uv, &m.uvs[i * 2], sizeof(key.v.uv));
+        }
+        const auto [it, inserted] = unique.emplace(key, uint32_t(vertices.size()));
+        if (inserted) {
+            vertices.push_back(key.v);
+            for (int k = 0; k < 3; ++k) {
+                m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k]);
+                m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k]);
+            }
+        }
+        indices[i] = it->second;
+    }
+
+    const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
+    uint32_t vertexOffset, firstIndex;
+    while (!_vertexAlloc.Allocate(vertexCount, &vertexOffset)) {
+        _EnsureCapacity(_vertices, _vertexAlloc, vertexCount, sizeof(Vertex),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);
+    }
+    while (!_indexAlloc.Allocate(indexCount, &firstIndex)) {
+        _EnsureCapacity(_indices, _indexAlloc, indexCount, sizeof(uint32_t),
+                        VK_BUFFER_USAGE_INDEX_BUFFER_BIT, false);
+    }
+    _copies.push_back({_vertices.buffer, VkDeviceSize(vertexOffset) * sizeof(Vertex),
+                       _Stage(vertices.data(), vertices.size() * sizeof(Vertex)),
+                       vertices.size() * sizeof(Vertex)});
+    _copies.push_back({_indices.buffer, VkDeviceSize(firstIndex) * sizeof(uint32_t),
+                       _Stage(indices.data(), indices.size() * sizeof(uint32_t)),
+                       indices.size() * sizeof(uint32_t)});
+    m._vertexOffset = vertexOffset;
+    m._vertexCount = vertexCount;
+    m._firstIndex = firstIndex;
+    m._indexCount = indexCount;
+}
+
+void Scene::_FreeInstances(Mesh &m)
+{
+    if (m._instanceCount > 0) {
+        _instanceAlloc.Free(m._instanceBase, m._instanceCount);
+        _fills.push_back({_instances.buffer, VkDeviceSize(m._instanceBase) * sizeof(Instance),
+                          VkDeviceSize(m._instanceCount) * sizeof(Instance)});
+    }
+    m._instanceCount = 0;
+}
+
+// Rewrites only this mesh's range of the instance pool; reallocates it when
+// the instance count changed.
+void Scene::_UploadInstances(Mesh &m)
+{
+    m.transformsDirty = false;
+    const uint32_t count = m.transforms.size() % 16 == 0 ? uint32_t(m.transforms.size() / 16) : 0;
+    if (count != m._instanceCount) {
+        _FreeInstances(m);
+        uint32_t base;
+        while (!_instanceAlloc.Allocate(count, &base)) {
+            _EnsureCapacity(_instances, _instanceAlloc, count, sizeof(Instance),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+        }
+        m._instanceBase = base;
+        m._instanceCount = count;
+    }
+    if (count == 0) {
+        return;
+    }
+    std::vector<Instance> instances(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        std::memcpy(instances[i].transform, &m.transforms[size_t(i) * 16], sizeof(instances[i].transform));
+        instances[i].draw = uint32_t(m._slot);
+        instances[i].index = int32_t(i);
+    }
+    _copies.push_back({_instances.buffer, VkDeviceSize(m._instanceBase) * sizeof(Instance),
+                       _Stage(instances.data(), instances.size() * sizeof(Instance)),
+                       instances.size() * sizeof(Instance)});
+}
+
+void Scene::_UpdateWorldBounds(Mesh &m)
+{
+    std::fill(m._worldMin, m._worldMin + 3, std::numeric_limits<float>::max());
+    std::fill(m._worldMax, m._worldMax + 3, std::numeric_limits<float>::lowest());
+    if (m._indexCount == 0) {
+        return;
+    }
+    float center[3], extent[3];
+    for (int k = 0; k < 3; ++k) {
+        center[k] = 0.5f * (m._boundsMin[k] + m._boundsMax[k]);
+        extent[k] = 0.5f * (m._boundsMax[k] - m._boundsMin[k]);
+    }
+    for (uint32_t i = 0; i < m._instanceCount; ++i) {
+        const float *x = &m.transforms[size_t(i) * 16];
+        // World AABB of this instance (row-vector: p' = p * M).
+        for (int k = 0; k < 3; ++k) {
+            const float c = center[0] * x[k] + center[1] * x[4 + k] + center[2] * x[8 + k] + x[12 + k];
+            const float e = extent[0] * std::abs(x[k]) + extent[1] * std::abs(x[4 + k]) +
+                            extent[2] * std::abs(x[8 + k]);
+            m._worldMin[k] = std::min(m._worldMin[k], c - e);
+            m._worldMax[k] = std::max(m._worldMax[k], c + e);
+        }
+    }
 }
 
 void Scene::_Upload(Texture &t)
@@ -356,14 +610,30 @@ void Scene::Commit()
     if (!_device) {
         return;
     }
-    if (_poolDirty || std::any_of(_meshes.begin(), _meshes.end(),
-                                  [](const auto &m) { return m->geometryDirty; })) {
-        _RebuildVertexPool();
+    // First commit: create the pools so every descriptor has a buffer.
+    if (!_vertices.buffer) {
+        _EnsureCapacity(_vertices, _vertexAlloc, 0, sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);
+        _EnsureCapacity(_indices, _indexAlloc, 0, sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, false);
+        _EnsureCapacity(_instances, _instanceAlloc, 0, sizeof(Instance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
     }
 
-    // Per-draw, material, light and texture tables are small enough to
-    // rebuild every commit from what visible meshes use, instead of
-    // tracking dirtiness. ponytail: not for 1M+ instances; dirty ranges in step 6.
+    // Upload only what changed.
+    for (const auto &m : _meshes) {
+        const bool geometry = m->geometryDirty, transforms = m->transformsDirty;
+        if (geometry) {
+            _UploadGeometry(*m);
+        }
+        if (transforms) {
+            _UploadInstances(*m);
+        }
+        if (geometry || transforms) {
+            _UpdateWorldBounds(*m);
+        }
+    }
+    _Flush();
+
+    // Per-mesh tables, materials and textures are small: rebuilt every
+    // commit from what visible meshes use (O(meshes), not O(instances)).
     _gpu.textures.clear();
     _textureSlots.clear();
     std::unordered_map<const Material *, uint32_t> materialSlots;
@@ -391,59 +661,46 @@ void Scene::Commit()
         return it->second;
     };
 
-    auto drawable = [](const Mesh &m) {
-        return m.visible && m._vertexCount > 0 && !m.transforms.empty() &&
-               m.transforms.size() % 16 == 0;
-    };
-    size_t instanceCount = 0, drawCount = 0;
-    for (const auto &m : _meshes) {
-        if (drawable(*m)) {
-            instanceCount += m->transforms.size() / 16;
-            ++drawCount;
-        }
-    }
-    _device->Reserve(_instances, instanceCount * sizeof(Instance), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    _device->Reserve(_indirect, drawCount * sizeof(VkDrawIndirectCommand),
+    const size_t slots = _meshes.size();
+    const uint32_t capacity = _instanceAlloc.Capacity();
+    _device->Reserve(_draws, slots * sizeof(DrawInfo), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    _device->Reserve(_commandTemplate, slots * sizeof(VkDrawIndexedIndirectCommand),
+                     VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    _device->Reserve(_shadowCommands, slots * sizeof(VkDrawIndexedIndirectCommand),
                      VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
-    auto *inst = static_cast<Instance *>(_instances.mapped);
-    auto *cmd = static_cast<VkDrawIndirectCommand *>(_indirect.mapped);
-    uint32_t n = 0, firstInstance = 0;
+    auto *draws = static_cast<DrawInfo *>(_draws.mapped);
+    auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
+    auto *shadows = static_cast<VkDrawIndexedIndirectCommand *>(_shadowCommands.mapped);
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                    std::numeric_limits<float>::lowest()};
-    for (const auto &m : _meshes) {
-        if (!drawable(*m)) {
-            continue;
-        }
-        const uint32_t material = m->material ? materialIndex(*m->material) : kNoMaterial;
-        const uint32_t count = uint32_t(m->transforms.size() / 16);
-        float center[3], extent[3];
-        for (int k = 0; k < 3; ++k) {
-            center[k] = 0.5f * (m->_boundsMin[k] + m->_boundsMax[k]);
-            extent[k] = 0.5f * (m->_boundsMax[k] - m->_boundsMin[k]);
-        }
-        for (uint32_t i = 0; i < count; ++i) {
-            Instance &out = inst[firstInstance + i];
-            const float *x = &m->transforms[size_t(i) * 16];
-            std::memcpy(out.transform, x, sizeof(out.transform));
-            std::memcpy(out.color, m->color, sizeof(m->color));
-            out.material = material;
-            out.primId = m->primId;
-            out.instanceId = int32_t(i);
-            // World AABB of this instance (row-vector: p' = p * M).
+    bool anyDrawable = false;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        const bool drawable = m.visible && m._indexCount > 0 && m._instanceCount > 0;
+        DrawInfo &d = draws[slot];
+        d = DrawInfo{};
+        std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
+        std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
+        std::copy(m.color, m.color + 3, d.color);
+        d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
+        d.primId = m.primId;
+        d.visible = drawable ? 1u : 0u;
+        // Culling fills in instanceCount; shadows draw every instance through
+        // the identity half of the visible buffer.
+        templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
+        shadows[slot] = {m._indexCount, drawable ? m._instanceCount : 0, m._firstIndex,
+                         int32_t(m._vertexOffset), capacity + m._instanceBase};
+        if (drawable) {
+            anyDrawable = true;
             for (int k = 0; k < 3; ++k) {
-                const float c = center[0] * x[k] + center[1] * x[4 + k] + center[2] * x[8 + k] + x[12 + k];
-                const float e = extent[0] * std::abs(x[k]) + extent[1] * std::abs(x[4 + k]) +
-                                extent[2] * std::abs(x[8 + k]);
-                lo[k] = std::min(lo[k], c - e);
-                hi[k] = std::max(hi[k], c + e);
+                lo[k] = std::min(lo[k], m._worldMin[k]);
+                hi[k] = std::max(hi[k], m._worldMax[k]);
             }
         }
-        cmd[n++] = {m->_vertexCount, count, m->_firstVertex, firstInstance};
-        firstInstance += count;
     }
-    _gpu.hasBounds = n > 0;
+    _gpu.hasBounds = anyDrawable;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
 
@@ -486,11 +743,16 @@ void Scene::Commit()
     }
 
     _gpu.vertices = _vertices.buffer;
+    _gpu.indices = _indices.buffer;
     _gpu.instances = _instances.buffer;
-    _gpu.indirect = _indirect.buffer;
+    _gpu.visible = _visible.buffer;
+    _gpu.draws = _draws.buffer;
+    _gpu.commandTemplate = _commandTemplate.buffer;
+    _gpu.shadowCommands = _shadowCommands.buffer;
     _gpu.materials = _materials.buffer;
     _gpu.lights = _lightBuffer.buffer;
-    _gpu.drawCount = n;
+    _gpu.drawCount = uint32_t(slots);
+    _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
 }
 

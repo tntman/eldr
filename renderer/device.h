@@ -56,6 +56,8 @@ public:
     VkDeviceMemory Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props);
     // Grows `b` to hold at least `bytes`, discarding its contents. GPU must be idle.
     void Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage);
+    // Device-local, unmapped; fill it through a staging copy.
+    Buffer CreateDeviceBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage);
     void Destroy(Buffer &b);
 
     Image CreateImage(VkFormat format, uint32_t width, uint32_t height, uint32_t layers,

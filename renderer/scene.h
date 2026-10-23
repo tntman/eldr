@@ -3,6 +3,7 @@
 #include "device.h"
 #include "ibl.h"
 
+#include <map>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -57,9 +58,9 @@ struct Material {
 };
 
 // CPU mirror of one mesh: a triangle list stored per corner (3 vertices per
-// triangle, no index buffer), so any primvar interpolation maps 1:1.
-// Different meshes may be written concurrently (Hydra syncs rprims in
-// parallel); nothing here touches Vulkan.
+// triangle), so any primvar interpolation maps 1:1; Commit deduplicates the
+// corners into indexed vertices. Different meshes may be written
+// concurrently (Hydra syncs rprims in parallel); nothing here touches Vulkan.
 struct Mesh {
     std::vector<float> points;   // xyz per corner
     std::vector<float> normals;  // xyz per corner, or empty (flat shading)
@@ -71,13 +72,17 @@ struct Mesh {
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
     bool geometryDirty = true;   // set after changing points/normals/uvs
+    bool transformsDirty = true; // set after changing transforms
 
 private:
     friend class Scene;
     size_t _slot = 0;
-    uint32_t _firstVertex = 0;
-    uint32_t _vertexCount = 0;
+    // Placement in the GPU pools (deduplicated, indexed vertices).
+    uint32_t _vertexOffset = 0, _vertexCount = 0;
+    uint32_t _firstIndex = 0, _indexCount = 0;
+    uint32_t _instanceBase = 0, _instanceCount = 0;
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
+    float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
 };
 
 // Distant light. Same threading rules as Mesh.
@@ -104,7 +109,7 @@ private:
     size_t _slot = 0;
 };
 
-// GPU layouts shared with the shaders (std430).
+// GPU layouts shared with the shaders (std430, see shaders/scene.glsl).
 struct Vertex {
     float position[3];
     float normal[3];
@@ -112,18 +117,41 @@ struct Vertex {
 };
 struct Instance {
     float transform[16];
-    float color[3];
+    uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
+    int32_t index;       // index into Mesh::transforms (instanceId AOV)
+    uint32_t pad[2];
+};
+struct DrawInfo {
+    float boundsMin[4];  // object space
+    float boundsMax[4];
+    float color[4];      // displayColor
     uint32_t material;   // kNoMaterial: color + default material
-    int32_t primId;      // Mesh::primId
-    int32_t instanceId;  // index into Mesh::transforms
+    int32_t primId;
+    uint32_t visible;
+    uint32_t pad;
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 constexpr uint32_t kNone = 0xFFFFFFFFu;
 constexpr uint32_t kMaxTextures = 4096;
 
-// Owns meshes, lights and their GPU copy: one vertex pool, one instance
-// buffer, one indirect-draw buffer, material/light tables, textures and the
-// active environment. Add*/Remove*/Commit are single-threaded.
+// Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
+class RangeAllocator {
+public:
+    bool Allocate(uint32_t count, uint32_t *offset);
+    void Free(uint32_t offset, uint32_t count);
+    void Grow(uint32_t capacity);  // adds [old capacity, capacity) as free
+    uint32_t Capacity() const { return _capacity; }
+
+private:
+    std::map<uint32_t, uint32_t> _free;  // offset -> count
+    uint32_t _capacity = 0;
+};
+
+// Owns meshes, lights and their GPU copy, and uploads only what changed:
+// device-local vertex/index/instance pools (sub-allocated per mesh), a
+// per-mesh DrawInfo table and indirect commands, material/light tables,
+// textures and the active environment. Add*/Remove*/Commit are
+// single-threaded.
 class Scene {
 public:
     explicit Scene(Device *device);  // null device: CPU mirror only
@@ -141,11 +169,18 @@ public:
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
-        VkBuffer instances = VK_NULL_HANDLE;
-        VkBuffer indirect = VK_NULL_HANDLE;
+        VkBuffer indices = VK_NULL_HANDLE;
+        VkBuffer instances = VK_NULL_HANDLE;   // Instance[instanceCapacity]
+        // [0, cap): per-mesh lists of visible instances, written by culling;
+        // [cap, 2*cap): identity, used by passes that don't cull (shadows).
+        VkBuffer visible = VK_NULL_HANDLE;
+        VkBuffer draws = VK_NULL_HANDLE;           // DrawInfo per mesh slot
+        VkBuffer commandTemplate = VK_NULL_HANDLE; // per slot, instanceCount 0
+        VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances
         VkBuffer materials = VK_NULL_HANDLE;
         VkBuffer lights = VK_NULL_HANDLE;
-        uint32_t drawCount = 0;
+        uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
+        uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
 
@@ -164,7 +199,23 @@ public:
     const Gpu &GetGpu() const { return _gpu; }
 
 private:
-    void _RebuildVertexPool();
+    // Batched uploads: bytes staged on the CPU, copied/filled in one submit.
+    struct Copy {
+        VkBuffer dst;
+        VkDeviceSize dstOffset, srcOffset, size;
+    };
+    struct Fill {
+        VkBuffer dst;
+        VkDeviceSize offset, size;
+    };
+    VkDeviceSize _Stage(const void *data, VkDeviceSize size);
+    void _Flush();
+    void _EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t needed,
+                         VkDeviceSize elementSize, VkBufferUsageFlags usage, bool invalidateNew);
+    void _UploadGeometry(Mesh &mesh);
+    void _UploadInstances(Mesh &mesh);
+    void _FreeInstances(Mesh &mesh);
+    void _UpdateWorldBounds(Mesh &mesh);
     void _Upload(Texture &texture);
     int32_t _TextureIndex(const TextureRef &ref);
     void _UpdateEnvironment(const Dome *dome);
@@ -176,8 +227,14 @@ private:
     std::vector<std::unique_ptr<Mesh>> _meshes;
     std::vector<std::unique_ptr<Light>> _lights;
     std::vector<std::unique_ptr<Dome>> _domes;
-    bool _poolDirty = true;
-    Buffer _vertices, _instances, _indirect, _materials, _lightBuffer, _staging;
+    // Device-local pools and their allocators.
+    Buffer _vertices, _indices, _instances, _visible;
+    RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc;
+    // Host-visible per-commit tables.
+    Buffer _draws, _commandTemplate, _shadowCommands, _materials, _lightBuffer, _staging;
+    std::vector<uint8_t> _stagingBytes;
+    std::vector<Copy> _copies;
+    std::vector<Fill> _fills;
     std::unordered_map<const Texture *, int32_t> _textureSlots;  // rebuilt per Commit
 
     // Environment built from this texture (kept alive so the pointer stays unique).

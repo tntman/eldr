@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define SCENE_WRITABLE
+#include "scene.glsl"
+
+// Frustum culling, one invocation per instance slot: survivors are appended
+// to their mesh's visible list and counted into its indirect command.
+// ponytail: frustum only; Hi-Z occlusion and LOD selection come later.
+
+struct DrawCommand {  // VkDrawIndexedIndirectCommand
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int vertexOffset;
+    uint firstInstance;
+};
+layout(std430, set = 0, binding = 10) buffer Commands { DrawCommand commands[]; };
+
+layout(push_constant) uniform CullParams {
+    vec4 planes[6];  // xyz . p + w >= 0 inside, world space
+    uint instanceCapacity;
+    uint drawCount;
+} pc;
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= pc.instanceCapacity) {
+        return;
+    }
+    Instance inst = instances[i];
+    if (inst.draw == kFreeSlot || inst.draw >= pc.drawCount || draws[inst.draw].visible == 0u) {
+        return;
+    }
+    DrawInfo d = draws[inst.draw];
+
+    // World AABB of the instance, tested against each plane.
+    vec3 c = 0.5 * (d.boundsMin.xyz + d.boundsMax.xyz);
+    vec3 e = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+    mat3 m = mat3(inst.transform);
+    vec3 wc = (inst.transform * vec4(c, 1.0)).xyz;
+    vec3 we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
+    for (int p = 0; p < 6; ++p) {
+        vec4 plane = pc.planes[p];
+        if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
+            return;
+        }
+    }
+    uint slot = atomicAdd(commands[inst.draw].instanceCount, 1u);
+    visible[commands[inst.draw].firstInstance + slot] = i;
+}
