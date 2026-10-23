@@ -1018,32 +1018,33 @@ private:
             (k.name == "place2d" ? Place2dMatrix : Transform2dMatrix)(n.parameters, m);
             return _Emit(P::kAffine, {*uv, _Const(GfVec4f(m[0], m[1], m[2], 0)), _Const(GfVec4f(m[3], m[4], m[5], 0))});
         }
-        // Houdini's ramps (hmtlxramp graphs): hinvlinear finds where its
-        // input falls among num keys, huniformramp interpolates num values
-        // spread evenly over [0, 1]; linear between keys. Both nodes hold
-        // ten (key0 = 0, key1..key9; value0..value9); a larger num (a ramp
-        // with more points) reads those ten.
-        // ponytail: Houdini's definitions aren't available here; this is
-        // what their inputs imply, unverified against Houdini/Karma.
+        // Houdini's ramps (hmtlxramp graphs), as Houdini 22 defines them
+        // (houdini/materialx/libraries/houdini; program.glsl has the
+        // formulas): hinvlinear places its input among ten keys,
+        // huniformramp interpolates ten values. Unauthored keys and values
+        // are 0, their nodedefs' defaults.
         if (k.name == "hinvlinear" || k.name == "huniformramp") {
-            const std::optional<float> count = _ConstantInput(n, TfToken("num"));
-            const std::optional<Value> t = in("ramp");
-            if (!count || !t) {
+            const bool keys = k.name == "hinvlinear";
+            const std::optional<Value> t = in("ramp"), num = in("num");
+            if (!t || !num) {
                 return std::nullopt;
             }
-            const uint32_t num = uint32_t(std::clamp(*count, 1.0f, 10.0f));
-            if (k.name == "hinvlinear") {
-                std::vector<float> keys;
-                for (uint32_t i = 0; i < num; ++i) {
-                    keys.push_back(_Parameter(n, TfToken("key" + std::to_string(i)))[0]);
+            std::vector<GfVec4f> values;
+            for (int i = 0; i < 10; ++i) {
+                values.push_back(_Parameter(n, TfToken((keys ? "key" : "value") + std::to_string(i))));
+            }
+            if (keys) {
+                std::vector<float> packed;
+                for (const GfVec4f &v : values) {
+                    packed.push_back(v[0]);
                 }
-                return _Emit(P::kInvLinear, {*t}, _Packed(std::move(keys)), num);
+                return _Emit(P::kInvLinear, {*t, *num}, _Packed(std::move(packed)));
             }
             const uint32_t first = uint32_t(_p.constants.size() / 4);
-            for (uint32_t i = 0; i < num; ++i) {
-                _Const(_Parameter(n, TfToken("value" + std::to_string(i))));
+            for (const GfVec4f &v : values) {
+                _Const(v);
             }
-            return _Emit(P::kUniformRamp, {*t}, first, num);
+            return _Emit(P::kUniformRamp, {*t, *num}, first);
         }
         return std::nullopt;
     }

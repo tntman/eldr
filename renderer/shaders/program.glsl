@@ -175,30 +175,26 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             break;
         }
         case kOpInvLinear: {
-            // The ramp position of a among imm1 ascending keys: segment i
-            // and the fraction through it, over the imm1 - 1 segments.
-            uint n = imm1, base = c + imm0;
-            float v = a.x, t = 0.0;
-            if (n >= 2u && v >= PackedFloat(base, n - 1u)) {
-                t = 1.0;
-            } else if (n >= 2u && v > PackedFloat(base, 0u)) {
-                for (uint k = 0u; k + 1u < n; ++k) {
-                    float k0 = PackedFloat(base, k), k1 = PackedFloat(base, k + 1u);
-                    if (v < k1) {
-                        t = (float(k) + (k1 > k0 ? (v - k0) / (k1 - k0) : 0.0)) / float(n - 1u);
-                        break;
-                    }
-                }
+            // Houdini's hinvlinear (houdini/materialx/libraries/houdini): the
+            // first of key1..key8 at or above a ends the segment, else
+            // key8..key9; a is remapped (unclamped) from it onto
+            // [(i - 1) / (num - 1), i / (num - 1)], the last onto
+            // [8 / (num - 1), 1]. num isn't clamped here, unlike huniformramp.
+            uint base = c + imm0, i = 1u;
+            while (i < 9u && PackedFloat(base, i) < a.x) {
+                ++i;
             }
-            r = vec4(t);
+            float k0 = PackedFloat(base, i - 1u), k1 = PackedFloat(base, i), d = b.x - 1.0;
+            float lo = float(i - 1u) / d, hi = i == 9u ? 1.0 : float(i) / d;
+            r = vec4(k1 != k0 ? lo + (a.x - k0) * (hi - lo) / (k1 - k0) : lo);
             break;
         }
         case kOpUniformRamp: {
-            uint n = max(imm1, 1u), base = c + imm0;
-            float f = clamp(a.x, 0.0, 1.0) * float(n - 1u);
-            uint k = min(uint(f), n > 1u ? n - 2u : 0u);
-            r = n > 1u ? mix(programConstants[base + k], programConstants[base + k + 1u], f - float(k))
-                       : programConstants[base];
+            // Houdini's huniformramp: ten values over clamp(num, 0, 10)
+            // evenly spaced keys, at clamp(a, 0, 1), linearly.
+            float f = clamp(a.x, 0.0, 1.0) * (clamp(b.x, 0.0, 10.0) - 1.0), k = floor(f);
+            uint base = c + imm0, k0 = uint(clamp(k, 0.0, 9.0)), k1 = uint(clamp(k + 1.0, 0.0, 9.0));
+            r = mix(programConstants[base + k0], programConstants[base + k1], f - k);
             break;
         }
         }

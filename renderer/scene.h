@@ -92,8 +92,8 @@ struct MaterialProgram {
         kRgbToHsv, kHsvToRgb,
         kAffine,       // (dot(b.xyz, (a.xy, 1)), dot(c.xyz, (a.xy, 1)), 0, 0)
         kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
-        kInvLinear,    // Houdini ramp position: a among imm1 keys (constants from imm0, 4 per vec4)
-        kUniformRamp,  // Houdini ramp: imm1 values (constants from imm0) at uniform positions, at a
+        kInvLinear,    // Houdini hinvlinear: a among ten keys (constants from imm0, 4 per vec4), b.x = num
+        kUniformRamp,  // Houdini huniformramp: ten values (constants from imm0) at a, b.x = num
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them.
     enum Input : uint32_t { kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity };

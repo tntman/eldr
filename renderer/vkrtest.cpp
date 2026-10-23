@@ -4,6 +4,7 @@
 #include "renderer.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -887,22 +888,38 @@ int main()
                 w.push_back(vtx->points[c * 3] > -0.5f ? 1.0f : 0.0f);
             }
             vtx->primvars = {{"w", vkr::Primvar::Rate::Vertex, 1, w}};
-            // Houdini ramp: 0.5 among keys 0, 0.25, 1 is 1/3 through the
-            // second segment, i.e. position 2/3 between red, green and blue.
-            auto [ramp, rampM] = programmed(0.1f, -0.3f, 0.4f, 0.3f);
-            {
-                P &p = rampM->program;
-                const uint8_t half = p.Constant(0.5f, 0.5f, 0.5f, 0.5f);
-                const uint32_t keys = uint32_t(p.constants.size() / 4);
-                p.Constant(0.0f, 0.25f, 1.0f, 0.0f);
-                const uint32_t values = uint32_t(p.constants.size() / 4);
-                p.Constant(1, 0, 0, 1);
-                p.Constant(0, 1, 0, 1);
-                p.Constant(0, 0, 1, 1);
-                p.Emit(P::kInvLinear, 0, {half}, keys, 3);
-                p.Emit(P::kUniformRamp, 1, {0}, values, 3);
+            // Houdini ramps (hinvlinear + huniformramp, ten keys and values).
+            // Three keys 0, 0.25, 1 (the rest 1): 0.5 is 1/3 through the
+            // second segment, position 2/3 between red, green and blue.
+            auto houdiniRamp = [&](vkr::Mesh *mesh, float at, float num, std::vector<float> keys,
+                                   std::vector<std::array<float, 3>> values) {
+                P &p = mesh->material->program;
+                const uint8_t position = p.Constant(at, at, at, at), count = p.Constant(num, num, num, num);
+                const uint32_t keyBase = uint32_t(p.constants.size() / 4);
+                keys.resize(12, 0.0f);
+                for (size_t i = 0; i < 12; i += 4) {
+                    p.Constant(keys[i], keys[i + 1], keys[i + 2], keys[i + 3]);
+                }
+                const uint32_t valueBase = uint32_t(p.constants.size() / 4);
+                values.resize(10, {0, 0, 0});
+                for (const auto &v : values) {
+                    p.Constant(v[0], v[1], v[2], 1);
+                }
+                p.Emit(P::kInvLinear, 0, {position, count}, keyBase);
+                p.Emit(P::kUniformRamp, 1, {0, count}, valueBase);
                 p.Emit(P::kOutput, 0, {1}, P::kEmissive);
+            };
+            auto [ramp, rampM] = programmed(0.1f, -0.3f, 0.4f, 0.3f);
+            houdiniRamp(ramp, 0.5f, 3, {0, 0.25f, 1, 1, 1, 1, 1, 1, 1, 1}, {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}});
+            // num past ten (a 17-point Houdini ramp): hinvlinear spreads the
+            // keys over i / 16, huniformramp reads ten values over i / 9. At
+            // 0.45, halfway from key4 to key5: (4.5 / 16) of the way along.
+            auto [ramp17, ramp17M] = programmed(0.5f, -0.9f, 0.9f, -0.5f);
+            std::vector<std::array<float, 3>> linear;
+            for (int i = 0; i < 10; ++i) {
+                linear.push_back({float(i) / 9.0f, 0, 0});
             }
+            houdiniRamp(ramp17, 0.45f, 17, {0, 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f, 1}, linear);
             // Overlay of 0.25 over 0.75: 1 - 2 (1 - 0.25)(1 - 0.75).
             auto [over, overM] = programmed(0.5f, -0.3f, 0.9f, 0.3f);
             {
@@ -944,6 +961,7 @@ int main()
             const float wl = (PixelNdc(6) + 0.9f) / 0.8f, wr = (PixelNdc(25) + 0.9f) / 0.8f;
             Expect(near(6, 32, wl, wl, wl) && near(25, 32, wr, wr, wr), "program reads vertex primvars");
             Expect(near(40, 32, 0, 2.0f / 3.0f, 1.0f / 3.0f), "Houdini ramp (invlinear, uniformramp)");
+            Expect(near(54, 9, 4.5f / 16.0f, 0, 0), "Houdini ramp with num past ten");
             Expect(near(54, 32, 0.625f, 0.625f, 0.625f), "MaterialX overlay");
             Expect(near(9, 9, 0, 1, 0), "MaterialX hsvadjust");
             Expect(img.At(22, 9, 0) > 1.8f && img.At(22, 9, 2) < 0.2f, "program samples a texture");
