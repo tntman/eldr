@@ -16,6 +16,7 @@ PASSES = [
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
+    ("fog", "Volumetric fog"),
     ("shading", "Shading"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),

@@ -29,6 +29,11 @@ struct FrameData {
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
+    // Volumetric fog (shaders/fog.glsl).
+    float fogMedium[4];      // density, height falloff, base height, phase g
+    float fogAlbedo[4];      // scattering colour, froxel depth
+    uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
+    float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
 };
 
 namespace {
@@ -69,7 +74,7 @@ const uint32_t kSkinComp[] =
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
-constexpr uint32_t kFeatureSoftSun = 65536;
+constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -179,6 +184,10 @@ void FrustumPlanes(const float *vp, float planes[6][4])
 
 constexpr uint32_t kBrdfLutSize = 64;
 
+// Stages that sample the shadow maps: shading and the volumetric fog.
+constexpr VkPipelineStageFlags2 kShadowReaders =
+    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
 // Spots with a cone up to this get one perspective atlas tile, wider
 // lights a cube of six. Must match kSpotShadowCone in mesh.frag.
 constexpr float kSpotShadowCone = 1.3962634f;  // 80 degrees
@@ -218,6 +227,7 @@ Renderer::Renderer(Device &device)
     , _taa(device)
     , _lens(device)
     , _post(device)
+    , _fog(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -251,6 +261,7 @@ Renderer::Renderer(Device &device)
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
     _CreatePipelines();
+    _fog.CreatePipelines(_layout);
     _CreateConstantImages();
 }
 
@@ -330,15 +341,17 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars. 49 the sun's cascades without depth compare
-    // (soft sun shadows' blocker search).
+    // and vertex-rate primvars. 47 and 48 the volumetric fog's volumes
+    // (Fog::Descriptors; the fog also reads the lights, the clusters and
+    // the shadow maps 4 and 17..19), 49 the sun's cascades without depth
+    // compare (soft sun shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     const VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
@@ -351,9 +364,9 @@ void Renderer::_CreateDescriptors()
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
+        {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {21, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
@@ -367,6 +380,8 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
+        {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
@@ -380,14 +395,15 @@ void Renderer::_CreateDescriptors()
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
-    const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 1},
+    const VkDescriptorPoolSize sizes[4] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
-    dpci.poolSizeCount = 3;
+    dpci.poolSizeCount = 4;
     dpci.pPoolSizes = sizes;
     Check(vkCreateDescriptorPool(_dev.device, &dpci, nullptr, &_descriptorPool),
           "vkCreateDescriptorPool");
@@ -809,6 +825,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    VkDescriptorImageInfo fogStorage[3], fogVolume;
+    _fog.Descriptors(fogStorage, &fogVolume, _clampSampler);
+    write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
+    write(48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &fogVolume);
     write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
@@ -938,6 +958,70 @@ void Renderer::_FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData
     data->cameraForward[2] = forward.z;
 }
 
+// Volumetric fog's medium, froxel grid and temporal state for this frame
+// (shaders/fog.glsl); false with fog off (its history is dropped then).
+// The froxels reach Frame::fogMaxDistance, or the scene's far end along the
+// view (as the clusters do).
+bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data)
+{
+    if (!frame.fog || !(frame.fogDensity > 0.0f)) {
+        _fog.Skip();
+        return false;
+    }
+    const Mat4 inv = ToMat4(frame.invViewProj);
+    const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+    const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1});
+    const Vec3 forward = Normalize(TransformPoint(inv, {0, 0, 0}) - nearCenter);
+    float depth = frame.fogMaxDistance;
+    if (!(depth > 0.0f)) {
+        depth = Dot(TransformPoint(inv, {0, 0, 1}) - eye, forward);
+        if (!(depth < 1e30f)) {
+            depth = 1e30f;  // infinite far plane
+        }
+        if (gpu.hasBounds) {
+            float sceneFar = 0.0f;
+            for (int k = 0; k < 8; ++k) {
+                const Vec3 c{(k & 1) ? gpu.boundsMax[0] : gpu.boundsMin[0], (k & 2) ? gpu.boundsMax[1] : gpu.boundsMin[1],
+                             (k & 4) ? gpu.boundsMax[2] : gpu.boundsMin[2]};
+                sceneFar = std::max(sceneFar, Dot(c - eye, forward));
+            }
+            depth = std::min(depth, sceneFar);
+        }
+        depth = std::max(depth, 1e-3f);
+    }
+    const uint32_t x = std::clamp(frame.fogGridSize, 16u, 512u);
+    const uint32_t y = std::max(1u, uint32_t(std::lround(float(x) * float(_height) / float(_width))));
+    constexpr uint32_t kSlices = 64;
+    const bool orthographic = std::abs(frame.viewProj[3]) + std::abs(frame.viewProj[7]) + std::abs(frame.viewProj[11]) < 1e-9f;
+    data->features[0] |= kFeatureFog;
+    const float medium[4] = {frame.fogDensity, std::max(frame.fogHeightFalloff, 0.0f), frame.fogHeight,
+                             std::clamp(frame.fogAnisotropy, -0.95f, 0.95f)};
+    std::copy(medium, medium + 4, data->fogMedium);
+    const float albedo[4] = {frame.fogColor[0], frame.fogColor[1], frame.fogColor[2], depth};
+    std::copy(albedo, albedo + 4, data->fogAlbedo);
+    const uint32_t grid[4] = {x, y, kSlices, frame.fogZUp ? 1u : 0u};
+    std::copy(grid, grid + 4, data->fogGrid);
+    // Last frame's grid is the history while the lights and the medium
+    // stay the same (moving geometry keeps it: its shadows lag a little).
+    uint64_t key = gpu.lightingHash;
+    for (const float v : {medium[0], medium[1], medium[2], medium[3], albedo[0], albedo[1], albedo[2]}) {
+        uint32_t bits;
+        std::memcpy(&bits, &v, sizeof(bits));
+        key = (key ^ bits) * 1099511628211ull;
+    }
+    const bool history = _fog.Resize(x, y, kSlices) && _fogDepth > 0.0f && key == _fogKey;
+    _fogKey = key;
+    // History: 90% of last frame's grid, sampled half a slice apart on average.
+    const float temporal[4] = {history ? _fog.Jitter() : 0.5f, history ? 0.9f : 0.0f, history ? _fogDepth : depth,
+                               orthographic ? 1.0f : 0.0f};
+    std::copy(temporal, temporal + 4, data->fogTemporal);
+    data->cameraForward[0] = forward.x;
+    data->cameraForward[1] = forward.y;
+    data->cameraForward[2] = forward.z;
+    _fogDepth = depth;
+    return true;
+}
+
 // std430 mirror of ShadowTile in mesh.frag.
 struct Renderer::ShadowTile {
     float viewProj[16];
@@ -1064,7 +1148,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
     _atlasKey = std::move(key);
     if (tiles.empty()) {
         ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return;
     }
@@ -1154,7 +1238,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdEndRendering(_cmd);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
@@ -1255,7 +1339,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const std::vector<ShadowTile> shadowTiles = _PlanLocalShadows(gpu, frame, fd.clusters[3]);
     fd.counts[1] = shadows ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
-    fd.counts[3] = gpu.environmentLatlong;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
     if (ibl) {
         for (int i = 0; i < 9; ++i) {
@@ -1266,6 +1349,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.envRadiance[3] = 1.0f;
     }
     const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
+    fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
+    // Volumetric fog; it also covers the background, as the sky pass does
+    // (premultiplied: needs post to composite the clear colour behind).
+    const bool fog = _SetupFog(gpu, frame, &fd);
     // Culling output; host-visible so VisibleInstances() can read it back.
     // One set of commands for the camera, one per cascade, one for atlas tiles.
     _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
@@ -1446,12 +1533,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         pass("sunShadows");
     } else {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
@@ -1511,6 +1598,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (!shadowTiles.empty()) {
         pass("localShadows");
     }
+    if (fog) {
+        _fog.Record(_cmd, _layout, _set);
+        pass("fog");
+    }
 
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
@@ -1567,7 +1658,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 7);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
-    if (sky) {
+    if (sky || (fog && frame.postProcess)) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
         vkCmdDraw(_cmd, 3, 1, 0, 0);
     }

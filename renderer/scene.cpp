@@ -1354,6 +1354,23 @@ void Scene::Commit()
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
 
+    // What lighting depends on besides geometry (FNV-1a, a word at a time).
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t bytes) {
+        const auto *b = static_cast<const uint8_t *>(data);
+        for (size_t i = 0; i < bytes; i += 8) {
+            uint64_t word = 0;
+            std::memcpy(&word, b + i, std::min<size_t>(8, bytes - i));
+            hash = (hash ^ word) * 1099511628211ull;
+        }
+    };
+    mix(lights, (lightCount + localLightCount) * sizeof(GpuLight));
+    mix(materials.data(), materials.size() * sizeof(GpuMaterial));
+    mix(&_gpu.environment, sizeof(_gpu.environment));
+    mix(_gpu.environmentRadiance, sizeof(_gpu.environmentRadiance));
+    mix(_gpu.environmentWorldToLocal, sizeof(_gpu.environmentWorldToLocal));
+    _gpu.lightingHash = hash;
+
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;
     _gpu.instances = _instances.buffer;

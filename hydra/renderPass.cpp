@@ -4,6 +4,7 @@
 #include "renderer.h"
 
 #include "pxr/base/gf/matrix4f.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/renderDelegate.h"
@@ -12,6 +13,7 @@
 #include "pxr/imaging/hd/tokens.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -102,20 +104,38 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
-                                {t.translucency, &frame.translucency}, {t.softSunShadows, &frame.softSunShadows}}) {
+                                {t.translucency, &frame.translucency}, {t.softSunShadows, &frame.softSunShadows},
+                                {t.fog, &frame.fog}, {t.fogZUp, &frame.fogZUp}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
-                                {t.bloomIntensity, &frame.post.bloomIntensity}}) {
+                                {t.bloomIntensity, &frame.post.bloomIntensity}, {t.fogDensity, &frame.fogDensity},
+                                {t.fogHeight, &frame.fogHeight}, {t.fogHeightFalloff, &frame.fogHeightFalloff},
+                                {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
+    // Colours: "r g b" (usdview edits strings) or a GfVec3f/GfVec3d.
+    auto readColor = [&](TfToken const &token, float rgb[3]) {
+        const VtValue v = delegate->GetRenderSetting(token);
+        if (v.IsHolding<std::string>()) {
+            float c[3];
+            if (std::sscanf(v.UncheckedGet<std::string>().c_str(), "%f %f %f", &c[0], &c[1], &c[2]) == 3) {
+                std::copy(c, c + 3, rgb);
+            }
+        } else if (v.CanCast<GfVec3f>()) {
+            const GfVec3f c = VtValue::Cast<GfVec3f>(v).UncheckedGet<GfVec3f>();
+            std::copy(c.data(), c.data() + 3, rgb);
+        }
+    };
+    readColor(t.fogColor, frame.fogColor);
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
                                 {t.shadowResolution, &frame.shadowResolution},
                                 {t.shadowCascades, &frame.shadowCascades},
                                 {t.localShadowResolution, &frame.localShadowResolution},
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
-                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
+                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
+                                {t.fogGridSize, &frame.fogGridSize}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // The scene camera's lens; usdview's free camera has none.

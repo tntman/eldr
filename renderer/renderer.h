@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device.h"
+#include "fog.h"
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
@@ -69,6 +70,17 @@ public:
         // Soft sun shadows: penumbrae from the distant light's angle (PCSS
         // on the cascades), with softShadows on.
         bool softSunShadows = true;
+        // Volumetric fog (fog.h): height fog lit by every light, over every
+        // surface and the sky. Units are the scene's.
+        bool fog = false;
+        float fogDensity = 0.02f;       // extinction per unit at fogHeight
+        float fogHeight = 0.0f;         // base height, along Y (or Z with fogZUp)
+        float fogHeightFalloff = 0.0f;  // density * exp(-falloff * (height - fogHeight)); 0: uniform
+        float fogAnisotropy = 0.6f;     // Henyey-Greenstein g: 0 even, towards 1 forward (shafts towards lights)
+        float fogColor[3] = {1, 1, 1};  // scattering albedo
+        float fogMaxDistance = 0.0f;    // view depth the froxels reach (then constant); 0: the scene's far end
+        uint32_t fogGridSize = 160;     // froxels across (16..512); rows by aspect, 64 slices
+        bool fogZUp = false;            // heights along Z (Z-up stages)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -129,6 +141,7 @@ private:
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
+    bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
@@ -138,6 +151,9 @@ private:
     TemporalAA _taa;
     Lens _lens;
     PostProcess _post;
+    Fog _fog;
+    float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
+    uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
@@ -181,7 +197,7 @@ private:
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     // GPU timestamps: one at the start, then one closing each pass.
-    static constexpr uint32_t kMaxTimestamps = 16;
+    static constexpr uint32_t kMaxTimestamps = 32;
     VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes

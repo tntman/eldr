@@ -114,5 +114,19 @@ expect(soft >= hard + 2, "soft sun shadows from the distant light's angle")
 sun.CreateAngleAttr(0)
 expect(penumbra(render(stage)) <= hard + 1, "a sun without angle casts hard shadows")
 
+# Volumetric fog through the render settings: red fog (isotropic) 5 units
+# deep in front of the wall a sun behind the camera lights: it hides most
+# of the wall (exp(-1.5)) and scatters red light back.
+stage = wall_stage()
+sun = UsdLux.DistantLight.Define(stage, "/sun")
+sun.CreateIntensityAttr(4)
+sun.CreateNormalizeAttr(True)
+linear = {"hdvk:postProcess": False}
+clear = render(stage, linear).pixelColor(32, 32)
+foggy = render(stage, {**linear, "hdvk:fog": True, "hdvk:fogDensity": 0.3, "hdvk:fogAnisotropy": 0.0,
+                       "hdvk:fogColor": "1 0 0"}).pixelColor(32, 32)
+expect(clear.green() == 255 and 40 < foggy.green() < 110, "fog hides the wall behind it")
+expect(foggy.red() > foggy.green() + 30, "hdvk:fogColor: red fog scatters red light")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

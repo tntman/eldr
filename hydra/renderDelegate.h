@@ -46,7 +46,16 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
-    ((softSunShadows, "hdvk:softSunShadows"))
+    ((softSunShadows, "hdvk:softSunShadows"))                \
+    ((fog, "hdvk:fog"))                                      \
+    ((fogDensity, "hdvk:fogDensity"))                        \
+    ((fogHeight, "hdvk:fogHeight"))                          \
+    ((fogHeightFalloff, "hdvk:fogHeightFalloff"))            \
+    ((fogAnisotropy, "hdvk:fogAnisotropy"))                  \
+    ((fogColor, "hdvk:fogColor"))                            \
+    ((fogMaxDistance, "hdvk:fogMaxDistance"))                \
+    ((fogGridSize, "hdvk:fogGridSize"))                      \
+    ((fogZUp, "hdvk:fogZUp"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

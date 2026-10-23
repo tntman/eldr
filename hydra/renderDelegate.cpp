@@ -9,6 +9,7 @@
 #include "renderPass.h"
 #include "renderer.h"
 
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
@@ -124,6 +125,16 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.localShadowResolution))},
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
         {"Soft Sun Shadows (distant light angle)", t.softSunShadows, VtValue(frame.softSunShadows)},
+        {"Volumetric Fog", t.fog, VtValue(frame.fog)},
+        {"Fog Density (extinction per unit)", t.fogDensity, VtValue(frame.fogDensity)},
+        {"Fog Height (base)", t.fogHeight, VtValue(frame.fogHeight)},
+        {"Fog Height Falloff (per unit, 0 = even)", t.fogHeightFalloff, VtValue(frame.fogHeightFalloff)},
+        {"Fog Anisotropy (phase g, -1..1)", t.fogAnisotropy, VtValue(frame.fogAnisotropy)},
+        {"Fog Color (r g b)", t.fogColor,
+         VtValue(TfStringPrintf("%g %g %g", frame.fogColor[0], frame.fogColor[1], frame.fogColor[2]))},
+        {"Fog Max Distance (0 = scene)", t.fogMaxDistance, VtValue(frame.fogMaxDistance)},
+        {"Fog Grid Size (froxels across, 16-512)", t.fogGridSize, VtValue(int(frame.fogGridSize))},
+        {"Fog Height Along Z (Z-up stages)", t.fogZUp, VtValue(frame.fogZUp)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},

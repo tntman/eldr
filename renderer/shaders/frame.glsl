@@ -21,12 +21,18 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
     uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
+    // Volumetric fog (fog.glsl).
+    vec4 fogMedium;      // extinction per unit at the base height, height falloff, base height, phase g
+    vec4 fogAlbedo;      // rgb: scattering colour; w: view depth the froxels reach
+    uvec4 fogGrid;       // froxels across, up, slices; w: 1 = heights along Z (else Y)
+    vec4 fogTemporal;    // x: slice jitter, y: history weight (0: none), z: last frame's fogAlbedo.w,
+                         // w: 1 = orthographic camera
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
-// Soft sun shadows (PCSS from the distant light's angle).
-const uint kFeatureSoftSun = 65536u;
+// Soft sun shadows (PCSS from the distant light's angle), volumetric fog.
+const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

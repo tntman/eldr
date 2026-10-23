@@ -473,6 +473,11 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+
+        // Volumetric fog, reflection probes: changes with what lighting
+        // depends on besides geometry (the light and material tables, the
+        // dome), so their histories and captures know when to start over.
+        uint64_t lightingHash = 0;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

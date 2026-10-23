@@ -1243,6 +1243,63 @@ int main()
             Expect(penumbra(0.1745f, true, false, &unused) <= hard + 1, "Frame::softSunShadows off: hard sun shadows");
             Expect(penumbra(0.1745f, false, true, &unused) <= hard + 1, "Frame::softShadows off: hard sun shadows");
         }
+
+        {
+            // Volumetric fog, through PerspectiveFrame (camera at the origin
+            // looking down -z): an emitter 4 away behind uniform fog of
+            // density 0.2 keeps exp(-0.8) of its light; a black backdrop
+            // shows the light the fog scatters from a sun behind the camera
+            // (isotropic phase, so E / 4 pi (1 - exp(-0.8)) along the axis);
+            // half of the view lies in the shadow of a horizontal plane
+            // above it, where the fog stays dark.
+            vkr::Scene scene(&device);
+            vkr::Mesh *backdrop = AddEmitter(scene, -10, -10, 10, 10, -4, 1.0f);
+            std::fill(backdrop->material->specular, backdrop->material->specular + 3, 0.0f);  // no highlight
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            frame.fog = true;
+            frame.fogDensity = 0.2f;
+            frame.fogAnisotropy = 0.0f;
+            scene.Commit();
+            const float transmitted = Render(renderer, scene, frame).At(32, 32, 0);
+            Expect(std::abs(transmitted - std::exp(-0.8f)) < 0.01f, "fog: transmittance exp(-density * distance)");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::any_of(renderer.GetStats().passMs.begin(), renderer.GetStats().passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "fog") == 0; }),
+                   "fog: its own pass");
+            frame.fog = false;
+            Expect(Render(renderer, scene, frame).At(32, 32, 0) == 1.0f &&
+                       std::none_of(renderer.GetStats().passMs.begin(), renderer.GetStats().passMs.end(),
+                                    [](const auto &p) { return std::strcmp(p.first, "fog") == 0; }),
+                   "Frame::fog off: no fog, no pass");
+            frame.fog = true;
+
+            backdrop->material->emissive[0] = backdrop->material->emissive[1] = backdrop->material->emissive[2] = 0;
+            vkr::Light *sun = AddLight(scene, 0, 0, 1);
+            std::fill(sun->irradiance, sun->irradiance + 3, 4.0f * 3.14159265f);  // E / 4 pi = 1
+            scene.Commit();
+            const float scattered = Render(renderer, scene, frame).At(32, 32, 0);
+            Expect(std::abs(scattered - (1.0f - std::exp(-0.8f))) < 0.02f, "fog: in-scattered sunlight");
+
+            // Light from above (+y), a plane at y = 0.5 over x < 0.
+            sun->direction[1] = 1;
+            sun->direction[2] = 0;
+            sun->castShadows = true;
+            vkr::Mesh *roof = scene.AddMesh();
+            roof->points = {-10, 0.5f, -0.05f, 0, 0.5f, -0.05f, 0, 0.5f, -10, -10, 0.5f, -0.05f, 0, 0.5f, -10, -10, 0.5f, -10};
+            roof->material = backdrop->material;
+            scene.Commit();
+            Image img = Render(renderer, scene, frame);
+            Expect(img.At(12, 32, 0) < 0.3f * img.At(52, 32, 0) && img.At(52, 32, 0) > 0.2f,
+                   "fog: the sun's shadow volumes stay dark");
+
+            // Height fog: thinner upwards (y), so less light scatters at the
+            // top of the view than at the bottom.
+            roof->visible = false;
+            frame.fogHeightFalloff = 2.0f;
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            Expect(img.At(32, 60, 0) < 0.7f * img.At(32, 4, 0), "fog: height falloff");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

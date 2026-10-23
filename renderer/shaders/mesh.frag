@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "frame.glsl"
+#include "fog.glsl"
 #include "lights.glsl"
 #include "material.glsl"
 #include "scene.glsl"
@@ -686,7 +687,9 @@ void main()
     if (!present) {
         discard;
     }
-    outColor = vec4(color, alpha);
+    // Volumetric fog between the camera and the surface (premultiplied).
+    vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
+    outColor = vec4(color * fog.a + fog.rgb * alpha, alpha);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
