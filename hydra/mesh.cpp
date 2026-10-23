@@ -201,7 +201,9 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // The uv set: the one the bound material's textures read, else "st",
     // else the first texture coordinate primvar.
     // ponytail: read when the mesh syncs; a material rewired to another uv
-    // set takes effect with the mesh's next primvar or binding change.
+    // set takes effect with the mesh's next primvar or binding change. A
+    // GeomSubset's material whose first uv set is another reads this one
+    // there (its other sets are primvars and fine).
     TfToken uvName = _tokens->st;
     if (const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(
             HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)))) {
