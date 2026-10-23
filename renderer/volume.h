@@ -1,10 +1,13 @@
 #pragma once
 
-#include <cstdint>
+#include "device.h"
+
 #include <memory>
 #include <vector>
 
 namespace vkr {
+
+class Scene;
 
 // One NanoVDB grid: the bytes of a single grid as NanoVDB lays it out
 // (GridData first, as a nanovdb::GridHandle's buffer holds it). Float grids
@@ -45,5 +48,35 @@ struct GpuVolume {
     float params[4];            // x: temperature to Kelvin
 };
 static_assert(sizeof(GpuVolume) % 16 == 0, "std430 array stride of GpuVolume");
+
+// Raymarches the scene's volumes over the shaded image: after the opaque
+// and translucent passes, before depth of field and TAA, see volume.frag.
+class VolumePass {
+public:
+    // `sceneLayout`: the renderer's set (frame data, lights, shadows,
+    // clusters; volume bindings 63..65).
+    VolumePass(Device &device, VkDescriptorSetLayout sceneLayout);
+    ~VolumePass();
+    VolumePass(const VolumePass &) = delete;
+    VolumePass &operator=(const VolumePass &) = delete;
+
+    struct Settings {
+        float stepSize = 1.0f;      // density voxels per step
+        uint32_t maxSteps = 256;    // per pixel; longer rays take longer steps
+        uint32_t shadowSteps = 8;   // towards each distant light (half as many up to the dome)
+        float density = 1.0f;       // extinction multiplier
+    };
+
+    // Blends the volumes over `color` (COLOR_ATTACHMENT_OPTIMAL, stays so);
+    // `set` must hold the scene's depth (binding 63) in
+    // DEPTH_READ_ONLY_OPTIMAL. Returns false (records nothing) without volumes.
+    bool Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
+                uint32_t width, uint32_t height, const Settings &settings);
+
+private:
+    Device &_dev;
+    VkPipelineLayout _layout = VK_NULL_HANDLE;
+    VkPipeline _pipeline = VK_NULL_HANDLE;
+};
 
 } // namespace vkr

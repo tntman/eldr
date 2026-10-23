@@ -1,5 +1,7 @@
 #include "volume.h"
 
+#include "fullscreen.h"
+#include "renderer.h"
 #include "scene.h"
 
 #include <algorithm>
@@ -12,6 +14,17 @@
 namespace vkr {
 
 namespace {
+
+const uint32_t kVolumeFrag[] =
+#include "volume.frag.inc"
+;
+
+struct VolumeParams {  // mirror of the push block in volume.frag
+    float stepSize;
+    uint32_t maxSteps, shadowSteps;
+    float density;
+    uint32_t count;
+};
 
 // y = m (x, 1): three rows of an affine map.
 struct Affine {
@@ -97,6 +110,53 @@ struct Nano {
 };
 
 } // namespace
+
+VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
+    : _dev(device)
+{
+    const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(VolumeParams)};
+    VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    lci.setLayoutCount = 1;
+    lci.pSetLayouts = &sceneLayout;
+    lci.pushConstantRangeCount = 1;
+    lci.pPushConstantRanges = &range;
+    Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
+    _pipeline = CreateFullscreenPipeline(_dev.device, _layout, kVolumeFrag, sizeof(kVolumeFrag),
+                                         Renderer::kColorFormat, false, true);
+}
+
+VolumePass::~VolumePass()
+{
+    vkDestroyPipeline(_dev.device, _pipeline, nullptr);
+    vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
+}
+
+bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
+                        uint32_t width, uint32_t height, const Settings &s)
+{
+    if (volumeCount == 0) {
+        return false;
+    }
+    // The shading pass's colour writes land before the blend reads them.
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+
+    VolumeParams p{};
+    p.stepSize = std::max(s.stepSize, 0.05f);
+    p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
+    p.shadowSteps = std::min(s.shadowSteps, 256u);
+    p.density = std::max(s.density, 0.0f);
+    p.count = volumeCount;
+    DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
+                   sizeof(p));
+    return true;
+}
 
 // Builds the volume table (a GpuVolume per drawn instance) and, when the
 // grids they read or their versions changed, the grid pool.

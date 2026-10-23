@@ -17,6 +17,7 @@ PASSES = [
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
     ("shading", "Shading"),
+    ("volumes", "Volumes"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),

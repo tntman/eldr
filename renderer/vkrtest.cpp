@@ -9,7 +9,11 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <vector>
+
+#define PNANOVDB_C
+#include "PNanoVDB.h"
 
 static int failures = 0;
 
@@ -177,6 +181,92 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
                                          : "without TAA the first frame is final");
     return img;
+}
+
+// NanoVDB float grid (laid out as PNanoVDB reads it) of a ball: `value`
+// within `radius` voxels of (15.5, 15.5, 15.5), voxels in [0, 32)^3, 32
+// per world unit, centred on the origin. One root tile, upper and lower
+// node, and leaves only where the ball reaches (the rest are empty tiles).
+static std::shared_ptr<vkr::VolumeGrid> BallGrid(float radius, float value)
+{
+    const pnanovdb_grid_type_constants_t &c = pnanovdb_grid_type_constants[PNANOVDB_GRID_TYPE_FLOAT];
+    const size_t tree = PNANOVDB_GRID_SIZE, root = tree + PNANOVDB_TREE_SIZE;
+    const size_t upper = root + c.root_size + c.root_tile_size, lower = upper + c.upper_size;
+    const size_t leaves = lower + c.lower_size;
+    std::vector<std::array<int, 3>> origins;  // leaves the ball reaches
+    for (int x = 0; x < 32; x += 8) {
+        for (int y = 0; y < 32; y += 8) {
+            for (int z = 0; z < 32; z += 8) {
+                const float dx = std::max({float(x) - 15.5f, 0.0f, 15.5f - float(x + 7)});
+                const float dy = std::max({float(y) - 15.5f, 0.0f, 15.5f - float(y + 7)});
+                const float dz = std::max({float(z) - 15.5f, 0.0f, 15.5f - float(z + 7)});
+                if (dx * dx + dy * dy + dz * dz <= radius * radius) {
+                    origins.push_back({x, y, z});
+                }
+            }
+        }
+    }
+    const size_t total = leaves + origins.size() * c.leaf_size;
+    std::vector<uint8_t> b(total, 0);
+    auto put = [&](size_t at, auto v) { std::memcpy(&b[at], &v, sizeof(v)); };
+    auto coord = [&](size_t at, int x, int y, int z) {
+        put(at, int32_t(x));
+        put(at + 4, int32_t(y));
+        put(at + 8, int32_t(z));
+    };
+    put(PNANOVDB_GRID_OFF_MAGIC, uint64_t(PNANOVDB_MAGIC_NUMBER));
+    put(PNANOVDB_GRID_OFF_VERSION, uint32_t(PNANOVDB_MAJOR_VERSION_NUMBER << 21 | PNANOVDB_MINOR_VERSION_NUMBER << 10));
+    put(PNANOVDB_GRID_OFF_GRID_COUNT, uint32_t(1));
+    put(PNANOVDB_GRID_OFF_GRID_SIZE, uint64_t(total));
+    const double voxel = 1.0 / 32.0, offset = -15.5 / 32.0;
+    for (int i = 0; i < 3; ++i) {
+        const size_t map = PNANOVDB_GRID_OFF_MAP;
+        put(map + PNANOVDB_MAP_OFF_MATF + 4 * (i * 4), float(voxel));
+        put(map + PNANOVDB_MAP_OFF_INVMATF + 4 * (i * 4), float(1 / voxel));
+        put(map + PNANOVDB_MAP_OFF_VECF + 4 * i, float(offset));
+        put(map + PNANOVDB_MAP_OFF_MATD + 8 * (i * 4), voxel);
+        put(map + PNANOVDB_MAP_OFF_INVMATD + 8 * (i * 4), 1 / voxel);
+        put(map + PNANOVDB_MAP_OFF_VECD + 8 * i, offset);
+        put(PNANOVDB_GRID_OFF_VOXEL_SIZE + 8 * i, voxel);
+    }
+    put(PNANOVDB_GRID_OFF_GRID_CLASS, uint32_t(PNANOVDB_GRID_CLASS_FOG_VOLUME));
+    put(PNANOVDB_GRID_OFF_GRID_TYPE, uint32_t(PNANOVDB_GRID_TYPE_FLOAT));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_LEAF, uint64_t(leaves - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_LOWER, uint64_t(lower - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_UPPER, uint64_t(upper - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_ROOT, uint64_t(root - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_LEAF, uint32_t(origins.size()));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_LOWER, uint32_t(1));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_UPPER, uint32_t(1));
+    coord(root + PNANOVDB_ROOT_OFF_BBOX_MIN, 0, 0, 0);
+    coord(root + PNANOVDB_ROOT_OFF_BBOX_MAX, 31, 31, 31);
+    put(root + PNANOVDB_ROOT_OFF_TABLE_SIZE, uint32_t(1));
+    put(root + c.root_off_max, value);
+    put(root + c.root_size + PNANOVDB_ROOT_TILE_OFF_CHILD, int64_t(upper - root));  // key 0: (0, 0, 0)
+    coord(upper + PNANOVDB_UPPER_OFF_BBOX_MAX, 31, 31, 31);
+    put(upper + PNANOVDB_UPPER_OFF_CHILD_MASK, uint32_t(1));
+    put(upper + c.upper_off_table, int64_t(lower - upper));
+    coord(lower + PNANOVDB_LOWER_OFF_BBOX_MAX, 31, 31, 31);
+    for (size_t l = 0; l < origins.size(); ++l) {
+        const auto [x, y, z] = origins[l];
+        const size_t leaf = leaves + l * c.leaf_size;
+        const uint32_t n = uint32_t((x >> 3) << 8 | (y >> 3) << 4 | (z >> 3));
+        const size_t mask = lower + PNANOVDB_LOWER_OFF_CHILD_MASK + 4 * (n >> 5);
+        uint32_t bits;
+        std::memcpy(&bits, &b[mask], 4);
+        put(mask, bits | 1u << (n & 31));
+        put(lower + c.lower_off_table + 8 * n, int64_t(leaf - lower));
+        coord(leaf + PNANOVDB_LEAF_OFF_BBOX_MIN, x, y, z);
+        for (int v = 0; v < 512; ++v) {
+            const float dx = float(x + (v >> 6)) - 15.5f, dy = float(y + ((v >> 3) & 7)) - 15.5f,
+                        dz = float(z + (v & 7)) - 15.5f;
+            put(leaf + c.leaf_off_table + 4 * v, dx * dx + dy * dy + dz * dz <= radius * radius ? value : 0.0f);
+        }
+    }
+    auto grid = std::make_shared<vkr::VolumeGrid>();
+    grid->words.resize(total / 4);
+    std::memcpy(grid->words.data(), b.data(), total);
+    return grid;
 }
 
 int main()
@@ -1143,6 +1233,56 @@ int main()
             const float off = RenderPost(device, scene, 0.0f).At(32, 44, 1);
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
+        }
+
+        {
+            // Volumes: a ball of density 2 (radius 12 voxels, 0.375) at the
+            // origin, seen along +z. Unlit, the blue background shows
+            // through by the transmittance, exp(-2 * 0.75) in the middle;
+            // the rest of the image is untouched.
+            vkr::Scene scene(&device);
+            vkr::Volume *ball = scene.AddVolume();
+            ball->density = BallGrid(12.0f, 2.0f);
+            scene.Commit();
+            vkr::Renderer renderer(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            Image img = Render(renderer, scene, frame);
+            Expect(std::abs(img.At(32, 32, 2) - std::exp(-1.5f)) < 0.03f && img.At(32, 32, 0) == 0.0f,
+                   "a volume's transmittance follows Beer-Lambert");
+            Expect(img.At(60, 32, 2) == 1.0f && img.At(32, 60, 2) == 1.0f, "a volume leaves the rest alone");
+            frame.volumes = false;
+            Expect(Render(renderer, scene, frame).At(32, 32, 2) == 1.0f, "volumes can be switched off");
+            frame.volumes = true;
+
+            // Opaque surfaces: an emitter in front (left half) hides the
+            // ball, one behind (right half) is seen through it.
+            AddEmitter(scene, -1, -1, 0, 1, -0.5f, 0.5f);
+            AddEmitter(scene, 0, -1, 1, 1, 0.5f, 1.0f);
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            Expect(img.At(28, 32, 0) == 0.5f, "a volume behind a surface is hidden");
+            Expect(img.At(36, 32, 0) > 0.1f && img.At(36, 32, 0) < 0.35f, "a surface behind a volume shows through");
+            frame.depthPrepass = false;
+            const Image noPrepass = Render(renderer, scene, frame);
+            Expect(noPrepass.At(28, 32, 0) == 0.5f && noPrepass.At(36, 32, 0) == img.At(36, 32, 0),
+                   "volumes stop at the main pass's depth without the prepass too");
+            frame.depthPrepass = true;
+
+            // A light from +x: the ball's lit side scatters more than the side
+            // its own density shadows; without the shadow march they match.
+            vkr::Scene lit(&device);
+            lit.AddVolume()->density = ball->density;
+            AddLight(lit, 1, 0, 0)->castShadows = true;
+            lit.Commit();
+            img = Render(renderer, lit, frame);
+            const float near = img.At(40, 32, 0), far = img.At(23, 32, 0);  // x = +-0.27
+            Expect(near > 0.02f && near > 2.0f * far, "a volume shadows itself");
+            frame.volume.shadowSteps = 0;
+            img = Render(renderer, lit, frame);
+            Expect(std::abs(img.At(40, 32, 0) - img.At(23, 32, 0)) < 0.05f * img.At(40, 32, 0),
+                   "without shadow steps the ball is lit evenly");
+            frame.volume.shadowSteps = vkr::VolumePass::Settings().shadowSteps;
+
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

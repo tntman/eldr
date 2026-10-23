@@ -120,8 +120,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
-    // image.
-    return {
+    // image (volumes last).
+    HdRenderSettingDescriptorList settings = {
         {"Depth Prepass (off: no AO, no SSR)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
@@ -155,6 +155,17 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
         {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
     };
+#ifdef HDVK_VOLUMES
+    const vkr::VolumePass::Settings &volume = frame.volume;
+    settings.insert(settings.end(), {
+        {"Volumes (OpenVDB)", t.volumes, VtValue(frame.volumes)},
+        {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
+        {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
+        {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
+        {"Volume Density Multiplier", t.volumeDensity, VtValue(volume.density)},
+    });
+#endif
+    return settings;
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(

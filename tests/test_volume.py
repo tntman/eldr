@@ -1,7 +1,9 @@
 """Headless check of HdVk's OpenVDB volumes (built against a USD with
-OpenVDB): tests/scenes/volume.vdb's cloud loads (the render stats count
-the volume and its grid memory), and fieldIndex 1 picks the file's second
-"density" grid (of another size).
+OpenVDB): tests/scenes/volume.vdb's cloud in front of an emissive wall, no
+lights, so it only absorbs. It darkens the wall where it is, the volume's
+transform moves it, fieldIndex 1 picks the file's second "density" grid (a
+small ball), hdvk:volumes switches volumes off, and the render stats count
+them and their grid memory.
 Run: usdenv.cmd python tests\\test_volume.py"""
 import os
 import sys
@@ -69,6 +71,13 @@ def render():
     return fbo.toImage()
 
 
+def brightness(image, x, y):
+    """Green of the pixel showing world (x, y, 0)."""
+    p = viewProj.Transform(Gf.Vec3d(x, y, 0))
+    px, py = int((p[0] * 0.5 + 0.5) * SIZE), int((0.5 - p[1] * 0.5) * SIZE)  # QImage rows top down
+    return image.pixelColor(px, py).greenF()
+
+
 failures = []
 
 
@@ -78,17 +87,31 @@ def expect(ok, what):
         print("FAIL:", what, file=sys.stderr)
 
 
-render()
+image = render()
+wallLevel = brightness(image, 3.5, 3.5)
+expect(wallLevel > 0.2, "the wall glows")
+expect(brightness(image, 0, 0) < 0.5 * wallLevel, "the cloud absorbs the wall's light")
+expect(brightness(image, 1.0, 0) < 0.5 * wallLevel, "the cloud is 1.6 across")
 stats = engine.GetRenderStats()
-cloudBytes = stats.get("volumeMemory", 0)
-expect(stats.get("volumes") == 1 and cloudBytes > 0, "stats count volumes and grid memory")
+expect(stats.get("volumes") == 1 and stats.get("volumeMemory", 0) > 0, "stats count volumes and grid memory")
+expect("volumes" in stats.get("gpuPassMs", {}), "the volumes' GPU pass is timed")
 rows = dict(hdvkUsdview.Rows(stats))
-expect("  volumes" in rows, "the usdview window shows the grid memory")
+expect("Volumes" in rows and "  volumes" in rows, "the usdview window shows volumes")
+
+translate.Set(Gf.Vec3d(2.5, 0, 0))
+image = render()
+expect(brightness(image, 0, 0) > 0.9 * wallLevel and brightness(image, 2.5, 0) < 0.5 * wallLevel,
+       "the volume's transform moves it")
+translate.Set(Gf.Vec3d(0, 0, 0))
 
 field.CreateFieldIndexAttr(1)  # the second "density": a ball of radius 0.5
-render()
-ballBytes = engine.GetRenderStats().get("volumeMemory", 0)
-expect(0 < ballBytes != cloudBytes, "fieldIndex picks another grid")
+image = render()
+expect(brightness(image, 0, 0) < 0.5 * wallLevel and brightness(image, 1.0, 0) > 0.9 * wallLevel,
+       "fieldIndex picks the grid")
+
+engine.SetRendererSetting("hdvk:volumes", False)
+image = render()
+expect(brightness(image, 0, 0) > 0.9 * wallLevel, "hdvk:volumes switches volumes off")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

@@ -6,8 +6,10 @@
 #include "post.h"
 #include "scene.h"
 #include "taa.h"
+#include "volume.h"
 
 #include <chrono>
+#include <memory>
 
 namespace vkr {
 
@@ -66,6 +68,9 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // OpenVDB volumes, raymarched over the shaded image (VolumePass).
+        bool volumes = true;
+        VolumePass::Settings volume;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -198,6 +203,7 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
+    std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
 };
 
 } // namespace vkr

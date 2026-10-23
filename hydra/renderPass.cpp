@@ -102,12 +102,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
-                                {t.translucency, &frame.translucency}}) {
+                                {t.translucency, &frame.translucency}, {t.volumes, &frame.volumes}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
-                                {t.bloomIntensity, &frame.post.bloomIntensity}}) {
+                                {t.bloomIntensity, &frame.post.bloomIntensity},
+                                {t.volumeStepSize, &frame.volume.stepSize},
+                                {t.volumeDensity, &frame.volume.density}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
@@ -115,7 +117,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.shadowCascades, &frame.shadowCascades},
                                 {t.localShadowResolution, &frame.localShadowResolution},
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
-                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
+                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
+                                {t.volumeMaxSteps, &frame.volume.maxSteps},
+                                {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // The scene camera's lens; usdview's free camera has none.
