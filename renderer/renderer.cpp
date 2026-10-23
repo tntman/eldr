@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <tuple>
 #include <vector>
 
@@ -1759,8 +1760,31 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
+    // Extra AOVs (aov.h), before the lens bends depth and the ids.
+    if (frame.extraAovs && Aovs::Any(out.aovs)) {
+        Aovs::Params params;
+        std::memcpy(params.view, frame.view, sizeof(params.view));
+        std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
+        params.cryptomatte = frame.cryptomatte;
+        params.cryptomatteIds = frame.cryptomatteIds;
+        const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
+        std::function<void()> geometry;
+        if (pipelines) {
+            geometry = [&] {
+                vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                PushDraw(_cmd, _layout, jitteredViewProj, 0);
+                vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+                vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, 7);
+            };
+        }
+        _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, out.aovs,
+                     geometry);
+        pass("aovs");
+    }
+
     // Lens distortion warps everything read back.
-    if (frame.lensDistortion && frame.distortion.Active()) {
+    if (frame.lensDistortion && frame.distortion.Active() && (out.color || out.depth || out.primId || out.instanceId)) {
         const bool post = frame.postProcess;
         _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
                            post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
@@ -1828,6 +1852,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         if (o.dst) {
             std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _width * _height);
         }
+    }
+    if (frame.extraAovs) {
+        _aovs.Read(out.aovs);
     }
 
     // What the camera drew: the culled commands' instances and triangles.

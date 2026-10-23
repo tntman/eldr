@@ -1,5 +1,6 @@
 #pragma once
 
+#include "aov.h"
 #include "device.h"
 #include "distortion.h"
 #include "gtao.h"
@@ -75,6 +76,13 @@ public:
         // Blend shape motion: skinned meshes' motion vectors (TAA, motion
         // blur) include their blend shapes' change since the last frame.
         bool blendShapeMotion = true;
+        // Extra AOVs (Targets::aovs): world to camera (Neye, Peye,
+        // cameraDepth; row-vector order) and per primId its Cryptomatte
+        // object and material ids (CryptomatteHash), 2 per id.
+        bool extraAovs = true;
+        float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const uint32_t *cryptomatte = nullptr;
+        uint32_t cryptomatteIds = 0;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -85,6 +93,8 @@ public:
         int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
         int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
         uint16_t *velocity = nullptr;   // object motion vectors, two halves per pixel (see mesh.frag)
+        // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
+        float *aovs[Aovs::kCount] = {};
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -216,6 +226,7 @@ private:
     Buffer _prevBlendWeights;
     VkBuffer _prevBlendSource = VK_NULL_HANDLE;
     bool _prevBlendValid = false;
+    Aovs _aovs{_dev};  // extra AOVs
 };
 
 } // namespace vkr

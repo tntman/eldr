@@ -9,6 +9,8 @@
 #include "renderPass.h"
 #include "renderer.h"
 
+#include "pxr/base/gf/vec2f.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
@@ -21,6 +23,7 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 namespace {
 
@@ -93,6 +96,20 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
+    // Extra AOVs (vkr::Aovs), rendered only when bound.
+    if (name == HdAovTokens->normal || name == HdAovTokens->Neye || name == HdAovTokens->Peye ||
+        name == HdVkAovTokens->albedo || name == HdVkAovTokens->emission) {
+        return HdAovDescriptor(HdFormatFloat32Vec3, false, VtValue(GfVec3f(0.0f)));
+    }
+    if (name == HdAovTokens->cameraDepth) {
+        return HdAovDescriptor(HdFormatFloat32, false, VtValue(0.0f));
+    }
+    if (name == HdAovTokensMakePrimvar(TfToken("st"))) {
+        return HdAovDescriptor(HdFormatFloat32Vec2, false, VtValue(GfVec2f(0.0f)));
+    }
+    if (name == HdVkAovTokens->cryptoObject || name == HdVkAovTokens->cryptoMaterial) {
+        return HdAovDescriptor(HdFormatFloat32Vec4, false, VtValue(GfVec4f(0.0f)));
+    }
     return HdAovDescriptor();
 }
 
@@ -135,6 +152,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
+        {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
@@ -259,7 +277,19 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["taaTarget"] = size_t(frame.taaTarget);
     stats["percentDone"] = converged ? 100.0 : 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
     stats["rendererStage"] = std::string(converged ? "converged" : "accumulating");
+    if (!_cryptomatteObject.empty()) {
+        VtDictionary manifests;
+        manifests["CryptoObject"] = _cryptomatteObject;
+        manifests["CryptoMaterial"] = _cryptomatteMaterial;
+        stats["cryptomatte"] = manifests;
+    }
     return stats;
+}
+
+void HdVkRenderDelegate::SetCryptomatteManifests(std::string object, std::string material)
+{
+    _cryptomatteObject = std::move(object);
+    _cryptomatteMaterial = std::move(material);
 }
 
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)

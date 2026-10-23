@@ -1243,6 +1243,62 @@ int main()
             Expect(std::abs(weight(0.0f, true) - 0.153f) < 0.005f, "blend shape motion: sinking");
             Expect(std::abs(weight(1.0f, false)) < 1e-4f, "Frame::blendShapeMotion off: no blend shape motion");
         }
+
+        {
+            // Extra AOVs and Cryptomatte: a quad at z = 0.5 facing the camera
+            // (identity view), uv across it; nothing around it.
+            Expect(vkr::CryptomatteHash("The quick brown fox jumps over the lazy dog") == 0x2e4ff723u &&
+                       vkr::CryptomatteHash("") == 0x00800000u,
+                   "Cryptomatte ids: MurmurHash3, no denormal floats");
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
+            quad->primId = 3;
+            auto material = std::make_shared<vkr::Material>();
+            const float base[3] = {0.2f, 0.4f, 0.6f}, emissive[3] = {1.0f, 0.5f, 0.25f};
+            std::copy(base, base + 3, material->baseColor);
+            std::copy(emissive, emissive + 3, material->emissive);
+            quad->material = material;
+            scene.Commit();
+            std::vector<std::vector<float>> aovs(vkr::Aovs::kCount);
+            vkr::Renderer::Targets out;
+            for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
+                aovs[k].assign(64 * 64 * vkr::Aovs::Components(vkr::Aovs::Kind(k)), -7.0f);
+                out.aovs[k] = aovs[k].data();
+            }
+            const uint32_t ids[8] = {0, 0, 0, 0, 0, 0, vkr::CryptomatteHash("/quad"), vkr::CryptomatteHash("/mat")};
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.cryptomatte = ids;
+            frame.cryptomatteIds = 4;
+            renderer.Render(scene, frame, out);
+            auto at = [&](vkr::Aovs::Kind k, int x, int y, int c) {
+                return aovs[k][(y * 64 + x) * vkr::Aovs::Components(k) + c];
+            };
+            auto near = [](float a, float b) { return std::abs(a - b) < 2e-3f; };
+            using A = vkr::Aovs;
+            Expect(near(at(A::kNormal, 32, 32, 2), -1.0f) && near(at(A::kNormalEye, 32, 32, 2), -1.0f),
+                   "AOV normal and Neye face the camera");
+            Expect(near(at(A::kPositionEye, 32, 32, 2), 0.5f) && near(at(A::kCameraDepth, 32, 32, 0), 0.5f) &&
+                       near(at(A::kPositionEye, 32, 32, 0), 1.0f / 64.0f),
+                   "AOV Peye and cameraDepth");
+            Expect(near(at(A::kSt, 32, 32, 0), 0.5f + 1.0f / 64.0f) && near(at(A::kSt, 32, 32, 1), 0.5f + 1.0f / 64.0f),
+                   "AOV primvars:st");
+            Expect(near(at(A::kAlbedo, 32, 32, 1), 0.4f) && near(at(A::kEmission, 32, 32, 2), 0.25f),
+                   "AOV albedo and emission");
+            float object, matte;
+            std::memcpy(&object, &ids[6], 4);
+            std::memcpy(&matte, &ids[7], 4);
+            Expect(at(A::kCryptoObject, 32, 32, 0) == object && at(A::kCryptoObject, 32, 32, 1) == 1.0f &&
+                       at(A::kCryptoMaterial, 32, 32, 0) == matte && at(A::kCryptoMaterial, 32, 32, 2) == 0.0f,
+                   "Cryptomatte object and material ids at coverage 1");
+            bool empty = true;
+            for (uint32_t k = 0; k < A::kCount; ++k) {
+                for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
+                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                }
+            }
+            Expect(empty, "AOVs are 0 where nothing was drawn");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

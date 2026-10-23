@@ -5,6 +5,7 @@
 #include "pxr/imaging/hd/renderDelegate.h"
 
 #include <memory>
+#include <string>
 
 namespace vkr {
 class Device;
@@ -45,9 +46,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((softShadowSamples, "hdvk:softShadowSamples"))          \
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
-    ((anisotropy, "hdvk:anisotropy"))                            ((tonemapper, "hdvk:tonemapper"))                            ((lensDistortion, "hdvk:lensDistortion"))                    ((blendShapeMotion, "hdvk:blendShapeMotion"))
+    ((anisotropy, "hdvk:anisotropy"))                            ((tonemapper, "hdvk:tonemapper"))                            ((lensDistortion, "hdvk:lensDistortion"))                    ((blendShapeMotion, "hdvk:blendShapeMotion"))                ((extraAovs, "hdvk:extraAovs"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+
+// AOVs of HdVk's own beyond HdAovTokens: base colour, emission and
+// Cryptomatte's first layer (ranks 0 and 1) of object and material ids.
+#define HDVK_AOV_TOKENS                           (albedo)                                      (emission)                                    ((cryptoObject, "CryptoObject00"))            ((cryptoMaterial, "CryptoMaterial00"))
+
+TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
@@ -93,6 +100,10 @@ public:
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
 
+    // Cryptomatte manifests of the last frame with those AOVs (JSON: name
+    // to hex id), reported in GetRenderStats()["cryptomatte"].
+    void SetCryptomatteManifests(std::string object, std::string material);
+
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
@@ -102,6 +113,7 @@ private:
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    std::string _cryptomatteObject, _cryptomatteMaterial;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
