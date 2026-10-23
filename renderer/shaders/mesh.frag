@@ -39,6 +39,7 @@ const vec2 kPoisson[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367),
     vec2(0.14383161, -0.14100790));
 
+#define RT_RESULTS
 #include "gi.glsl"  // ray-traced shadows and reflections, GI probes
 
 // mesh.vert's packed outputs.
@@ -560,6 +561,7 @@ void main()
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
     }
+    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);

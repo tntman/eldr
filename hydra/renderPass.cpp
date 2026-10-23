@@ -103,12 +103,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency}, {t.rtShadows, &frame.rtShadows},
-                                {t.rtReflections, &frame.rtReflections}}) {
+                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
-                                {t.bloomIntensity, &frame.post.bloomIntensity}}) {
+                                {t.bloomIntensity, &frame.post.bloomIntensity},
+                                {t.giHysteresis, &frame.giHysteresis}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
@@ -118,7 +119,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
-                                {t.rtReflectionSamples, &frame.rtReflectionSamples}}) {
+                                {t.rtReflectionSamples, &frame.rtReflectionSamples},
+                                {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // The scene camera's lens; usdview's free camera has none.

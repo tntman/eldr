@@ -70,7 +70,7 @@ const uint32_t kSkinComp[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 // Ray tracing's (shaders/gi.glsl).
-constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21;
+constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21, kFeatureGi = 1u << 22;
 // The TLAS's custom index (a mesh slot) has 24 bits, and so has its count.
 constexpr uint32_t kMaxRtInstances = (1u << 24) - 1;
 
@@ -1188,7 +1188,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
 
 bool Renderer::IsConverged() const
 {
-    return (!_adapting || _post.ExposureConverged()) && _taaConverged;
+    return (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged());
 }
 
 uint32_t Renderer::VisibleInstances() const
@@ -1280,6 +1280,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     rt.shadowSamples = frame.rtShadowSamples;
     rt.reflectionSamples = frame.rtReflectionSamples;
     rt.sun = gpu.shadowLight;
+    rt.gi = rtScene && frame.gi;
+    rt.giProbes = frame.giProbes;
+    rt.giRays = frame.giRays;
+    rt.giHysteresis = frame.giHysteresis;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
@@ -1295,7 +1299,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const std::vector<ShadowTile> shadowTiles =
         _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0);
     rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
-    fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0);
+    fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
+                      (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
     fd.counts[3] = gpu.environmentLatlong;
@@ -1326,7 +1331,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
-    const bool rayTracing = rt.shadows || rt.reflections;
+    const bool rayTracing = rt.shadows || rt.reflections || rt.gi;
     if (rayTracing) {
         _rt->Prepare(gpu, rt, _width, _height);
     } else if (_rt) {

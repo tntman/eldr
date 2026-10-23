@@ -29,6 +29,17 @@ const uint32_t kAnyHit[] =
 const uint32_t kTlasComp[] =
 #include "tlas.comp.inc"
 ;
+const uint32_t kProbesRgen[] =
+#include "rt_probes.rgen.inc"
+;
+const uint32_t kGiUpdateComp[] =
+#include "gi_update.comp.inc"
+;
+
+// GI probes: at most this many (the grid coarsens until it fits), atlas
+// tiles per row, rays per probe (gi_update.comp's kMaxRays).
+constexpr uint32_t kMaxProbes = 16384, kProbesPerRow = 128, kMaxProbeRays = 512;
+constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors, as gi.glsl
 
 // std140 mirror of RayTracingData in shaders/gi.glsl.
 struct RayTracingData {
@@ -43,9 +54,9 @@ struct RayTracingData {
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
 constexpr uint32_t kSlotCutout = 2;
 
-// BLASes are placed in 64 MB blocks at the required 256-byte alignment.
+// BLASes are placed in 16 MB blocks at the required 256-byte alignment.
 constexpr VkDeviceSize kUnit = 256;
-constexpr VkDeviceSize kBlockBytes = VkDeviceSize(64) << 20;
+constexpr VkDeviceSize kBlockBytes = VkDeviceSize(16) << 20;
 // Scratch memory of one batch of BLAS builds.
 constexpr VkDeviceSize kScratchBudget = VkDeviceSize(128) << 20;
 
@@ -135,7 +146,8 @@ RayTracing::~RayTracing()
     _dev.Destroy(_uniforms);
     _dev.Destroy(_slots);
     _dev.Destroy(_sbt);
-    for (VkPipeline p : {_pipeline, _tlasPipeline}) {
+    _dev.Destroy(_giRays);
+    for (VkPipeline p : {_pipeline, _tlasPipeline, _giUpdate[0], _giUpdate[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -162,6 +174,12 @@ void RayTracing::Release()
     for (Buffer *b : {&_scratch, &_instances, &_tlasBuffer}) {
         _dev.Destroy(*b);
     }
+    _work = Work();
+}
+
+bool RayTracing::Converged() const
+{
+    return !_work.gi || _giFrames >= std::min(uint32_t(1.0f / (1.0f - _work.giHysteresis)), 100u);
 }
 
 void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
@@ -212,6 +230,18 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_tlasPipeline);
     vkDestroyShaderModule(device, tlasModule, nullptr);
     Check(r, "vkCreateComputePipelines");
+    // The probe update, specialized for each atlas's tile interiors.
+    VkShaderModule giModule = CreateShaderModule(device, kGiUpdateComp, sizeof(kGiUpdateComp));
+    cci.stage.module = giModule;
+    const VkSpecializationMapEntry entry{0, 0, sizeof(int32_t)};
+    for (int i = 0; i < 2 && r == VK_SUCCESS; ++i) {
+        const int32_t texels = i == 0 ? kIrradianceTexels : kVisibilityTexels;
+        const VkSpecializationInfo spec{1, &entry, sizeof(texels), &texels};
+        cci.stage.pSpecializationInfo = &spec;
+        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_giUpdate[i]);
+    }
+    vkDestroyShaderModule(device, giModule, nullptr);
+    Check(r, "vkCreateComputePipelines");
 
     // Shader groups: the ray generation shaders, misses (closest surface,
     // shadow), hit groups (closest surface: closest hit + cutout any hit;
@@ -227,6 +257,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {kShadowMiss, sizeof(kShadowMiss), VK_SHADER_STAGE_MISS_BIT_KHR},
         {kClosestHit, sizeof(kClosestHit), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
         {kAnyHit, sizeof(kAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
+        {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
     constexpr uint32_t kStages = sizeof(stages) / sizeof(stages[0]);
     VkPipelineShaderStageCreateInfo stageInfos[kStages] = {};
@@ -250,6 +281,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 2, kUnused, kUnused),  // shadow miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, 3, 4),
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 4),
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 5, kUnused, kUnused),  // probes
     };
     constexpr uint32_t kGroups = sizeof(groups) / sizeof(groups[0]);
     VkRayTracingPipelineCreateInfoKHR rci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
@@ -266,15 +298,16 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     Check(r, "vkCreateRayTracingPipelinesKHR");
 
     // Shader binding table: each region starts on the base alignment; the
-    // raygen region is one record (picked per trace), miss and hit regions
-    // two records each.
+    // raygen regions are one record each (pixels, probes), miss and hit
+    // regions two records each.
     const uint32_t handleSize = _props.shaderGroupHandleSize;
     const VkDeviceSize stride = AlignUp(handleSize, _props.shaderGroupHandleAlignment);
     const VkDeviceSize base = _props.shaderGroupBaseAlignment;
     std::vector<uint8_t> handles(size_t(kGroups) * handleSize);
     Check(_fn->getGroupHandles(device, _pipeline, 0, kGroups, handles.size(), handles.data()),
           "vkGetRayTracingShaderGroupHandlesKHR");
-    const VkDeviceSize raygenOffset = 0, missOffset = AlignUp(stride, base),
+    const VkDeviceSize raygenOffset = 0, probesOffset = AlignUp(stride, base),
+                       missOffset = probesOffset + AlignUp(stride, base),
                        hitOffset = missOffset + AlignUp(2 * stride, base);
     const VkDeviceSize bytes = hitOffset + 2 * stride;
     _dev.Reserve(_sbt, bytes + base,
@@ -282,11 +315,13 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     const VkDeviceAddress address = AlignUp(_Address(_sbt.buffer), base);
     auto *table = static_cast<uint8_t *>(_sbt.mapped) + (address - _Address(_sbt.buffer));
     std::memcpy(table + raygenOffset, &handles[0], handleSize);
+    std::memcpy(table + probesOffset, &handles[size_t(5) * handleSize], handleSize);
     for (uint32_t i = 0; i < 2; ++i) {
         std::memcpy(table + missOffset + i * stride, &handles[size_t(1 + i) * handleSize], handleSize);
         std::memcpy(table + hitOffset + i * stride, &handles[size_t(3 + i) * handleSize], handleSize);
     }
     _raygen = {address + raygenOffset, stride, stride};
+    _raygenProbes = {address + probesOffset, stride, stride};
     _miss = {address + missOffset, stride, 2 * stride};
     _hit = {address + hitOffset, stride, 2 * stride};
 }
@@ -457,6 +492,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             _fn->cmdBuild(cmd, uint32_t(infos.size()), infos.data(), rangeInfos.data());
         });
     }
+    _dev.Destroy(_scratch);  // the TLAS needs far less
 }
 
 // The slot table and the TLAS's storage for every instance slot; the
@@ -483,6 +519,7 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
 
     const uint32_t capacity = std::max(gpu.instanceCapacity, 1u);
     if (capacity <= _tlasCapacity) {
+        _ReserveScratch(_tlasScratch);
         return;
     }
     _fn->destroyAccelerationStructure(_dev.device, _tlas, nullptr);
@@ -503,7 +540,8 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
     ci.size = sizes.accelerationStructureSize;
     ci.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
     Check(_fn->createAccelerationStructure(_dev.device, &ci, nullptr, &_tlas), "vkCreateAccelerationStructureKHR");
-    _ReserveScratch(sizes.buildScratchSize);
+    _tlasScratch = sizes.buildScratchSize;
+    _ReserveScratch(_tlasScratch);
     _tlasCapacity = capacity;
     _tlasDirty = true;
 
@@ -533,9 +571,68 @@ VkAccelerationStructureBuildGeometryInfoKHR RayTracing::_TlasBuildInfo(VkAcceler
     return info;
 }
 
+// A grid over the scene's bounds, Work::giProbes along the longest side:
+// the spacing snapped to powers of 2^(1/4) and the probes to multiples of
+// it (half a step off, so they don't sit on floors at round heights).
+// Coarser until it fits kMaxProbes. A new grid (or GI switched back on)
+// starts the probes over, so the grid stays while the scene (an animated
+// one too) stays inside it and its spacing within a factor sqrt 2 of the
+// fitting one.
+void RayTracing::_FitProbes(const Scene::Gpu &gpu)
+{
+    float extent[3], longest = 0;
+    for (int k = 0; k < 3; ++k) {
+        extent[k] = gpu.hasBounds ? std::max(gpu.boundsMax[k] - gpu.boundsMin[k], 0.0f) : 1.0f;
+        longest = std::max(longest, extent[k]);
+    }
+    const uint32_t along = std::clamp(_work.giProbes, 2u, 64u);
+    float spacing = std::exp2(std::ceil(std::log2(std::max(longest, 1e-6f) / float(along - 1)) * 4.0f) / 4.0f);
+    float origin[3];
+    uint32_t counts[3];
+    for (;;) {
+        uint64_t total = 1;
+        for (int k = 0; k < 3; ++k) {
+            const float lo = gpu.hasBounds ? gpu.boundsMin[k] : -0.5f;
+            origin[k] = (std::floor(lo / spacing - 0.5f) + 0.5f) * spacing;
+            counts[k] = uint32_t(std::floor((lo + extent[k] - origin[k]) / spacing)) + 2;
+            total *= counts[k];
+        }
+        if (total <= kMaxProbes) {
+            break;
+        }
+        spacing *= 1.18920712f;
+    }
+    bool keep = _giFrames > 0 && along == _giAlong && spacing < 1.42f * _giSpacing && _giSpacing < 1.42f * spacing;
+    for (int k = 0; k < 3 && keep && gpu.hasBounds; ++k) {
+        keep = gpu.boundsMin[k] >= _giOrigin[k] &&
+               gpu.boundsMax[k] <= _giOrigin[k] + float(_giCounts[k] - 1) * _giSpacing;
+    }
+    if (keep) {
+        return;
+    }
+    const uint32_t probes = counts[0] * counts[1] * counts[2];
+    const uint32_t perRow = std::min(probes, kProbesPerRow), rows = (probes + perRow - 1) / perRow;
+    _dev.Destroy(_giIrradiance);
+    _dev.Destroy(_giVisibility);
+    _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, perRow * (kIrradianceTexels + 2),
+                                 rows * (kIrradianceTexels + 2));
+    _giVisibility = _CreateAtlas(VK_FORMAT_R16G16_SFLOAT, perRow * (kVisibilityTexels + 2),
+                                 rows * (kVisibilityTexels + 2));
+    std::copy(origin, origin + 3, _giOrigin);
+    std::copy(counts, counts + 3, _giCounts);
+    _giSpacing = spacing;
+    _giPerRow = perRow;
+    _giAlong = along;
+    _giFrames = 0;
+}
+
 void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height)
 {
+    if (work.gi && !_work.gi) {
+        _giFrames = 0;  // switched on: start over
+    }
     _work = work;
+    _work.giRays = std::clamp(work.giRays, 16u, kMaxProbeRays);
     _BuildBlases(gpu);
     _PrepareTlas(gpu);
     if ((work.shadows || work.reflections) && (width != _width || height != _height)) {
@@ -548,6 +645,56 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
     d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);
     d.params[3] = work.sun;
+    if (!work.gi) {
+        return;
+    }
+    _FitProbes(gpu);
+    const uint32_t probes = _giCounts[0] * _giCounts[1] * _giCounts[2];
+    const VkDeviceSize rayBytes = VkDeviceSize(probes) * _work.giRays * 4 * sizeof(float);
+    if (_giRays.size < rayBytes) {
+        _dev.Destroy(_giRays);
+        _giRays = _dev.CreateDeviceBuffer(rayBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    }
+    std::copy(_giOrigin, _giOrigin + 3, d.giOrigin);
+    d.giOrigin[3] = _giSpacing;
+    std::copy(_giCounts, _giCounts + 3, d.giCounts);
+    d.giCounts[3] = _giPerRow;
+    // While the probes are fresh, a plain average of the frames so far.
+    const float hysteresis = std::clamp(work.giHysteresis, 0.0f, 0.99f);
+    d.giParams[0] = std::min(hysteresis, float(_giFrames) / float(_giFrames + 1));
+    d.giParams[1] = float(_work.giRays);
+    d.giParams[2] = 2.0f * _giSpacing;
+    // A random rotation of the ray directions (a random unit quaternion,
+    // Shoemake), different every frame.
+    uint32_t seed = _frame * 747796405u + 2891336453u;
+    auto random = [&]() {
+        seed = seed * 747796405u + 2891336453u;
+        return float((seed >> 8) & 0xFFFFFF) / 16777216.0f;
+    };
+    const float u0 = random(), u1 = 6.2831853f * random(), u2 = 6.2831853f * random();
+    const float x = std::sqrt(1 - u0) * std::sin(u1), y = std::sqrt(1 - u0) * std::cos(u1),
+                z = std::sqrt(u0) * std::sin(u2), w = std::sqrt(u0) * std::cos(u2);
+    const float m[16] = {1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y), 0,
+                         2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x), 0,
+                         2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y), 0,
+                         0, 0, 0, 1};
+    std::copy(m, m + 16, d.giRotation);
+    ++_giFrames;
+
+    const VkDescriptorBufferInfo rays{_giRays.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorImageInfo atlases[2] = {{VK_NULL_HANDLE, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
+                                              {VK_NULL_HANDLE, _giVisibility.view, VK_IMAGE_LAYOUT_GENERAL}};
+    VkWriteDescriptorSet writes[3] = {};
+    for (uint32_t i = 0; i < 3; ++i) {
+        writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[i].dstSet = _set;
+        writes[i].dstBinding = 1 + i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pBufferInfo = i == 0 ? &rays : nullptr;
+        writes[i].pImageInfo = i == 0 ? nullptr : &atlases[i - 1];
+    }
+    vkUpdateDescriptorSets(_dev.device, 3, writes, 0, nullptr);
 }
 
 void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
@@ -614,6 +761,27 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
         _tlasDirty = false;
         _tlasVersion = gpu.version;
         pass("accelerationStructures");
+    }
+    if (_work.gi) {
+        // Probe rays (reading last frame's probes for further bounces), then
+        // blended into the probes, before shading and reflections read them.
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
+        const uint32_t probes = _giCounts[0] * _giCounts[1] * _giCounts[2];
+        _fn->cmdTraceRays(cmd, &_raygenProbes, &_miss, &_hit, &_callable, _work.giRays, probes, 1);
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 2, sets, 0, nullptr);
+        for (VkPipeline p : _giUpdate) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
+            vkCmdDispatch(cmd, probes, 1, 1);
+        }
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        pass("giProbes");
     }
     if (_work.shadows || _work.reflections) {
         // Last frame's shading pass is done reading the images.

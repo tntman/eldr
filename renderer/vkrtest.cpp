@@ -1238,6 +1238,83 @@ int main()
             frame.rtReflections = true;
             const float on = Render(renderer, scene, frame).At(32, 41, 1);
             Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
+        }
+
+        if (device.rayTracing) {
+            // Global illumination: a white wall at z = 0.5 and, edge-on to the
+            // camera in the x = 0 plane, a red panel whose -x side the sun
+            // lights head-on; the sun only grazes the wall. Bounced light
+            // tints the wall left of the panel red.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto red = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 0.9f;
+            red->baseColor[1] = red->baseColor[2] = 0.0f;
+            red->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = scene.AddMesh();
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, -0.5f, 0, 0.6f, 0.45f,
+                             0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, -0.6f, 0.45f};
+            panel->material = red;
+            AddLight(scene, -1, 0, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image direct = Render(renderer, scene, frame);
+            frame.gi = true;
+            frame.giProbes = 8;
+            Image img, last;
+            int frames = 0;
+            do {
+                last = img;
+                img = Render(renderer, scene, frame);
+                ++frames;
+            } while (!renderer.IsConverged() && frames < 200);
+            const float r = img.At(28, 32, 0), g = img.At(28, 32, 1);
+            Expect(std::abs(direct.At(28, 32, 0) - direct.At(28, 32, 1)) < 1e-3f && r > 1.2f * g && g > 0.0f,
+                   "GI bounces the red panel's light onto the white wall");
+            Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
+            Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+            Render(renderer, scene);
+            Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
+        }
+
+        if (device.rayTracing) {
+            // No light through walls: a closed room (thin walls without
+            // normals, its front one behind the camera's near plane) with
+            // the sun outside; its back wall only sees the room.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto wall = [&](std::array<float, 12> c) {
+                vkr::Mesh *m = scene.AddMesh();
+                m->points = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+                             c[0], c[1], c[2], c[6], c[7], c[8], c[9], c[10], c[11]};
+                m->material = white;
+            };
+            wall({-1, -1, 0.5f, 1, -1, 0.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // back
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, 1, -1.5f, -1, 1, -1.5f});        // front
+            wall({-1, -1, -1.5f, -1, -1, 0.5f, -1, 1, 0.5f, -1, 1, -1.5f});        // left
+            wall({1, -1, -1.5f, 1, -1, 0.5f, 1, 1, 0.5f, 1, 1, -1.5f});            // right
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, -1, 0.5f, -1, -1, 0.5f});        // floor
+            wall({-1, 1, -1.5f, 1, 1, -1.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // ceiling
+            AddLight(scene, -1, 0.3f, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.gi = true;
+            Image img;
+            for (int i = 0; i < 40; ++i) {
+                img = Render(renderer, scene, frame);
+            }
+            float brightest = 0;
+            for (int y = 4; y < 60; y += 4) {
+                for (int x = 4; x < 60; x += 4) {
+                    brightest = std::max(brightest, img.At(x, y, 0));
+                }
+            }
+            Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
         } else {
             std::puts("no ray tracing on this GPU: its tests skipped");
         }

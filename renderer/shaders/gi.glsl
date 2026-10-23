@@ -110,7 +110,7 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     return weights > 1e-6 ? vec4(sum / weights, 1.0) : vec4(0.0);
 }
 
-#ifndef RAY_TRACING
+#ifdef RT_RESULTS
 // mesh.frag: what the ray tracing pass traced for the opaque surface at
 // this pixel. Translucent surfaces lie in front of it (closer than the
 // prepass depth) and have no rays of their own.

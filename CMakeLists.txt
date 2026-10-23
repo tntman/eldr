@@ -19,7 +19,7 @@ find_package(pxr CONFIG REQUIRED)
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
-               tonemap.frag tlas.comp)
+               tonemap.frag tlas.comp gi_update.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
@@ -30,7 +30,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
-foreach(shader rt_pixels.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit)
+foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}

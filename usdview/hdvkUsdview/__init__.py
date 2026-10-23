@@ -17,6 +17,7 @@ PASSES = [
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
     ("accelerationStructures", "Acceleration structures (TLAS)"),
+    ("giProbes", "Global illumination probes"),
     ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
     ("depthOfField", "Depth of field"),
