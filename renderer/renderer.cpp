@@ -111,6 +111,7 @@ constexpr uint32_t kTaaSamples = 16, kTaaMoving = 9;
 
 Renderer::Renderer(Device &device)
     : _dev(device)
+    , _gtao(device)
     , _taa(device)
     , _post(device)
 {
@@ -146,7 +147,7 @@ Renderer::~Renderer()
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
-    for (VkPipeline p : {_pipeline, _shadowPipeline, _skyPipeline, _cullPipeline}) {
+    for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -190,8 +191,8 @@ void Renderer::_CreateDescriptors()
     constexpr VkShaderStageFlags kGeometry = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // Binding 0 is the bindless array, partially bound and indexed by material
     // data. 7..10 are the GPU-driven scene: instances, draw infos, visible
-    // lists and the culled indirect commands.
-    const VkDescriptorSetLayoutBinding bindings[11] = {
+    // lists and the culled indirect commands; 11 is the GTAO result.
+    const VkDescriptorSetLayoutBinding bindings[12] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -203,19 +204,20 @@ void Renderer::_CreateDescriptors()
         {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
-    const VkDescriptorBindingFlags bindingFlags[11] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[12] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 11;
+    flags.bindingCount = 12;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 11;
+    slci.bindingCount = 12;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 3},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 4},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
@@ -289,10 +291,15 @@ void Renderer::_CreatePipelines()
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    // Prepass and shadows write depth; shading (and the sky) only test
+    // against the finished prepass depth.
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_TRUE;
     depth.depthCompareOp = VK_COMPARE_OP_LESS;
+    VkPipelineDepthStencilStateCreateInfo depthReadOnly = depth;
+    depthReadOnly.depthWriteEnable = VK_FALSE;
+    depthReadOnly.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     // Attachments: color, primId, instanceId. Identical blend states, so no
     // independentBlend feature is needed (the sky writes -1 ids).
     VkPipelineColorBlendAttachmentState attachments[3] = {};
@@ -324,41 +331,43 @@ void Renderer::_CreatePipelines()
     ci.pViewportState = &viewport;
     ci.pRasterizationState = &raster;
     ci.pMultisampleState = &multisample;
-    ci.pDepthStencilState = &depth;
+    ci.pDepthStencilState = &depthReadOnly;
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dynamic;
     ci.layout = _layout;
     VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &_pipeline);
 
-    // Shadow: same vertex stage, depth only, slope-scaled bias.
+    // Depth prepass: same vertex stage, depth only. Shadow: plus slope-scaled bias.
     if (r == VK_SUCCESS) {
+        VkPipelineRenderingCreateInfo depthRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        depthRendering.depthAttachmentFormat = kDepthFormat;
+        VkPipelineColorBlendStateCreateInfo noBlend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        VkGraphicsPipelineCreateInfo pci = ci;
+        pci.pNext = &depthRendering;
+        pci.stageCount = 1;
+        pci.pDepthStencilState = &depth;
+        pci.pColorBlendState = &noBlend;
+        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &_prepassPipeline);
+
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
-        VkPipelineRenderingCreateInfo shadowRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        shadowRendering.depthAttachmentFormat = kDepthFormat;
-        VkPipelineColorBlendStateCreateInfo noBlend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         VkPipelineDynamicStateCreateInfo shadowDynamic = dynamic;
         shadowDynamic.dynamicStateCount = 3;
-        VkGraphicsPipelineCreateInfo sci = ci;
-        sci.pNext = &shadowRendering;
-        sci.stageCount = 1;
+        VkGraphicsPipelineCreateInfo sci = pci;
         sci.pRasterizationState = &shadowRaster;
-        sci.pColorBlendState = &noBlend;
         sci.pDynamicState = &shadowDynamic;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowPipeline);
+        if (r == VK_SUCCESS) {
+            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowPipeline);
+        }
     }
 
     // Sky: full-screen triangle at depth 1, drawn after geometry.
     if (r == VK_SUCCESS) {
         VkPipelineShaderStageCreateInfo skyStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, skyVert),
                                                         stage(VK_SHADER_STAGE_FRAGMENT_BIT, skyFrag)};
-        VkPipelineDepthStencilStateCreateInfo skyDepth = depth;
-        skyDepth.depthWriteEnable = VK_FALSE;
-        skyDepth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
         VkGraphicsPipelineCreateInfo kci = ci;
         kci.pStages = skyStages;
         kci.pVertexInputState = &noInput;
-        kci.pDepthStencilState = &skyDepth;
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
@@ -441,6 +450,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    _gtao.Resize(width, height, _depth.view);
     _taa.Resize(width, height, _color.view, _depth.view);
     _post.Resize(width, height, _taa.Output());
     _taaValid = false;
@@ -466,6 +476,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo draws{gpu.draws, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo visible{gpu.visible, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo commands{_commands.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorImageInfo ao{_clampSampler, _gtao.Output(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -489,6 +500,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &draws, nullptr);
     write(9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &visible, nullptr);
     write(10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &commands, nullptr);
+    write(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &ao);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -616,11 +628,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool taa = frame.postProcess && frame.taa;
     float jitteredViewProj[16];
     std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
-    Mat4 unjitter;  // jittered NDC -> unjittered NDC
+    Mat4 unjitter;          // jittered NDC -> unjittered NDC
+    uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..kTaaSamples
     if (taa) {
-        const uint32_t i = (_haltonIndex++ % kTaaSamples) + 1;
-        const float jx = (Halton(i, 2) - 0.5f) * 2.0f / float(_width);
-        const float jy = (Halton(i, 3) - 0.5f) * 2.0f / float(_height);
+        sample = (_haltonIndex++ % kTaaSamples) + 1;
+        const float jx = (Halton(sample, 2) - 0.5f) * 2.0f / float(_width);
+        const float jy = (Halton(sample, 3) - 0.5f) * 2.0f / float(_height);
         for (int r = 0; r < 4; ++r) {  // clip.xy += jitter * clip.w
             jitteredViewProj[r * 4 + 0] += jx * jitteredViewProj[r * 4 + 3];
             jitteredViewProj[r * 4 + 1] += jy * jitteredViewProj[r * 4 + 3];
@@ -743,6 +756,53 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
+    // Depth prepass: the main pass then shades each pixel once, and GTAO
+    // reads the finished depth before it. From here on depth is read-only.
+    constexpr VkPipelineStageFlags2 kDepthTests =
+        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                 VK_PIPELINE_STAGE_2_NONE, 0, kDepthTests,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depthAtt.imageView = _depth.view;
+    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depthAtt.clearValue.depthStencil.depth = frame.clearDepth;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {_width, _height}};
+    ri.layerCount = 1;
+    ri.pDepthAttachment = &depthAtt;
+    vkCmdBeginRendering(_cmd, &ri);
+    // No Y flip: NDC y=-1 lands in memory row 0, which is the bottom row
+    // in GL/Hydra order, so readback needs no flip either.
+    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+    const VkRect2D scissor{{0, 0}, {_width, _height}};
+    vkCmdSetViewport(_cmd, 0, 1, &vp);
+    vkCmdSetScissor(_cmd, 0, 1, &scissor);
+    if (draw) {
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline);
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, jitteredViewProj);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+    }
+    vkCmdEndRendering(_cmd);
+    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                 kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 kDepthTests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+
+    // AO only darkens the dome lighting, so without a dome it is skipped.
+    if (frame.ambientOcclusion && draw && gpu.environment) {
+        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample);
+    } else {
+        _gtao.Clear(_cmd);
+    }
+
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
         ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
@@ -751,11 +811,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
-    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                 VK_PIPELINE_STAGE_2_NONE, 0,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     VkRenderingAttachmentInfo colorAtts[3] = {};
     for (int i = 0; i < 3; ++i) {
@@ -771,27 +826,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const float transparent[4] = {0, 0, 0, 0};
     std::memcpy(colorAtts[0].clearValue.color.float32, frame.postProcess ? transparent : frame.clearColor,
                 sizeof(frame.clearColor));
-    VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    depthAtt.imageView = _depth.view;
-    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAtt.clearValue.depthStencil.depth = frame.clearDepth;
-
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, {_width, _height}};
-    ri.layerCount = 1;
+    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
     ri.colorAttachmentCount = 3;
     ri.pColorAttachments = colorAtts;
-    ri.pDepthAttachment = &depthAtt;
     vkCmdBeginRendering(_cmd, &ri);
-
-    // No Y flip: NDC y=-1 lands in memory row 0, which is the bottom row
-    // in GL/Hydra order, so readback needs no flip either.
-    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
-    const VkRect2D scissor{{0, 0}, {_width, _height}};
     vkCmdSetViewport(_cmd, 0, 1, &vp);
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
+    // GTAO bound its own set; the sky and shading need the scene's again.
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, jitteredViewProj);
@@ -810,15 +854,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
     if (frame.postProcess) {
-        // HDR color and depth (depth marks background) feed the post passes.
+        // HDR color feeds TAA and post (TAA also reads the read-only depth).
         ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                     kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         // TAA weight: 1 without usable history; 1/(n+1) over n history
         // frames, capped at kTaaMoving while the camera moves (0.1) and at
         // kTaaSamples - 1 while it is still (a 16-sample average).
@@ -880,17 +920,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
-    if (frame.postProcess) {
-        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                     kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    } else {
-        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                     VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    }
+    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                 kDepthTests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     // Copy only what the caller asked for, packed one after another.
     struct Output {

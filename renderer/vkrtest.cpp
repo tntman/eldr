@@ -295,6 +295,29 @@ int main()
         }
 
         {
+            // GTAO: a wall (z = 0.5) whose left half is covered by a ledge
+            // 0.2 in front of it, under a uniform dome. The wall right next
+            // to the ledge is occluded; beyond the 0.5 radius it is not, and
+            // neither is the ledge's own flat face.
+            vkr::Scene scene(&device);
+            scene.AddDome();
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.5f);
+            material->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = material;
+            AddQuad(scene, -1, -1, 0, 1, 0.3f)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.ambientOcclusion = false;
+            const Image off = Render(renderer, scene, frame);
+            auto ratio = [&](int x) { return on.At(x, 32, 0) / off.At(x, 32, 0); };
+            Expect(ratio(34) < 0.9f, "GTAO darkens the wall next to the ledge");
+            Expect(ratio(60) > 0.98f, "GTAO leaves the open wall alone");
+            Expect(ratio(16) > 0.98f, "GTAO leaves the flat ledge alone");
+        }
+
+        {
             // Shadow: occluder at z = -0.5 in front of a ground quad at z = 0.5,
             // light from the camera side tilted towards +x, so the shadow lands
             // one unit to the left (-x) of the occluder.

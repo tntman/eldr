@@ -30,6 +30,7 @@ layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(set = 0, binding = 6) uniform sampler2D brdfLut;
+layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;  // GTAO, 1 = unoccluded
 
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
@@ -111,6 +112,15 @@ float Shadow(vec3 p, vec3 ng, vec3 l)
         }
     }
     return sum / 9.0;
+}
+
+// Interreflections brighten occlusion on light surfaces (Jimenez 2016).
+vec3 MultiBounce(float visibility, vec3 albedo)
+{
+    vec3 a = 2.0404 * albedo - 0.3324;
+    vec3 b = -4.7951 * albedo + 0.6417;
+    vec3 c = 2.7552 * albedo + 0.6903;
+    return max(vec3(visibility), ((visibility * a + b) * visibility + c) * visibility);
 }
 
 // Same SH9 basis order as BuildEnvironment.
@@ -202,7 +212,12 @@ void main()
         vec3 Favg = f0 + (1.0 - f0) / 21.0;
         vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
         vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
-        color += occlusion * (FssEss * specular + (Fms * Ems + kd) * Lavg);
+        // Material and screen-space occlusion; specular occlusion derived
+        // from it (Lagarde 2014), as in Filament.
+        float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
+        float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
+        color += FssEss * specular * MultiBounce(specularAO, f0)
+               + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
     }
     outColor = vec4(color, 1.0);
     outPrimId = inPrimId;

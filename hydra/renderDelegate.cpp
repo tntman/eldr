@@ -73,13 +73,18 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     return HdAovDescriptor();
 }
 
-// Shown in usdview's Hydra Settings menu; defaults match vkr::PostProcess::Settings.
+// Shown in usdview's Hydra Settings menu; defaults match vkr::Renderer::Frame.
 HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() const
 {
-    const vkr::PostProcess::Settings defaults;
+    const vkr::Renderer::Frame frame{};
+    const vkr::PostProcess::Settings &defaults = frame.post;
     return {
-        {"Post Processing (exposure, bloom, tonemap)", HdVkRenderSettingsTokens->postProcess, VtValue(true)},
-        {"Temporal Anti-Aliasing", HdVkRenderSettingsTokens->taa, VtValue(true)},
+        {"Post Processing (exposure, bloom, tonemap)", HdVkRenderSettingsTokens->postProcess,
+         VtValue(frame.postProcess)},
+        {"Temporal Anti-Aliasing", HdVkRenderSettingsTokens->taa, VtValue(frame.taa)},
+        {"Ambient Occlusion (GTAO)", HdVkRenderSettingsTokens->ambientOcclusion,
+         VtValue(frame.ambientOcclusion)},
+        {"Ambient Occlusion Radius", HdVkRenderSettingsTokens->aoRadius, VtValue(frame.aoRadius)},
         {"Auto Exposure", HdVkRenderSettingsTokens->autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", HdVkRenderSettingsTokens->exposureCompensation,
          VtValue(defaults.exposureCompensation)},

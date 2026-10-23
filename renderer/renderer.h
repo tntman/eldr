@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device.h"
+#include "gtao.h"
 #include "post.h"
 #include "scene.h"
 #include "taa.h"
@@ -24,6 +25,8 @@ public:
         bool showEnvironment = true;  // draw the dome texture as background
         bool postProcess = true;      // false: color is the raw linear HDR scene
         bool taa = true;              // with postProcess: jittered + temporally resolved
+        bool ambientOcclusion = true; // GTAO on the dome (image-based) lighting
+        float aoRadius = 0.5f;        // world units
         PostProcess::Settings post;
     };
 
@@ -66,6 +69,7 @@ private:
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
 
     Device &_dev;
+    Gtao _gtao;
     TemporalAA _taa;
     PostProcess _post;
     // TAA state: frames in the history, jitter sequence, last camera.
@@ -85,7 +89,8 @@ private:
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
-    VkPipeline _pipeline = VK_NULL_HANDLE;
+    VkPipeline _prepassPipeline = VK_NULL_HANDLE;  // depth only
+    VkPipeline _pipeline = VK_NULL_HANDLE;         // shading, depth read-only
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;

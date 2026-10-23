@@ -67,6 +67,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");
     need(f12.shaderSampledImageArrayNonUniformIndexing,
          "shaderSampledImageArrayNonUniformIndexing");
+    need(f12.separateDepthStencilLayouts, "separateDepthStencilLayouts");
     need(f13.dynamicRendering, "dynamicRendering");
     need(f13.synchronization2, "synchronization2");
     return missing;
@@ -176,6 +177,7 @@ Device::Device()
         f12.runtimeDescriptorArray = VK_TRUE;
         f12.descriptorBindingPartiallyBound = VK_TRUE;
         f12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        f12.separateDepthStencilLayouts = VK_TRUE;
         VkPhysicalDeviceFeatures2 f{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &f12};
         f.features.multiDrawIndirect = VK_TRUE;
         f.features.drawIndirectFirstInstance = VK_TRUE;

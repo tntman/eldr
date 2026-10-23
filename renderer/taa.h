@@ -17,8 +17,8 @@ public:
     // the next Resize. History starts empty.
     void Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth);
 
-    // Expects color and depth in SHADER_READ_ONLY_OPTIMAL and leaves
-    // Output() there too. `alpha` is the current frame's blend weight
+    // Expects color in SHADER_READ_ONLY_OPTIMAL, depth in
+    // DEPTH_READ_ONLY_OPTIMAL, and leaves Output() in SHADER_READ_ONLY_OPTIMAL. `alpha` is the current frame's blend weight
     // (1 ignores history); `reprojection` maps current jittered NDC to the
     // previous frame's clip space (row-vector order).
     void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha);

@@ -23,6 +23,9 @@ layout(location = 4) flat out uint outMaterial;
 layout(location = 5) flat out int outPrimId;
 layout(location = 6) flat out int outInstanceId;
 
+// The depth prepass and the main pass must produce bit-identical depth.
+invariant gl_Position;
+
 void main()
 {
     Instance inst = instances[visible[gl_InstanceIndex]];

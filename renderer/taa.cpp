@@ -115,7 +115,8 @@ void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkIm
     Check(vkAllocateDescriptorSets(_dev.device, &ai, &_set), "vkAllocateDescriptorSets");
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     const VkDescriptorImageInfo images[3] = {
-        {_nearest, color, ro}, {_linear, _history.view, ro}, {_nearest, depth, ro}};
+        {_nearest, color, ro}, {_linear, _history.view, ro},
+        {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}};
     VkWriteDescriptorSet writes[3] = {};
     for (uint32_t i = 0; i < 3; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

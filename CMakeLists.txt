@@ -16,8 +16,8 @@ find_package(pxr CONFIG REQUIRED)
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
-foreach(shader mesh.vert mesh.frag fullscreen.vert sky.frag cull.comp taa.frag
-               histogram.comp exposure.comp bloom_down.frag bloom_up.frag tonemap.frag)
+foreach(shader mesh.vert mesh.frag fullscreen.vert sky.frag cull.comp gtao.frag gtao_denoise.frag
+               taa.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag tonemap.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
@@ -29,7 +29,7 @@ endforeach()
 
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
-    renderer/post.cpp renderer/taa.cpp renderer/fullscreen.cpp ${shader_incs})
+    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/fullscreen.cpp ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
