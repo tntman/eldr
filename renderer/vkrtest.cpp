@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <tuple>
 #include <vector>
 
 static int failures = 0;
@@ -1241,6 +1242,160 @@ int main()
             const Image off = Render(renderer, scene, frame);
             Expect(near(off, 40, 16, 0.25f, 0.25f, 0.25f) && near(off, 56, 4, 0.25f, 0.25f, 0.25f),
                    "Frame::proceduralTextures off: noise reads 0 (its pivot)");
+        }
+
+        {
+            // AgX tonemapping: auto-exposure puts a uniform screen at middle
+            // gray, which each curve maps to its own value (none: as is).
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0, 1.0f);
+            scene.Commit();
+            using T = vkr::PostProcess::Settings::Tonemapper;
+            for (auto [tonemapper, expected, what] :
+                 {std::tuple{T::Aces, 0.106f, "tonemap: ACES(0.18) = 0.106"},
+                  std::tuple{T::Agx, 0.214f, "tonemap: AgX(0.18) = 0.214"},
+                  std::tuple{T::AgxPunchy, 0.097f, "tonemap: AgX punchy(0.18) = 0.097"},
+                  std::tuple{T::None, 0.18f, "tonemap: none(0.18) = 0.18"}}) {
+                vkr::Renderer post(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.taa = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = tonemapper;
+                Expect(std::abs(Render(post, scene, frame).At(32, 32, 1) - expected) < 0.01f, what);
+            }
+        }
+
+        {
+            // Lens distortion: barrel (k1 > 0) bows a vertical strip right
+            // of the centre into a ")", and ids and depth move with the colour
+            // (row 55 still looks inside the unwidened view).
+            vkr::Scene scene(&device);
+            vkr::Mesh *strip = AddEmitter(scene, 0.4f, -1, 0.6f, 1, 0, 1.0f);
+            strip->primId = 7;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.distortion.k1 = 0.5f;
+            const Image warped = Render(renderer, scene, frame);
+            frame.lensDistortion = false;
+            const Image straight = Render(renderer, scene, frame);
+            auto centre = [](const Image &img, int y) {
+                float sum = 0, count = 0;
+                for (int x = 0; x < 64; ++x) {
+                    const bool lit = img.At(x, y, 0) > 0.5f;
+                    sum += lit ? float(x) : 0.0f;
+                    count += lit ? 1.0f : 0.0f;
+                }
+                return count > 0 ? sum / count : -1.0f;
+            };
+            Expect(std::abs(centre(straight, 32) - 47.5f) < 0.6f && std::abs(centre(straight, 63) - 47.5f) < 0.6f,
+                   "distortion off: the strip stays straight");
+            Expect(std::abs(centre(warped, 32) - 46.0f) < 1.0f && std::abs(centre(warped, 55) - 43.5f) < 1.0f,
+                   "barrel distortion bows the strip");
+            Expect(warped.Prim(46, 32) == 7 && warped.Prim(51, 32) == -1 && warped.depth[32 * 64 + 51] == 1.0f &&
+                       std::abs(warped.depth[32 * 64 + 46] - 0.5f) < 1e-3f,
+                   "ids and depth are warped with the colour");
+
+            // The warp's reach: a corner of k1 = 0.1 looks 1.2 times as far
+            // out; a fisheye's 45 degree half view reaches tan(1 rad).
+            vkr::LensDistortion::Params p;
+            p.k1 = 0.1f;
+            Expect(std::abs(vkr::LensDistortion::Overscan(p, 1.0f) - 1.2f) < 1e-3f, "overscan of a barrel lens");
+            p = {};
+            p.fisheye = true;
+            const float edge[2] = {1, 0};
+            float source[2];
+            Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
+                   "equidistant fisheye");
+        }
+
+        {
+            // Blend shape motion: a skinned quad (one joint at rest) whose
+            // blend shape lifts its top corners by 0.4. At row 40 (y = 0.27)
+            // the surface rose 0.22 between weight 0 and 1 (motion vector
+            // -0.11 uv); back at weight 0 it sank 0.31 (+0.15).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+            quad->jointCount = 1;
+            quad->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            quad->blendOffsets = {0, 0.4f, 0, 0};
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                quad->jointIndices.insert(quad->jointIndices.end(), {0, 0, 0, 0});
+                quad->jointWeights.insert(quad->jointWeights.end(), {1, 0, 0, 0});
+                quad->blendRanges.insert(quad->blendRanges.end(), {0u, quad->points[c * 3 + 1] > 0 ? 1u : 0u});
+            }
+            quad->blendShapeCount = 1;
+            quad->blendWeights = {0.0f};
+            scene.Commit();
+            Render(renderer, scene);
+            auto weight = [&](float w, bool motion) {
+                quad->blendWeights = {w};
+                quad->jointsDirty = true;
+                scene.Commit();
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.blendShapeMotion = motion;
+                return Render(renderer, scene, frame).Vel(32, 40, 1);
+            };
+            Expect(std::abs(weight(1.0f, true) + 0.11f) < 0.005f, "blend shape motion: rising");
+            Expect(std::abs(weight(0.0f, true) - 0.153f) < 0.005f, "blend shape motion: sinking");
+            Expect(std::abs(weight(1.0f, false)) < 1e-4f, "Frame::blendShapeMotion off: no blend shape motion");
+        }
+
+        {
+            // Extra AOVs and Cryptomatte: a quad at z = 0.5 facing the camera
+            // (identity view), uv across it; nothing around it.
+            Expect(vkr::CryptomatteHash("The quick brown fox jumps over the lazy dog") == 0x2e4ff723u &&
+                       vkr::CryptomatteHash("") == 0x00800000u,
+                   "Cryptomatte ids: MurmurHash3, no denormal floats");
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
+            quad->primId = 3;
+            auto material = std::make_shared<vkr::Material>();
+            const float base[3] = {0.2f, 0.4f, 0.6f}, emissive[3] = {1.0f, 0.5f, 0.25f};
+            std::copy(base, base + 3, material->baseColor);
+            std::copy(emissive, emissive + 3, material->emissive);
+            quad->material = material;
+            scene.Commit();
+            std::vector<std::vector<float>> aovs(vkr::Aovs::kCount);
+            vkr::Renderer::Targets out;
+            for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
+                aovs[k].assign(64 * 64 * vkr::Aovs::Components(vkr::Aovs::Kind(k)), -7.0f);
+                out.aovs[k] = aovs[k].data();
+            }
+            const uint32_t ids[8] = {0, 0, 0, 0, 0, 0, vkr::CryptomatteHash("/quad"), vkr::CryptomatteHash("/mat")};
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.cryptomatte = ids;
+            frame.cryptomatteIds = 4;
+            renderer.Render(scene, frame, out);
+            auto at = [&](vkr::Aovs::Kind k, int x, int y, int c) {
+                return aovs[k][(y * 64 + x) * vkr::Aovs::Components(k) + c];
+            };
+            auto near = [](float a, float b) { return std::abs(a - b) < 2e-3f; };
+            using A = vkr::Aovs;
+            Expect(near(at(A::kNormal, 32, 32, 2), -1.0f) && near(at(A::kNormalEye, 32, 32, 2), -1.0f),
+                   "AOV normal and Neye face the camera");
+            Expect(near(at(A::kPositionEye, 32, 32, 2), 0.5f) && near(at(A::kCameraDepth, 32, 32, 0), 0.5f) &&
+                       near(at(A::kPositionEye, 32, 32, 0), 1.0f / 64.0f),
+                   "AOV Peye and cameraDepth");
+            Expect(near(at(A::kSt, 32, 32, 0), 0.5f + 1.0f / 64.0f) && near(at(A::kSt, 32, 32, 1), 0.5f + 1.0f / 64.0f),
+                   "AOV primvars:st");
+            Expect(near(at(A::kAlbedo, 32, 32, 1), 0.4f) && near(at(A::kEmission, 32, 32, 2), 0.25f),
+                   "AOV albedo and emission");
+            float object, matte;
+            std::memcpy(&object, &ids[6], 4);
+            std::memcpy(&matte, &ids[7], 4);
+            Expect(at(A::kCryptoObject, 32, 32, 0) == object && at(A::kCryptoObject, 32, 32, 1) == 1.0f &&
+                       at(A::kCryptoMaterial, 32, 32, 0) == matte && at(A::kCryptoMaterial, 32, 32, 2) == 0.0f,
+                   "Cryptomatte object and material ids at coverage 1");
+            bool empty = true;
+            for (uint32_t k = 0; k < A::kCount; ++k) {
+                for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
+                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                }
+            }
+            Expect(empty, "AOVs are 0 where nothing was drawn");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

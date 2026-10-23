@@ -1371,6 +1371,7 @@ void Scene::Commit()
     _gpu.jointBounds = _jointBoundsPool.buffer;
     _gpu.blendOffsets = _blendOffsets.buffer;
     _gpu.blendWeights = _blendWeights.buffer;
+    _gpu.blendWeightsBytes = _blendWeights.size;
     _gpu.drawCount = uint32_t(slots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;

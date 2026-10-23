@@ -1,6 +1,8 @@
 #pragma once
 
+#include "aov.h"
 #include "device.h"
+#include "distortion.h"
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
@@ -68,6 +70,24 @@ public:
         PostProcess::Settings post;
         // Procedural textures: MaterialX noise in material programs (off: it reads 0).
         bool proceduralTextures = true;
+        // Lens distortion: the camera's lensDistortion:* warp the finished
+        // frame, ids and depth included (distortion.h); the caller renders
+        // the view distortion.overscan times wider.
+        bool lensDistortion = true;
+        LensDistortion::Params distortion;
+        // Blend shape motion: skinned meshes' motion vectors (TAA, motion
+        // blur) include their blend shapes' change since the last frame.
+        bool blendShapeMotion = true;
+        // Extra AOVs (Targets::aovs): world to camera (Neye, Peye,
+        // cameraDepth; row-vector order) and per primId its Cryptomatte
+        // object and material ids (CryptomatteHash), 2 per id.
+        bool extraAovs = true;
+        float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const uint32_t *cryptomatte = nullptr;
+        uint32_t cryptomatteIds = 0;
+        // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
+        // and depth go to the app's OpenGL on the GPU instead of Targets.
+        bool shareFrame = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -78,6 +98,8 @@ public:
         int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
         int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
         uint16_t *velocity = nullptr;   // object motion vectors, two halves per pixel (see mesh.frag)
+        // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
+        float *aovs[Aovs::kCount] = {};
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -118,6 +140,17 @@ public:
         double exposure = 1;      // the tonemap's multiplier of scene radiance
     };
     const Stats &GetStats() const { return _stats; }
+
+    // GPU sharing (interop.h): the last frame's images, in
+    // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
+    // has it (RGBA16F) and depth (D32); null before a frame.
+    VkImage ColorImage() const { return _frameColor; }
+    VkImage DepthImage() const { return _frameColor ? _depth.image : VK_NULL_HANDLE; }
+    uint32_t Width() const { return _width; }
+    uint32_t Height() const { return _height; }
+    // Copies the last frame's outputs (as Render's, extra AOVs aside) to
+    // host memory, for consumers that ask after Render.
+    void Read(const Targets &out);
 
 private:
     void _CreateDescriptors();
@@ -181,7 +214,7 @@ private:
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     // GPU timestamps: one at the start, then one closing each pass.
-    static constexpr uint32_t kMaxTimestamps = 16;
+    static constexpr uint32_t kMaxTimestamps = 32;
     VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes
@@ -201,6 +234,17 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
+    LensDistortion _distortion{_dev};
+    // Blend shape motion: last frame's blend shape weights, copied after
+    // each frame's draws from the scene's pool (_prevBlendSource), which
+    // the next frame's motion vectors read while it is the same buffer.
+    // ponytail: a mesh whose weights moved within the pool (its shape count
+    // changed) reads another mesh's for one frame.
+    Buffer _prevBlendWeights;
+    VkBuffer _prevBlendSource = VK_NULL_HANDLE;
+    bool _prevBlendValid = false;
+    Aovs _aovs{_dev};  // extra AOVs
+    VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
 };
 
 } // namespace vkr

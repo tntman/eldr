@@ -361,8 +361,9 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.visible = this->IsVisible();
     }
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
+        this->SetMaterialId(sceneDelegate->GetMaterialId(id));  // Cryptomatte's material ids
         const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(
-            HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
+            HdPrimTypeTokens->material, this->GetMaterialId()));
         m.material = material ? material->Get() : nullptr;
     }
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;

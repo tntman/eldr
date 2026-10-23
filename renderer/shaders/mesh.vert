@@ -15,13 +15,16 @@ layout(location = 3) in vec4 inVertexColor;
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
     uint listBase;  // which list of instance indices (kVisibleLists); kFreeSlot: all instances
-    uint motion;    // main pass: 1 = write outPrevWorldPos, 2 = same without last frame's joints
+    uint motion;    // main pass: 1 = write outPrevWorldPos, 2 = same without last frame's joints;
+                    // + 4: with last frame's blend shape weights
 } pc;
 
 // Last frame's joint matrices (copied before skin.comp rebuilds them) and
 // rows of rigid meshes that moved: where each vertex was, for motion vectors.
 layout(std430, set = 0, binding = 26) readonly buffer PrevJoints { mat4 prevJoints[]; };
 layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
+// Last frame's blend shape weights (copied after each frame's draws).
+layout(std430, set = 0, binding = 60) readonly buffer PrevBlendWeights { float prevBlendWeights[]; };
 
 // Crowds are bound by what the vertex stage exports, so the outputs are
 // packed and the depth passes (built with DEPTH_ONLY) export only what
@@ -162,7 +165,7 @@ void main()
     DrawInfo d = draws[inst.draw];
     mat4 model = InstanceTransform(inst);
     mat3 normalMatrix;
-    vec3 position = inPosition;
+    vec3 position = inPosition, prevPosition = inPosition;
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {
@@ -180,13 +183,16 @@ void main()
             uint weights = d.blendWeights + (d.blendPerInstance != 0u ? uint(inst.index) * d.blendShapes : 0u);
             for (uint k = 0u; k < v.blend.y; ++k) {
                 vec4 o = blendOffsets[v.blend.x + k];
-                position += o.xyz * blendWeights[weights + min(uint(o.w), d.blendShapes - 1u)];
+                uint weight = weights + min(uint(o.w), d.blendShapes - 1u);
+                position += o.xyz * blendWeights[weight];
+#ifndef DEPTH_ONLY
+                prevPosition += o.xyz * ((pc.motion & 4u) != 0u ? prevBlendWeights[weight] : blendWeights[weight]);
+#endif
             }
         }
         model = SkinMatrix(s, w, s2, inst.joints, false);
 #ifndef DEPTH_ONLY
-        // ponytail: last frame's blend shape weights aren't kept.
-        prevModel = pc.motion == 1u ? SkinMatrix(s, w, s2, inst.joints, true) : model;
+        prevModel = (pc.motion & 3u) == 1u ? SkinMatrix(s, w, s2, inst.joints, true) : model;
 #endif
         normalMatrix = mat3(model);  // ponytail: no inverse-transpose for scaled joints
     } else {
@@ -198,7 +204,7 @@ void main()
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
     outUv = inUv;
 #ifndef DEPTH_ONLY
-    vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(position, 1.0)).xyz : world.xyz;
+    vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(prevPosition, 1.0)).xyz : world.xyz;
     outWorldPos = vec4(world.xyz, prevWorld.x);
     outNormal = vec4(normalMatrix * inNormal, prevWorld.y);
     outColor = vec4(d.vertexColors != 0u ? inVertexColor.rgb : d.color.rgb, prevWorld.z);

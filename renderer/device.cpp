@@ -200,11 +200,26 @@ Device::Device()
             return std::strcmp(e.extensionName, budget) == 0;
         });
 
+        // Optional: GPU sharing with OpenGL (usdview), see interop.h.
+        auto has = [&](const char *name) {
+            return std::any_of(extensions.begin(), extensions.end(),
+                               [&](const VkExtensionProperties &e) { return std::strcmp(e.extensionName, name) == 0; });
+        };
+        const char *win32[2] = {"VK_KHR_external_memory_win32", "VK_KHR_external_semaphore_win32"};
+        externalWin32 = has(win32[0]) && has(win32[1]);
+        std::vector<const char *> enabled;
+        if (memoryBudget) {
+            enabled.push_back(budget);
+        }
+        if (externalWin32) {
+            enabled.insert(enabled.end(), win32, win32 + 2);
+        }
+
         VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f};
         dci.queueCreateInfoCount = 1;
         dci.pQueueCreateInfos = &qci;
-        dci.enabledExtensionCount = memoryBudget ? 1 : 0;
-        dci.ppEnabledExtensionNames = &budget;
+        dci.enabledExtensionCount = uint32_t(enabled.size());
+        dci.ppEnabledExtensionNames = enabled.data();
         Check(vkCreateDevice(physical, &dci, nullptr, &device), "vkCreateDevice");
         vkGetDeviceQueue(device, queueFamily, 0, &queue);
 
@@ -240,7 +255,7 @@ void Device::_Release()
 }
 
 VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
-                                VkMemoryPropertyFlags preferred, bool texture)
+                                VkMemoryPropertyFlags preferred, bool texture, const void *next)
 {
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(physical, &mp);
@@ -248,7 +263,7 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
         for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
             if ((req.memoryTypeBits & (1u << i)) &&
                 (mp.memoryTypes[i].propertyFlags & wanted) == wanted) {
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, next};
                 ai.allocationSize = req.size;
                 ai.memoryTypeIndex = i;
                 VkDeviceMemory memory = VK_NULL_HANDLE;

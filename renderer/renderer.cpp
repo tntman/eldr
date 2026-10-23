@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <functional>
 #include <tuple>
 #include <vector>
 
@@ -274,6 +275,7 @@ Renderer::~Renderer()
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
     _dev.Destroy(_prevJoints);
+    _dev.Destroy(_prevBlendWeights);
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
@@ -339,9 +341,9 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars.
+    // and vertex-rate primvars; 60 last frame's blend shape weights.
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[33] = {
+    const VkDescriptorSetLayoutBinding bindings[34] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -375,20 +377,21 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[33] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[34] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 33;
+    flags.bindingCount = 34;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 33;
+    slci.bindingCount = 34;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -773,6 +776,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo prevBlendWeights{
+        _prevBlendWeights.buffer ? _prevBlendWeights.buffer : gpu.blendWeights, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -822,6 +827,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevBlendWeights, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1185,14 +1191,15 @@ uint32_t Renderer::VisibleInstances() const
     return total;
 }
 
-// ponytail: synchronous, one frame in flight, CPU readback every frame.
-// GL interop (step 7) removes the readback; frames in flight come with it.
+// ponytail: synchronous, one frame in flight. The Hydra layer's GPU sharing
+// (interop.h) skips the readback; frames in flight would come next.
 void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
 {
     if (frame.width == 0 || frame.height == 0) {
         return;
     }
     const auto cpuStart = std::chrono::steady_clock::now();
+    _frameColor = VK_NULL_HANDLE;
     if (frame.width != _width || frame.height != _height) {
         _Resize(frame.width, frame.height);
     }
@@ -1297,6 +1304,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
+    // Blend shape motion: last frame's weights, kept like the joints.
+    const bool blendMotion = frame.objectMotion && frame.blendShapeMotion && gpu.blendWeightsBytes > 0;
+    const bool prevBlend = blendMotion && _prevBlendValid && _prevBlendSource == gpu.blendWeights &&
+                           _prevBlendWeights.size >= gpu.blendWeightsBytes;
+    if (blendMotion && gpu.blendWeightsBytes > _prevBlendWeights.size) {
+        _dev.Destroy(_prevBlendWeights);
+        _prevBlendWeights = _dev.CreateDeviceBuffer(gpu.blendWeightsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                                               VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     _lastDrawCount = draw ? gpu.drawCount : 0;
@@ -1570,8 +1586,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
     // GTAO bound its own set; the sky and shading need the scene's again.
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-    // Motion vectors: 1 with last frame's joints, 2 without, 0 none (mesh.vert).
-    const uint32_t motion = !frame.objectMotion ? 0 : prevJoints ? 1 : 2;
+    // Motion vectors: 1 with last frame's joints, 2 without, 0 none; + 4
+    // with last frame's blend shape weights (mesh.vert).
+    const uint32_t motion = !frame.objectMotion ? 0 : (prevJoints ? 1 : 2) | (prevBlend ? 4 : 0);
     vkCmdSetDepthWriteEnable(_cmd, frame.depthPrepass ? VK_FALSE : VK_TRUE);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline[0]);
@@ -1619,6 +1636,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
     }
     pass("shading");
+    // Blend shape motion: this frame's weights are the next one's last.
+    _prevBlendValid = blendMotion && draw;
+    if (_prevBlendValid) {
+        VkMemoryBarrier2 drawn{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        // After the draws read the copy; the weights' upload is done too.
+        drawn.srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT;
+        drawn.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        drawn.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        drawn.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &drawn;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+        const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
+        vkCmdCopyBuffer(_cmd, gpu.blendWeights, _prevBlendWeights.buffer, 1, &all);
+        _prevBlendSource = gpu.blendWeights;
+    }
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1748,6 +1782,40 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
+    // Extra AOVs (aov.h), before the lens bends depth and the ids.
+    if (frame.extraAovs && Aovs::Any(out.aovs)) {
+        Aovs::Params params;
+        std::memcpy(params.view, frame.view, sizeof(params.view));
+        std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
+        params.cryptomatte = frame.cryptomatte;
+        params.cryptomatteIds = frame.cryptomatteIds;
+        const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
+        std::function<void()> geometry;
+        if (pipelines) {
+            geometry = [&] {
+                vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                PushDraw(_cmd, _layout, jitteredViewProj, 0);
+                vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+                vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, 15);
+            };
+        }
+        _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, out.aovs,
+                     geometry);
+        pass("aovs");
+    }
+
+    // Lens distortion warps everything read back.
+    if (frame.lensDistortion && frame.distortion.Active()) {
+        const bool post = frame.postProcess;
+        _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
+                           post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
+                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth);
+        pass("lensDistortion");
+    }
+
+    _frameColor = frame.postProcess ? _post.Output() : _color.image;
+
     // Copy only what the caller asked for, packed one after another.
     struct Output {
         VkImage image;
@@ -1809,6 +1877,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _width * _height);
         }
     }
+    if (frame.extraAovs) {
+        _aovs.Read(out.aovs);
+    }
 
     // What the camera drew: the culled commands' instances and triangles.
     const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
@@ -1837,6 +1908,60 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+}
+
+// As Render's readback, from the images it left in TRANSFER_SRC_OPTIMAL.
+void Renderer::Read(const Targets &out)
+{
+    if (!_frameColor) {
+        return;
+    }
+    const std::pair<VkImage, void *> outputs[5] = {{_frameColor, out.color}, {_depth.image, out.depth},
+                                                   {_primId.image, out.primId}, {_instanceId.image, out.instanceId},
+                                                   {_velocity.image, out.velocity}};
+    const VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
+    Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
+    VkDeviceSize offsets[5] = {}, offset = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (outputs[i].second) {
+            offsets[i] = offset;
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = offset;
+            copy.imageSubresource = {i == 1 ? VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT)
+                                            : VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT), 0, 0, 1};
+            copy.imageExtent = {_width, _height, 1};
+            vkCmdCopyImageToBuffer(_cmd, outputs[i].first, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _readback.buffer, 1,
+                                   &copy);
+            offset += bytesPerPixel[i] * _width * _height;
+        }
+    }
+    VkMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    toHost.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &toHost;
+    vkCmdPipelineBarrier2(_cmd, &dep);
+    Check(vkEndCommandBuffer(_cmd), "vkEndCommandBuffer");
+    VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+    cbi.commandBuffer = _cmd;
+    VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;
+    Check(vkQueueSubmit2(_dev.queue, 1, &si, _fence), "vkQueueSubmit2");
+    Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+    Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
+    const auto *src = static_cast<const uint8_t *>(_readback.mapped);
+    for (int i = 0; i < 5; ++i) {
+        if (outputs[i].second) {
+            std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _width * _height);
+        }
+    }
 }
 
 } // namespace vkr

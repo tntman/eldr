@@ -1,0 +1,149 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Lens distortion: a grid of posts and beams seen through cameras with
+# HdCamera's lensDistortion:* parameters. No USD schema has them; custom
+# attributes of those names reach HdCamera through UsdImaging.
+#   usdenv usdrecord --renderer Eldr --camera /cam distortion.usda out.png
+# /cam is a barrel lens, /pincushion the opposite, /fisheye an equidistant
+# fisheye and /plain the same view undistorted.
+
+def Camera "plain"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Camera "cam"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    float lensDistortion:k1 = 0.12
+    float lensDistortion:k2 = 0.02
+}
+
+def Camera "pincushion"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    float lensDistortion:k1 = -0.08
+}
+
+def Camera "fisheye"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    uniform token lensDistortion:type = "fisheye"
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.5, 0.6, 0.8)
+    float inputs:intensity = 0.5
+}
+
+def Mesh "floor"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-20, 0, -20), (-20, 0, 20), (20, 0, 20), (20, 0, -20)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+}
+
+def Xform "grid"
+{
+    def Cube "post0"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (-6, 2, -2)
+        double3 xformOp:scale = (1, 13.3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+
+    def Cube "post1"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (-3, 2, -2)
+        double3 xformOp:scale = (1, 13.3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+
+    def Cube "post2"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (0, 2, -2)
+        double3 xformOp:scale = (1, 13.3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+
+    def Cube "post3"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (3, 2, -2)
+        double3 xformOp:scale = (1, 13.3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+
+    def Cube "post4"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (6, 2, -2)
+        double3 xformOp:scale = (1, 13.3, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.8, 0.2, 0.2)]
+    }
+
+    def Cube "beam0"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (0, 0.5, -2)
+        double3 xformOp:scale = (45, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.2, 0.4, 0.8)]
+    }
+
+    def Cube "beam1"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (0, 2, -2)
+        double3 xformOp:scale = (45, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.2, 0.4, 0.8)]
+    }
+
+    def Cube "beam2"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (0, 3.5, -2)
+        double3 xformOp:scale = (45, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.2, 0.4, 0.8)]
+    }
+
+    def Cube "beam3"
+    {
+        double size = 0.3
+        double3 xformOp:translate = (0, 5, -2)
+        double3 xformOp:scale = (45, 1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        color3f[] primvars:displayColor = [(0.2, 0.4, 0.8)]
+    }
+}

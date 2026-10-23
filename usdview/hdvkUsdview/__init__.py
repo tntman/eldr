@@ -21,6 +21,8 @@ PASSES = [
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
     ("post", "Bloom, exposure, tonemap"),
+    ("aovs", "Extra AOVs"),
+    ("lensDistortion", "Lens distortion"),
     ("readback", "Readback to Hydra"),
 ]
 
@@ -36,6 +38,7 @@ def Rows(stats):
             ("GPU", ms("gpuTimeMs")),
             ("Render call (CPU, waits for GPU)", ms("renderTimeMs")),
             ("Scene upload (CPU)", ms("commitTimeMs")),
+            ("Frame to the viewport", "GPU (OpenGL)" if stats.get("frameSharing") == "OpenGL" else "CPU readback"),
             ("GPU passes", None)]
     passes = stats.get("gpuPassMs", {})
     rows += [(label, "%.2f ms" % passes[key]) for key, label in PASSES if key in passes]

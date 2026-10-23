@@ -5,6 +5,7 @@
 #include "pxr/imaging/hd/renderDelegate.h"
 
 #include <memory>
+#include <string>
 
 namespace vkr {
 class Device;
@@ -46,15 +47,32 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
-    ((proceduralTextures, "hdvk:proceduralTextures"))
+    ((proceduralTextures, "hdvk:proceduralTextures"))        \
+    ((tonemapper, "hdvk:tonemapper"))                        \
+    ((lensDistortion, "hdvk:lensDistortion"))                \
+    ((blendShapeMotion, "hdvk:blendShapeMotion"))            \
+    ((extraAovs, "hdvk:extraAovs"))                          \
+    ((shareFrame, "hdvk:shareFrame"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+
+// AOVs of HdVk's own beyond HdAovTokens: base colour, emission and
+// Cryptomatte's first layer (ranks 0 and 1) of object and material ids.
+#define HDVK_AOV_TOKENS                           \
+    (albedo)                                                 \
+    (emission)                                               \
+    ((cryptoObject, "CryptoObject00"))                       \
+    ((cryptoMaterial, "CryptoMaterial00"))
+
+TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
 
 class HdVkTextureCache;
+class HdVkGLInterop;
+class Hgi;
 
 class HdVkRenderDelegate final : public HdRenderDelegate
 {
@@ -94,6 +112,20 @@ public:
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
 
+    // Cryptomatte manifests of the last frame with those AOVs (JSON: name
+    // to hex id), reported in GetRenderStats()["cryptomatte"].
+    void SetCryptomatteManifests(std::string object, std::string material);
+
+    // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
+    void SetDrivers(HdDriverVector const &drivers) override;
+    // Hands frames to the app's OpenGL on the GPU (made on first use, with
+    // its context current); null when that can't work.
+    HdVkGLInterop *GLInterop();
+    // After it failed: read back from then on.
+    void DisableGLInterop();
+    // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
+    void SetFrameShared(bool shared) { _frameShared = shared; }
+
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
@@ -103,6 +135,11 @@ private:
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    std::string _cryptomatteObject, _cryptomatteMaterial;
+    // GPU sharing; declared last: released before the renderer and device.
+    Hgi *_hgi = nullptr;
+    bool _interopTried = false, _frameShared = false;
+    std::unique_ptr<HdVkGLInterop> _interop;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
