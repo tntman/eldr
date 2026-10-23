@@ -13,9 +13,10 @@ namespace {
 
 // std430 mirrors of the structs in mesh.frag.
 struct GpuTexRef {
-    int32_t index;
+    int32_t index;    // bindless texture, or with udim the first of its kUdimTiles in the UDIM table
     int32_t channel;
-    int32_t pad[2];
+    int32_t udim;
+    int32_t pad;
     float scale[4];
     float bias[4];
 };
@@ -207,7 +208,7 @@ Scene::~Scene()
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
-                          &_materials, &_lightBuffer, &_staging}) {
+                          &_materials, &_udimTiles, &_lightBuffer, &_staging}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -741,9 +742,8 @@ void Scene::_Upload(Texture &t)
     });
 }
 
-int32_t Scene::_TextureIndex(const TextureRef &ref)
+int32_t Scene::_TextureIndex(Texture *t)
 {
-    Texture *t = ref.texture.get();
     if (!t || t->width == 0 || t->height == 0 ||
         t->pixels.size() != size_t(t->width) * t->height * BytesPerPixel(t->format)) {
         return -1;
@@ -912,6 +912,7 @@ void Scene::Commit()
     _textureSlots.clear();
     std::unordered_map<const Material *, uint32_t> materialSlots;
     std::vector<GpuMaterial> materials;
+    std::vector<int32_t> udimTiles;
     auto materialIndex = [&](const Material &m) {
         const auto [it, inserted] = materialSlots.emplace(&m, uint32_t(materials.size()));
         if (inserted) {
@@ -925,7 +926,15 @@ void Scene::Commit()
             const TextureRef *refs[6] = {&m.baseColorTex, &m.emissiveTex, &m.metallicTex,
                                          &m.roughnessTex, &m.occlusionTex, &m.normalTex};
             for (int i = 0; i < 6; ++i) {
-                g.tex[i].index = _TextureIndex(*refs[i]);
+                if (refs[i]->udim.empty()) {
+                    g.tex[i].index = _TextureIndex(refs[i]->texture.get());
+                } else {
+                    g.tex[i].index = int32_t(udimTiles.size());
+                    g.tex[i].udim = 1;
+                    for (size_t t = 0; t < kUdimTiles; ++t) {
+                        udimTiles.push_back(t < refs[i]->udim.size() ? _TextureIndex(refs[i]->udim[t].get()) : -1);
+                    }
+                }
                 g.tex[i].channel = refs[i]->channel;
                 std::copy(refs[i]->scale, refs[i]->scale + 4, g.tex[i].scale);
                 std::copy(refs[i]->bias, refs[i]->bias + 4, g.tex[i].bias);
@@ -1012,6 +1021,9 @@ void Scene::Commit()
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(materials.begin(), materials.end(), static_cast<GpuMaterial *>(_materials.mapped));
+    _device->Reserve(_udimTiles, std::max<size_t>(udimTiles.size(), 1) * sizeof(int32_t),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(udimTiles.begin(), udimTiles.end(), static_cast<int32_t *>(_udimTiles.mapped));
 
     _device->Reserve(_lightBuffer, _lights.size() * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1092,9 +1104,7 @@ void Scene::Commit()
         _gpu.environment = _envView;
         std::copy((*dome)->radiance, (*dome)->radiance + 3, _gpu.environmentRadiance);
         std::copy((*dome)->worldToLocal, (*dome)->worldToLocal + 16, _gpu.environmentWorldToLocal);
-        TextureRef latlong;
-        latlong.texture = (*dome)->texture;
-        const int32_t index = _TextureIndex(latlong);
+        const int32_t index = _TextureIndex((*dome)->texture.get());
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
 
@@ -1105,6 +1115,7 @@ void Scene::Commit()
     _gpu.draws = _draws.buffer;
     _gpu.commandTemplate = _commandTemplate.buffer;
     _gpu.materials = _materials.buffer;
+    _gpu.udimTiles = _udimTiles.buffer;
     _gpu.lights = _lightBuffer.buffer;
     _gpu.skin = _skin.buffer;
     _gpu.joints = _joints.buffer;

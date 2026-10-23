@@ -9,9 +9,10 @@ const uint kNoMaterial = 0xFFFFFFFFu;
 
 // std430 mirrors of GpuTexRef/GpuMaterial in scene.cpp.
 struct TexRef {
-    int index;     // -1: none
+    int index;     // -1: none; with udim the first of its 100 entries in udimTiles
     int channel;   // 0..3, or -1 for all
-    int pad0, pad1;
+    int udim;
+    int pad;
     vec4 scale;
     vec4 bias;
 };
@@ -22,6 +23,7 @@ struct Material {
     TexRef tex[6];   // baseColor, emissive, metallic, roughness, occlusion, normal
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
+layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(set = 0, binding = 6) uniform sampler2D brdfLut;
@@ -68,7 +70,23 @@ vec4 Fetch(TexRef r, vec4 constant)
     if (r.index < 0) {
         return constant;
     }
-    vec4 t = texture(textures[nonuniformEXT(r.index)], inUv) * r.scale + r.bias;
+    int index = r.index;
+    vec2 uv = inUv;
+    if (r.udim != 0) {
+        // UDIM: tile 1001 + u + 10 v, sampled with the unwrapped uv's
+        // gradients so mips don't jump at tile borders. Missing tiles and uv
+        // outside 10 x 10 tiles show the constant.
+        vec2 tile = floor(inUv);
+        if (any(lessThan(tile, vec2(0.0))) || any(greaterThan(tile, vec2(9.0)))) {
+            return constant;
+        }
+        index = udimTiles[r.index + int(tile.x) + 10 * int(tile.y)];
+        if (index < 0) {
+            return constant;
+        }
+        uv -= tile;
+    }
+    vec4 t = textureGrad(textures[nonuniformEXT(index)], uv, dFdx(inUv), dFdy(inUv)) * r.scale + r.bias;
     return r.channel < 0 ? t : vec4(t[r.channel]);
 }
 

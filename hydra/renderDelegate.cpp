@@ -53,12 +53,13 @@ const TfTokenVector &HdVkRenderDelegate::GetSupportedRprimTypes() const { return
 const TfTokenVector &HdVkRenderDelegate::GetSupportedSprimTypes() const { return _sprimTypes; }
 const TfTokenVector &HdVkRenderDelegate::GetSupportedBprimTypes() const { return _bprimTypes; }
 
-// Storm's context first: assets made for usdview (Disney's Moana) bind their
-// UsdPreviewSurface only to outputs:glslfx:surface. UsdShade falls back to
-// the universal outputs:surface by itself.
+// MaterialX first (Houdini and Karma assets), then Storm's context: assets
+// made for usdview (Disney's Moana) bind their UsdPreviewSurface only to
+// outputs:glslfx:surface. UsdShade falls back to the universal
+// outputs:surface by itself.
 TfTokenVector HdVkRenderDelegate::GetMaterialRenderContexts() const
 {
-    return {TfToken("glslfx")};
+    return {TfToken("mtlx"), TfToken("glslfx")};
 }
 
 HdResourceRegistrySharedPtr HdVkRenderDelegate::GetResourceRegistry() const
@@ -100,6 +101,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Exposure Compensation (EV)", HdVkRenderSettingsTokens->exposureCompensation,
          VtValue(defaults.exposureCompensation)},
         {"Bloom Intensity", HdVkRenderSettingsTokens->bloomIntensity, VtValue(defaults.bloomIntensity)},
+        {"Sun Shadows (cascades)", HdVkRenderSettingsTokens->shadows, VtValue(frame.shadows)},
+        {"Local Light Shadows", HdVkRenderSettingsTokens->localShadows, VtValue(frame.localShadows)},
+        {"Soft Shadows (PCSS)", HdVkRenderSettingsTokens->softShadows, VtValue(frame.softShadows)},
+        {"TAA Samples (still camera)", HdVkRenderSettingsTokens->taaSamples, VtValue(int(frame.taaSamples))},
+        {"Small Object Culling (pixels, 0 = off)", HdVkRenderSettingsTokens->cullPixels,
+         VtValue(frame.cullPixels)},
     };
 }
 

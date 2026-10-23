@@ -28,6 +28,11 @@ public:
         bool ambientOcclusion = true; // GTAO on the dome (image-based) lighting
         float aoRadius = 0.5f;        // world units
         bool ssr = true;              // screen-space reflections (needs postProcess)
+        bool shadows = true;          // the distant light's shadow cascades
+        bool localShadows = true;     // sphere/rect/disk lights' shadow atlas
+        bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
+        uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
+        float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
         PostProcess::Settings post;
     };
 

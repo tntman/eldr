@@ -22,7 +22,12 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssr, "hdvk:ssr"))                                      \
     ((autoExposure, "hdvk:autoExposure"))                    \
     ((exposureCompensation, "hdvk:exposureCompensation"))    \
-    ((bloomIntensity, "hdvk:bloomIntensity"))
+    ((bloomIntensity, "hdvk:bloomIntensity"))                \
+    ((shadows, "hdvk:shadows"))                              \
+    ((localShadows, "hdvk:localShadows"))                    \
+    ((softShadows, "hdvk:softShadows"))                      \
+    ((taaSamples, "hdvk:taaSamples"))                        \
+    ((cullPixels, "hdvk:cullPixels"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

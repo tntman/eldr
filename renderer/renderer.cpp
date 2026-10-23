@@ -155,9 +155,9 @@ float Halton(uint32_t index, uint32_t base)
     return r;
 }
 
-// Frames a still camera accumulates before TAA reports converged; while
-// the camera moves the blend weight stays at 1 / (kTaaMoving + 1) = 0.1.
-constexpr uint32_t kTaaSamples = 16, kTaaMoving = 9;
+// While the camera moves the TAA blend weight stays at 1 / (kTaaMoving + 1)
+// = 0.1; a still camera accumulates Frame::taaSamples.
+constexpr uint32_t kTaaMoving = 9;
 
 } // namespace
 
@@ -254,11 +254,11 @@ void Renderer::_CreateDescriptors()
     // the light clusters (written by lights.comp, which also reads 2 and 3),
     // 15, 16, 21 and 22 skinning (SkinVertex, joint matrices built by
     // skin.comp, skinning transforms, per-joint rest bounds), 23 and 24
-    // blend shape offsets and weights, 17..19
+    // blend shape offsets and weights, 25 the UDIM tile table, 17..19
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[25] = {
+    const VkDescriptorSetLayoutBinding bindings[26] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -284,20 +284,21 @@ void Renderer::_CreateDescriptors()
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
     };
-    const VkDescriptorBindingFlags bindingFlags[25] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[26] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 25;
+    flags.bindingCount = 26;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 25;
+    slci.bindingCount = 26;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 15},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -573,6 +574,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo jointBounds{gpu.jointBounds, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo blendOffsets{gpu.blendOffsets, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo blendWeights{gpu.blendWeights, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo udimTiles{gpu.udimTiles, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -614,6 +616,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &jointBounds, nullptr);
     write(23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendOffsets, nullptr);
     write(24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendWeights, nullptr);
+    write(25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &udimTiles, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -767,6 +770,9 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     };
     std::vector<Candidate> candidates;
     for (const Scene::Gpu::ShadowCaster &c : gpu.shadowCasters) {
+        if (!frame.localShadows) {
+            break;
+        }
         // Rounded up to a power of sqrt 2: the cutoff follows the exposure,
         // which drifts while it adapts, and every change of a tile's far
         // plane redraws the atlas.
@@ -822,7 +828,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             t.params[0] = 2.0f * tanHalf / float(kShadowTileSize);
             t.params[1] = n;
             t.params[2] = f;
-            t.params[3] = c.size;
+            t.params[3] = frame.softShadows ? c.size : 0.0f;
             tiles.push_back(t);
         };
         if (spot) {
@@ -991,9 +997,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     float jitteredViewProj[16];
     std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     Mat4 unjitter;          // jittered NDC -> unjittered NDC
-    uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..kTaaSamples
+    const uint32_t taaSamples = std::clamp(frame.taaSamples, 1u, 256u);
+    uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..taaSamples
     if (taa) {
-        sample = (_haltonIndex++ % kTaaSamples) + 1;
+        sample = (_haltonIndex++ % taaSamples) + 1;
         const float jx = (Halton(sample, 2) - 0.5f) * 2.0f / float(_width);
         const float jy = (Halton(sample, 3) - 0.5f) * 2.0f / float(_height);
         for (int r = 0; r < 4; ++r) {  // clip.xy += jitter * clip.w
@@ -1019,7 +1026,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
     fd.viewport[0] = float(_width);
     fd.viewport[1] = float(_height);
-    const bool shadows = gpu.drawCount > 0 && gpu.instanceCapacity > 0 && _FitCascades(gpu, frame, &fd);
+    const bool shadows = frame.shadows && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
+                         _FitCascades(gpu, frame, &fd);
     fd.counts[0] = gpu.lightCount;
     fd.localLights[0] = gpu.localLightCount;
     fd.localLights[1] = sample;
@@ -1102,7 +1110,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                             std::abs(frame.viewProj[11]) < 1e-9f ? 1.0f : 0.0f;
         cull.pixelScale = (cull.orthographic > 0 ? 1.0f : Dot(mid - eye, forward)) / std::max(pixel, 1e-30f);
         cull.nearDistance = Dot(nearCenter - eye, forward);
-        cull.minRadius = 0.5f;
+        cull.minRadius = std::max(frame.cullPixels, 0.0f);
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
@@ -1113,6 +1121,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         for (uint32_t c = 0; shadows && c < kCascades; ++c) {
             FrustumPlanes(fd.cascadeViewProj[c], cull.planes);
             cull.orthographic = 1.0f;
+            cull.minRadius = 0.5f;
             cull.pixelScale = 1.0f / fd.cascadeTexel[c];
             cull.listBase = (1 + c) * gpu.instanceCapacity;
             cull.commandBase = (1 + c) * gpu.drawCount;
@@ -1311,8 +1320,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 _taaWarmup = false;
             }
             alpha = 1.0f / float(_taaFrames + 1);
-            _taaConverged = _taaValid && !moved && _taaFrames == kTaaSamples - 1;  // sample 16 of a still camera
-            _taaFrames = std::min(_taaFrames + 1, kTaaSamples - 1);
+            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1;  // last sample of a still camera
+            _taaFrames = std::min(_taaFrames + 1, taaSamples - 1);
             _taaValid = true;
         } else {
             _taaValid = false;

@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace vkr {
 struct Material;
@@ -22,13 +23,17 @@ class HdVkTextureCache
 {
 public:
     std::shared_ptr<vkr::Texture> Get(std::string const &path, TfToken const &sourceColorSpace);
+    // A path with <UDIM>: vkr::kUdimTiles tiles, null where none exists.
+    std::vector<std::shared_ptr<vkr::Texture>> GetUdim(std::string const &path,
+                                                       TfToken const &sourceColorSpace);
 
 private:
     std::mutex _mutex;
     std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
 };
 
-// Reads a UsdPreviewSurface network into a vkr::Material. The vkr::Material
+// Reads a UsdPreviewSurface, MaterialX standard_surface or OpenPBR network
+// into a vkr::Material. The vkr::Material
 // object stays the same for the sprim's lifetime (meshes hold it), so
 // re-syncs update it in place.
 class HdVkMaterial final : public HdMaterial

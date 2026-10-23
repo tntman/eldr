@@ -37,8 +37,14 @@ private:
 };
 
 // texel * scale + bias, then one channel (0..3) or all of them (-1).
+// UDIM tiles 1001..1100: tile 1001 + u + 10 v covers uv [u, u+1) x [v, v+1).
+constexpr size_t kUdimTiles = 100;
+
 struct TextureRef {
     std::shared_ptr<Texture> texture;  // null: use the material's constant
+    // UDIM: kUdimTiles tiles, null where missing (texture is then one of
+    // them); empty for a single texture.
+    std::vector<std::shared_ptr<Texture>> udim;
     int channel = -1;
     float scale[4] = {1, 1, 1, 1};
     float bias[4] = {0, 0, 0, 0};
@@ -264,6 +270,7 @@ public:
         VkBuffer jointBounds = VK_NULL_HANDLE; // JointBounds pool
         VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)
         VkBuffer blendWeights = VK_NULL_HANDLE; // blend shape weights (float)
+        VkBuffer udimTiles = VK_NULL_HANDLE;    // per UDIM texture kUdimTiles bindless indices, -1: missing
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
         // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
@@ -324,7 +331,7 @@ private:
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
     void _Upload(Texture &texture);
-    int32_t _TextureIndex(const TextureRef &ref);
+    int32_t _TextureIndex(Texture *t);
     void _UpdateEnvironment(const Dome *dome);
     void _DestroyEnvironment();
     template <typename T>
@@ -340,7 +347,7 @@ private:
     RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
         _boundsAlloc, _blendAlloc, _weightAlloc;
     // Host-visible per-commit tables.
-    Buffer _draws, _commandTemplate, _materials, _lightBuffer, _staging;
+    Buffer _draws, _commandTemplate, _materials, _udimTiles, _lightBuffer, _staging;
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;

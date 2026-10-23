@@ -8,9 +8,12 @@
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hio/image.h"
+#include "pxr/usd/ar/resolver.h"
 #include "pxr/usd/sdf/assetPath.h"
 
+#include <algorithm>
 #include <cstring>
+#include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -21,6 +24,23 @@ TF_DEFINE_PRIVATE_TOKENS(
     (UsdPreviewSurface)
     (UsdUVTexture)
     (UsdPrimvarReader_float3)
+    (ND_UsdPreviewSurface_surfaceshader)
+    (ND_standard_surface_surfaceshader)
+    (ND_open_pbr_surface_surfaceshader)
+    (base)
+    (base_color)
+    (base_weight)
+    (base_metalness)
+    (emission)
+    (emission_color)
+    (emission_luminance)
+    (metalness)
+    (specular_roughness)
+    (geometry_normal)
+    (geomprop)
+    (in)
+    (index)
+    ((colorSpaceFile, "colorSpace:file"))
     (diffuseColor)
     (emissiveColor)
     (metallic)
@@ -158,35 +178,72 @@ std::string AssetPath(VtValue const &v)
     return v.IsHolding<std::string>() ? v.UncheckedGet<std::string>() : std::string();
 }
 
-// ponytail: metallic workflow only. Ignored for now: opacity/opacityThreshold,
-// specular workflow, clearcoat, ior, displacement, UsdTransform2d and the
-// primvar reader's varname (meshes always provide "st").
-void ReadPreviewSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures,
-                        vkr::Material *m)
-{
-    const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
-    if (terminal == net.terminals.end()) {
-        return;
-    }
-    const auto surfaceIt = net.nodes.find(terminal->second.upstreamNode);
-    if (surfaceIt == net.nodes.end() ||
-        surfaceIt->second.nodeTypeId != _tokens->UsdPreviewSurface) {
-        return;
-    }
-    const HdMaterialNode2 &surface = surfaceIt->second;
+// Where a surface shader keeps what HdVk reads (empty: not there), and the
+// shader's defaults for it: Hydra passes only authored inputs. Base colour
+// and emission are colour times weight.
+struct SurfaceInputs {
+    TfToken id;
+    TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal;
+    float baseColorDefault, baseWeightDefault, emissionDefault, emissionWeightDefault, roughnessDefault;
+};
 
-    // Reads a constant and/or a UsdUVTexture connection for one input.
-    auto input = [&](TfToken const &name, float *constant, int size, vkr::TextureRef *ref) {
-        if (size == 1) {
-            Read(surface.parameters, name, constant);
-        } else {
-            GfVec3f v;
-            if (Read(surface.parameters, name, &v)) {
-                std::copy(v.data(), v.data() + 3, constant);
-            }
-        }
-        const auto conn = surface.inputConnections.find(name);
-        if (conn == surface.inputConnections.end() || conn->second.empty()) {
+const std::vector<SurfaceInputs> &Surfaces()
+{
+    static const std::vector<SurfaceInputs> surfaces = [] {
+        const SurfaceInputs preview{_tokens->UsdPreviewSurface, _tokens->diffuseColor, TfToken(),
+                                    _tokens->emissiveColor, TfToken(), _tokens->metallic, _tokens->roughness,
+                                    _tokens->occlusion, _tokens->normal, 0.18f, 1.0f, 0.0f, 1.0f, 0.5f};
+        SurfaceInputs mtlxPreview = preview;
+        mtlxPreview.id = _tokens->ND_UsdPreviewSurface_surfaceshader;
+        return std::vector<SurfaceInputs>{
+            preview,
+            mtlxPreview,
+            {_tokens->ND_standard_surface_surfaceshader, _tokens->base_color, _tokens->base,
+             _tokens->emission_color, _tokens->emission, _tokens->metalness, _tokens->specular_roughness,
+             TfToken(), _tokens->normal, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f},
+            // emission_luminance is in nits, the radiance unit UsdLux uses too.
+            {_tokens->ND_open_pbr_surface_surfaceshader, _tokens->base_color, _tokens->base_weight,
+             _tokens->emission_color, _tokens->emission_luminance, _tokens->base_metalness,
+             _tokens->specular_roughness, TfToken(), _tokens->geometry_normal, 0.8f, 1.0f, 1.0f, 0.0f, 0.3f},
+        };
+    }();
+    return surfaces;
+}
+
+bool StartsWith(TfToken const &t, const char *prefix)
+{
+    return t.GetString().rfind(prefix, 0) == 0;
+}
+
+// Hio's colour space for a MaterialX colorspace name: sRGB-encoded or
+// linear. A file without one is in the document's working space, linear,
+// as MaterialX (and Storm's MaterialX path) reads it.
+// ponytail: other gamuts (acescg) are read as linear Rec.709.
+TfToken MtlxColorSpace(std::map<TfToken, VtValue> const &params)
+{
+    std::string name;
+    TfToken token;
+    if (Read(params, _tokens->colorSpaceFile, &token)) {
+        name = token.GetString();
+    } else {
+        Read(params, _tokens->colorSpaceFile, &name);
+    }
+    return name == "srgb_texture" || name == "sRGB" || name == "srgb" ? _tokens->sRGB : _tokens->raw;
+}
+
+// Follows the connection of `name` to a texture, through MaterialX nodes
+// that only convert, extract a channel or decode a normal map. A primvar
+// reader of displayColor on the base colour makes the mesh's colour the base.
+// ponytail: texture coordinates are always "st"; UsdTransform2d, MaterialX
+// texcoord/uvtiling and image defaults are ignored.
+void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken name,
+                 HdVkTextureCache *textures, vkr::Material *m, vkr::TextureRef *ref)
+{
+    int channel = -1;
+    bool normalMap = false;
+    for (int depth = 0; depth < 8; ++depth) {
+        const auto conn = node->inputConnections.find(name);
+        if (conn == node->inputConnections.end() || conn->second.empty()) {
             return;
         }
         const HdMaterialConnection2 &c = conn->second[0];
@@ -194,47 +251,129 @@ void ReadPreviewSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *texture
         if (up == net.nodes.end()) {
             return;
         }
-        const HdMaterialNode2 &node = up->second;
-        if (node.nodeTypeId == _tokens->UsdPrimvarReader_float3 && ref == &m->baseColorTex) {
+        node = &up->second;
+        const TfToken &type = node->nodeTypeId;
+        name = _tokens->in;
+        if (StartsWith(type, "ND_convert_") || StartsWith(type, "ND_dot_")) {
+            continue;
+        }
+        if (StartsWith(type, "ND_normalmap")) {
+            normalMap = true;
+            continue;
+        }
+        if (StartsWith(type, "ND_extract_")) {
+            Read(node->parameters, _tokens->index, &channel);
+            continue;
+        }
+        if (type == _tokens->UsdPrimvarReader_float3 || StartsWith(type, "ND_geompropvalue_")) {
             TfToken varname;
             std::string varnameStr;
-            if ((Read(node.parameters, _tokens->varname, &varname) && varname == _tokens->displayColor) ||
-                (Read(node.parameters, _tokens->varname, &varnameStr) && varnameStr == "displayColor")) {
+            const TfToken &param = type == _tokens->UsdPrimvarReader_float3 ? _tokens->varname : _tokens->geomprop;
+            if (ref == &m->baseColorTex &&
+                ((Read(node->parameters, param, &varname) && varname == _tokens->displayColor) ||
+                 (Read(node->parameters, param, &varnameStr) && varnameStr == "displayColor"))) {
                 m->baseColorFromDisplayColor = true;
             }
             return;
         }
-        if (node.nodeTypeId != _tokens->UsdUVTexture) {
+        const bool preview = type == _tokens->UsdUVTexture;
+        if (!preview && !StartsWith(type, "ND_image_") && !StartsWith(type, "ND_tiledimage_")) {
             return;
         }
-        const auto file = node.parameters.find(_tokens->file);
-        const std::string path = file == node.parameters.end() ? std::string()
-                                                               : AssetPath(file->second);
+        const auto file = node->parameters.find(_tokens->file);
+        const std::string path = file == node->parameters.end() ? std::string() : AssetPath(file->second);
         if (path.empty()) {
             return;
         }
         TfToken colorSpace;
-        Read(node.parameters, _tokens->sourceColorSpace, &colorSpace);
-        ref->texture = textures->Get(path, colorSpace);
-        const TfToken &out = c.upstreamOutputName;
-        ref->channel = out == _tokens->r ? 0 : out == _tokens->g ? 1 :
-                       out == _tokens->b ? 2 : out == _tokens->a ? 3 : -1;
-        GfVec4f v;
-        if (Read(node.parameters, _tokens->scale, &v)) {
-            std::copy(v.data(), v.data() + 4, ref->scale);
+        if (preview) {
+            Read(node->parameters, _tokens->sourceColorSpace, &colorSpace);
+        } else {
+            colorSpace = MtlxColorSpace(node->parameters);
         }
-        if (Read(node.parameters, _tokens->bias, &v)) {
-            std::copy(v.data(), v.data() + 4, ref->bias);
+        if (path.find("<UDIM>") != std::string::npos) {
+            ref->udim = textures->GetUdim(path, colorSpace);
+            const auto tile = std::find_if(ref->udim.begin(), ref->udim.end(), [](auto const &t) { return t; });
+            ref->texture = tile == ref->udim.end() ? nullptr : *tile;
+        } else {
+            ref->texture = textures->Get(path, colorSpace);
+        }
+        if (preview) {
+            const TfToken &out = c.upstreamOutputName;
+            channel = out == _tokens->r ? 0 : out == _tokens->g ? 1 : out == _tokens->b ? 2 : out == _tokens->a ? 3 : -1;
+            GfVec4f v;
+            if (Read(node->parameters, _tokens->scale, &v)) {
+                std::copy(v.data(), v.data() + 4, ref->scale);
+            }
+            if (Read(node->parameters, _tokens->bias, &v)) {
+                std::copy(v.data(), v.data() + 4, ref->bias);
+            }
+        } else if (normalMap) {
+            std::fill(ref->scale, ref->scale + 3, 2.0f);
+            std::fill(ref->bias, ref->bias + 3, -1.0f);
+        }
+        ref->channel = channel;
+        return;
+    }
+}
+
+// ponytail: metallic workflow only. Ignored for now: opacity/opacityThreshold,
+// specular workflow, coat, sheen, transmission, subsurface, ior and
+// displacement.
+void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m)
+{
+    const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
+    if (terminal == net.terminals.end()) {
+        return;
+    }
+    const auto surfaceIt = net.nodes.find(terminal->second.upstreamNode);
+    if (surfaceIt == net.nodes.end()) {
+        return;
+    }
+    const HdMaterialNode2 &surface = surfaceIt->second;
+    const auto kind = std::find_if(Surfaces().begin(), Surfaces().end(),
+                                   [&](SurfaceInputs const &k) { return k.id == surface.nodeTypeId; });
+    if (kind == Surfaces().end()) {
+        return;
+    }
+
+    // One input: its constant (authored, else the default) times the weight,
+    // or a texture whose scale and bias carry the weight.
+    auto input = [&](TfToken const &name, TfToken const &weightName, float weightDefault, float valueDefault,
+                     float *constant, int size, vkr::TextureRef *ref) {
+        if (name.IsEmpty()) {
+            return;
+        }
+        float weight = weightDefault;
+        if (!weightName.IsEmpty()) {
+            Read(surface.parameters, weightName, &weight);
+        }
+        std::fill(constant, constant + size, valueDefault);
+        GfVec3f v;
+        if (size == 1) {
+            Read(surface.parameters, name, constant);
+        } else if (Read(surface.parameters, name, &v)) {
+            std::copy(v.data(), v.data() + 3, constant);
+        }
+        for (int i = 0; i < size; ++i) {
+            constant[i] *= weight;
+        }
+        ReadTexture(net, &surface, name, textures, m, ref);
+        for (int i = 0; ref->texture && i < 3; ++i) {
+            ref->scale[i] *= weight;
+            ref->bias[i] *= weight;
         }
     };
 
-    input(_tokens->diffuseColor, m->baseColor, 3, &m->baseColorTex);
-    input(_tokens->emissiveColor, m->emissive, 3, &m->emissiveTex);
-    input(_tokens->metallic, &m->metallic, 1, &m->metallicTex);
-    input(_tokens->roughness, &m->roughness, 1, &m->roughnessTex);
-    input(_tokens->occlusion, &m->occlusion, 1, &m->occlusionTex);
+    input(kind->baseColor, kind->baseWeight, kind->baseWeightDefault, kind->baseColorDefault, m->baseColor, 3,
+          &m->baseColorTex);
+    input(kind->emission, kind->emissionWeight, kind->emissionWeightDefault, kind->emissionDefault, m->emissive,
+          3, &m->emissiveTex);
+    input(kind->metallic, TfToken(), 1.0f, 0.0f, &m->metallic, 1, &m->metallicTex);
+    input(kind->roughness, TfToken(), 1.0f, kind->roughnessDefault, &m->roughness, 1, &m->roughnessTex);
+    input(kind->occlusion, TfToken(), 1.0f, 1.0f, &m->occlusion, 1, &m->occlusionTex);
     float unusedNormal[3];
-    input(_tokens->normal, unusedNormal, 3, &m->normalTex);
+    input(kind->normal, TfToken(), 1.0f, 0.0f, unusedNormal, 3, &m->normalTex);
 }
 
 } // namespace
@@ -252,6 +391,23 @@ std::shared_ptr<vkr::Texture> HdVkTextureCache::Get(std::string const &path,
     return texture;
 }
 
+// As Storm: the tiles 1001..1100 the resolver finds (it also looks into
+// packages such as usdz).
+std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string const &path,
+                                                                     TfToken const &sourceColorSpace)
+{
+    const size_t at = path.find("<UDIM>");
+    std::vector<std::shared_ptr<vkr::Texture>> tiles(vkr::kUdimTiles);
+    for (size_t i = 0; i < tiles.size(); ++i) {
+        const ArResolvedPath tile = ArGetResolver().Resolve(path.substr(0, at) + std::to_string(1001 + i) +
+                                                            path.substr(at + 6));
+        if (!tile.empty()) {
+            tiles[i] = Get(tile.GetPathString(), sourceColorSpace);
+        }
+    }
+    return tiles;
+}
+
 HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
     : HdMaterial(id)
     , _textures(textures)
@@ -266,9 +422,8 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         vkr::Material m;  // UsdPreviewSurface defaults
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
-            ReadPreviewSurface(
-                HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
-                _textures, &m);
+            ReadSurface(HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
+                        _textures, &m);
         }
         *_material = std::move(m);
     }

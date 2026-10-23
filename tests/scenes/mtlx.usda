@@ -1,0 +1,175 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# MaterialX surfaces (outputs:mtlx:surface). Each also binds a magenta
+# UsdPreviewSurface to the universal outputs:surface: magenta means the
+# MaterialX network was not used. The rightmost quad is UDIM: tiles 1001
+# (orange, bottom left), 1002 (teal), 1011 (purple, top left); 1012 is
+# missing and shows the constant base colour.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 1, 12.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-30, 20, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    class Material "_magentaFallback"
+    {
+        token outputs:surface.connect = </mtl/_magentaFallback/preview.outputs:surface>
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0, 1)
+            token outputs:surface
+        }
+    }
+
+    # standard_surface, base colour from an image in a node graph: the
+    # quadrants of step3's texQuad (red, green / blue, white).
+    def Material "textured" (inherits = </mtl/_magentaFallback>)
+    {
+        token outputs:mtlx:surface.connect = </mtl/textured/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color.connect = </mtl/textured/graph.outputs:base_color>
+            float inputs:specular_roughness = 0.6
+            token outputs:out
+        }
+        def NodeGraph "graph"
+        {
+            color3f outputs:base_color.connect = </mtl/textured/graph/image.outputs:out>
+            def Shader "image"
+            {
+                uniform token info:id = "ND_image_color3"
+                asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+                color3f outputs:out
+            }
+        }
+    }
+
+    # OpenPBR gold metal, no textures.
+    def Material "gold" (inherits = </mtl/_magentaFallback>)
+    {
+        token outputs:mtlx:surface.connect = </mtl/gold/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (1, 0.78, 0.34)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.35
+            token outputs:out
+        }
+    }
+
+    def Material "udim" (inherits = </mtl/_magentaFallback>)
+    {
+        token outputs:mtlx:surface.connect = </mtl/udim/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.3, 0.3, 0.3)
+            color3f inputs:base_color.connect = </mtl/udim/image.outputs:out>
+            float inputs:specular_roughness = 0.6
+            token outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/udim.<UDIM>.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+    }
+
+    # standard_surface with a MaterialX normal map: the vertical ridges of
+    # step3's bumpQuad.
+    def Material "bumpy" (inherits = </mtl/_magentaFallback>)
+    {
+        token outputs:mtlx:surface.connect = </mtl/bumpy/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.6)
+            float inputs:specular_roughness = 0.4
+            vector3f inputs:normal.connect = </mtl/bumpy/normalmap.outputs:out>
+            token outputs:out
+        }
+        def Shader "normalmap"
+        {
+            uniform token info:id = "ND_normalmap_float"
+            vector3f inputs:in.connect = </mtl/bumpy/image.outputs:out>
+            vector3f outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_vector3"
+            asset inputs:file = @./textures/ridges_normal.png@
+            vector3f outputs:out
+        }
+    }
+}
+
+def Mesh "texQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/textured>
+    double3 xformOp:translate = (-3.6, 1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "goldQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/gold>
+    double3 xformOp:translate = (-1.2, 1, 0)
+    float xformOp:rotateY = -25
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+def Mesh "bumpQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/bumpy>
+    double3 xformOp:translate = (1.2, 1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "udimQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (2, 0), (2, 2), (0, 2)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/udim>
+    double3 xformOp:translate = (3.6, 1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

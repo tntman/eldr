@@ -10,6 +10,7 @@
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/tokens.h"
 
+#include <algorithm>
 #include <exception>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -92,6 +93,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         HdVkRenderSettingsTokens->exposureCompensation, frame.post.exposureCompensation);
     frame.post.bloomIntensity = delegate->GetRenderSetting<float>(
         HdVkRenderSettingsTokens->bloomIntensity, frame.post.bloomIntensity);
+    frame.shadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->shadows, frame.shadows);
+    frame.localShadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->localShadows,
+                                                          frame.localShadows);
+    frame.softShadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->softShadows,
+                                                         frame.softShadows);
+    frame.taaSamples = uint32_t(std::max(
+        delegate->GetRenderSetting<int>(HdVkRenderSettingsTokens->taaSamples, int(frame.taaSamples)), 1));
+    frame.cullPixels = delegate->GetRenderSetting<float>(HdVkRenderSettingsTokens->cullPixels, frame.cullPixels);
     const GfVec3d eye = view.GetInverse().ExtractTranslation();
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);
