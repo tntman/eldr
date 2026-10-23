@@ -109,6 +109,11 @@ vec3 F_Schlick(vec3 f0, float VoH)
 // GGX specular times cos for light from direction l.
 vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
+#ifdef LAYERS
+    if (layers.anisotropy > 0.0) {
+        return AnisotropicSpecular(n, v, l, a, f0, NoV);  // brdf.glsl
+    }
+#endif
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
@@ -508,7 +513,7 @@ void main()
     // standard_surface's specular weight and colour scale the dielectric
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
-    PrepareLayers(NoV, f0, diffuseColor, tint, emissive);
+    PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
@@ -550,7 +555,7 @@ void main()
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
     if (frame.envRadiance.w > 0.0) {
         mat3 toLocal = mat3(frame.envWorldToLocal);
-        vec3 r = normalize(toLocal * reflect(-v, n));
+        vec3 r = normalize(toLocal * reflect(-v, BentNormal(n, v, perceptual)));
         float lod = perceptual * float(frame.counts.z - 1u);
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
@@ -563,6 +568,9 @@ void main()
     // Screen-space reflections replace the dome where they hit something;
     // where the hit is partly background the dome shows through.
     float ssrWeight = frame.ssr.x > 0.0 ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+#ifdef LAYERS
+    ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
+#endif
     if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);

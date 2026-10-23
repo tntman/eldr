@@ -103,6 +103,10 @@ def hue(rgb):
 for prim in ("/oilSlick", "/anodized"):
     on, off = compare("hdvk:thinFilm", prim)
     expect(max(abs(a - b) for a, b in zip(hue(on), hue(off))) > 0.05, prim[1:] + ": the film colours it", on, off)
+for prim in ("/brushedSteel", "/brushedGold"):
+    on, off = compare("hdvk:anisotropicSpecular", prim, lambda image, prim: list(pixels(image, prim)))
+    change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
+    expect(change > 0.1, prim[1:] + ": the highlights stretch (%.2f of the image changes)" % change)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

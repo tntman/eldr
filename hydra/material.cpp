@@ -108,6 +108,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     (thin_film_IOR)
     (thin_film_weight)
     (thin_film_ior)
+    (specular_anisotropy)
+    (specular_rotation)
+    (specular_roughness_anisotropy)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1133,6 +1136,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
         m->thinFilm = m->thinFilmThickness > 0.0f ? 1.0f : 0.0f;
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
+        m->anisotropy = ReadOr(p, _tokens->specular_anisotropy, 0.0f);
+        m->anisotropyRotation = ReadOr(p, _tokens->specular_rotation, 0.0f);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1147,6 +1152,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->thinFilm = ReadOr(p, _tokens->thin_film_weight, 0.0f);
         m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
+        m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
+        m->openPbrAnisotropy = true;
     }
 }
 

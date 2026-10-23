@@ -49,7 +49,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((specularWorkflow, "hdvk:specularWorkflow"))            \
     ((clearcoat, "hdvk:clearcoat"))                          \
     ((sheen, "hdvk:sheen"))                                  \
-    ((thinFilm, "hdvk:thinFilm"))
+    ((thinFilm, "hdvk:thinFilm"))                            \
+    ((anisotropicSpecular, "hdvk:anisotropicSpecular"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

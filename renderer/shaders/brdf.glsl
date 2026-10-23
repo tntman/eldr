@@ -1,19 +1,23 @@
 // Shading beyond mesh.frag's metallic-roughness base (Lambert diffuse, GGX
 // specular), from the material's constants (material.glsl): the specular
-// workflow, a clearcoat, sheen and thin-film iridescence. mesh.frag includes it after its inputs
+// workflow, a clearcoat, sheen, thin-film iridescence and anisotropy.
+// mesh.frag includes it after its inputs
 // and calls PrepareLayers once per pixel (before the lights), LayerLight
-// per light and LayerAmbient for the dome. Only materials with lobes
+// per light (and AnisotropicSpecular for the base's GGX), BentNormal and
+// LayerAmbient for the dome. Only materials with lobes
 // (vkr::Material::Layered) shade with the LAYERS build of mesh.frag; the
 // plain build gets the empty versions at the end, so plain materials pay
 // nothing. Within LAYERS each lobe costs a branch unless the material uses
 // it and its FrameData.features.x flag is on.
 
 // frame.features.x bits (renderer.cpp's Frame switches).
-const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u;
+const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
+           kFeatureAnisotropy = 128u;
 
 #ifdef LAYERS
 
 // mesh.frag's GGX pieces, shared by the lobes.
+mat3 CotangentFrame(vec3 n, vec3 p, vec2 uv);
 float D_GGX(float NoH, float a);
 float V_SmithGGXCorrelated(float NoV, float NoL, float a);
 vec3 F_Schlick(vec3 f0, float VoH);
@@ -27,6 +31,10 @@ struct Layers {
     vec3 sheen;            // colour times weight; 0: no sheen
     float sheenRoughness;
     float sheenAlbedo;     // directional albedo towards the viewer
+    float anisotropy;      // 0: isotropic base specular
+    bool openPbrAnisotropy;  // OpenPBR's roughness mapping, else standard_surface's
+    vec3 tangent;          // the stretch direction, with the bitangent across it
+    vec3 bitangent;
 };
 Layers layers;
 
@@ -97,9 +105,9 @@ vec3 Iridescence(float cosTheta1, float thickness, float eta2, vec3 f0)
 
 // Before the lights: the pixel's lobes, and the base's F0 and colours as
 // they change them.
-void PrepareLayers(float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
+void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0);
+    layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0));
     if (inMaterial == kNoMaterial) {
         return;
     }
@@ -138,6 +146,64 @@ void PrepareLayers(float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3
         emissive *= base;
         layers.sheen *= base;
     }
+    // Anisotropic specular: stretched along the uv set's u direction (as
+    // MaterialX's default tangent), rotated about the normal; without uvs
+    // around the world's up axis.
+    // ponytail: no tangent primvars; a "tangents" primvar would replace the
+    // derivative frame.
+    if (m.anisotropy.x > 0.0 && (frame.features.x & kFeatureAnisotropy) != 0u) {
+        layers.anisotropy = clamp(m.anisotropy.x, 0.0, 1.0);
+        layers.openPbrAnisotropy = m.anisotropy.z > 0.0;
+        vec3 t = CotangentFrame(n, inWorldPos, inUv)[0];
+        t -= n * dot(n, t);
+        if (dot(t, t) < 1e-12) {
+            t = cross(abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n);
+        }
+        t = normalize(t);
+        float angle = 2.0 * PI * m.anisotropy.y;
+        layers.tangent = cos(angle) * t + sin(angle) * cross(n, t);
+        layers.bitangent = cross(n, layers.tangent);
+    }
+}
+
+// The base's GGX with roughness `a` stretched along the tangent (Heitz
+// 2014's anisotropic distribution and height-correlated visibility, in
+// Filament's form), times cos, for light from direction l.
+vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
+{
+    float at, ab;
+    if (layers.openPbrAnisotropy) {
+        // OpenPBR: alpha_t = a sqrt(2 / (1 + (1 - anisotropy)^2)), alpha_b = (1 - anisotropy) alpha_t.
+        float k = 1.0 - layers.anisotropy;
+        at = a * sqrt(2.0 / (1.0 + k * k));
+        ab = max(k * at, 1e-4);
+    } else {
+        // standard_surface (mx_roughness_anisotropy).
+        float aspect = sqrt(1.0 - min(layers.anisotropy, 0.98));
+        at = min(a / aspect, 1.0);
+        ab = a * aspect;
+    }
+    vec3 t = layers.tangent, b = layers.bitangent, h = normalize(v + l);
+    float NoL = clamp(dot(n, l), 0.0, 1.0);
+    float a2 = at * ab;
+    vec3 d = vec3(ab * dot(t, h), at * dot(b, h), a2 * max(dot(n, h), 0.0));
+    float b2 = a2 / dot(d, d);
+    float D = a2 * b2 * b2 / PI;
+    float lambdaV = NoL * length(vec3(at * dot(t, v), ab * dot(b, v), NoV));
+    float lambdaL = NoV * length(vec3(at * dot(t, l), ab * dot(b, l), NoL));
+    return D * 0.5 / (lambdaV + lambdaL) * F_Schlick(f0, max(dot(l, h), 0.0)) * NoL;
+}
+
+// The normal the dome's reflection is looked up with: anisotropic
+// highlights bend it towards the stretch (Filament's bent normal).
+vec3 BentNormal(vec3 n, vec3 v, float perceptual)
+{
+    if (layers.anisotropy <= 0.0) {
+        return n;
+    }
+    vec3 across = cross(layers.bitangent, v);
+    vec3 stretched = cross(across, layers.bitangent);
+    return normalize(mix(n, stretched, layers.anisotropy * clamp(5.0 * perceptual, 0.0, 1.0)));
 }
 
 // The lobes' reflection of light from direction l, times cos, per unit of
@@ -183,8 +249,13 @@ vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
 
 #else
 
-void PrepareLayers(float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
+void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
 {
+}
+
+vec3 BentNormal(vec3 n, vec3 v, float perceptual)
+{
+    return n;
 }
 
 vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float widen)

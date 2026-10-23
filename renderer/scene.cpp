@@ -38,6 +38,7 @@ struct GpuMaterial {
     float sheen[4];          // weight, roughness
     float sheenColor[4];
     float thinFilm[4];       // weight, thickness (nm), ior
+    float anisotropy[4];     // amount, rotation (turns), 1: OpenPBR's mapping
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1096,6 +1097,9 @@ void Scene::Commit()
             g.thinFilm[0] = m.thinFilm;
             g.thinFilm[1] = m.thinFilmThickness;
             g.thinFilm[2] = m.thinFilmIor;
+            g.anisotropy[0] = m.anisotropy;
+            g.anisotropy[1] = m.anisotropyRotation;
+            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);

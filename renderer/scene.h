@@ -175,10 +175,15 @@ struct Material {
     float thinFilm = 0;
     float thinFilmThickness = 0;  // nanometres
     float thinFilmIor = 1.5f;
+    // Anisotropic specular, stretched along the uv set's u direction turned
+    // by the rotation (in turns). 0: isotropic.
+    float anisotropy = 0;
+    float anisotropyRotation = 0;
+    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
 
     // Whether any lobe beyond the metallic base is on: such materials shade
     // with the renderer's LAYERS pipelines, the others never pay for them.
-    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0; }
+    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0; }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one

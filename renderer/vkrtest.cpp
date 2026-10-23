@@ -1269,6 +1269,40 @@ int main()
             Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 2) - 0.16f) < 0.02f,
                    "Frame::thinFilm off: the bare base");
         }
+
+        {
+            // Anisotropy: on a black quad whose u runs along x, a light
+            // tilted towards x shines on the centre far more than one tilted
+            // as much towards y (the highlight stretches along u); a quarter
+            // turn of rotation swaps them. Nearly isotropic, the anisotropic
+            // GGX is the isotropic one.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->roughness = 0.3f;
+            material->anisotropy = 0.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene).At(32, 32, 1);
+            };
+            Expect(specular(0.4f, 0) > 3 * specular(0, 0.4f), "anisotropic highlight stretches along u");
+            material->anisotropyRotation = 0.25f;
+            Expect(specular(0, 0.4f) > 3 * specular(0.4f, 0), "rotated a quarter turn it stretches along v");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.anisotropicSpecular = false;
+            const float across = specular(0.4f, 0);
+            Expect(Render(renderer, scene, frame).At(32, 32, 1) > 2 * across, "Frame::anisotropicSpecular off: isotropic");
+            material->anisotropy = 1e-3f;
+            const float nearly = specular(0.4f, 0);
+            Expect(std::abs(nearly - Render(renderer, scene, frame).At(32, 32, 1)) < 0.01f * nearly,
+                   "nearly isotropic anisotropic GGX is GGX");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

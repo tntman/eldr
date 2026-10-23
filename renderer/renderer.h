@@ -72,6 +72,7 @@ public:
         bool clearcoat = true;         // a second GGX lobe on top (coat)
         bool sheen = true;             // microfiber lobe (fabric, fuzz)
         bool thinFilm = true;          // thin-film iridescence on the specular
+        bool anisotropicSpecular = true;  // highlights stretched along a tangent (brushed metal)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
