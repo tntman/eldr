@@ -111,6 +111,86 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     return 1.0 - gStraight - dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
 }
 
+// frame.features.x: translucent casters tint the sun's and local lights'
+// shadows (Transparency's tint maps, below).
+const uint kFeatureTranslucentShadows = 8192u;
+
+// Per sun cascade (layer) and for the local lights' atlas: the colour
+// translucent casters let through and the depth of the nearest of them.
+layout(set = 0, binding = 43) uniform sampler2DArray sunTint;
+layout(set = 0, binding = 44) uniform sampler2DArray sunTintDepth;
+layout(set = 0, binding = 45) uniform sampler2D atlasTint;
+layout(set = 0, binding = 46) uniform sampler2D atlasTintDepth;
+
+// Bilinear over the 2 x 2 texels around uv (in texels of `size`), each
+// tinting only receivers behind its caster (window depth ref).
+vec3 TintLookup(sampler2DArray tint, sampler2DArray tintDepth, sampler2D atlas, sampler2D atlasDepth, bool sun,
+                vec2 uv, float layer, float ref, vec2 lo, vec2 hi)
+{
+    float size = float(sun ? textureSize(tint, 0).x : textureSize(atlas, 0).x);
+    vec2 t = uv * size - 0.5;
+    vec2 f = fract(t);
+    vec3 sum = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        ivec2 o = ivec2(i & 1, i >> 1);
+        ivec2 q = ivec2(clamp(floor(t) + vec2(o), lo * size, hi * size - 1.0));
+        float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        float d = sun ? texelFetch(tintDepth, ivec3(q, int(layer)), 0).r : texelFetch(atlasDepth, q, 0).r;
+        vec3 c = sun ? texelFetch(tint, ivec3(q, int(layer)), 0).rgb : texelFetch(atlas, q, 0).rgb;
+        sum += w * (ref > d ? c : vec3(1.0));
+    }
+    return sum;
+}
+
+// The colour translucent casters let through to p from the shadow-casting
+// distant light (direction l), looked up as Shadow() does in mesh.frag.
+vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
+{
+    if ((frame.features.x & kFeatureTranslucentShadows) == 0u) {
+        return vec3(1.0);
+    }
+    float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
+    int c = 0;
+    while (c < 4 && depth > frame.cascadeSplits[c]) {
+        ++c;
+    }
+    if (c == 4) {
+        return vec3(1.0);
+    }
+    float texel = frame.cascadeTexel[c];
+    float NoL = clamp(dot(ng, l), 0.0, 1.0);
+    vec4 clip = frame.cascadeViewProj[c] * vec4(p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    return TintLookup(sunTint, sunTintDepth, atlasTint, atlasTintDepth, true, ndc.xy * 0.5 + 0.5, float(c),
+                      ndc.z * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+}
+
+// The same for local light `index`, looked up as LocalShadow() does.
+vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
+{
+    uint tile = lightShadow[index];
+    if ((frame.features.x & kFeatureTranslucentShadows) == 0u || tile == kNone) {
+        return vec3(1.0);
+    }
+    vec3 fromLight = p - light.position.xyz;
+    if (light.shaping.y > kSpotShadowCone) {
+        vec3 a = abs(fromLight);
+        tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
+              : a.y >= a.z               ? (fromLight.y > 0.0 ? 2u : 3u)
+                                         : (fromLight.z > 0.0 ? 4u : 5u);
+    }
+    ShadowTile t = shadowTiles[tile];
+    float dist = length(fromLight);
+    float texel = t.params.x * dist;
+    vec3 l = -fromLight / max(dist, 1e-8);
+    float NoL = clamp(dot(ng, l), 0.0, 1.0);
+    vec4 clip = t.viewProj * vec4(p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    return TintLookup(sunTint, sunTintDepth, atlasTint, atlasTintDepth, false,
+                      t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, 0.0, ndc.z * 0.5 + 0.5, t.rect.xy,
+                      t.rect.xy + t.rect.zw);
+}
+
 // OIT: premultiplied colour and coverage times a weight falling with the
 // distance (relative to the nearest translucent mesh's, to the power
 // frame.translucency.w) are summed in location 0; location 3, the

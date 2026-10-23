@@ -1244,6 +1244,68 @@ int main()
             Expect(off.At(44, 32, 1) > 0.8f && edge(off) == edge(straight),
                    "Frame::refraction off: straight through, untinted");
         }
+
+        {
+            // Translucent shadows: the sun shadow test's occluder made of red
+            // glass (transmission 1, ior 1.5: 8% lost to its two interfaces),
+            // then of opacity 0.5, then the same for a spot and a point
+            // light's atlas tiles.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            auto glass = std::make_shared<vkr::Material>();
+            glass->transmission = 1;
+            glass->transmissionColor[1] = glass->transmissionColor[2] = 0.2f;
+            occluder->material = glass;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            // Lit for comparison: pixel 10, just beside the shadow.
+            const float r = img.At(3, 32, 0) / img.At(10, 32, 0), g = img.At(3, 32, 1) / img.At(10, 32, 1);
+            Expect(std::abs(r - 0.92f) < 0.04f && std::abs(g - 0.18f) < 0.04f,
+                   "red glass casts a red shadow, weakened by its interfaces' reflections");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.translucentShadows = false;
+            const Image none = Render(renderer, scene, frame);
+            Expect(none.At(3, 32, 1) > 0.97f * none.At(10, 32, 1), "Frame::translucentShadows off: none cast");
+            frame = IdentityFrame();
+            frame.translucentShadowDivisor = 4;
+            const Image quarter = Render(renderer, scene, frame);
+            Expect(std::abs(quarter.At(3, 32, 1) / quarter.At(10, 32, 1) - 0.18f) < 0.04f,
+                   "Frame::translucentShadowDivisor 4: still tinted");
+            glass->transmission = 0;
+            glass->opacity = 0.5f;
+            glass->ior = 1.0f;
+            scene.Commit();
+            const Image half = Render(renderer, scene);
+            Expect(std::abs(half.At(3, 32, 1) / half.At(10, 32, 1) - 0.5f) < 0.04f,
+                   "an opacity 0.5 occluder lets half the light through");
+
+            scene.RemoveLight(sun);
+            glass->opacity = 0.25f;
+            for (const float cone : {45.0f, 180.0f}) {
+                // Through the occluder's centre the shadow lands around x =
+                // -0.7 (pixel 12), which the camera sees past the occluder.
+                vkr::Light *light = AddSphereLight(scene, 0.8f, 0, -1.6f, 0.02f, 400.0f);
+                light->point = true;
+                const float len = std::sqrt(0.8f * 0.8f + 1.1f * 1.1f);
+                light->direction[0] = -0.8f / len;
+                light->direction[2] = 1.1f / len;
+                light->coneAngle = cone;
+                light->castShadows = true;
+                scene.Commit();
+                const Image local = Render(renderer, scene);
+                light->castShadows = false;
+                scene.Commit();
+                const Image open = Render(renderer, scene);
+                Expect(std::abs(local.At(12, 32, 1) / open.At(12, 32, 1) - 0.75f) < 0.06f,
+                       cone < 90 ? "translucent spot light shadow (atlas tile)"
+                                 : "translucent point light shadow (cube faces)");
+                scene.RemoveLight(light);
+            }
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

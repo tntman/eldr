@@ -55,6 +55,8 @@ Transparency::~Transparency()
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
     _Destroy();
+    _DestroyTint(_sunTint);
+    _DestroyTint(_atlasTint);
     vkDestroyPipeline(d, _resolve, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
@@ -174,6 +176,105 @@ void Transparency::RecordBackground(VkCommandBuffer cmd, VkImage color)
                  VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
+void Transparency::_DestroyTint(TintMap &map)
+{
+    for (int i = 0; i < 4; ++i) {
+        vkDestroyImageView(_dev.device, map.colorLayers[i], nullptr);
+        vkDestroyImageView(_dev.device, map.depthLayers[i], nullptr);
+        map.colorLayers[i] = map.depthLayers[i] = VK_NULL_HANDLE;
+    }
+    _dev.Destroy(map.color);
+    _dev.Destroy(map.depth);
+    map.size = 0;
+}
+
+bool Transparency::EnsureTintMaps(uint32_t sunSize, uint32_t cascades, uint32_t atlasSize)
+{
+    if (_sunTint.size == sunSize && _atlasTint.size == atlasSize && _tintCascades == cascades) {
+        return false;
+    }
+    _tintCascades = cascades;
+    constexpr VkImageUsageFlags kUsage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    for (TintMap *map : {&_sunTint, &_atlasTint}) {
+        const bool sun = map == &_sunTint;
+        _DestroyTint(*map);
+        map->size = sun ? sunSize : atlasSize;
+        const uint32_t layers = sun ? cascades : 1;
+        const VkImageViewType type = sun ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        map->color = _dev.CreateImage(kTintFormat, map->size, map->size, layers, 1,
+                                      kUsage | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, type);
+        map->depth = _dev.CreateImage(kTintDepthFormat, map->size, map->size, layers, 1,
+                                      kUsage | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT,
+                                      type);
+        for (uint32_t layer = 0; sun && layer < layers; ++layer) {
+            VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+            vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            vci.image = map->color.image;
+            vci.format = kTintFormat;
+            vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+            Check(vkCreateImageView(_dev.device, &vci, nullptr, &map->colorLayers[layer]), "vkCreateImageView");
+            vci.image = map->depth.image;
+            vci.format = kTintDepthFormat;
+            vci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, layer, 1};
+            Check(vkCreateImageView(_dev.device, &vci, nullptr, &map->depthLayers[layer]), "vkCreateImageView");
+        }
+    }
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        for (const TintMap *map : {&_sunTint, &_atlasTint}) {
+            const uint32_t layers = map == &_sunTint ? cascades : 1;
+            _ClearTint(cmd, *map, layers, VK_IMAGE_LAYOUT_UNDEFINED);
+            for (const auto &[image, aspect] : {std::pair{map->color.image, VK_IMAGE_ASPECT_COLOR_BIT},
+                                                {map->depth.image, VK_IMAGE_ASPECT_DEPTH_BIT}}) {
+                ImageBarrier(cmd, image, {VkImageAspectFlags(aspect), 0, 1, 0, layers}, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                             VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+    });
+    return true;
+}
+
+void Transparency::_ClearTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers, VkImageLayout from)
+{
+    const VkImageSubresourceRange color{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers};
+    const VkImageSubresourceRange depth{VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, layers};
+    ImageBarrier(cmd, map.color.image, color, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, from, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    ImageBarrier(cmd, map.depth.image, depth, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, from, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkClearColorValue white{{1.0f, 1.0f, 1.0f, 1.0f}};
+    vkCmdClearColorImage(cmd, map.color.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &white, 1, &color);
+    const VkClearDepthStencilValue far{1.0f, 0};
+    vkCmdClearDepthStencilImage(cmd, map.depth.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &depth);
+}
+
+void Transparency::BeginTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers)
+{
+    _ClearTint(cmd, map, layers, VK_IMAGE_LAYOUT_UNDEFINED);
+    ImageBarrier(cmd, map.color.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers}, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    ImageBarrier(cmd, map.depth.image, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, layers}, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+}
+
+void Transparency::EndTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers)
+{
+    ImageBarrier(cmd, map.color.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers},
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ImageBarrier(cmd, map.depth.image, {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, layers},
+                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void Transparency::BeginAccumulation(VkCommandBuffer cmd)

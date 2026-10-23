@@ -19,6 +19,8 @@ class Transparency {
 public:
     static constexpr VkFormat kAccumFormat = VK_FORMAT_R32G32B32A32_SFLOAT;  // HDR highlights times weights
     static constexpr VkFormat kRevealageFormat = VK_FORMAT_R16_SFLOAT;
+    static constexpr VkFormat kTintFormat = VK_FORMAT_R8G8B8A8_UNORM;
+    static constexpr VkFormat kTintDepthFormat = VK_FORMAT_D32_SFLOAT;
 
     explicit Transparency(Device &device);
     ~Transparency();
@@ -48,6 +50,26 @@ public:
     // attachment.
     void RecordBackground(VkCommandBuffer cmd, VkImage color);
 
+    // Translucent shadows: per sun cascade (layers) and for the local
+    // lights' atlas, the colour translucent casters let through
+    // (multiplied together) and the depth of the nearest one; receivers
+    // behind it take the colour. (Re)made at these sizes, cleared to white
+    // and depth 1 (no caster) and left in SHADER_READ_ONLY_OPTIMAL; 1 x 1
+    // until used. Returns true when it made them (the GPU is idle there).
+    struct TintMap {
+        Image color, depth;
+        VkImageView colorLayers[4] = {}, depthLayers[4] = {};  // the sun's, per cascade
+        uint32_t size = 0;
+    };
+    bool EnsureTintMaps(uint32_t sunSize, uint32_t cascades, uint32_t atlasSize);
+    // Recording into them: BeginTint clears `layers` of `map` and makes
+    // them attachments, EndTint makes them readable again.
+    void BeginTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers);
+    void EndTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers);
+    const TintMap &SunTint() const { return _sunTint; }
+    const TintMap &AtlasTint() const { return _atlasTint; }
+    VkSampler NearestSampler() const { return _sampler; }
+
 private:
     void _Destroy();
 
@@ -61,6 +83,10 @@ private:
     Image _accum, _revealage;
     Image _background;
     uint32_t _backgroundLevels = 0;
+    TintMap _sunTint, _atlasTint;
+    uint32_t _tintCascades = 0;
+    void _DestroyTint(TintMap &map);
+    static void _ClearTint(VkCommandBuffer cmd, const TintMap &map, uint32_t layers, VkImageLayout from);
     uint32_t _width = 0, _height = 0;
 };
 

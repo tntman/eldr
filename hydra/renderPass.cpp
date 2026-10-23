@@ -103,7 +103,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency}, {t.oit, &frame.oit},
-                                {t.refraction, &frame.refraction}}) {
+                                {t.refraction, &frame.refraction}, {t.translucentShadows, &frame.translucentShadows}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -118,7 +118,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.localShadowResolution, &frame.localShadowResolution},
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
-                                {t.refractionSamples, &frame.refractionSamples}}) {
+                                {t.refractionSamples, &frame.refractionSamples},
+                                {t.translucentShadowDivisor, &frame.translucentShadowDivisor}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // The scene camera's lens; usdview's free camera has none.

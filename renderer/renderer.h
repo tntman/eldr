@@ -77,6 +77,11 @@ public:
         // them, rough ones blurred over this many taps (1..16).
         bool refraction = true;
         uint32_t refractionSamples = 8;
+        // Translucent shadows: translucent casters tint and lighten the
+        // sun's and local lights' shadows, through maps of 1 / this the
+        // shadow maps' resolution (1..4).
+        bool translucentShadows = true;
+        uint32_t translucentShadowDivisor = 2;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -139,7 +144,8 @@ private:
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
-    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
+    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
+    void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
                              uint32_t motion, VkRenderingAttachmentInfo depth);
 
@@ -174,6 +180,9 @@ private:
     VkPipeline _prepassPipeline[4] = {};      // depth only
     VkPipeline _translucentPipeline[8] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[8] = {};          // shading, OIT accumulation (Transparency)
+    // Translucent shadow casters into Transparency's tint maps: their
+    // nearest depth, then their colours multiplied (shadow_tint.frag).
+    VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
     VkPipeline _pipeline[8] = {};             // shading, depth read-only

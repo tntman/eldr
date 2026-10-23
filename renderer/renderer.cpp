@@ -67,11 +67,14 @@ const uint32_t kLightsComp[] =
 const uint32_t kSkinComp[] =
 #include "skin.comp.inc"
 ;
+const uint32_t kShadowTintFrag[] =
+#include "shadow_tint.frag.inc"
+;
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 // Translucency (transparency.glsl).
-constexpr uint32_t kFeatureRefraction = 4096;
+constexpr uint32_t kFeatureRefraction = 4096, kFeatureTranslucentShadows = 8192;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -279,7 +282,7 @@ Renderer::~Renderer()
     }
     for (int v = 0; v < 4; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
-                             _shadowCutoutPipeline[v]}) {
+                             _shadowCutoutPipeline[v], _tintDepthPipeline[v], _tintColorPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
@@ -334,9 +337,10 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars; 42 the refraction background (Transparency).
+    // and vertex-rate primvars; 42 the refraction background, 43..46 the
+    // translucent shadows' tint maps (Transparency).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    constexpr uint32_t kBindings = 34;
+    constexpr uint32_t kBindings = 38;
     const VkDescriptorSetLayoutBinding bindings[kBindings] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -372,6 +376,10 @@ void Renderer::_CreateDescriptors()
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {42, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {43, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {44, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {45, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {46, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
     const VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
@@ -384,7 +392,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 9},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 13},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
@@ -432,6 +440,7 @@ void Renderer::_CreatePipelines()
     VkShaderModule graphVert = CreateShaderModule(device, kMeshGraphVert, sizeof(kMeshGraphVert));
     VkShaderModule graphFrag = CreateShaderModule(device, kMeshGraphFrag, sizeof(kMeshGraphFrag));
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
+    VkShaderModule tintFrag = CreateShaderModule(device, kShadowTintFrag, sizeof(kShadowTintFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
     auto stage = [](VkShaderStageFlagBits s, VkShaderModule m) {
@@ -626,6 +635,38 @@ void Renderer::_CreatePipelines()
         if (r == VK_SUCCESS) {
             r = createMesh(sci, _shadowCutoutPipeline, 4);
         }
+
+        // Translucent shadow casters (Transparency's tint maps): depth like
+        // the shadows, colour masked; then no depth test, colour
+        // multiplied.
+        const VkPipelineShaderStageCreateInfo tintStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert),
+                                                               stage(VK_SHADER_STAGE_FRAGMENT_BIT, tintFrag)};
+        const VkFormat tintFormat = Transparency::kTintFormat;
+        VkPipelineRenderingCreateInfo tintRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        tintRendering.colorAttachmentCount = 1;
+        tintRendering.pColorAttachmentFormats = &tintFormat;
+        tintRendering.depthAttachmentFormat = Transparency::kTintDepthFormat;
+        VkPipelineColorBlendAttachmentState tintAttachment{};
+        VkPipelineColorBlendStateCreateInfo tintBlend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+        tintBlend.attachmentCount = 1;
+        tintBlend.pAttachments = &tintAttachment;
+        VkGraphicsPipelineCreateInfo tci = sci;
+        tci.pNext = &tintRendering;
+        tci.pStages = tintStages;
+        tci.pColorBlendState = &tintBlend;
+        if (r == VK_SUCCESS) {
+            r = createMesh(tci, _tintDepthPipeline, 4);
+        }
+        tintAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        tintAttachment.blendEnable = VK_TRUE;
+        tintAttachment.srcColorBlendFactor = tintAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+        tintAttachment.dstColorBlendFactor = tintAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        VkPipelineDepthStencilStateCreateInfo noDepth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        tci.pDepthStencilState = &noDepth;
+        if (r == VK_SUCCESS) {
+            r = createMesh(tci, _tintColorPipeline, 4);
+        }
     }
 
     // Sky: full-screen triangle at depth 1, drawn after geometry.
@@ -638,7 +679,8 @@ void Renderer::_CreatePipelines()
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, maskFrag, skyVert, skyFrag}) {
+    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, maskFrag, skyVert, skyFrag,
+                             tintFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -799,6 +841,13 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     // Without refraction this frame the LUT stands in for its background.
     const VkDescriptorImageInfo refraction{_clampSampler, background ? background : _brdfLut.view,
                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const Transparency::TintMap &sunTint = _transparency.SunTint(), &atlasTint = _transparency.AtlasTint();
+    const VkSampler nearest = _transparency.NearestSampler();
+    const VkDescriptorImageInfo tints[4] = {
+        {_clampSampler, sunTint.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {nearest, sunTint.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {_clampSampler, atlasTint.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {nearest, atlasTint.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -845,6 +894,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
     write(42, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &refraction);
+    for (uint32_t i = 0; i < 4; ++i) {
+        write(43 + i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &tints[i]);
+    }
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1084,7 +1136,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
 // accumulation frames). Without tiles the atlas is only transitioned for
 // its descriptor.
 // ponytail: all or nothing; a moving caster redraws every light's tiles.
-void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles)
+void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint)
 {
     const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
     std::vector<float> key;
@@ -1092,6 +1144,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         key.insert(key.end(), t.viewProj, t.viewProj + 16);
         key.insert(key.end(), t.rect, t.rect + 4);
     }
+    key.push_back(tint ? float(_transparency.AtlasTint().size) : 0.0f);
     if (!tiles.empty() && gpu.version == _atlasVersion && key == _atlasKey) {
         return;  // still in SHADER_READ_ONLY_OPTIMAL from when it was drawn
     }
@@ -1123,6 +1176,9 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     const VkClearDepthStencilValue far{1.0f, 0};
     vkCmdClearDepthStencilImage(_cmd, _shadowAtlas.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &range);
+    if (tint) {
+        _transparency.BeginTint(_cmd, _transparency.AtlasTint(), 1);
+    }
     ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
@@ -1187,6 +1243,35 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         PushDraw(_cmd, _layout, t.viewProj, tileList);
         DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, 3);
         vkCmdEndRendering(_cmd);
+        if (tint) {
+            const Transparency::TintMap &map = _transparency.AtlasTint();
+            const float scale = float(map.size) / float(kShadowAtlasSize);
+            const int32_t tx = int32_t(std::lround(x * scale)), ty = int32_t(std::lround(y * scale));
+            const uint32_t tsize = std::max(uint32_t(std::lround(size * scale)), 1u);
+            VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+            color.imageView = map.color.view;
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingAttachmentInfo depth = color;
+            depth.imageView = map.depth.view;
+            depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            VkRenderingInfo tri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+            tri.renderArea = {{tx, ty}, {tsize, tsize}};
+            tri.layerCount = 1;
+            tri.colorAttachmentCount = 1;
+            tri.pColorAttachments = &color;
+            tri.pDepthAttachment = &depth;
+            vkCmdBeginRendering(_cmd, &tri);
+            const VkViewport tvp{float(tx), float(ty), float(tsize), float(tsize), 0, 1};
+            vkCmdSetViewport(_cmd, 0, 1, &tvp);
+            vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
+            _DrawTintCasters(gpu, tileCommands);
+            vkCmdEndRendering(_cmd);
+        }
+    }
+    if (tint) {
+        _transparency.EndTint(_cmd, _transparency.AtlasTint(), 1);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1277,6 +1362,26 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
     vkCmdEndRendering(_cmd);
     if (oit) {
         _transparency.Resolve(_cmd, _color.view);
+    }
+}
+
+// The translucent shadow casters of one command list (commands[first] at
+// offset `commands`): their nearest depth, then their colours multiplied
+// (in a rendering into a tint map; push constants and buffers bound).
+void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
+{
+    vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
+    for (const VkPipeline *pipelines : {_tintDepthPipeline, _tintColorPipeline}) {
+        VkPipeline bound = VK_NULL_HANDLE;
+        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+            if (pipelines[gpu.translucentVariant[i] & 3] != bound) {
+                bound = pipelines[gpu.translucentVariant[i] & 3];
+                vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+            }
+            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                     commands + VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand),
+                                     1, sizeof(VkDrawIndexedIndirectCommand));
+        }
     }
 }
 
@@ -1407,6 +1512,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     // Refraction reads a copy of the opaque colour and the prepass depth.
     const bool refraction = draw && frame.translucency && frame.refraction && frame.depthPrepass && gpu.refraction;
+    // Translucent shadows: tint maps at a fraction of the shadow maps'
+    // size (1 x 1 while unused); new ones invalidate the cached atlas.
+    const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
+                                    !gpu.translucent.empty();
+    const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
+    if (_transparency.EnsureTintMaps(translucentShadows ? std::max(_shadowSize / divisor, 1u) : 1u, kCascades,
+                                     translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
+        _atlasVersion = 0;
+    }
+    if (translucentShadows) {
+        fd.features[0] |= kFeatureTranslucentShadows;
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (refraction) {
         fd.features[0] |= kFeatureRefraction;
@@ -1572,6 +1689,35 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                        _shadowPipeline, _shadowCutoutPipeline, 3);
             vkCmdEndRendering(_cmd);
         }
+        // Translucent casters into the sun's tint map, cascade by cascade.
+        if (translucentShadows) {
+            const Transparency::TintMap &map = _transparency.SunTint();
+            _transparency.BeginTint(_cmd, map, kCascades);
+            for (uint32_t c = 0; c < cascades; ++c) {
+                VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                color.imageView = map.colorLayers[c];
+                color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+                color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                VkRenderingAttachmentInfo depth = color;
+                depth.imageView = map.depthLayers[c];
+                depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+                VkRenderingInfo tri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+                tri.renderArea = {{0, 0}, {map.size, map.size}};
+                tri.layerCount = 1;
+                tri.colorAttachmentCount = 1;
+                tri.pColorAttachments = &color;
+                tri.pDepthAttachment = &depth;
+                vkCmdBeginRendering(_cmd, &tri);
+                const VkViewport tvp{0, 0, float(map.size), float(map.size), 0, 1};
+                vkCmdSetViewport(_cmd, 0, 1, &tvp);
+                vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
+                PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
+                _DrawTintCasters(gpu, VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                vkCmdEndRendering(_cmd);
+            }
+            _transparency.EndTint(_cmd, map, kCascades);
+        }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1635,7 +1781,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _gtao.Clear(_cmd);
     }
 
-    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>());
+    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
     if (!shadowTiles.empty()) {
         pass("localShadows");
     }

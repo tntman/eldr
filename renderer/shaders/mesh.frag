@@ -291,7 +291,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
-    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
+    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 
 // Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
@@ -523,7 +523,7 @@ void main()
                          Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l);
+            radiance *= Shadow(inWorldPos, ng, l) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
     }
