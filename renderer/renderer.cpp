@@ -75,6 +75,8 @@ const uint32_t kShadowTintFrag[] =
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 // Translucency (transparency.glsl).
 constexpr uint32_t kFeatureRefraction = 4096, kFeatureTranslucentShadows = 8192;
+// Subsurface scattering (subsurface.glsl).
+constexpr uint32_t kFeatureSubsurface = 16384;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -224,6 +226,7 @@ Renderer::Renderer(Device &device)
     , _lens(device)
     , _post(device)
     , _transparency(device)
+    , _subsurface(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -290,6 +293,7 @@ Renderer::~Renderer()
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
+        vkDestroyPipeline(_dev.device, _subsurfacePipeline[v], nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
@@ -596,6 +600,25 @@ void Renderer::_CreatePipelines()
         const VkSpecializationInfo oitSpec{1, &passEntry, sizeof(oitPass), &oitPass};
         r = createMesh(oci, _oitPipeline, 8, &oitSpec);
     }
+    // Subsurface pass (Subsurface): the subsurface lobe's light and the
+    // radii (locations 0 and 1), nothing else written.
+    if (r == VK_SUCCESS) {
+        VkPipelineColorBlendAttachmentState sss[4] = {attachments[0], attachments[1], attachments[2],
+                                                      attachments[3]};
+        sss[2].colorWriteMask = sss[3].colorWriteMask = 0;
+        VkPipelineColorBlendStateCreateInfo sssBlend = blend;
+        sssBlend.pAttachments = sss;
+        const VkFormat sssFormats[4] = {Subsurface::kLightFormat, Subsurface::kIdFormat, kIdFormat, kVelocityFormat};
+        VkPipelineRenderingCreateInfo sssRendering = rendering;
+        sssRendering.pColorAttachmentFormats = sssFormats;
+        VkGraphicsPipelineCreateInfo sci = ci;
+        sci.pNext = &sssRendering;
+        sci.pColorBlendState = &sssBlend;
+        const VkSpecializationMapEntry passEntry{12, 0, sizeof(uint32_t)};
+        const uint32_t sssPass = 2;
+        const VkSpecializationInfo sssSpec{1, &passEntry, sizeof(sssPass), &sssPass};
+        r = createMesh(sci, _subsurfacePipeline, 8, &sssSpec);
+    }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
     // positions, invariant). Shadow: plus slope-scaled bias.
@@ -785,6 +808,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                  _taa.Output(), _taa.History());
     _post.Resize(width, height, _taa.Output());
     _transparency.Resize(width, height);
+    _subsurface.Resize(width, height, _depth.view);
     _taaValid = false;
     _historyValid = false;
 }
@@ -1385,6 +1409,65 @@ void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
     }
 }
 
+// Subsurface meshes shaded again after the opaque pass, their subsurface
+// lobe only, into Subsurface's targets (testing the opaque depth), which
+// it then blurs into the colour.
+void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
+                                 const float *invViewProj, VkRenderingAttachmentInfo depth)
+{
+    // The opaque pass's ids, velocity and colour are written before this
+    // pass loads (and the blur adds to) them.
+    VkMemoryBarrier2 opaque{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    opaque.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    opaque.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    opaque.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    opaque.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &opaque;
+    vkCmdPipelineBarrier2(_cmd, &dep);
+
+    _subsurface.BeginLighting(_cmd);
+    const VkImageView views[4] = {_subsurface.Light().view, _subsurface.Id().view, _instanceId.view, _velocity.view};
+    VkRenderingAttachmentInfo atts[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        atts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        atts[i].imageView = views[i];
+        atts[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        atts[i].loadOp = i < 2 ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        atts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {_width, _height}};
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 4;
+    ri.pColorAttachments = atts;
+    ri.pDepthAttachment = &depth;
+    vkCmdBeginRendering(_cmd, &ri);
+    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+    vkCmdSetViewport(_cmd, 0, 1, &vp);
+    vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+    PushDraw(_cmd, _layout, viewProj, 0);
+    const VkDeviceSize vertexOffset = 0;
+    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+    VkPipeline bound = VK_NULL_HANDLE;
+    for (size_t i = 0; i < gpu.subsurface.size(); ++i) {
+        if (_subsurfacePipeline[gpu.subsurfaceVariant[i]] != bound) {
+            bound = _subsurfacePipeline[gpu.subsurfaceVariant[i]];
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+        }
+        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                 VkDeviceSize(gpu.subsurface[i]) * sizeof(VkDrawIndexedIndirectCommand), 1,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+    }
+    vkCmdEndRendering(_cmd);
+    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples);
+}
+
 bool Renderer::IsConverged() const
 {
     return (!_adapting || _post.ExposureConverged()) && _taaConverged;
@@ -1523,6 +1606,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     if (translucentShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
+    }
+    // Subsurface scattering blurs by the prepass depth.
+    if (draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty()) {
+        fd.features[0] |= kFeatureSubsurface;
     }
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (refraction) {
@@ -1847,6 +1934,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     vkCmdEndRendering(_cmd);
     pass("shading");
+    if (fd.features[0] & kFeatureSubsurface) {
+        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt);
+        pass("subsurface");
+    }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
         _RenderTranslucency(gpu, frame, &fd, jitteredViewProj, motion, depthAtt);
         pass("translucency");

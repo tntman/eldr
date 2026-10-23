@@ -96,6 +96,12 @@ TF_DEFINE_PRIVATE_TOKENS(
     (specular_ior)
     (thin_walled)
     (geometry_thin_walled)
+    (subsurface)
+    (subsurface_weight)
+    (subsurface_color)
+    (subsurface_radius)
+    (subsurface_scale)
+    (subsurface_radius_scale)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1068,7 +1074,7 @@ private:
 };
 
 // ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, subsurface and displacement.
+// coat, sheen and displacement.
 // *uvPrimvar: the primvar the textures' coordinates come from.
 // ponytail: one per material (meshes carry one uv set); a second warns.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
@@ -1182,6 +1188,32 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         Read(surface.parameters, openPbr ? _tokens->specular_ior : _tokens->specular_IOR, &m->ior);
         Read(surface.parameters, openPbr ? _tokens->geometry_thin_walled : _tokens->thin_walled, &m->thinWalled);
         m->transmission = std::clamp(m->transmission, 0.0f, 1.0f);
+        // Subsurface: standard_surface's radius is a colour times a scale,
+        // OpenPBR's a distance times a colour (the shaders' defaults
+        // apply where nothing is authored).
+        Read(surface.parameters, openPbr ? _tokens->subsurface_weight : _tokens->subsurface, &m->subsurface);
+        m->subsurface = std::clamp(m->subsurface, 0.0f, 1.0f);
+        GfVec3f color = openPbr ? GfVec3f(0.8f) : GfVec3f(1.0f);
+        if (Read(surface.parameters, _tokens->subsurface_color, &color)) {
+            const TfToken colorSpace = ParameterColorSpace(surface.parameters, _tokens->subsurface_color);
+            if (NeedsConversion(colorSpace)) {
+                color = GfColor(GfColor(color, GfColorSpace(colorSpace)),
+                                GfColorSpace(GfColorSpaceNames->LinearRec709)).GetRGB();
+            }
+        }
+        std::copy(color.data(), color.data() + 3, m->subsurfaceColor);
+        GfVec3f radius = openPbr ? GfVec3f(1.0f, 0.5f, 0.25f) : GfVec3f(1.0f);
+        float scale = 1.0f;
+        if (openPbr) {
+            Read(surface.parameters, _tokens->subsurface_radius_scale, &radius);
+            Read(surface.parameters, _tokens->subsurface_radius, &scale);
+        } else {
+            Read(surface.parameters, _tokens->subsurface_radius, &radius);
+            Read(surface.parameters, _tokens->subsurface_scale, &scale);
+        }
+        for (int i = 0; i < 3; ++i) {
+            m->subsurfaceRadius[i] = std::max(radius[i] * scale, 0.0f);
+        }
     } else if (Read(surface.parameters, _tokens->ior, &m->ior)) {
         m->opacityRefracts = m->ior != 1.0f;
     }

@@ -166,6 +166,12 @@ struct Material {
     float ior = 1.5f;
     bool thinWalled = false;
     bool opacityRefracts = false;
+    // Subsurface scattering (subsurface.h): the weight of the diffuse
+    // light that scatters under the surface, its colour, and how far each
+    // channel travels (mean free path, world units). Constants only.
+    float subsurface = 0;
+    float subsurfaceColor[3] = {1, 1, 1};
+    float subsurfaceRadius[3] = {1, 1, 1};
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -483,6 +489,10 @@ public:
         // (Material::transmission, opacityRefracts): the renderer copies
         // the opaque colour for it.
         bool refraction = false;
+        // Slots of opaque and cutout meshes with subsurface materials (and
+        // their pipeline variants), shaded again by the subsurface pass.
+        std::vector<uint32_t> subsurface;
+        std::vector<uint8_t> subsurfaceVariant;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

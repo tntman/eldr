@@ -19,14 +19,15 @@ find_package(pxr CONFIG REQUIRED)
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
-               tonemap.frag oit_resolve.frag shadow_tint.frag)
+               tonemap.frag oit_resolve.frag shadow_tint.frag subsurface_blur.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
-                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/transparency.glsl)
+                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/transparency.glsl
+                renderer/shaders/subsurface.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
@@ -39,7 +40,7 @@ foreach(shader mesh.vert mesh.frag)
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/transparency.glsl)
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -53,7 +54,7 @@ list(APPEND shader_incs ${spv})
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
-    renderer/transparency.cpp
+    renderer/transparency.cpp renderer/subsurface.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)

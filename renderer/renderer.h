@@ -5,6 +5,7 @@
 #include "lens.h"
 #include "post.h"
 #include "scene.h"
+#include "subsurface.h"
 #include "taa.h"
 #include "transparency.h"
 
@@ -82,6 +83,11 @@ public:
         // shadow maps' resolution (1..4).
         bool translucentShadows = true;
         uint32_t translucentShadowDivisor = 2;
+        // Subsurface scattering (needs depthPrepass): the diffuse light of
+        // subsurface materials blurred over this many taps per direction
+        // (1..64), and the sun shining through their thin parts.
+        bool subsurface = true;
+        uint32_t subsurfaceSamples = 15;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -146,6 +152,8 @@ private:
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
+    void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
+                           const float *invViewProj, VkRenderingAttachmentInfo depth);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
                              uint32_t motion, VkRenderingAttachmentInfo depth);
 
@@ -155,6 +163,7 @@ private:
     Lens _lens;
     PostProcess _post;
     Transparency _transparency;
+    Subsurface _subsurface;
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
@@ -183,6 +192,7 @@ private:
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
+    VkPipeline _subsurfacePipeline[8] = {};   // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
     VkPipeline _pipeline[8] = {};             // shading, depth read-only

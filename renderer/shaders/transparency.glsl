@@ -3,8 +3,9 @@
 
 // The pass a shading pipeline draws (the Renderer specializes it): 0 the
 // opaque pass or sorted translucency (colour premultiplied by coverage,
-// blended over), 1 weighted blended OIT accumulation.
-layout(constant_id = 12) const uint kTranslucentPass = 0u;
+// blended over), 1 weighted blended OIT accumulation, 2 the subsurface
+// pass (subsurface.glsl).
+layout(constant_id = 12) const uint kShadingPass = 0u;
 
 // frame.features.x: refraction samples the opaque colour behind (bound below).
 const uint kFeatureRefraction = 4096u;
@@ -191,14 +192,26 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
                       t.rect.xy + t.rect.zw);
 }
 
-// OIT: premultiplied colour and coverage times a weight falling with the
-// distance (relative to the nearest translucent mesh's, to the power
-// frame.translucency.w) are summed in location 0; location 3, the
-// revealage, is multiplied by 1 - coverage. Pure highlights (glass at
-// opacity 0) keep a sliver of coverage so they still count.
-void TranslucentOutput(vec3 color, float alpha)
+// The outputs of the passes after the opaque one. OIT: premultiplied
+// colour and coverage times a weight falling with the distance (relative
+// to the nearest translucent mesh's, to the power frame.translucency.w)
+// are summed in location 0; location 3, the revealage, is multiplied by
+// 1 - coverage. Pure highlights (glass at opacity 0) keep a sliver of
+// coverage so they still count. Subsurface: the light in location 0, its
+// alpha the largest radius, location 1 the radii's proportions (10 bits
+// each) and bit 30, so the blur keeps materials apart.
+void PassOutput(vec3 color, float alpha)
 {
-    if (kTranslucentPass != 1u) {
+    if (kShadingPass == 2u) {
+        vec3 radius = inMaterial != kNoMaterial ? max(materials[inMaterial].subsurfaceRadius.xyz, vec3(1e-6))
+                                                : vec3(1.0);
+        float largest = max(radius.r, max(radius.g, radius.b));
+        uvec3 q = uvec3(round(radius / largest * 1023.0));
+        outColor = vec4(color, largest);
+        outPrimId = int(q.r | (q.g << 10) | (q.b << 20) | (1u << 30));
+        return;
+    }
+    if (kShadingPass != 1u) {
         return;
     }
     float a = clamp(alpha, 1.0 / 256.0, 1.0);

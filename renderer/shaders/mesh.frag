@@ -67,6 +67,7 @@ layout(location = 2) out int outInstanceId;
 layout(location = 3) out vec2 outVelocity;
 
 #include "transparency.glsl"
+#include "subsurface.glsl"
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -477,6 +478,7 @@ void main()
 #endif
     }
     TransmissionBegin(alpha);
+    SubsurfaceBegin(baseColor, emissive, metallic, specularTint);
 
     vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
@@ -544,6 +546,8 @@ void main()
         }
     }
 
+    color += SubsurfaceTransmission(inWorldPos, n);
+
     // Image-based lighting from the dome, if any.
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
     if (frame.envRadiance.w > 0.0) {
@@ -560,7 +564,7 @@ void main()
     specular *= MultiBounce(specularAO, f0);
     // Screen-space reflections replace the dome where they hit something;
     // where the hit is partly background the dome shows through.
-    float ssrWeight = frame.ssr.x > 0.0 ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    float ssrWeight = frame.ssr.x > 0.0 && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
     if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
@@ -582,5 +586,5 @@ void main()
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
     vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
     outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
-    TranslucentOutput(color, alpha);
+    PassOutput(color, alpha);
 }

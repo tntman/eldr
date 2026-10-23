@@ -1306,6 +1306,61 @@ int main()
                 scene.RemoveLight(light);
             }
         }
+
+        {
+            // Subsurface scattering: a white subsurface ground (radii 0.1,
+            // 0.05, 0.02: red travels furthest) with the sun shadow test's
+            // geometry, an occluder over x in [0.5, 1] shadowing [-0.5, 0].
+            // Light bleeds into the shadow across its edge at pixel 32, red
+            // furthest; the lit side gives it up.
+            vkr::Scene scene(&device);
+            AddLight(scene, 1, 0, -1)->castShadows = true;
+            vkr::Mesh *ground = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            AddQuad(scene, 0.5f, -1, 1, 1, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            auto skin = std::make_shared<vkr::Material>();
+            std::fill(skin->baseColor, skin->baseColor + 3, 1.0f);
+            skin->roughness = 1;
+            skin->subsurface = 1;
+            const float radii[3] = {0.1f, 0.05f, 0.02f};
+            std::copy(radii, radii + 3, skin->subsurfaceRadius);
+            ground->material = skin;
+            scene.Commit();
+            const Image on = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.subsurface = false;
+            const Image off = Render(renderer, scene, frame);
+            const float bleedR = on.At(30, 32, 0) - off.At(30, 32, 0), bleedB = on.At(30, 32, 2) - off.At(30, 32, 2);
+            Expect(bleedR > 0.05f && bleedR > 2 * bleedB && bleedB >= 0,
+                   "subsurface: light bleeds into the shadow, red the furthest");
+            Expect(on.At(34, 32, 0) < off.At(34, 32, 0), "subsurface: the lit side gives light up");
+            Expect(std::abs(on.At(8, 32, 2) - off.At(8, 32, 2)) < 0.01f, "subsurface: far from edges nothing changes");
+            frame = IdentityFrame();
+            frame.subsurfaceSamples = 1;
+            Expect(MaxDifference(Render(renderer, scene, frame), off) < 0.01f, "Frame::subsurfaceSamples 1: no blur");
+        }
+
+        {
+            // Thin-object transmission: a thin-walled subsurface quad lit
+            // only from behind glows by the light through it (subsurface 0.5
+            // of a white colour: half the light), and is black without.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, 1)->castShadows = true;
+            vkr::Mesh *leaf = AddQuad(scene, -1, -1, 1, 1, 0);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 1;
+            material->subsurface = 0.5f;
+            material->thinWalled = true;
+            leaf->material = material;
+            scene.Commit();
+            const Image lit = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.subsurface = false;
+            const Image dark = Render(renderer, scene, frame);
+            Expect(std::abs(lit.At(32, 32, 1) - 0.5f) < 0.05f && dark.At(32, 32, 1) < 0.01f,
+                   "thin-walled subsurface: light from behind shows through");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

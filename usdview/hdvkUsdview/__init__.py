@@ -17,6 +17,7 @@ PASSES = [
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
     ("shading", "Shading"),
+    ("subsurface", "Subsurface scattering"),
     ("translucency", "Translucency (refraction, OIT)"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),

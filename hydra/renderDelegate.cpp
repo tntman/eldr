@@ -105,7 +105,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
     // image.
     return {
-        {"Depth Prepass (off: no AO, SSR, refraction)", t.depthPrepass, VtValue(frame.depthPrepass)},
+        {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
@@ -130,6 +130,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
+        {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
+        {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
