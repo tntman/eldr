@@ -35,6 +35,8 @@ struct GpuMaterial {
     float specularColor[4];  // specular workflow F0, w = 1 when used
     float coat[4];           // weight, roughness, F0
     float coatColor[4];
+    float sheen[4];          // weight, roughness
+    float sheenColor[4];
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1087,6 +1089,9 @@ void Scene::Commit()
             g.coat[1] = m.coatRoughness;
             g.coat[2] = m.coatF0;
             std::copy(m.coatColor, m.coatColor + 3, g.coatColor);
+            g.sheen[0] = m.sheen;
+            g.sheen[1] = m.sheenRoughness;
+            std::copy(m.sheenColor, m.sheenColor + 3, g.sheenColor);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);

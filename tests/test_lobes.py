@@ -91,6 +91,9 @@ for prim in ("/clearcoat", "/carPaint", "/amberCoat"):
     expect(sum(on) > 1.5 * sum(off), prim[1:] + ": the coat's sharp highlight", on, off)
 on, off = compare("hdvk:clearcoat", "/amberCoat")
 expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "amberCoat: the coat colour tints the base", on, off)
+for prim in ("/velvet", "/fuzz"):
+    on, off = compare("hdvk:sheen", prim)
+    expect(sum(on) > 1.15 * sum(off), prim[1:] + ": sheen brightens the sphere", on, off)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

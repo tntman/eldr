@@ -47,7 +47,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
     ((specularWorkflow, "hdvk:specularWorkflow"))            \
-    ((clearcoat, "hdvk:clearcoat"))
+    ((clearcoat, "hdvk:clearcoat"))                          \
+    ((sheen, "hdvk:sheen"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

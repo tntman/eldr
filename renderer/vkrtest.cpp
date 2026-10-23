@@ -1207,6 +1207,40 @@ int main()
             const float v = Render(renderer, furnace).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: coated white dielectric returns 1");
         }
+
+        {
+            // Sheen: microfibers shine at grazing angles. A strip tilted 80
+            // degrees away from the view, lit from the camera: the Imageworks
+            // lobe (roughness 0.3) adds D * V * cos * pi = 0.81 * 0.8 * 0.17
+            // * pi = 0.35. Under a uniform dome (white furnace) white sheen
+            // over a white diffuse still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            const float c = std::cos(80.0f * 3.14159265f / 180.0f), s = std::sin(80.0f * 3.14159265f / 180.0f);
+            vkr::Mesh *strip = AddQuad(scene, 0, 0, 0, 0, 0);
+            strip->points = {-1, -c, -s, 1, -c, -s, 1, c, s, -1, -c, -s, 1, c, s, -1, c, s};
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->sheen = 1;
+            strip->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float on = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.sheen = false;
+            const float off = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(on - off > 0.3f && on - off < 0.4f, "sheen brightens grazing angles");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->sheen = 1;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white sheen over white returns 1");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

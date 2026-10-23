@@ -167,10 +167,14 @@ struct Material {
     float coatRoughness = 0.01f;
     float coatF0 = 0.04f;  // from the coat's IOR
     float coatColor[3] = {1, 1, 1};
+    // Sheen (fabric, fuzz): a microfiber lobe over the diffuse. Weight 0: none.
+    float sheen = 0;
+    float sheenColor[3] = {1, 1, 1};
+    float sheenRoughness = 0.3f;
 
     // Whether any lobe beyond the metallic base is on: such materials shade
     // with the renderer's LAYERS pipelines, the others never pay for them.
-    bool Layered() const { return specularWorkflow || coat > 0; }
+    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0; }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one

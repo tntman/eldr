@@ -98,6 +98,12 @@ TF_DEFINE_PRIVATE_TOKENS(
     (coat_IOR)
     (coat_weight)
     (coat_ior)
+    (sheen)
+    (sheen_color)
+    (sheen_roughness)
+    (fuzz_weight)
+    (fuzz_color)
+    (fuzz_roughness)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1116,12 +1122,20 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
         color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->sheen_roughness, 0.3f);
+        color(_tokens->sheen_color, m->sheenColor);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
-        // ponytail: coat_darkening isn't modelled (the coat's albedo only).
+        // ponytail: coat_darkening isn't modelled (the coat's albedo only);
+        // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
+        // under the coat rather than over it.
         m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
         color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->fuzz_weight, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->fuzz_roughness, 0.5f);
+        color(_tokens->fuzz_color, m->sheenColor);
     }
 }
 

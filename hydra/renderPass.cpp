@@ -103,7 +103,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency},
-                                {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat}}) {
+                                {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
+                                {t.sheen, &frame.sheen}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},

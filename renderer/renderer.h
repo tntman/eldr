@@ -70,6 +70,7 @@ public:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
         bool clearcoat = true;         // a second GGX lobe on top (coat)
+        bool sheen = true;             // microfiber lobe (fabric, fuzz)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
