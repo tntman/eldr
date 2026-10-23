@@ -73,6 +73,8 @@ layout(location = 2) out int outInstanceId;
 layout(location = 3) out vec2 outVelocity;
 
 #include "brdf.glsl"
+#include "transparency.glsl"
+#include "subsurface.glsl"
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -365,7 +367,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
     specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
-    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
+    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 
 // Soft sun shadows: PCSS in the cascade's light space, as LocalShadow()
@@ -611,6 +613,8 @@ void main()
         }
 #endif
     }
+    TransmissionBegin(alpha);
+    SubsurfaceBegin(baseColor, emissive, metallic, specularTint);
 
     vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
@@ -643,6 +647,7 @@ void main()
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
     PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
+    SubsurfaceLayers();
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
@@ -659,7 +664,7 @@ void main()
                              light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w));
+            radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
     }
@@ -679,6 +684,8 @@ void main()
             color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV, energyCompensation);
         }
     }
+
+    color += SubsurfaceTransmission(inWorldPos, n);
 
     // Image-based lighting from the dome, if any.
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
@@ -708,7 +715,7 @@ void main()
     if (mirror) {
         specular = PlanarSpecular(specular, inWorldPos, n, perceptual);
     }
-    float ssrWeight = frame.ssr.x > 0.0 && !mirror ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
 #ifdef LAYERS
     ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
 #endif
@@ -723,18 +730,26 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
-    color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
-    color = ToonShade(color, emissive, diffuseColor + f0);
+    if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
+        color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        color = ToonShade(color, emissive, diffuseColor + f0);
+    }
+    alpha = TransmissionEnd(color, n, v, perceptual);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;
     }
-    // Volumetric fog between the camera and the surface (premultiplied).
-    vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
-    outColor = vec4(color * fog.a + fog.rgb * alpha, alpha);
+    // Volumetric fog between the camera and the surface (premultiplied;
+    // also for OIT, not on the subsurface pass's diffuse light).
+    if (kShadingPass != 2u) {
+        vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
+        color = color * fog.a + fog.rgb * alpha;
+    }
+    outColor = vec4(color, alpha);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
     vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
     outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
+    PassOutput(color, alpha);
 }

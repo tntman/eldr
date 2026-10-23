@@ -13,6 +13,12 @@
                         "loadWithRenderer": "Eldr",
                         "priority": 0,
                         "displayName": "Scene index for Eldr (implicit surfaces, skinning inputs)"
+                    },
+                    "HdVk_MatteSceneIndexPlugin": {
+                        "bases": ["HdSceneIndexPlugin"],
+                        "loadWithRenderer": "Eldr",
+                        "priority": 0,
+                        "displayName": "Holdouts for Eldr (the active render pass's matte collection)"
                     }
                 }
             },

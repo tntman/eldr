@@ -24,6 +24,10 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     // Shading styles (brdf.glsl): x: kStyle* flags, y: toon bands for every
     // material (0: only materials with their own).
     uvec4 styles;
+    // Translucency (transparency.glsl): x: refraction blur taps, y:
+    // refraction background mip levels, z: 1 / distance of the nearest
+    // translucent mesh, w: OIT depth weight exponent.
+    vec4 translucency;
     // Volumetric fog (fog.glsl).
     vec4 fogMedium;      // extinction per unit at the base height, height falloff, base height, phase g
     vec4 fogAlbedo;      // rgb: scattering colour; w: view depth the froxels reach

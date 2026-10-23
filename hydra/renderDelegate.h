@@ -70,7 +70,16 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((giRays, "hdvk:giRaysPerProbe"))                        \
     ((giHysteresis, "hdvk:giHysteresis"))                    \
     ((emissiveLights, "hdvk:emissiveLights"))                \
-    ((emissiveLightThreshold, "hdvk:emissiveLightThreshold")) \
+    ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))        \
+    ((oit, "hdvk:oit"))                                      \
+    ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
+    ((refraction, "hdvk:refraction"))                        \
+    ((refractionSamples, "hdvk:refractionSamples"))              \
+    ((translucentShadows, "hdvk:translucentShadows"))        \
+    ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
+    ((subsurface, "hdvk:subsurface"))                        \
+    ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
+    ((holdouts, "hdvk:holdouts")) \
     ((softSunShadows, "hdvk:softSunShadows"))                \
     ((fog, "hdvk:fog"))                                      \
     ((fogDensity, "hdvk:fogDensity"))                        \

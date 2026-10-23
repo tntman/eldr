@@ -42,6 +42,10 @@ struct GpuMaterial {
     float thinFilm[4];       // weight, thickness (nm), ior
     float anisotropy[4];     // amount, rotation (turns), 1: OpenPBR's mapping
     float toon[4];           // bands, softness
+    float transmission[4];  // Material::transmissionColor, transmission
+    float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
+    float subsurface[4];        // Material::subsurfaceColor, subsurface
+    float subsurfaceRadius[4];  // Material::subsurfaceRadius
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1276,6 +1280,15 @@ void Scene::Commit()
             g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
             g.toon[0] = m.toonBands;
             g.toon[1] = m.toonSoftness;
+            std::copy(m.transmissionColor, m.transmissionColor + 3, g.transmission);
+            g.transmission[3] = m.transmission;
+            g.refraction[0] = m.ior;
+            g.refraction[1] = m.thinWalled ? 1.0f : 0.0f;
+            g.refraction[2] = m.transmissionDepth;
+            g.refraction[3] = m.opacityRefracts ? 1.0f : 0.0f;
+            std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
+            g.subsurface[3] = m.subsurface;
+            std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);
@@ -1311,6 +1324,9 @@ void Scene::Commit()
     _gpu.translucentVariant.clear();
     _gpu.translucentCenters.clear();
     _gpu.slotGeometry.resize(slots);
+    _gpu.refraction = false;
+    _gpu.subsurface.clear();
+    _gpu.subsurfaceVariant.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -1371,17 +1387,23 @@ void Scene::Commit()
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture ||
+                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->transmission > 0 ||
                     (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
+            _gpu.refraction = _gpu.refraction || m.material->transmission > 0 || m.material->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
+        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->subsurface > 0) {
+            _gpu.subsurface.push_back(uint32_t(slot));
+            _gpu.subsurfaceVariant.push_back(variant >> 2);
+        }
         kind[slot] |= variant;
         d.primId = m.primId;
+        d.holdout = m.holdout ? 1u : 0u;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;

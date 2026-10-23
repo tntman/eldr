@@ -9,7 +9,9 @@
 #include "post.h"
 #include "raytracing.h"
 #include "scene.h"
+#include "subsurface.h"
 #include "taa.h"
+#include "transparency.h"
 
 #include <chrono>
 
@@ -125,6 +127,29 @@ public:
         // GI picks up every emissive surface's light regardless.
         bool emissiveLights = true;
         float emissiveLightThreshold = 4.0f;  // scene-referred radiance of the brightest channel
+        // Translucency (transparency.h): weighted blended OIT, its weights
+        // falling with distance to this power (0: a plain average); off:
+        // sorted per mesh, blended over.
+        bool oit = true;
+        float oitDepthWeight = 4.0f;
+        // Refraction (needs depthPrepass): translucent materials with a
+        // transmission or an ior bend and tint the opaque colour behind
+        // them, rough ones blurred over this many taps (1..16).
+        bool refraction = true;
+        uint32_t refractionSamples = 8;
+        // Translucent shadows: translucent casters tint and lighten the
+        // sun's and local lights' shadows, through maps of 1 / this the
+        // shadow maps' resolution (1..4).
+        bool translucentShadows = true;
+        uint32_t translucentShadowDivisor = 2;
+        // Subsurface scattering (needs depthPrepass): the diffuse light of
+        // subsurface materials blurred over this many taps per direction
+        // (1..64), and the sun shining through their thin parts.
+        bool subsurface = true;
+        uint32_t subsurfaceSamples = 15;
+        // Holdouts (Mesh::holdout): black with zero alpha; off: drawn as
+        // usual.
+        bool holdouts = true;
         // Soft sun shadows: penumbrae from the distant light's angle (PCSS
         // on the cascades), with softShadows on.
         bool softSunShadows = true;
@@ -222,20 +247,27 @@ private:
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
-    void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass);
+    void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
                                               uint32_t *rtLights, uint32_t rtSlots);
-    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
+    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
+    void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
+    void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
+                           const float *invViewProj, VkRenderingAttachmentInfo depth);
+    void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
+                             uint32_t motion, VkRenderingAttachmentInfo depth);
 
     Device &_dev;
     Gtao _gtao;
     TemporalAA _taa;
     Lens _lens;
     PostProcess _post;
+    Transparency _transparency;
+    Subsurface _subsurface;
     Fog _fog;
     float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
     uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)
@@ -265,6 +297,11 @@ private:
     // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders).
     VkPipeline _prepassPipeline[4] = {};      // depth only
     VkPipeline _translucentPipeline[32] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[32] = {};          // shading, OIT accumulation (Transparency)
+    // Translucent shadow casters into Transparency's tint maps: their
+    // nearest depth, then their colours multiplied (shadow_tint.frag).
+    VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
+    VkPipeline _subsurfacePipeline[32] = {};   // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
     VkPipeline _pipeline[32] = {};             // shading, depth read-only

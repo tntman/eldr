@@ -1826,6 +1826,261 @@ int main()
         }
 
         {
+            // Order-independent transparency: one translucent mesh (opacity
+            // 0.5, displayColor) of two quads over the left half of an opaque
+            // red one, the near green quad's triangles listed before the far
+            // blue one's. Weighted blended OIT lets the nearer dominate
+            // whatever the triangle order; the sorted mode blends in list
+            // order (blue over green).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto red = std::make_shared<vkr::Material>(), glass = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 1;
+            red->baseColor[1] = red->baseColor[2] = 0;
+            red->roughness = 1;
+            glass->baseColorFromDisplayColor = true;
+            glass->roughness = 1;
+            glass->opacity = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = red;
+            vkr::Mesh *layers = AddQuad(scene, -1, -1, 0, 1, 0);
+            const std::vector<float> points = layers->points, uvs = layers->uvs;
+            layers->points.insert(layers->points.end(), points.begin(), points.end());
+            layers->uvs.insert(layers->uvs.end(), uvs.begin(), uvs.end());
+            for (size_t i = 18; i < 36; i += 3) {
+                layers->points[i + 2] = 0.25f;  // the second quad behind the first
+            }
+            for (int corner = 0; corner < 12; ++corner) {
+                layers->colors.insert(layers->colors.end(), {0, corner < 6 ? 1.0f : 0.0f, corner < 6 ? 0.0f : 1.0f});
+            }
+            layers->material = glass;
+            scene.Commit();
+            const Image oit = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.oit = false;
+            const Image sorted = Render(renderer, scene, frame);
+            Expect(oit.At(16, 32, 1) > oit.At(16, 32, 2) + 0.1f && std::abs(oit.At(16, 32, 0) - 0.25f) < 0.06f,
+                   "OIT: the nearer layer dominates whatever the triangle order, the opaque shows by revealage");
+            Expect(sorted.At(16, 32, 2) > sorted.At(16, 32, 1) + 0.1f, "sorted mode: blended in list order");
+            Expect(std::abs(oit.At(48, 32, 0) - sorted.At(48, 32, 0)) < 1e-3f && oit.At(48, 32, 1) < 0.05f,
+                   "OIT leaves pixels without translucency alone");
+        }
+
+        {
+            // Refraction: a glass quad (transmission 1) turned 50 degrees
+            // about y, in front of a red (x < 0) and green (x > 0) wall seen
+            // through a perspective camera. An ior moves the colour edge,
+            // roughness blurs it, the transmission colour tints, and with
+            // Frame::refraction off the wall shows straight and untinted.
+            vkr::Scene scene(&device);
+            vkr::Mesh *left = AddEmitter(scene, -6, -6, 0, 6, -5, 1.0f);
+            left->material->emissive[1] = left->material->emissive[2] = 0;
+            vkr::Mesh *right = AddEmitter(scene, 0, -6, 6, 6, -5, 1.0f);
+            right->material->emissive[0] = right->material->emissive[2] = 0;
+            vkr::Mesh *glassQuad = AddQuad(scene, -1, -1, 1, 1, 0);
+            const float t = std::tan(50.0f * 3.14159265f / 180.0f);
+            for (size_t i = 0; i < glassQuad->points.size(); i += 3) {
+                glassQuad->points[i + 2] = -2.5f + glassQuad->points[i] * t;
+            }
+            auto glass = std::make_shared<vkr::Material>();
+            std::fill(glass->baseColor, glass->baseColor + 3, 1.0f);
+            glass->roughness = 0;
+            glass->transmission = 1;
+            glassQuad->material = glass;
+            auto edge = [&](const Image &img) {  // first pixel of row 32 more green than red
+                int x = 0;
+                while (x < 63 && img.At(x, 32, 1) <= img.At(x, 32, 0)) {
+                    ++x;
+                }
+                return x;
+            };
+            auto blurred = [&](const Image &img) {  // pixels of row 32 mixing both
+                int n = 0;
+                for (int x = 0; x < 64; ++x) {
+                    n += img.At(x, 32, 0) > 0.1f && img.At(x, 32, 1) > 0.1f;
+                }
+                return n;
+            };
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            glass->ior = 1.0f;
+            scene.Commit();
+            const Image straight = Render(renderer, scene, frame);
+            glass->ior = 1.5f;
+            scene.Commit();
+            const Image bent = Render(renderer, scene, frame);
+            Expect(std::abs(edge(bent) - edge(straight)) >= 2, "refraction: an ior moves the edge seen through glass");
+            Expect(straight.At(44, 32, 1) > 0.8f && straight.At(44, 32, 0) < 0.05f,
+                   "refraction: smooth clear glass transmits almost all");
+            glass->roughness = 0.5f;
+            scene.Commit();
+            Expect(blurred(Render(renderer, scene, frame)) > blurred(bent) + 2, "refraction: roughness blurs");
+            glass->roughness = 0;
+            std::copy_n(std::array<float, 3>{1, 0.2f, 0.2f}.data(), 3, glass->transmissionColor);
+            scene.Commit();
+            const Image tinted = Render(renderer, scene, frame);
+            Expect(tinted.At(44, 32, 1) < 0.25f * bent.At(44, 32, 1) && tinted.At(44, 32, 1) > 0.05f,
+                   "refraction: the transmission colour tints");
+            frame.refraction = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(off.At(44, 32, 1) > 0.8f && edge(off) == edge(straight),
+                   "Frame::refraction off: straight through, untinted");
+        }
+
+        {
+            // Translucent shadows: the sun shadow test's occluder made of red
+            // glass (transmission 1, ior 1.5: 8% lost to its two interfaces),
+            // then of opacity 0.5, then the same for a spot and a point
+            // light's atlas tiles.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            auto glass = std::make_shared<vkr::Material>();
+            glass->transmission = 1;
+            glass->transmissionColor[1] = glass->transmissionColor[2] = 0.2f;
+            occluder->material = glass;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            // Lit for comparison: pixel 10, just beside the shadow.
+            const float r = img.At(3, 32, 0) / img.At(10, 32, 0), g = img.At(3, 32, 1) / img.At(10, 32, 1);
+            Expect(std::abs(r - 0.92f) < 0.04f && std::abs(g - 0.18f) < 0.04f,
+                   "red glass casts a red shadow, weakened by its interfaces' reflections");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.translucentShadows = false;
+            const Image none = Render(renderer, scene, frame);
+            Expect(none.At(3, 32, 1) > 0.97f * none.At(10, 32, 1), "Frame::translucentShadows off: none cast");
+            frame = IdentityFrame();
+            frame.translucentShadowDivisor = 4;
+            const Image quarter = Render(renderer, scene, frame);
+            Expect(std::abs(quarter.At(3, 32, 1) / quarter.At(10, 32, 1) - 0.18f) < 0.04f,
+                   "Frame::translucentShadowDivisor 4: still tinted");
+            glass->transmission = 0;
+            glass->opacity = 0.5f;
+            glass->ior = 1.0f;
+            scene.Commit();
+            const Image half = Render(renderer, scene);
+            Expect(std::abs(half.At(3, 32, 1) / half.At(10, 32, 1) - 0.5f) < 0.04f,
+                   "an opacity 0.5 occluder lets half the light through");
+
+            scene.RemoveLight(sun);
+            glass->opacity = 0.25f;
+            for (const float cone : {45.0f, 180.0f}) {
+                // Through the occluder's centre the shadow lands around x =
+                // -0.7 (pixel 12), which the camera sees past the occluder.
+                vkr::Light *light = AddSphereLight(scene, 0.8f, 0, -1.6f, 0.02f, 400.0f);
+                light->point = true;
+                const float len = std::sqrt(0.8f * 0.8f + 1.1f * 1.1f);
+                light->direction[0] = -0.8f / len;
+                light->direction[2] = 1.1f / len;
+                light->coneAngle = cone;
+                light->castShadows = true;
+                scene.Commit();
+                const Image local = Render(renderer, scene);
+                light->castShadows = false;
+                scene.Commit();
+                const Image open = Render(renderer, scene);
+                Expect(std::abs(local.At(12, 32, 1) / open.At(12, 32, 1) - 0.75f) < 0.06f,
+                       cone < 90 ? "translucent spot light shadow (atlas tile)"
+                                 : "translucent point light shadow (cube faces)");
+                scene.RemoveLight(light);
+            }
+        }
+
+        {
+            // Subsurface scattering: a white subsurface ground (radii 0.1,
+            // 0.05, 0.02: red travels furthest) with the sun shadow test's
+            // geometry, an occluder over x in [0.5, 1] shadowing [-0.5, 0].
+            // Light bleeds into the shadow across its edge at pixel 32, red
+            // furthest; the lit side gives it up.
+            vkr::Scene scene(&device);
+            AddLight(scene, 1, 0, -1)->castShadows = true;
+            vkr::Mesh *ground = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            AddQuad(scene, 0.5f, -1, 1, 1, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            auto skin = std::make_shared<vkr::Material>();
+            std::fill(skin->baseColor, skin->baseColor + 3, 1.0f);
+            skin->roughness = 1;
+            skin->subsurface = 1;
+            const float radii[3] = {0.1f, 0.05f, 0.02f};
+            std::copy(radii, radii + 3, skin->subsurfaceRadius);
+            ground->material = skin;
+            scene.Commit();
+            const Image on = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.subsurface = false;
+            const Image off = Render(renderer, scene, frame);
+            const float bleedR = on.At(30, 32, 0) - off.At(30, 32, 0), bleedB = on.At(30, 32, 2) - off.At(30, 32, 2);
+            Expect(bleedR > 0.05f && bleedR > 2 * bleedB && bleedB >= 0,
+                   "subsurface: light bleeds into the shadow, red the furthest");
+            Expect(on.At(34, 32, 0) < off.At(34, 32, 0), "subsurface: the lit side gives light up");
+            Expect(std::abs(on.At(8, 32, 2) - off.At(8, 32, 2)) < 0.01f, "subsurface: far from edges nothing changes");
+            frame = IdentityFrame();
+            frame.subsurfaceSamples = 1;
+            Expect(MaxDifference(Render(renderer, scene, frame), off) < 0.01f, "Frame::subsurfaceSamples 1: no blur");
+        }
+
+        {
+            // Thin-object transmission: a thin-walled subsurface quad lit
+            // only from behind glows by the light through it (subsurface 0.5
+            // of a white colour: half the light), and is black without.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, 1)->castShadows = true;
+            vkr::Mesh *leaf = AddQuad(scene, -1, -1, 1, 1, 0);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 1;
+            material->subsurface = 0.5f;
+            material->thinWalled = true;
+            leaf->material = material;
+            scene.Commit();
+            const Image lit = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.subsurface = false;
+            const Image dark = Render(renderer, scene, frame);
+            Expect(std::abs(lit.At(32, 32, 1) - 0.5f) < 0.05f && dark.At(32, 32, 1) < 0.01f,
+                   "thin-walled subsurface: light from behind shows through");
+        }
+
+        {
+            // Holdouts: a holdout quad over the left half of a red wall is
+            // black with zero alpha and still hides the wall (its depth);
+            // post composites the clear colour there exactly. A translucent
+            // holdout leaves the wall alone.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto red = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 1;
+            red->baseColor[1] = red->baseColor[2] = 0;
+            red->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = red;
+            vkr::Mesh *matte = AddQuad(scene, -1, -1, 0, 1, 0);
+            scene.Commit();
+            Expect(Render(renderer, scene).At(16, 32, 3) == 1.0f, "not yet a holdout");
+            matte->holdout = true;  // changes after a frame: only the DrawInfo table
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(img.At(16, 32, 0) == 0 && img.At(16, 32, 1) == 0 && img.At(16, 32, 3) == 0 &&
+                       img.depth[32 * 64 + 16] < img.depth[32 * 64 + 48],
+                   "holdout: black, zero alpha, still in front");
+            Expect(img.At(48, 32, 0) > 0.9f && img.At(48, 32, 3) == 1.0f, "beside the holdout the wall as usual");
+            const Image post = RenderPost(device, scene, 0.0f, false);
+            Expect(post.At(16, 32, 2) == 1.0f && post.At(16, 32, 0) == 0.0f && post.At(16, 32, 3) == 1.0f,
+                   "holdout after post: exactly the clear colour (opaque blue)");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.holdouts = false;
+            Expect(Render(renderer, scene, frame).At(16, 32, 1) > 0.1f, "Frame::holdouts off: drawn as usual");
+            auto glass = std::make_shared<vkr::Material>();
+            glass->opacity = 0.5f;
+            matte->material = glass;
+            scene.Commit();
+            const Image translucent = Render(renderer, scene);
+            Expect(std::abs(translucent.At(16, 32, 0) - translucent.At(48, 32, 0)) < 1e-3f &&
+                       translucent.At(16, 32, 3) == 1.0f,
+                   "translucent holdout: what's behind it unchanged");
+        }
+
+        {
             // Cylinder light along x (half length 0.3, radius 0.05) 0.5 in
             // front of a white, fully rough wall: its diffuse light against
             // the integral over its side (the caps don't emit), in front of

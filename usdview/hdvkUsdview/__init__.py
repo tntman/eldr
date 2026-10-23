@@ -23,6 +23,8 @@ PASSES = [
     ("giProbes", "Global illumination probes"),
     ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
+    ("subsurface", "Subsurface scattering"),
+    ("translucency", "Translucency (refraction, OIT)"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
