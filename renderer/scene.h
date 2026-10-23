@@ -223,6 +223,24 @@ struct Material {
     {
         return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0;
     }
+    // Transmission (refraction, transparency.glsl): of the surface opacity
+    // leaves, `transmission` lets light through, tinted by
+    // transmissionColor (Beer-Lambert at transmissionDepth along the path
+    // inside; 0: at the surface) and bent by ior unless thinWalled. With
+    // opacityRefracts what opacity lets through is refracted too
+    // (UsdPreviewSurface with an ior). Constants only.
+    float transmission = 0;
+    float transmissionColor[3] = {1, 1, 1};
+    float transmissionDepth = 0;
+    float ior = 1.5f;
+    bool thinWalled = false;
+    bool opacityRefracts = false;
+    // Subsurface scattering (subsurface.h): the weight of the diffuse
+    // light that scatters under the surface, its colour, and how far each
+    // channel travels (mean free path, world units). Constants only.
+    float subsurface = 0;
+    float subsurfaceColor[3] = {1, 1, 1};
+    float subsurfaceRadius[3] = {1, 1, 1};
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -292,6 +310,9 @@ struct Mesh {
     std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
     uint32_t blendShapeCount = 0;
     std::vector<float> blendWeights;
+    // Holdout (matte): drawn black with zero alpha, cut out of the image
+    // but still hiding what's behind it and casting shadows.
+    bool holdout = false;
 
 private:
     friend class Scene;
@@ -401,7 +422,8 @@ struct DrawInfo {
     uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
     uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
-    uint32_t pad[3];
+    uint32_t holdout;          // 1: Mesh::holdout
+    uint32_t pad[2];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -574,6 +596,14 @@ public:
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
         };
         std::vector<SlotGeometry> slotGeometry;
+        // A drawn translucent material refracts or tints what's behind it
+        // (Material::transmission, opacityRefracts): the renderer copies
+        // the opaque colour for it.
+        bool refraction = false;
+        // Slots of opaque and cutout meshes with subsurface materials (and
+        // their pipeline variants), shaded again by the subsurface pass.
+        std::vector<uint32_t> subsurface;
+        std::vector<uint8_t> subsurfaceVariant;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

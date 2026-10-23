@@ -141,14 +141,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
                                 {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
                                 {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
-                                {t.emissiveLights, &frame.emissiveLights}}) {
+                                {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
+                                {t.refraction, &frame.refraction},
+                                {t.translucentShadows, &frame.translucentShadows},
+                                {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
                                 {t.giHysteresis, &frame.giHysteresis},
-                                {t.emissiveLightThreshold, &frame.emissiveLightThreshold}}) {
+                                {t.emissiveLightThreshold, &frame.emissiveLightThreshold},
+                                {t.oitDepthWeight, &frame.oitDepthWeight}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
@@ -159,7 +163,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
-                                {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays}}) {
+                                {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays},
+                                {t.refractionSamples, &frame.refractionSamples},
+                                {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
+                                {t.subsurfaceSamples, &frame.subsurfaceSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;

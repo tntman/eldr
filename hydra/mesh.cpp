@@ -22,7 +22,11 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 namespace {
 
-TF_DEFINE_PRIVATE_TOKENS(_tokens, (st));
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    (st)
+    ((riMatte, "ri:attributes:Ri:Matte"))
+    ((karmaHoldout, "karma:object:holdoutmode")));
 
 // Finds a primvar's interpolation; false if the prim doesn't have it. An
 // empty name finds the first texture coordinate (float2) primvar.
@@ -43,6 +47,28 @@ bool FindPrimvar(HdSceneDelegate *sd, SdfPath const &id, TfToken const &name,
     }
     return false;
 }
+
+} // namespace
+
+bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
+{
+    for (const TfToken &name : {_tokens->riMatte, _tokens->karmaHoldout}) {
+        HdInterpolation interp;
+        if (!FindPrimvar(sceneDelegate, id, name, &interp)) {
+            continue;
+        }
+        const VtValue value = sceneDelegate->Get(id, name);
+        const VtValue scalar = value.IsArrayValued() && value.GetArraySize() > 0
+            ? VtValue::Cast<VtIntArray>(value) : VtValue::Cast<int>(value);
+        if (scalar.IsHolding<int>() ? scalar.UncheckedGet<int>() != 0
+                                    : scalar.IsHolding<VtIntArray>() && scalar.UncheckedGet<VtIntArray>()[0] != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
 
 // Expands a primvar of any interpolation to one value per triangle corner.
 // Returns false (and leaves `out` empty) if the data doesn't fit the topology.
@@ -334,6 +360,9 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _UpdateVisibility(sceneDelegate, dirtyBits);
         m.visible = IsVisible();
     }
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        m.holdout = HdVkHoldout(sceneDelegate, id);
+    }
 
     // Sprims sync before rprims, so the material already exists here.
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
@@ -472,6 +501,7 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         std::copy(m.color, m.color + 3, d.color);
         d.primId = m.primId;
         d.visible = m.visible;
+        d.holdout = m.holdout;
         d.tag = m.tag;
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
