@@ -66,6 +66,9 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
+        // materials render without them.
+        bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

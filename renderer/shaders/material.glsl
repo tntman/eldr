@@ -21,6 +21,8 @@ struct Material {
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
     vec4 specular;   // dielectric specular weight times colour
+    // Lobes (brdf.glsl).
+    vec4 specularColor;  // specular workflow F0, w = 1 when used
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

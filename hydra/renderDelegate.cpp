@@ -125,6 +125,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
+        {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
+         VtValue(frame.specularWorkflow)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},

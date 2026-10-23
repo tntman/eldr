@@ -154,6 +154,13 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
+    // Lobes beyond the metallic base (shaders/brdf.glsl), constants only.
+    // ponytail: no textures or programs for them; add a TextureRef (or a
+    // MaterialProgram::Input) per input when assets need it.
+    // UsdPreviewSurface useSpecularWorkflow: F0 is specularColor (F90 white),
+    // metallic is ignored.
+    bool specularWorkflow = false;
+    float specularColor[3] = {0, 0, 0};
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one

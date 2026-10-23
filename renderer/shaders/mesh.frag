@@ -66,6 +66,8 @@ layout(location = 2) out int outInstanceId;
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
 
+#include "brdf.glsl"
+
 vec4 Fetch(TexRef r, vec4 constant)
 {
     return Fetch(r, constant, inUv);
@@ -505,6 +507,7 @@ void main()
     // standard_surface's specular weight and colour scale the dielectric
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
+    PrepareLayers(f0);
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 

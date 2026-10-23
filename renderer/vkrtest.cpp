@@ -1144,6 +1144,29 @@ int main()
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
+
+        {
+            // Specular workflow: F0 is specularColor. A black quad with F0
+            // (0.5, 0, 0) under the head-on light reflects 12.5 times the
+            // default material's 0.16 (plus multiple scattering) in red and
+            // nothing in green; the setting off falls back to F0 0.04.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->specularWorkflow = true;
+            material->specularColor[0] = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.specularWorkflow = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(on.At(32, 32, 0) > 2.0f && on.At(32, 32, 0) < 2.2f && on.At(32, 32, 1) < 0.001f,
+                   "specular workflow: specularColor is F0");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
+                   "Frame::specularWorkflow off: F0 0.04");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

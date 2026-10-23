@@ -87,6 +87,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (varname)
     (displayColor)
     (r)(g)(b)(a)
+    (useSpecularWorkflow)
+    (specularColor)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1058,8 +1060,39 @@ private:
     std::string _failed;
 };
 
-// ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, transmission, subsurface, ior and displacement.
+// A colour input in linear Rec.709 (converted from the colour space it was
+// authored in), else `color`.
+GfVec3f ReadColor(std::map<TfToken, VtValue> const &params, TfToken const &name, GfVec3f color)
+{
+    if (Read(params, name, &color)) {
+        const TfToken colorSpace = ParameterColorSpace(params, name);
+        if (NeedsConversion(colorSpace)) {
+            color = GfColor(GfColor(color, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+        }
+    }
+    return color;
+}
+
+// The lobes beyond the metallic base (shaders/brdf.glsl), as constants:
+// unauthored inputs take the surface's defaults, connected ones too.
+void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
+{
+    auto const &p = surface.parameters;
+    const TfToken &id = surface.nodeTypeId;
+    if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
+            m->specularWorkflow = true;
+            const GfVec3f f0 = ReadColor(p, _tokens->specularColor, GfVec3f(0.0f));
+            std::copy(f0.data(), f0.data() + 3, m->specularColor);
+            m->metallic = 0.0f;  // the workflow ignores it
+            m->metallicTex = vkr::TextureRef();
+        }
+    }
+}
+
+// ponytail: metallic and specular workflows; the lobes ReadLobes reads.
+// Ignored for now: transmission, subsurface, ior and displacement.
 // *uvPrimvar: the primvar the textures' coordinates come from.
 // ponytail: one per material (meshes carry one uv set); a second warns.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
@@ -1175,6 +1208,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
     }
+    ReadLobes(surface, m);
 }
 
 } // namespace
