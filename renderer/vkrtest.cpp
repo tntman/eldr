@@ -118,12 +118,13 @@ static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, fl
 // like usdrecord does: exposure snaps on the first frame, TAA accumulates
 // 16 jittered frames of the still camera.
 static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f,
-                        bool taa = true)
+                        bool taa = true, bool ssr = true)
 {
     vkr::Renderer renderer(device);
     vkr::Renderer::Frame frame = IdentityFrame();
     frame.postProcess = true;
     frame.taa = taa;
+    frame.ssr = ssr;
     frame.post.bloomIntensity = bloom;
     Image img;
     int frames = 0;
@@ -397,6 +398,33 @@ int main()
             const int smooth = partial(RenderPost(device, scene, 0.0f, true));
             const int hard = partial(RenderPost(device, scene, 0.0f, false));
             Expect(smooth > 30 && hard < 5, "TAA turns the hard edge into partial coverage");
+        }
+
+        {
+            // SSR: a mirror tilted towards -y (normal (0, -1, -1)) above an
+            // emitter tilted up towards it. View rays (+z) reflect straight
+            // down and hit the emitter, which is on screen. No dome, so the
+            // mirror is black without SSR.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, 0, 0, 0, 0, 0);
+            mirror->points = {-0.8f, 0, 0, 0.8f, 0, 0, 0.8f, 0.8f, -0.8f,
+                              -0.8f, 0, 0, 0.8f, 0.8f, -0.8f, -0.8f, 0.8f, -0.8f};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            vkr::Mesh *emitter = AddEmitter(scene, 0, 0, 0, 0, 0, 1.0f);
+            emitter->points = {-0.8f, -0.8f, -0.6f, 0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f,
+                               -0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f, -0.8f, -0.1f, 0.1f};
+            scene.Commit();
+            // Row 41 is y = 0.3 on the mirror; its reflection lands on the
+            // emitter at y = -0.5.
+            const float on = RenderPost(device, scene, 0.0f).At(32, 41, 1);
+            const float off = RenderPost(device, scene, 0.0f, true, false).At(32, 41, 1);
+            const float emitterValue = RenderPost(device, scene, 0.0f).At(32, 16, 1);
+            Expect(off < 0.01f, "mirror without SSR reflects only the black (absent) dome");
+            Expect(on > 0.8f * emitterValue, "SSR reflects the emitter in the mirror");
         }
 
         {

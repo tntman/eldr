@@ -19,6 +19,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((taa, "hdvk:taa"))                                      \
     ((ambientOcclusion, "hdvk:ambientOcclusion"))            \
     ((aoRadius, "hdvk:aoRadius"))                            \
+    ((ssr, "hdvk:ssr"))                                      \
     ((autoExposure, "hdvk:autoExposure"))                    \
     ((exposureCompensation, "hdvk:exposureCompensation"))    \
     ((bloomIntensity, "hdvk:bloomIntensity"))

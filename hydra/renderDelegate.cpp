@@ -85,6 +85,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ambient Occlusion (GTAO)", HdVkRenderSettingsTokens->ambientOcclusion,
          VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", HdVkRenderSettingsTokens->aoRadius, VtValue(frame.aoRadius)},
+        {"Screen Space Reflections", HdVkRenderSettingsTokens->ssr, VtValue(frame.ssr)},
         {"Auto Exposure", HdVkRenderSettingsTokens->autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", HdVkRenderSettingsTokens->exposureCompensation,
          VtValue(defaults.exposureCompensation)},

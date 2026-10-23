@@ -85,6 +85,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.ambientOcclusion = delegate->GetRenderSetting<bool>(
         HdVkRenderSettingsTokens->ambientOcclusion, frame.ambientOcclusion);
     frame.aoRadius = delegate->GetRenderSetting<float>(HdVkRenderSettingsTokens->aoRadius, frame.aoRadius);
+    frame.ssr = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->ssr, frame.ssr);
     frame.post.autoExposure = delegate->GetRenderSetting<bool>(
         HdVkRenderSettingsTokens->autoExposure, frame.post.autoExposure);
     frame.post.exposureCompensation = delegate->GetRenderSetting<float>(

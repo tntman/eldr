@@ -22,6 +22,8 @@ struct FrameData {
     float envSh[9][4];
     float envWorldToLocal[16];
     float envRadiance[4];
+    float prevViewProj[16];
+    float ssr[4];  // enabled, noise index
 };
 
 namespace {
@@ -191,8 +193,9 @@ void Renderer::_CreateDescriptors()
     constexpr VkShaderStageFlags kGeometry = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
     // Binding 0 is the bindless array, partially bound and indexed by material
     // data. 7..10 are the GPU-driven scene: instances, draw infos, visible
-    // lists and the culled indirect commands; 11 is the GTAO result.
-    const VkDescriptorSetLayoutBinding bindings[12] = {
+    // lists and the culled indirect commands; 11 is the GTAO result, 12
+    // and 13 last frame's color and this frame's depth for reflections.
+    const VkDescriptorSetLayoutBinding bindings[14] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -205,19 +208,21 @@ void Renderer::_CreateDescriptors()
         {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
-    const VkDescriptorBindingFlags bindingFlags[12] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[14] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 12;
+    flags.bindingCount = 14;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 12;
+    slci.bindingCount = 14;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 4},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 6},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
@@ -454,6 +459,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
     _taa.Resize(width, height, _color.view, _depth.view);
     _post.Resize(width, height, _taa.Output());
     _taaValid = false;
+    _historyValid = false;
 }
 
 // The GPU is idle here (Render waits for every frame), so rewriting the set
@@ -477,6 +483,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo visible{gpu.visible, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo commands{_commands.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo ao{_clampSampler, _gtao.Output(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo previous{_clampSampler, _taa.History(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo depth{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -501,6 +509,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &visible, nullptr);
     write(10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &commands, nullptr);
     write(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &ao);
+    write(12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &previous);
+    write(13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &depth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -643,6 +653,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         // The sky reconstructs rays per pixel, so it follows the jitter too.
         const Mat4 invJittered = unjitter * ToMat4(frame.invViewProj);
         std::memcpy(fd.invViewProj, invJittered.m, sizeof(fd.invViewProj));
+    }
+    std::memcpy(fd.viewProj, jitteredViewProj, sizeof(fd.viewProj));
+
+    // Reflections shade hits with last frame's resolved image, which exists
+    // once post (TAA resolve) ran at this size.
+    if (frame.ssr && frame.postProcess && _historyValid) {
+        std::memcpy(fd.prevViewProj, _prevViewProj, sizeof(fd.prevViewProj));
+        fd.ssr[0] = 1.0f;
+        fd.ssr[1] = float(sample);
     }
 
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
@@ -879,7 +898,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             alpha = 1.0f / float(_taaFrames + 1);
             _taaConverged = _taaValid && !moved && _taaFrames == kTaaSamples - 1;  // sample 16 of a still camera
             _taaFrames = std::min(_taaFrames + 1, kTaaSamples - 1);
-            std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
             _taaValid = true;
         } else {
             _taaValid = false;
@@ -904,9 +922,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
 
         _taa.Record(_cmd, &reprojection.m[0][0], alpha);
         _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
+        std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
+        _historyValid = true;
     } else {
         _taaValid = false;
         _taaConverged = true;
+        _historyValid = false;
     }
 
     // Everything that may be read back goes to TRANSFER_SRC (with post on,

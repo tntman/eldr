@@ -27,6 +27,7 @@ public:
         bool taa = true;              // with postProcess: jittered + temporally resolved
         bool ambientOcclusion = true; // GTAO on the dome (image-based) lighting
         float aoRadius = 0.5f;        // world units
+        bool ssr = true;              // screen-space reflections (needs postProcess)
         PostProcess::Settings post;
     };
 
@@ -74,8 +75,9 @@ private:
     PostProcess _post;
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
-    float _prevViewProj[16] = {};
+    float _prevViewProj[16] = {};  // camera of the frame in the TAA history
     bool _taaValid = false;
+    bool _historyValid = false;    // the TAA history holds last frame's image
     bool _taaWarmup = false;  // accumulating a fresh history for a still camera
     bool _taaConverged = true;
     std::chrono::steady_clock::time_point _lastFrame;

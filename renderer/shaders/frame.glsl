@@ -3,7 +3,7 @@ const uint kNone = 0xFFFFFFFFu;
 const float PI = 3.14159265359;
 
 layout(std140, set = 0, binding = 3) uniform FrameData {
-    mat4 viewProj;
+    mat4 viewProj;       // as rasterized: includes the TAA jitter
     mat4 invViewProj;
     vec4 cameraPos;      // xyz
     vec4 cameraForward;  // xyz
@@ -15,6 +15,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 envSh[9];       // irradiance SH, dome-local space
     mat4 envWorldToLocal;
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
+    mat4 prevViewProj;   // unjittered camera of the frame in previousColor
+    vec4 ssr;            // x = 1: trace reflections, y = noise index
 } frame;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];

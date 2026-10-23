@@ -24,6 +24,8 @@ public:
     void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha);
 
     VkImageView Output() const { return _resolved.view; }
+    // Last frame's resolve, in SHADER_READ_ONLY_OPTIMAL between frames.
+    VkImageView History() const { return _history.view; }
 
 private:
     void _Destroy();
