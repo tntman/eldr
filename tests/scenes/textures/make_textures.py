@@ -5,11 +5,12 @@ import struct
 import zlib
 
 
-def write_png(path, size, pixel):
-    # RGB, or RGBA when pixel() returns four values.
+def write_png(path, size, pixel, bits=8):
+    # RGB, or RGBA when pixel() returns four values; 8 or 16 bits per channel.
     channels = len(pixel(0, 0))
+    sample = (lambda c: bytes((c,))) if bits == 8 else (lambda c: struct.pack(">H", c))
     rows = b"".join(
-        b"\x00" + bytes(c for x in range(size) for c in pixel(x, y)) for y in range(size)
+        b"\x00" + b"".join(sample(c) for x in range(size) for c in pixel(x, y)) for y in range(size)
     )
 
     def chunk(tag, data):
@@ -17,7 +18,7 @@ def write_png(path, size, pixel):
 
     with open(path, "wb") as f:
         f.write(b"\x89PNG\r\n\x1a\n")
-        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 6 if channels == 4 else 2, 0, 0, 0)))
+        f.write(chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, bits, 6 if channels == 4 else 2, 0, 0, 0)))
         f.write(chunk(b"IDAT", zlib.compress(rows)))
         f.write(chunk(b"IEND", b""))
 
@@ -56,6 +57,15 @@ here = os.path.dirname(os.path.abspath(__file__))
 write_png(os.path.join(here, "quadrants.png"), 64, quadrants)
 write_png(os.path.join(here, "ridges_normal.png"), 64, ridges)
 write_png(os.path.join(here, "cutout.png"), 64, cutout)
+# 16-bit linear halves: ACEScg (left, right) and the same colours in linear
+# Rec.709 (GfColorSpace's conversion), for colorspace.usda.
+def halves(left, right):
+    return lambda x, y: tuple(round(c * 65535) for c in (left if x < 32 else right))
+
+
+write_png(os.path.join(here, "acescg.png"), 64, halves((0.2, 0.4, 0.6), (0.6, 0.6, 0.1)), bits=16)
+write_png(os.path.join(here, "rec709.png"), 64, halves((0.04234, 0.42394, 0.6354), (0.64163, 0.60527, 0.02351)),
+          bits=16)
 # UDIM tiles 1001 (u 0..1, v 0..1), 1002 (u 1..2) and 1011 (v 1..2); 1012
 # is left out on purpose.
 for tile, color in ((1001, (230, 120, 20)), (1002, (20, 170, 170)), (1011, (150, 60, 200))):

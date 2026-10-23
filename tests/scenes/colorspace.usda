@@ -1,0 +1,118 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Colour spaces: each column pairs the same colour authored in ACEScg
+# (top, tagged lin_ap1_scene) and pre-converted to linear Rec.709 (bottom);
+# HdVk shades in linear Rec.709, so each pair must match. Left: a constant
+# diffuseColor; right: 16-bit textures (textures/make_textures.py).
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 7)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+}
+
+def Scope "mtl"
+{
+    def Material "constantAp1"
+    {
+        token outputs:surface.connect = </mtl/constantAp1/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.3, 0.2) (colorSpace = "lin_ap1_scene")
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+    def Material "constantRec709"
+    {
+        token outputs:surface.connect = </mtl/constantRec709/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.64934, 0.275, 0.1799)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+    def Material "textureAp1"
+    {
+        token outputs:surface.connect = </mtl/textureAp1/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/textureAp1/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/acescg.png@ (colorSpace = "lin_ap1_scene")
+            float3 outputs:rgb
+        }
+    }
+    def Material "textureRec709"
+    {
+        token outputs:surface.connect = </mtl/textureRec709/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/textureRec709/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/rec709.png@
+            token inputs:sourceColorSpace = "raw"
+            float3 outputs:rgb
+        }
+    }
+}
+
+class Mesh "_quad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "constantTop" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/constantAp1>
+    double3 xformOp:translate = (-1.2, 1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "constantBottom" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/constantRec709>
+    double3 xformOp:translate = (-1.2, -1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "textureTop" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/textureAp1>
+    double3 xformOp:translate = (1.2, 1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "textureBottom" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/textureRec709>
+    double3 xformOp:translate = (1.2, -1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

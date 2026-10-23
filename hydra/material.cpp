@@ -2,6 +2,8 @@
 
 #include "scene.h"
 
+#include "pxr/base/gf/color.h"
+#include "pxr/base/gf/colorSpace.h"
 #include "pxr/base/gf/half.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
@@ -13,8 +15,10 @@
 #include "pxr/usd/sdf/assetPath.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -53,11 +57,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (occlusion)
     (normal)
     (file)
-    (sourceColorSpace)
     (scale)
     (bias)
-    (raw)
-    (sRGB)
     (varname)
     (displayColor)
     (r)(g)(b)(a)
@@ -91,18 +92,74 @@ std::vector<uint8_t> Pack(const T *src, size_t texels, int channels, T one)
     return out;
 }
 
+// A GfColorSpace name for a colour space name in a file: UsdShade and
+// GfColorSpace names as they are, MaterialX's and the OCIO ACES configs'
+// common ones mapped. "raw" (and data) is no conversion; empty: none given or
+// "auto" (Hio decides: 8-bit sRGB, the rest linear).
+TfToken CanonicalColorSpace(std::string name)
+{
+    static const std::map<std::string, std::string> aliases = {
+        {"auto", ""},
+        {"srgb", "srgb_rec709_scene"}, {"srgb_texture", "srgb_rec709_scene"},
+        {"srgb - texture", "srgb_rec709_scene"}, {"utility - srgb - texture", "srgb_rec709_scene"},
+        {"srgb_tx", "srgb_rec709_scene"},
+        {"lin_rec709", "lin_rec709_scene"}, {"lin_srgb", "lin_rec709_scene"}, {"linear", "lin_rec709_scene"},
+        {"linear rec.709 (srgb)", "lin_rec709_scene"}, {"scene-linear rec.709-srgb", "lin_rec709_scene"},
+        {"utility - linear - srgb", "lin_rec709_scene"},
+        {"acescg", "lin_ap1_scene"}, {"lin_ap1", "lin_ap1_scene"}, {"aces - acescg", "lin_ap1_scene"},
+        {"aces2065-1", "lin_ap0_scene"}, {"lin_ap0", "lin_ap0_scene"}, {"aces - aces2065-1", "lin_ap0_scene"},
+        {"utility - raw", "raw"}, {"data", "raw"}, {"identity", "raw"}, {"unknown", "raw"},
+    };
+    if (GfColorSpace::IsValid(TfToken(name))) {
+        return TfToken(name == "data" || name == "identity" || name == "unknown" ? "raw" : name);
+    }
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+    const auto it = aliases.find(name);
+    if (it != aliases.end()) {
+        return TfToken(it->second);
+    }
+    static std::mutex mutex;
+    static std::set<std::string> warned;
+    std::lock_guard<std::mutex> lock(mutex);
+    if (warned.insert(name).second) {
+        TF_WARN("HdVk: unknown color space '%s', read as if none was given", name.c_str());
+    }
+    return TfToken();
+}
+
+// The colour space Hydra gives parameter `name` ("colorSpace:<name>": a
+// UsdUVTexture's sourceColorSpace, or the UsdColorSpaceAPI's), canonical.
+TfToken ParameterColorSpace(std::map<TfToken, VtValue> const &params, TfToken const &name)
+{
+    const auto it = params.find(TfToken(SdfPath::JoinIdentifier(TfToken("colorSpace"), name)));
+    if (it == params.end()) {
+        return TfToken();
+    }
+    return CanonicalColorSpace(it->second.IsHolding<TfToken>() ? it->second.UncheckedGet<TfToken>().GetString()
+                               : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
+                                                                       : std::string());
+}
+
+// HdVk shades in linear Rec.709: whether values in `colorSpace` need
+// converting (anything but that, raw and "auto").
+bool NeedsConversion(TfToken const &colorSpace)
+{
+    return !colorSpace.IsEmpty() && colorSpace != GfColorSpaceNames->LinearRec709 && colorSpace != "raw";
+}
+
 std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const &colorSpace)
 {
-    const HioImage::SourceColorSpace cs =
-        colorSpace == _tokens->raw  ? HioImage::Raw :
-        colorSpace == _tokens->sRGB ? HioImage::SRGB : HioImage::Auto;
+    // 8-bit sRGB stays sRGB-encoded (the GPU decodes it); every other colour
+    // space but linear Rec.709 is converted to it on the CPU, below.
+    const bool srgb = colorSpace == GfColorSpaceNames->SRGBRec709;
+    const HioImage::SourceColorSpace cs = srgb ? HioImage::SRGB : colorSpace.IsEmpty() ? HioImage::Auto : HioImage::Raw;
     HioImageSharedPtr image = HioImage::OpenForReading(path, 0, 0, cs);
     if (!image) {
         TF_WARN("HdVk: cannot read texture '%s'", path.c_str());
         return nullptr;
     }
     const HioFormat format = image->GetFormat();
-    const HioType type = HioGetHioType(format);
+    HioType type = HioGetHioType(format);
     const int channels = HioGetComponentCount(format);
     const int w = image->GetWidth(), h = image->GetHeight();
     size_t componentBytes = 0;
@@ -132,6 +189,41 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
         return nullptr;
     }
 
+    // Other colour spaces: to linear Rec.709 through floats (then stored as
+    // floats are, below). Gray stays gray: gamuts share their white.
+    // ponytail: gray textures in gamma-encoded spaces aren't decoded.
+    const bool convert = NeedsConversion(colorSpace) && channels >= 3 &&
+                         !(srgb && (type == HioTypeUnsignedByte || type == HioTypeUnsignedByteSRGB));
+    if (convert) {
+        const size_t n = size_t(w) * h * channels;
+        std::vector<float> f(n);
+        for (size_t i = 0; i < n; ++i) {
+            switch (type) {
+            case HioTypeUnsignedByte:
+            case HioTypeUnsignedByteSRGB: f[i] = src[i] / 255.0f; break;
+            case HioTypeUnsignedShort: f[i] = reinterpret_cast<const uint16_t *>(src.data())[i] / 65535.0f; break;
+            case HioTypeHalfFloat: {
+                GfHalf hv;
+                hv.setBits(reinterpret_cast<const uint16_t *>(src.data())[i]);
+                f[i] = float(hv);
+                break;
+            }
+            default: f[i] = reinterpret_cast<const float *>(src.data())[i]; break;
+            }
+        }
+        // Convert*Span convert from the object's space to the argument's,
+        // whatever their documentation says (gf/colorSpace.cpp, 26.08).
+        const GfColorSpace linear(GfColorSpaceNames->LinearRec709), source(colorSpace);
+        if (channels == 4) {
+            source.ConvertRGBASpan(linear, TfSpan<float>(f));
+        } else {
+            source.ConvertRGBSpan(linear, TfSpan<float>(f));
+        }
+        src.resize(n * sizeof(float));
+        std::memcpy(src.data(), f.data(), src.size());
+        type = HioTypeFloat;
+    }
+
     // Stored as compactly as the GPU samples them: 8 and 16 bit and half stay
     // as they are, floats become halves unless they hold values past the
     // half range (bright HDR suns keep their energy). 8-bit sRGB stays RGBA:
@@ -156,7 +248,7 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
     switch (type) {
     case HioTypeUnsignedByte:
     case HioTypeUnsignedByteSRGB:
-        if (type == HioTypeUnsignedByteSRGB || image->IsColorSpaceSRGB()) {
+        if (type == HioTypeUnsignedByteSRGB || (image->IsColorSpaceSRGB() && !convert)) {
             tex->format = F::RGBA8_SRGB;
             tex->pixels.resize(texels * 4);
             ExpandToRgba<uint8_t>(src.data(), texels, channels, 255, tex->pixels.data());
@@ -251,22 +343,6 @@ bool StartsWith(TfToken const &t, const char *prefix)
     return t.GetString().rfind(prefix, 0) == 0;
 }
 
-// Hio's colour space for a MaterialX colorspace name: sRGB-encoded or
-// linear. A file without one is in the document's working space, linear,
-// as MaterialX (and Storm's MaterialX path) reads it.
-// ponytail: other gamuts (acescg) are read as linear Rec.709.
-TfToken MtlxColorSpace(std::map<TfToken, VtValue> const &params)
-{
-    std::string name;
-    TfToken token;
-    if (Read(params, _tokens->colorSpaceFile, &token)) {
-        name = token.GetString();
-    } else {
-        Read(params, _tokens->colorSpaceFile, &name);
-    }
-    return name == "srgb_texture" || name == "sRGB" || name == "srgb" ? _tokens->sRGB : _tokens->raw;
-}
-
 // Follows the connection of `name` to a texture, through MaterialX nodes
 // that only convert, extract a channel or decode a normal map. A primvar
 // reader of displayColor on the base colour makes the mesh's colour the base.
@@ -321,11 +397,12 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         if (path.empty()) {
             return;
         }
-        TfToken colorSpace;
-        if (preview) {
-            Read(node->parameters, _tokens->sourceColorSpace, &colorSpace);
-        } else {
-            colorSpace = MtlxColorSpace(node->parameters);
+        // A MaterialX file without a colour space is in the document's
+        // working space, linear (as MaterialX and Storm's MaterialX path read
+        // it); a UsdUVTexture's is "auto".
+        TfToken colorSpace = ParameterColorSpace(node->parameters, _tokens->file);
+        if (colorSpace.IsEmpty() && !preview) {
+            colorSpace = GfColorSpaceNames->LinearRec709;
         }
         if (path.find("<UDIM>") != std::string::npos) {
             ref->udim = textures->GetUdim(path, colorSpace);
@@ -388,6 +465,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         if (size == 1) {
             Read(surface.parameters, name, constant);
         } else if (Read(surface.parameters, name, &v)) {
+            const TfToken colorSpace = ParameterColorSpace(surface.parameters, name);
+            if (NeedsConversion(colorSpace)) {
+                v = GfColor(GfColor(v, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+            }
             std::copy(v.data(), v.data() + 3, constant);
         }
         for (int i = 0; i < size; ++i) {
