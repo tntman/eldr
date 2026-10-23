@@ -6,7 +6,8 @@
 //   ExtComputation inputs over as primvars (the same hydra:* primvars
 //   UsdSkelImaging writes itself with HD_ENABLE_DEFERRED_SKINNING), so
 //   HdVkMesh skins on the GPU and per frame only the skinning transforms
-//   change.
+//   change. Authored normals come back the same way (UsdSkelImaging blocks
+//   them on skinned meshes) and are skinned on the GPU too.
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/extComputationPrimvarsSchema.h"
 #include "pxr/imaging/hd/extComputationSchema.h"
@@ -30,7 +31,10 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((aggregator, "skinningPointsInputAggregatorComputation"))
     ((computation, "skinningPointsComputation"))
+    ((normalsAggregator, "skinningNormalsInputAggregatorComputation"))
     (restPoints)
+    (restNormals)
+    (hasFaceVaryingNormals)
     (geomBindXform)
     (influences)
     (numInfluencesPerComponent)
@@ -80,7 +84,7 @@ public:
                 .Build();
         };
         const TfToken &constant = HdPrimvarSchemaTokens->constant;
-        const TfToken names[] = {
+        TfTokenVector names = {
             HdTokens->points,
             HdSkinningSkelInputTokens->geomBindTransform,
             HdSkinningInputTokens->influences,
@@ -94,7 +98,7 @@ public:
             HdSkinningInputTokens->numBlendShapeOffsetRanges,
             HdSkinningInputTokens->blendShapeWeights,
         };
-        const HdDataSourceBaseHandle values[] = {
+        std::vector<HdDataSourceBaseHandle> values = {
             primvar(rest.Get(_tokens->restPoints), HdPrimvarSchemaTokens->vertex, HdPrimvarRoleTokens->point),
             primvar(rest.Get(_tokens->geomBindXform), constant, TfToken()),
             primvar(rest.Get(_tokens->influences), constant, TfToken()),
@@ -108,11 +112,28 @@ public:
             primvar(rest.Get(_tokens->numBlendShapeOffsetRanges), constant, TfToken()),
             primvar(pose.Get(_tokens->blendShapeWeights), constant, TfToken()),
         };
+        // Authored normals are blocked too; they reach only the normals
+        // aggregator, which UsdSkelImaging serves for every skinned mesh
+        // (announced as a prim only with USDSKELIMAGING_ENABLE_NORMAL_COMPUTATIONS,
+        // without which Storm shades skinned meshes faceted).
+        const HdSampledDataSourceContainerSchema normalsInputs =
+            HdExtComputationSchema::GetFromParent(
+                _GetInputSceneIndex()->GetPrim(path.AppendChild(_tokens->normalsAggregator)).dataSource)
+                .GetInputValues();
+        if (const HdSampledDataSourceHandle normals = normalsInputs.Get(_tokens->restNormals)) {
+            const HdSampledDataSourceHandle faceVarying = normalsInputs.Get(_tokens->hasFaceVaryingNormals);
+            names.push_back(HdTokens->normals);
+            values.push_back(primvar(normals,
+                                     faceVarying && faceVarying->GetValue(0.0f).GetWithDefault<bool>(false)
+                                         ? HdPrimvarSchemaTokens->faceVarying
+                                         : HdPrimvarSchemaTokens->vertex,
+                                     HdPrimvarRoleTokens->normal));
+        }
         // ponytail: dual-quaternion skinning is treated as linear blend.
         prim.dataSource = HdOverlayContainerDataSource::New(
             HdRetainedContainerDataSource::New(
                 HdPrimvarsSchema::GetSchemaToken(),
-                HdRetainedContainerDataSource::New(std::size(names), names, values),
+                HdRetainedContainerDataSource::New(names.size(), names.data(), values.data()),
                 HdExtComputationPrimvarsSchema::GetSchemaToken(),
                 HdBlockDataSource::New()),
             prim.dataSource);
@@ -164,7 +185,9 @@ protected:
             }
             auto primvar = [](TfToken const &name) { return HdPrimvarsSchema::GetDefaultLocator().Append(name); };
             HdDataSourceLocatorSet locators;
-            if (e.primPath.GetNameToken() == _tokens->aggregator) {
+            if (e.primPath.GetNameToken() == _tokens->normalsAggregator) {
+                locators = {primvar(HdTokens->normals)};
+            } else if (e.primPath.GetNameToken() == _tokens->aggregator) {
                 locators = {primvar(HdTokens->points), primvar(HdSkinningSkelInputTokens->geomBindTransform),
                             primvar(HdSkinningInputTokens->influences),
                             primvar(HdSkinningInputTokens->numInfluencesPerComponent),
@@ -187,7 +210,8 @@ private:
     static bool _IsComputation(SdfPath const &path)
     {
         return path.IsPrimPath() && (path.GetNameToken() == _tokens->aggregator ||
-                                     path.GetNameToken() == _tokens->computation);
+                                     path.GetNameToken() == _tokens->computation ||
+                                     path.GetNameToken() == _tokens->normalsAggregator);
     }
 };
 
