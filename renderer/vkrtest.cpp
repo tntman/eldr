@@ -1167,6 +1167,49 @@ int main()
                 Expect(std::abs(Render(post, scene, frame).At(32, 32, 1) - expected) < 0.01f, what);
             }
         }
+
+        {
+            // Lens distortion: barrel (k1 > 0) bows a vertical strip right
+            // of the centre into a ")", and ids and depth move with the colour
+            // (row 55 still looks inside the unwidened view).
+            vkr::Scene scene(&device);
+            vkr::Mesh *strip = AddEmitter(scene, 0.4f, -1, 0.6f, 1, 0, 1.0f);
+            strip->primId = 7;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.distortion.k1 = 0.5f;
+            const Image warped = Render(renderer, scene, frame);
+            frame.lensDistortion = false;
+            const Image straight = Render(renderer, scene, frame);
+            auto centre = [](const Image &img, int y) {
+                float sum = 0, count = 0;
+                for (int x = 0; x < 64; ++x) {
+                    const bool lit = img.At(x, y, 0) > 0.5f;
+                    sum += lit ? float(x) : 0.0f;
+                    count += lit ? 1.0f : 0.0f;
+                }
+                return count > 0 ? sum / count : -1.0f;
+            };
+            Expect(std::abs(centre(straight, 32) - 47.5f) < 0.6f && std::abs(centre(straight, 63) - 47.5f) < 0.6f,
+                   "distortion off: the strip stays straight");
+            Expect(std::abs(centre(warped, 32) - 46.0f) < 1.0f && std::abs(centre(warped, 55) - 43.5f) < 1.0f,
+                   "barrel distortion bows the strip");
+            Expect(warped.Prim(46, 32) == 7 && warped.Prim(51, 32) == -1 && warped.depth[32 * 64 + 51] == 1.0f &&
+                       std::abs(warped.depth[32 * 64 + 46] - 0.5f) < 1e-3f,
+                   "ids and depth are warped with the colour");
+
+            // The warp's reach: a corner of k1 = 0.1 looks 1.2 times as far
+            // out; a fisheye's 45 degree half view reaches tan(1 rad).
+            vkr::LensDistortion::Params p;
+            p.k1 = 0.1f;
+            Expect(std::abs(vkr::LensDistortion::Overscan(p, 1.0f) - 1.2f) < 1e-3f, "overscan of a barrel lens");
+            p = {};
+            p.fisheye = true;
+            const float edge[2] = {1, 0};
+            float source[2];
+            Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
+                   "equidistant fisheye");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

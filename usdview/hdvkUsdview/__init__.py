@@ -21,6 +21,7 @@ PASSES = [
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
     ("post", "Bloom, exposure, tonemap"),
+    ("lensDistortion", "Lens distortion"),
     ("readback", "Readback to Hydra"),
 ]
 

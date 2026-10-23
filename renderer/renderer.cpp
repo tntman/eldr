@@ -1727,6 +1727,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
+    // Lens distortion warps everything read back.
+    if (frame.lensDistortion && frame.distortion.Active()) {
+        const bool post = frame.postProcess;
+        _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
+                           post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
+                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth);
+        pass("lensDistortion");
+    }
+
     // Copy only what the caller asked for, packed one after another.
     struct Output {
         VkImage image;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "device.h"
+#include "distortion.h"
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
@@ -66,6 +67,11 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Lens distortion: the camera's lensDistortion:* warp the finished
+        // frame, ids and depth included (distortion.h); the caller renders
+        // the view distortion.overscan times wider.
+        bool lensDistortion = true;
+        LensDistortion::Params distortion;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -198,6 +204,7 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
+    LensDistortion _distortion{_dev};
 };
 
 } // namespace vkr

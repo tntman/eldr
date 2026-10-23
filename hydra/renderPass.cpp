@@ -83,11 +83,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     primId = usable(primId, HdFormatInt32);
     instanceId = usable(instanceId, HdFormatInt32);
 
-    const GfMatrix4d view = state->GetWorldToViewMatrix();
-    const GfMatrix4d viewProj = view * state->GetProjectionMatrix();
-    const GfMatrix4f viewProjF(viewProj), invViewProjF(viewProj.GetInverse());
-    std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
-    std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
     HdRenderDelegate *delegate = GetRenderIndex()->GetRenderDelegate();
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
@@ -103,7 +98,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
-                                {t.translucency, &frame.translucency}}) {
+                                {t.translucency, &frame.translucency},
+                                {t.lensDistortion, &frame.lensDistortion}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -125,9 +121,37 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                           : tonemapper == "agxPunchy" ? Tonemapper::AgxPunchy
                           : tonemapper == "none"      ? Tonemapper::None
                                                       : Tonemapper::Aces;
+    // Lens distortion (HdCamera's lensDistortion:*, which USD cameras carry
+    // as custom attributes of those names) warps the finished frame; the
+    // scene renders that much wider for the warp to sample.
+    GfMatrix4d projection = state->GetProjectionMatrix();
+    const HdCamera *camera = state->GetCamera();
+    if (camera && frame.lensDistortion && projection[0][0] > 0.0) {
+        vkr::LensDistortion::Params &d = frame.distortion;
+        const bool perspective = camera->GetProjection() == HdCamera::Perspective;
+        d.fisheye = perspective && camera->GetLensDistortionType() == HdCameraTokens->fisheye;
+        d.k1 = camera->GetLensDistortionK1();
+        d.k2 = camera->GetLensDistortionK2();
+        std::copy(camera->GetLensDistortionCenter().data(), camera->GetLensDistortionCenter().data() + 2, d.center);
+        d.anaSq = camera->GetLensDistortionAnaSq() > 0.0f ? camera->GetLensDistortionAnaSq() : 1.0f;
+        std::copy(camera->GetLensDistortionAsym().data(), camera->GetLensDistortionAsym().data() + 2, d.asym);
+        d.scale = camera->GetLensDistortionScale() > 0.0f ? camera->GetLensDistortionScale() : 1.0f;
+        d.tanHalfWidth = float(1.0 / projection[0][0]);
+        if (d.Active()) {
+            d.overscan = vkr::LensDistortion::Overscan(d, float(frame.width) / float(frame.height));
+            GfMatrix4d widen(1.0);
+            widen[0][0] = widen[1][1] = 1.0 / d.overscan;
+            projection = projection * widen;
+        }
+    }
+    const GfMatrix4d view = state->GetWorldToViewMatrix();
+    const GfMatrix4d viewProj = view * projection;
+    const GfMatrix4f viewProjF(viewProj), invViewProjF(viewProj.GetInverse());
+    std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
+    std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
+
     // The scene camera's lens; usdview's free camera has none.
-    const GfMatrix4d projection = state->GetProjectionMatrix();
-    if (const HdCamera *camera = state->GetCamera()) {
+    if (camera) {
         frame.shutter = float(camera->GetShutterClose() - camera->GetShutterOpen());
         if (camera->GetProjection() == HdCamera::Perspective && projection[0][0] > 0.0) {
             frame.focalLength = camera->GetFocalLength();

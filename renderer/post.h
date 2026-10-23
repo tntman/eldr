@@ -36,6 +36,7 @@ public:
                 const float background[4]);
 
     VkImage Output() const { return _output.image; }
+    VkImageView OutputView() const { return _output.view; }
 
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;
