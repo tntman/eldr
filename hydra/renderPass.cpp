@@ -105,37 +105,45 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency}, {t.softSunShadows, &frame.softSunShadows},
-                                {t.fog, &frame.fog}, {t.fogZUp, &frame.fogZUp}}) {
+                                {t.fog, &frame.fog}, {t.fogZUp, &frame.fogZUp},
+                                {t.reflectionProbe, &frame.reflectionProbe},
+                                {t.planarReflections, &frame.planarReflections}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity}, {t.fogDensity, &frame.fogDensity},
                                 {t.fogHeight, &frame.fogHeight}, {t.fogHeightFalloff, &frame.fogHeightFalloff},
-                                {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance}}) {
+                                {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance},
+                                {t.planarScale, &frame.planarScale}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
-    // Colours: "r g b" (usdview edits strings) or a GfVec3f/GfVec3d.
-    auto readColor = [&](TfToken const &token, float rgb[3]) {
+    // Colours and positions: "x y z" (usdview edits strings) or a
+    // GfVec3f/GfVec3d; false (and `xyz` as it was) if neither.
+    auto readVec3 = [&](TfToken const &token, float xyz[3]) {
         const VtValue v = delegate->GetRenderSetting(token);
         if (v.IsHolding<std::string>()) {
             float c[3];
             if (std::sscanf(v.UncheckedGet<std::string>().c_str(), "%f %f %f", &c[0], &c[1], &c[2]) == 3) {
-                std::copy(c, c + 3, rgb);
+                std::copy(c, c + 3, xyz);
+                return true;
             }
         } else if (v.CanCast<GfVec3f>()) {
             const GfVec3f c = VtValue::Cast<GfVec3f>(v).UncheckedGet<GfVec3f>();
-            std::copy(c.data(), c.data() + 3, rgb);
+            std::copy(c.data(), c.data() + 3, xyz);
+            return true;
         }
+        return false;
     };
-    readColor(t.fogColor, frame.fogColor);
+    readVec3(t.fogColor, frame.fogColor);
+    frame.probePosition[3] = readVec3(t.probePosition, frame.probePosition) ? 1.0f : 0.0f;
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
                                 {t.shadowResolution, &frame.shadowResolution},
                                 {t.shadowCascades, &frame.shadowCascades},
                                 {t.localShadowResolution, &frame.localShadowResolution},
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
-                                {t.fogGridSize, &frame.fogGridSize}}) {
+                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // The scene camera's lens; usdview's free camera has none.

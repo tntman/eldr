@@ -5,6 +5,7 @@
 #include "frame.glsl"
 #include "fog.glsl"
 #include "lights.glsl"
+#include "probes.glsl"
 #include "material.glsl"
 #include "scene.glsl"
 
@@ -665,14 +666,25 @@ void main()
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
     }
+    // Reflections beyond the screen (probes.glsl): the mirror reflects the
+    // planar reflection (below, over the dome's sky), other surfaces the
+    // reflection probe's captured surroundings instead of the dome.
+    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
+    if ((frame.features.x & kFeatureProbe) != 0u && !mirror) {
+        specular = ProbeSpecular(inWorldPos, reflect(-v, n), perceptual);
+    }
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
     float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
     specular *= MultiBounce(specularAO, f0);
-    // Screen-space reflections replace the dome where they hit something;
-    // where the hit is partly background the dome shows through.
-    float ssrWeight = frame.ssr.x > 0.0 ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    // The mirror's planar reflection, elsewhere screen-space reflections:
+    // they replace the dome (or probe) where they hit something; where the
+    // hit is partly background the dome shows through.
+    if (mirror) {
+        specular = PlanarSpecular(specular, inWorldPos, n, perceptual);
+    }
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
     if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);

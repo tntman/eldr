@@ -1300,6 +1300,83 @@ int main()
             img = Render(renderer, scene, frame);
             Expect(img.At(32, 60, 0) < 0.7f * img.At(32, 4, 0), "fog: height falloff");
         }
+
+        {
+            // Reflection probe: a mirror facing the camera (IdentityFrame,
+            // shaded as seen from z = -2) reflects an emitter behind the
+            // camera, out of view, at x -1..-0.2. The probe at the bounds'
+            // centre sees it. The mirror's ray at x reaches it at 2.4 x, so
+            // it shows at x = -0.27 (pixel 23) but not at -0.61 (pixel 12),
+            // where the probe's own ray in that direction would meet it:
+            // parallax correction.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            AddEmitter(scene, -1, -1, -0.2f, 1, -3, 2.0f);
+            vkr::Dome *dome = scene.AddDome();  // black, but image-based lighting is on
+            std::fill(dome->radiance, dome->radiance + 3, 0.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image off = Render(renderer, scene, frame);
+            frame.reflectionProbe = true;
+            const Image on = Render(renderer, scene, frame);
+            Expect(off.At(23, 32, 0) < 0.01f, "no probe: the mirror shows the black dome");
+            Expect(on.At(23, 32, 0) > 1.6f && on.At(48, 32, 0) < 0.1f && renderer.IsConverged(),
+                   "reflection probe: the emitter behind the camera");
+            Expect(on.At(12, 32, 0) < 0.1f, "reflection probe: parallax corrected");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::strcmp(renderer.GetStats().passMs.front().first, "probeCapture") == 0,
+                   "reflection probe: its capture is a pass");
+            const Image again = Render(renderer, scene, frame);
+            Expect(MaxDifference(again, on) < 1e-3f && (renderer.GetStats().passMs.empty() ||
+                                                        std::strcmp(renderer.GetStats().passMs.front().first,
+                                                                    "probeCapture") != 0),
+                   "reflection probe: captured once for a still scene");
+            frame.imageBasedLighting = false;
+            Expect(Render(renderer, scene, frame).At(23, 32, 0) < 0.01f,
+                   "Frame::imageBasedLighting off: no probe either");
+        }
+
+        {
+            // Planar reflections through PerspectiveFrame: a chrome floor at
+            // y = -0.5 reflects an emitter standing behind it (y 0.6..2,
+            // z = -4), not a black panel hidden under it (clipped at the
+            // mirror). The view ray at pixel row 16 meets the floor at depth
+            // 1 and, reflected, the emitter at y = 1.
+            vkr::Scene scene(&device);
+            vkr::Mesh *floor = scene.AddMesh();
+            floor->points = {-3, -0.5f, -0.1f, 3, -0.5f, -0.1f, 3, -0.5f, -10, -3, -0.5f, -0.1f, 3, -0.5f, -10,
+                             -3, -0.5f, -10};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0.1f;
+            floor->material = chrome;
+            AddEmitter(scene, -2, 0.6f, 2, 2, -4, 1.0f);
+            // Black, just under the floor: mirrored, it would stand in front
+            // of the floor where row 16 looks.
+            AddEmitter(scene, -2, -1.2f, 2, -0.55f, -0.8f, 0.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            const float off = Render(renderer, scene, frame).At(32, 16, 0);
+            frame.planarReflections = true;
+            const Image on = Render(renderer, scene, frame);
+            Expect(off < 0.01f && on.At(32, 16, 0) > 0.8f, "planar reflection of what stands on the mirror");
+            Expect(on.At(32, 26, 0) < 0.05f, "planar reflection: the floor's far part reflects the empty sky");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::strcmp(renderer.GetStats().passMs.front().first, "planarReflection") == 0,
+                   "planar reflection: its render is a pass");
+            chrome->roughness = 0.5f;  // no longer glossy: no mirror
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflection: only glossy floors");
+            floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) > 0.1f, "planar reflection: a flagged mirror");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

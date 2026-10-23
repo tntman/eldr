@@ -1,5 +1,6 @@
 """Headless check of HdVk's lights and lighting effects through Hydra:
-cylinder lights.
+cylinder lights, soft sun shadows, volumetric fog, the reflection probe and
+planar reflections.
 Run: usdenv.cmd python tests\\test_lighting.py"""
 import sys
 
@@ -7,7 +8,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
-from pxr import Gf, Usd, UsdGeom, UsdImagingGL, UsdLux
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdShade
 
 SIZE = 64
 
@@ -127,6 +128,41 @@ foggy = render(stage, {**linear, "hdvk:fog": True, "hdvk:fogDensity": 0.3, "hdvk
                        "hdvk:fogColor": "1 0 0"}).pixelColor(32, 32)
 expect(clear.green() == 255 and 40 < foggy.green() < 110, "fog hides the wall behind it")
 expect(foggy.red() > foggy.green() + 30, "hdvk:fogColor: red fog scatters red light")
+
+# Reflections of what the camera can't see: a chrome wall facing the camera
+# and an emitter behind the camera over the left (x < 0). The reflection
+# probe and planar reflections (the wall flagged with
+# primvars:hdvk:planarReflection) show it on the left half of the wall;
+# without them the wall stays dark.
+def material(stage, path, **inputs):
+    mat = UsdShade.Material.Define(stage, path)
+    shader = UsdShade.Shader.Define(stage, path + "/pbr")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    for name, value in inputs.items():
+        kind = Sdf.ValueTypeNames.Color3f if isinstance(value, tuple) else Sdf.ValueTypeNames.Float
+        shader.CreateInput(name, kind).Set(value)
+    mat.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+    return mat
+
+
+stage = wall_stage()
+chrome = material(stage, "/chrome", diffuseColor=(1.0, 1.0, 1.0), metallic=1.0, roughness=0.05)
+wall = stage.GetPrimAtPath("/wall")
+UsdShade.MaterialBindingAPI.Apply(wall).Bind(chrome)
+UsdGeom.PrimvarsAPI(wall).CreatePrimvar("hdvk:planarReflection", Sdf.ValueTypeNames.Bool,
+                                        UsdGeom.Tokens.constant).Set(True)
+emitter = UsdGeom.Mesh.Define(stage, "/emitter")
+emitter.CreatePointsAttr([(-6, -6, 8), (0, -6, 8), (0, 6, 8), (-6, 6, 8)])
+emitter.CreateFaceVertexCountsAttr([4])
+emitter.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+glow = material(stage, "/glow", diffuseColor=(0.0, 0.0, 0.0), emissiveColor=(1.0, 1.0, 1.0))
+UsdShade.MaterialBindingAPI.Apply(emitter.GetPrim()).Bind(glow)
+for settings, what in (({"hdvk:reflectionProbe": True}, "hdvk:reflectionProbe"),
+                       ({"hdvk:planarReflections": True}, "hdvk:planarReflections")):
+    dark = render(stage, linear)
+    lit = render(stage, {**linear, **settings})
+    expect(gray(dark, 16, 32) < 10 and gray(lit, 16, 32) > 150 and gray(lit, 48, 32) < 10,
+           what + ": the emitter behind the camera in the chrome wall")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

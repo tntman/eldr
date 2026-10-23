@@ -1,5 +1,7 @@
 ﻿#include "scene.h"
 
+#include "vkmath.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -402,6 +404,39 @@ void Scene::_UploadGeometry(Mesh &m)
                        std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
+    }
+    // Planar reflections: is the mesh flat? Its first proper triangle,
+    // and every point within a thousandth of its size of that plane.
+    m._flat = false;
+    if (!skinned && m.blendRanges.empty()) {
+        auto point = [&](size_t corner) {
+            const size_t e = indexed ? m.indices[corner] : corner;
+            return Vec3{m.points[e * 3], m.points[e * 3 + 1], m.points[e * 3 + 2]};
+        };
+        float lo[3] = {m.points[0], m.points[1], m.points[2]}, hi[3] = {lo[0], lo[1], lo[2]};
+        for (size_t i = 0; i < m.points.size(); ++i) {
+            lo[i % 3] = std::min(lo[i % 3], m.points[i]);
+            hi[i % 3] = std::max(hi[i % 3], m.points[i]);
+        }
+        const float size = Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+        for (size_t t = 0; t < corners && !m._flat; t += 3) {
+            const Vec3 a = point(t), b = point(t + 1), c = point(t + 2);
+            const Vec3 n = Cross(b - a, c - a);
+            if (Length(n) > 1e-6f * size * size) {
+                const Vec3 u = Normalize(n);
+                m._flat = true;
+                for (size_t k = 0; k < m.points.size() && m._flat; k += 3) {
+                    m._flat = std::abs(Dot(Vec3{m.points[k], m.points[k + 1], m.points[k + 2]} - a, u)) <= 1e-3f * size;
+                }
+                const Vec3 tri[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) {
+                    m._flatTriangle[k * 3] = tri[k].x;
+                    m._flatTriangle[k * 3 + 1] = tri[k].y;
+                    m._flatTriangle[k * 3 + 2] = tri[k].z;
+                }
+                break;
+            }
+        }
     }
     // Vertex-rate primvars: the first that fit in four components.
     m._primvarComponents.assign(m.primvars.size(), kNone);
@@ -1236,6 +1271,46 @@ void Scene::Commit()
     _gpu.hasBounds = anyDrawable;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
+
+    // Planar reflections' mirror: a flagged flat mesh, else the largest
+    // glossy one (its world bounds' diagonal) spanning a third of the scene.
+    // ponytail: one mirror, from its first instance.
+    _gpu.mirrorSlot = kNone;
+    const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
+    float mirrorScore = 0.0f;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
+            m.transforms.size() < 16) {
+            continue;
+        }
+        const Material *mat = m.material.get();
+        const bool glossy = mat && mat->roughness <= 0.3f && !mat->roughnessTex.texture &&
+                            !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
+        const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
+                                       m._worldMax[2] - m._worldMin[2]});
+        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
+        if (score <= mirrorScore) {
+            continue;
+        }
+        const float *x = m.transforms.data();  // row-vector order
+        Vec3 p[3];
+        for (int k = 0; k < 3; ++k) {
+            const float *t = &m._flatTriangle[k * 3];
+            p[k] = {t[0] * x[0] + t[1] * x[4] + t[2] * x[8] + x[12], t[0] * x[1] + t[1] * x[5] + t[2] * x[9] + x[13],
+                    t[0] * x[2] + t[1] * x[6] + t[2] * x[10] + x[14]};
+        }
+        const Vec3 n = Normalize(Cross(p[1] - p[0], p[2] - p[0]));
+        if (Dot(n, n) < 0.5f) {
+            continue;
+        }
+        mirrorScore = score;
+        _gpu.mirrorSlot = uint32_t(slot);
+        const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
+        std::copy(plane, plane + 4, _gpu.mirrorPlane);
+        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
+        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+    }
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

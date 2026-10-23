@@ -13,6 +13,7 @@
 namespace vkr {
 
 struct FrameData;
+class Reflections;
 
 class Renderer {
 public:
@@ -81,6 +82,13 @@ public:
         float fogMaxDistance = 0.0f;    // view depth the froxels reach (then constant); 0: the scene's far end
         uint32_t fogGridSize = 160;     // froxels across (16..512); rows by aspect, 64 slices
         bool fogZUp = false;            // heights along Z (Z-up stages)
+        // Reflection probe and planar reflections (probes.h).
+        bool reflectionProbe = false;    // one cube captured in the scene, before the dome (with imageBasedLighting)
+        uint32_t probeResolution = 128;  // its faces' texels (16..512, a power of two)
+        float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
+        bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
+        float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -132,6 +140,12 @@ public:
     };
     const Stats &GetStats() const { return _stats; }
 
+    // The last frame's colour target: raw HDR, premultiplied (with
+    // Frame::postProcess off), in TRANSFER_SRC_OPTIMAL. Planar reflections
+    // sample another renderer's.
+    VkImage ColorImage() const { return _color.image; }
+    VkImageView ColorView() const { return _color.view; }
+
 private:
     void _CreateDescriptors();
     void _CreatePipelines();
@@ -154,6 +168,7 @@ private:
     Fog _fog;
     float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
     uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)
+    std::unique_ptr<Reflections> _reflections;  // made when a frame first asks for them
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history

@@ -26,7 +26,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
-                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/fog.glsl)
+                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/fog.glsl
+                renderer/shaders/probes.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
@@ -39,7 +40,7 @@ foreach(shader mesh.vert mesh.frag)
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/fog.glsl)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -53,6 +54,7 @@ list(APPEND shader_incs ${spv})
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp renderer/fog.cpp
+    renderer/probes.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)

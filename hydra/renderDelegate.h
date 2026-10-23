@@ -55,7 +55,12 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((fogColor, "hdvk:fogColor"))                            \
     ((fogMaxDistance, "hdvk:fogMaxDistance"))                \
     ((fogGridSize, "hdvk:fogGridSize"))                      \
-    ((fogZUp, "hdvk:fogZUp"))
+    ((fogZUp, "hdvk:fogZUp"))                                \
+    ((reflectionProbe, "hdvk:reflectionProbe"))              \
+    ((probeResolution, "hdvk:probeResolution"))              \
+    ((probePosition, "hdvk:probePosition"))                  \
+    ((planarReflections, "hdvk:planarReflections"))          \
+    ((planarScale, "hdvk:planarScale"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

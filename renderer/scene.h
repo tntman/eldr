@@ -220,10 +220,17 @@ struct Mesh {
     std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
     uint32_t blendShapeCount = 0;
     std::vector<float> blendWeights;
+    // Planar reflections: make this (flat) mesh the mirror
+    // (primvars:hdvk:planarReflection), whatever its size and roughness.
+    bool planarReflection = false;
 
 private:
     friend class Scene;
     size_t _slot = 0;
+    // Planar reflections: all points on one plane, through this triangle
+    // (object space, three points).
+    bool _flat = false;
+    float _flatTriangle[9] = {};
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -478,6 +485,14 @@ public:
         // depends on besides geometry (the light and material tables, the
         // dome), so their histories and captures know when to start over.
         uint64_t lightingHash = 0;
+        // Planar reflections: the mirror, the flat mesh flagged by
+        // Mesh::planarReflection or else the largest flat, glossy (roughness
+        // up to 0.3), opaque one at least a third of the scene's size; kNone:
+        // none. Its first instance's plane (unit normal n, n . x + d = 0) and
+        // world bounds.
+        uint32_t mirrorSlot = kNone;
+        float mirrorPlane[4] = {};
+        float mirrorMin[3] = {}, mirrorMax[3] = {};
     };
     const Gpu &GetGpu() const { return _gpu; }
 

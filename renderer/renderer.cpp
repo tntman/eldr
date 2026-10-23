@@ -1,6 +1,7 @@
 ﻿#include "renderer.h"
 
 #include "ibl.h"
+#include "probes.h"
 #include "vkmath.h"
 
 #include <algorithm>
@@ -34,6 +35,12 @@ struct FrameData {
     float fogAlbedo[4];      // scattering colour, froxel depth
     uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
     float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
+    // Reflection probe and planar reflections (shaders/probes.glsl).
+    float probe[4];          // capture position, prefiltered levels - 1
+    float probeMin[4];       // the scene's bounds then
+    float probeMax[4];
+    float planarPlane[4];    // the mirror's plane, facing the camera
+    uint32_t planarInfo[4];  // the mirror's mesh slot
 };
 
 namespace {
@@ -74,7 +81,7 @@ const uint32_t kSkinComp[] =
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
-constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072;
+constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -344,7 +351,8 @@ void Renderer::_CreateDescriptors()
     // and vertex-rate primvars. 47 and 48 the volumetric fog's volumes
     // (Fog::Descriptors; the fog also reads the lights, the clusters and
     // the shadow maps 4 and 17..19), 49 the sun's cascades without depth
-    // compare (soft sun shadows' blocker search).
+    // compare (soft sun shadows' blocker search), 50 the reflection probe
+    // and 51 the planar reflection (Reflections).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     const VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
@@ -383,6 +391,8 @@ void Renderer::_CreateDescriptors()
         {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
         {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     const VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -396,7 +406,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[4] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 4},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
@@ -830,6 +840,13 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
     write(48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &fogVolume);
     write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
+    // Without a probe or planar reflection: placeholders the shaders skip.
+    const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
+    const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
+    const VkDescriptorImageInfo probeInfo{_clampSampler, probe, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo planarInfo{_clampSampler, planar, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &probeInfo);
+    write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &planarInfo);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1244,7 +1261,8 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
 
 bool Renderer::IsConverged() const
 {
-    return (!_adapting || _post.ExposureConverged()) && _taaConverged;
+    return (!_adapting || _post.ExposureConverged()) && _taaConverged &&
+           !(_reflections && _reflections->ProbePending());
 }
 
 uint32_t Renderer::VisibleInstances() const
@@ -1278,6 +1296,17 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkDestroySampler(_dev.device, _sampler, nullptr);
         _sampler = CreateMaterialSampler(_dev.device, anisotropy);
         _anisotropy = anisotropy;
+    }
+
+    // Reflections beyond the screen: their own renders of the scene, done
+    // before this frame records (probes.h).
+    if (frame.reflectionProbe || frame.planarReflections) {
+        if (!_reflections) {
+            _reflections = std::make_unique<Reflections>(_dev);
+        }
+        _reflections->Update(scene, frame);
+    } else {
+        _reflections.reset();
     }
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
@@ -1353,6 +1382,19 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     const bool fog = _SetupFog(gpu, frame, &fd);
+    const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
+    if (_reflections && _reflections->Probe()) {
+        fd.features[0] |= kFeatureProbe;
+        std::copy(_reflections->ProbePosition(), _reflections->ProbePosition() + 3, fd.probe);
+        fd.probe[3] = float(_reflections->ProbeLevels() - 1);
+        std::copy(_reflections->ProbeMin(), _reflections->ProbeMin() + 3, fd.probeMin);
+        std::copy(_reflections->ProbeMax(), _reflections->ProbeMax() + 3, fd.probeMax);
+    }
+    if (planarImage) {
+        fd.features[0] |= kFeaturePlanar;
+        std::copy(_reflections->PlanarPlane(), _reflections->PlanarPlane() + 4, fd.planarPlane);
+        fd.planarInfo[0] = gpu.mirrorSlot;
+    }
     // Culling output; host-visible so VisibleInstances() can read it back.
     // One set of commands for the camera, one per cascade, one for atlas tiles.
     _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
@@ -1391,6 +1433,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
         }
     };
+    if (planarImage) {
+        // Rendered (and left for readback) by the reflections' renderer.
+        ImageBarrier(_cmd, planarImage, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
 
     const VkDeviceSize vertexOffset = 0;
     if (draw) {
@@ -1418,10 +1468,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdPipelineBarrier2(_cmd, &dep);
 
         // Joint matrices of all skinned instances, read by culling (bounds)
-        // and every vertex stage.
+        // and every vertex stage (reflection renders reuse the last frame's).
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _skinPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
-        vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        if (frame.skinning) {
+            vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        }
         VkMemoryBarrier2 jointsBuilt{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         jointsBuilt.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         jointsBuilt.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
@@ -1911,6 +1963,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 _stats.passMs.push_back({_passes[i], double(ticks[i + 1] - ticks[i]) * _timestampMs});
             }
             _stats.gpuMs = double(ticks.back() - ticks.front()) * _timestampMs;
+        }
+    }
+    // The reflections' renders ran before this frame's passes.
+    for (const auto &[name, ms] : {std::pair{"planarReflection", _reflections ? _reflections->planarMs : 0.0},
+                                   std::pair{"probeCapture", _reflections ? _reflections->probeMs : 0.0}}) {
+        if (ms > 0) {
+            _stats.passMs.insert(_stats.passMs.begin(), {name, ms});
+            _stats.gpuMs += ms;
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
