@@ -1,5 +1,6 @@
 #include "material.h"
 
+#include "instancer.h"
 #include "scene.h"
 
 #include "pxr/base/gf/color.h"
@@ -14,11 +15,15 @@
 #include "pxr/imaging/hio/image.h"
 #include "pxr/usd/ar/resolver.h"
 #include "pxr/usd/sdf/assetPath.h"
+#include "pxr/usd/sdr/registry.h"
+#include "pxr/usd/sdr/shaderNode.h"
+#include "pxr/usd/sdr/shaderProperty.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <set>
 #include <vector>
 
@@ -33,6 +38,11 @@ TF_DEFINE_PRIVATE_TOKENS(
     (UsdTransform2d)
     (UsdPrimvarReader_float2)
     (UsdPrimvarReader_float3)
+    (fallback)
+    (wrapS)
+    (specular)
+    (specular_color)
+    (specular_weight)
     (st)
     (texcoord)
     (rotation)
@@ -326,6 +336,7 @@ struct SurfaceInputs {
     TfToken id;
     TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal, opacity;
     float baseColorDefault, baseWeightDefault, emissionDefault, emissionWeightDefault, roughnessDefault;
+    TfToken specular, specularColor;  // dielectric specular weight and colour (constants only)
 };
 
 const std::vector<SurfaceInputs> &Surfaces()
@@ -342,12 +353,13 @@ const std::vector<SurfaceInputs> &Surfaces()
             mtlxPreview,
             {_tokens->ND_standard_surface_surfaceshader, _tokens->base_color, _tokens->base,
              _tokens->emission_color, _tokens->emission, _tokens->metalness, _tokens->specular_roughness,
-             TfToken(), _tokens->normal, _tokens->opacity, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f},
+             TfToken(), _tokens->normal, _tokens->opacity, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f, _tokens->specular,
+             _tokens->specular_color},
             // emission_luminance is in nits, the radiance unit UsdLux uses too.
             {_tokens->ND_open_pbr_surface_surfaceshader, _tokens->base_color, _tokens->base_weight,
              _tokens->emission_color, _tokens->emission_luminance, _tokens->base_metalness,
              _tokens->specular_roughness, TfToken(), _tokens->geometry_normal, _tokens->geometry_opacity, 0.8f,
-             1.0f, 1.0f, 0.0f, 0.3f},
+             1.0f, 1.0f, 0.0f, 0.3f, _tokens->specular_weight, _tokens->specular_color},
         };
     }();
     return surfaces;
@@ -374,6 +386,68 @@ T ReadOr(std::map<TfToken, VtValue> const &params, TfToken const &name, T fallba
     return fallback;
 }
 
+// UsdTransform2d: T + R (S uv), R counter-clockwise (Storm's codeGen.cpp).
+void Transform2dMatrix(std::map<TfToken, VtValue> const &p, float m[6])
+{
+    const float r = ReadOr(p, _tokens->rotation, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
+    const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), t = ReadOr(p, _tokens->translation, GfVec2f(0));
+    const float out[6] = {c * scale[0], -s * scale[1], t[0], s * scale[0], c * scale[1], t[1]};
+    std::copy(out, out + 6, m);
+}
+
+// MaterialX's NG_place2d: SRT  pivot + R ((uv - pivot) / scale) - offset,
+// TRS  pivot + R (uv - pivot - offset) / scale, R by -rotate (mx_rotate_vector2).
+void Place2dMatrix(std::map<TfToken, VtValue> const &p, float m[6])
+{
+    const float r = ReadOr(p, _tokens->rotate, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
+    const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), pivot = ReadOr(p, _tokens->pivot, GfVec2f(0)),
+                  offset = ReadOr(p, _tokens->offset, GfVec2f(0));
+    const float ix = 1.0f / scale[0], iy = 1.0f / scale[1];
+    const bool trs = ReadOr(p, _tokens->operationorder, 0) == 1;
+    // A = R diag(1/s) (SRT) or diag(1/s) R (TRS), R = (c s; -s c).
+    const float a[4] = {trs ? c * ix : c * ix, trs ? s * ix : s * iy, trs ? -s * iy : -s * ix, trs ? c * iy : c * iy};
+    const GfVec2f shift = trs ? pivot + offset : pivot;
+    const float out[6] = {a[0], a[1], pivot[0] - a[0] * shift[0] - a[1] * shift[1] - (trs ? 0.0f : offset[0]),
+                          a[2], a[3], pivot[1] - a[2] * shift[0] - a[3] * shift[1] - (trs ? 0.0f : offset[1])};
+    std::copy(out, out + 6, m);
+}
+
+// tiledimage: its own tiling after the incoming coordinates
+// (NG_tiledimage: (uv uvtiling - uvoffset) realworldtilesize / realworldimagesize).
+void TiledImageMatrix(std::map<TfToken, VtValue> const &p, float m[6])
+{
+    const GfVec2f tiling = ReadOr(p, _tokens->uvtiling, GfVec2f(1)), offset = ReadOr(p, _tokens->uvoffset, GfVec2f(0));
+    const GfVec2f k = GfCompDiv(ReadOr(p, _tokens->realworldtilesize, GfVec2f(1)),
+                                ReadOr(p, _tokens->realworldimagesize, GfVec2f(1)));
+    const float out[6] = {tiling[0] * k[0], 0, -offset[0] * k[0], 0, tiling[1] * k[1], -offset[1] * k[1]};
+    std::copy(out, out + 6, m);
+}
+
+// A texture node's file into ref (UDIMs as tiles). A MaterialX file without
+// a colour space is in the document's working space, linear (as MaterialX
+// and Storm's MaterialX path read it); a UsdUVTexture's is "auto".
+// False without a file.
+bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textures, vkr::TextureRef *ref)
+{
+    const auto file = node.parameters.find(_tokens->file);
+    const std::string path = file == node.parameters.end() ? std::string() : AssetPath(file->second);
+    if (path.empty()) {
+        return false;
+    }
+    TfToken colorSpace = ParameterColorSpace(node.parameters, _tokens->file);
+    if (colorSpace.IsEmpty() && !preview) {
+        colorSpace = GfColorSpaceNames->LinearRec709;
+    }
+    if (path.find("<UDIM>") != std::string::npos) {
+        ref->udim = textures->GetUdim(path, colorSpace);
+        const auto tile = std::find_if(ref->udim.begin(), ref->udim.end(), [](auto const &t) { return t; });
+        ref->texture = tile == ref->udim.end() ? nullptr : *tile;
+    } else {
+        ref->texture = textures->Get(path, colorSpace);
+    }
+    return true;
+}
+
 // Follows a texture's coordinates (`input` of `node`) to the primvar they
 // come from (a reader's varname; MaterialX texcoord index n -> "st" / "st<n>",
 // or geomprop), composing UsdTransform2d and MaterialX place2d into
@@ -395,26 +469,13 @@ void ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, Tf
         const TfToken &type = node->nodeTypeId;
         auto const &p = node->parameters;
         if (type == _tokens->UsdTransform2d) {
-            // T + R (S uv), R counter-clockwise (Storm's codeGen.cpp).
-            const float r = ReadOr(p, _tokens->rotation, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
-            const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), t = ReadOr(p, _tokens->translation, GfVec2f(0));
-            const float m[6] = {c * scale[0], -s * scale[1], t[0], s * scale[0], c * scale[1], t[1]};
+            float m[6];
+            Transform2dMatrix(p, m);
             Compose(ref->uvTransform, m);
             input = _tokens->in;
         } else if (StartsWith(type, "ND_place2d")) {
-            // MaterialX's NG_place2d: SRT  pivot + R ((uv - pivot) / scale) - offset,
-            // TRS  pivot + R (uv - pivot - offset) / scale, R by -rotate (mx_rotate_vector2).
-            const float r = ReadOr(p, _tokens->rotate, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
-            const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), pivot = ReadOr(p, _tokens->pivot, GfVec2f(0)),
-                          offset = ReadOr(p, _tokens->offset, GfVec2f(0));
-            const float ix = 1.0f / scale[0], iy = 1.0f / scale[1];
-            const bool trs = ReadOr(p, _tokens->operationorder, 0) == 1;
-            // A = R diag(1/s) (SRT) or diag(1/s) R (TRS), R = (c s; -s c).
-            const float a[4] = {trs ? c * ix : c * ix, trs ? s * ix : s * iy, trs ? -s * iy : -s * ix,
-                                trs ? c * iy : c * iy};
-            const GfVec2f shift = trs ? pivot + offset : pivot;
-            const float m[6] = {a[0], a[1], pivot[0] - a[0] * shift[0] - a[1] * shift[1] - (trs ? 0.0f : offset[0]),
-                                a[2], a[3], pivot[1] - a[2] * shift[0] - a[3] * shift[1] - (trs ? 0.0f : offset[1])};
+            float m[6];
+            Place2dMatrix(p, m);
             Compose(ref->uvTransform, m);
             input = _tokens->texcoord;
         } else if (StartsWith(type, "ND_convert_") || StartsWith(type, "ND_dot_")) {
@@ -453,6 +514,7 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
 {
     int channel = -1;
     bool normalMap = false;
+    float normalScale = 1.0f;
     for (int depth = 0; depth < 8; ++depth) {
         const auto conn = node->inputConnections.find(name);
         if (conn == node->inputConnections.end() || conn->second.empty()) {
@@ -471,6 +533,7 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         }
         if (StartsWith(type, "ND_normalmap")) {
             normalMap = true;
+            Read(node->parameters, _tokens->scale, &normalScale);
             continue;
         }
         if (StartsWith(type, "ND_extract_")) {
@@ -492,24 +555,8 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         if (!preview && !StartsWith(type, "ND_image_") && !StartsWith(type, "ND_tiledimage_")) {
             return;
         }
-        const auto file = node->parameters.find(_tokens->file);
-        const std::string path = file == node->parameters.end() ? std::string() : AssetPath(file->second);
-        if (path.empty()) {
+        if (!LoadFile(*node, preview, textures, ref)) {
             return;
-        }
-        // A MaterialX file without a colour space is in the document's
-        // working space, linear (as MaterialX and Storm's MaterialX path read
-        // it); a UsdUVTexture's is "auto".
-        TfToken colorSpace = ParameterColorSpace(node->parameters, _tokens->file);
-        if (colorSpace.IsEmpty() && !preview) {
-            colorSpace = GfColorSpaceNames->LinearRec709;
-        }
-        if (path.find("<UDIM>") != std::string::npos) {
-            ref->udim = textures->GetUdim(path, colorSpace);
-            const auto tile = std::find_if(ref->udim.begin(), ref->udim.end(), [](auto const &t) { return t; });
-            ref->texture = tile == ref->udim.end() ? nullptr : *tile;
-        } else {
-            ref->texture = textures->Get(path, colorSpace);
         }
         if (preview) {
             const TfToken &out = c.upstreamOutputName;
@@ -522,24 +569,493 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
                 std::copy(v.data(), v.data() + 4, ref->bias);
             }
         } else if (normalMap) {
-            std::fill(ref->scale, ref->scale + 3, 2.0f);
-            std::fill(ref->bias, ref->bias + 3, -1.0f);
+            // MaterialX normalmap: texel * 2 - 1, xy times its scale.
+            const float scale[3] = {2.0f * normalScale, 2.0f * normalScale, 2.0f};
+            const float bias[3] = {-normalScale, -normalScale, -1.0f};
+            std::copy(scale, scale + 3, ref->scale);
+            std::copy(bias, bias + 3, ref->bias);
         }
         ref->channel = channel;
         // tiledimage: its own tiling after the incoming coordinates
         // (NG_tiledimage: (uv uvtiling - uvoffset) realworldtilesize / realworldimagesize).
         if (StartsWith(type, "ND_tiledimage_")) {
-            auto const &p = node->parameters;
-            const GfVec2f tiling = ReadOr(p, _tokens->uvtiling, GfVec2f(1)), offset = ReadOr(p, _tokens->uvoffset, GfVec2f(0));
-            const GfVec2f k = GfCompDiv(ReadOr(p, _tokens->realworldtilesize, GfVec2f(1)),
-                                        ReadOr(p, _tokens->realworldimagesize, GfVec2f(1)));
-            const float m[6] = {tiling[0] * k[0], 0, -offset[0] * k[0], 0, tiling[1] * k[1], -offset[1] * k[1]};
-            std::copy(m, m + 6, ref->uvTransform);
+            TiledImageMatrix(node->parameters, ref->uvTransform);
         }
         ReadTexcoord(net, node, preview ? _tokens->st : _tokens->texcoord, ref, primvar);
         return;
     }
 }
+
+// A shading node's name and output type: MaterialX ND_<name>_<type>...
+// ("ND_multiply_color3FA": multiply, color3; ND_convert_<from>_<to>: the
+// to type), UsdShade <name>_<type> (UsdPrimvarReader_float3).
+struct NodeKind {
+    std::string name, type;
+};
+
+NodeKind Kind(TfToken const &id)
+{
+    const std::string &s = id.GetString();
+    const bool mtlx = s.rfind("ND_", 0) == 0;
+    const size_t start = mtlx ? 3 : 0, end = s.find('_', start);
+    NodeKind k{s.substr(start, end == std::string::npos ? std::string::npos : end - start), std::string()};
+    if (end != std::string::npos) {
+        const std::string rest = s.substr(end + 1);
+        k.type = k.name == "convert" ? rest.substr(rest.rfind('_') + 1) : rest.substr(0, rest.find('_'));
+        if (k.type.size() > 2 && k.type.compare(k.type.size() - 2, 2, "FA") == 0) {
+            k.type.resize(k.type.size() - 2);
+        }
+    }
+    return k;
+}
+
+uint32_t Components(std::string const &type)
+{
+    if (type == "float" || type == "integer" || type == "boolean" || type == "int") {
+        return 1;
+    }
+    if (type == "vector2" || type == "float2") {
+        return 2;
+    }
+    return type == "color4" || type == "vector4" || type == "float4" ? 4 : 3;
+}
+
+// A scalar or vector value as a vec4 (scalars splat, missing components 0).
+bool ToVec4(VtValue const &v, GfVec4f *out)
+{
+    std::vector<float> f;
+    uint32_t n = 0;
+    if (!HdVkToFloats(v, &f, &n) || f.size() != n || n == 0) {
+        return false;
+    }
+    *out = n == 1 ? GfVec4f(f[0]) : GfVec4f(f[0], f[1], n > 2 ? f[2] : 0.0f, n > 3 ? f[3] : 0.0f);
+    return true;
+}
+
+// Compiles the shading graphs behind material inputs that the texture and
+// constant path can't express (MaterialX math, several textures, primvars)
+// into m->program, mesh.frag's per-pixel interpreter (scene.h). Values are
+// an op's result or a constant; ops collect with one virtual register each
+// and get the program's kRegisters in Finish.
+// ponytail: an input's graph is either compiled whole or not at all (a
+// node HdVk lacks, e.g. noise, leaves the input at its constant).
+class GraphCompiler
+{
+public:
+    using P = vkr::MaterialProgram;
+
+    GraphCompiler(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, P *program, TfToken *uvPrimvar)
+        : _net(net)
+        , _textures(textures)
+        , _p(*program)
+        , _uvPrimvar(uvPrimvar)
+    {
+    }
+
+    // Compiles input `name` of `node`, times `weight`, into output `target`.
+    // False, with nothing kept, if a node on the way isn't supported.
+    bool Output(HdMaterialNode2 const &node, TfToken const &name, P::Input target, float weight)
+    {
+        const size_t ops = _ops.size(), constants = _p.constants.size(), images = _p.images.size(),
+                     primvars = _p.primvars.size();
+        const auto memo = _memo;
+        const TfToken uv = *_uvPrimvar;
+        _failed.clear();
+        std::optional<Value> v = _Input(node, name, 0);
+        // A normal is a tangent-space one only out of a normalmap.
+        if (v && target == P::kNormal && !(v->op && _ops[v->index].op == P::kNormalMap)) {
+            v.reset();
+        }
+        if (v && weight != 1.0f) {
+            v = _Emit(P::kMultiply, {*v, _Const(GfVec4f(weight))});
+        }
+        if (!v) {
+            _ops.resize(ops);
+            _p.constants.resize(constants);
+            _p.images.resize(images);
+            _p.primvars.resize(primvars);
+            _memo = memo;
+            *_uvPrimvar = uv;
+            return false;
+        }
+        _Emit(P::kOutput, {*v}, target);
+        return true;
+    }
+
+    // The node id that made the last Output fail (empty: a malformed graph).
+    std::string const &Failed() const { return _failed; }
+
+    // Gives each value a register from its op until its last reader; false
+    // (program left empty) if more than kRegisters values are live at once
+    // or the constants don't fit the operand bytes.
+    bool Finish()
+    {
+        std::vector<int> last(_ops.size(), -1), reg(_ops.size(), -1);
+        for (size_t i = 0; i < _ops.size(); ++i) {
+            for (const Value &a : _ops[i].args) {
+                if (a.op) {
+                    last[a.index] = int(i);
+                }
+            }
+        }
+        std::vector<bool> busy(P::kRegisters, false);
+        for (size_t i = 0; i < _ops.size(); ++i) {
+            const Ins &ins = _ops[i];
+            uint8_t operands[4] = {0, 0, 0, 0};
+            for (size_t k = 0; k < ins.args.size(); ++k) {
+                const Value &a = ins.args[k];
+                if (!a.op && P::kRegisters + a.index > 255) {
+                    _p.code.clear();
+                    return false;
+                }
+                operands[k] = uint8_t(a.op ? reg[a.index] : P::kRegisters + a.index);
+            }
+            for (const Value &a : ins.args) {
+                if (a.op && last[a.index] == int(i)) {
+                    busy[reg[a.index]] = false;
+                }
+            }
+            uint32_t dst = 0;
+            if (ins.op != P::kOutput) {
+                const auto free = std::find(busy.begin(), busy.end(), false);
+                if (free == busy.end()) {
+                    _p.code.clear();
+                    return false;
+                }
+                dst = uint32_t(free - busy.begin());
+                busy[dst] = last[i] >= 0;  // a dead value frees its register at once
+                reg[i] = int(dst);
+            }
+            _p.Emit(ins.op, dst, {operands[0], operands[1], operands[2], operands[3]}, ins.imm0, ins.imm1);
+        }
+        return true;
+    }
+
+private:
+    struct Value {
+        bool op;         // an op's result (index into _ops), else constant `index`
+        uint32_t index;
+    };
+    struct Ins {
+        P::Op op;
+        std::vector<Value> args;
+        uint32_t imm0, imm1;
+    };
+
+    Value _Emit(P::Op op, std::vector<Value> args, uint32_t imm0 = 0, uint32_t imm1 = 0)
+    {
+        _ops.push_back({op, std::move(args), imm0, imm1});
+        return {true, uint32_t(_ops.size() - 1)};
+    }
+
+    Value _Const(GfVec4f const &v)
+    {
+        _p.constants.insert(_p.constants.end(), v.data(), v.data() + 4);
+        return {false, uint32_t(_p.constants.size() / 4 - 1)};
+    }
+
+    // Floats packed four to a constant; the first one's index.
+    uint32_t _Packed(std::vector<float> values)
+    {
+        const uint32_t first = uint32_t(_p.constants.size() / 4);
+        values.resize((values.size() + 3) / 4 * 4, 0.0f);
+        _p.constants.insert(_p.constants.end(), values.begin(), values.end());
+        return first;
+    }
+
+    // An unconnected input: authored (colours converted to linear Rec.709),
+    // else the node definition's default, else zero.
+    GfVec4f _Parameter(HdMaterialNode2 const &node, TfToken const &input) const
+    {
+        GfVec4f v(0.0f);
+        const auto it = node.parameters.find(input);
+        if (it != node.parameters.end() && ToVec4(it->second, &v)) {
+            const TfToken colorSpace = ParameterColorSpace(node.parameters, input);
+            if (NeedsConversion(colorSpace)) {
+                const GfVec3f rgb = GfColor(GfColor(GfVec3f(v[0], v[1], v[2]), GfColorSpace(colorSpace)),
+                                            GfColorSpace(GfColorSpaceNames->LinearRec709))
+                                        .GetRGB();
+                v = GfVec4f(rgb[0], rgb[1], rgb[2], v[3]);
+            }
+            return v;
+        }
+        if (SdrShaderNodeConstPtr def = SdrRegistry::GetInstance().GetShaderNodeByIdentifier(node.nodeTypeId)) {
+            if (SdrShaderPropertyConstPtr p = def->GetShaderInput(input)) {
+                ToVec4(p->GetDefaultValue(), &v);
+            }
+        }
+        return v;
+    }
+
+    bool _Connected(HdMaterialNode2 const &node, TfToken const &input) const
+    {
+        const auto c = node.inputConnections.find(input);
+        return c != node.inputConnections.end() && !c->second.empty();
+    }
+
+    // An input the program needs at compile time (a ramp's key count, a
+    // channel index): its value, or a connected constant node's.
+    std::optional<float> _ConstantInput(HdMaterialNode2 const &node, TfToken const &input) const
+    {
+        const auto c = node.inputConnections.find(input);
+        if (c == node.inputConnections.end() || c->second.empty()) {
+            return _Parameter(node, input)[0];
+        }
+        const auto up = _net.nodes.find(c->second[0].upstreamNode);
+        if (up == _net.nodes.end() || Kind(up->second.nodeTypeId).name != "constant") {
+            return std::nullopt;
+        }
+        return _Parameter(up->second, TfToken("value"))[0];
+    }
+
+    std::optional<Value> _Input(HdMaterialNode2 const &node, TfToken const &input, int depth)
+    {
+        const auto c = node.inputConnections.find(input);
+        if (c != node.inputConnections.end() && !c->second.empty()) {
+            return _Node(c->second[0].upstreamNode, c->second[0].upstreamOutputName, depth + 1);
+        }
+        return _Const(_Parameter(node, input));
+    }
+
+    // Texture coordinates: a connected input, else the mesh's uv set.
+    std::optional<Value> _Uv(HdMaterialNode2 const &node, TfToken const &input, int depth)
+    {
+        return _Connected(node, input) ? _Input(node, input, depth) : std::optional<Value>(_Texcoord(_tokens->st));
+    }
+
+    Value _Texcoord(TfToken const &primvar)
+    {
+        if (_uvPrimvar->IsEmpty()) {
+            *_uvPrimvar = primvar;
+        }
+        return _Emit(P::kTexcoord, {});
+    }
+
+    std::optional<Value> _Node(SdfPath const &path, TfToken const &output, int depth)
+    {
+        const auto key = std::make_pair(path, output);
+        const auto memo = _memo.find(key);
+        if (memo != _memo.end()) {
+            return memo->second;
+        }
+        const auto it = _net.nodes.find(path);
+        if (depth > 64 || it == _net.nodes.end()) {
+            return std::nullopt;
+        }
+        std::optional<Value> v = _Compile(it->second, Kind(it->second.nodeTypeId), output, depth);
+        if (!v && _failed.empty()) {
+            _failed = it->second.nodeTypeId.GetString();
+        }
+        if (v) {
+            _memo[key] = *v;
+        }
+        return v;
+    }
+
+    std::optional<Value> _Compile(HdMaterialNode2 const &n, NodeKind const &k, TfToken const &output, int depth)
+    {
+        auto in = [&](const char *name) { return _Input(n, TfToken(name), depth); };
+        // Ops whose operands are inputs, in order.
+        static const std::map<std::string, std::pair<P::Op, std::vector<const char *>>> plain = {
+            {"add", {P::kAdd, {"in1", "in2"}}},
+            {"subtract", {P::kSubtract, {"in1", "in2"}}},
+            {"multiply", {P::kMultiply, {"in1", "in2"}}},
+            {"divide", {P::kDivide, {"in1", "in2"}}},
+            {"min", {P::kMin, {"in1", "in2"}}},
+            {"max", {P::kMax, {"in1", "in2"}}},
+            {"power", {P::kPower, {"in1", "in2"}}},
+            {"modulo", {P::kModulo, {"in1", "in2"}}},
+            {"absval", {P::kAbs, {"in"}}},
+            {"floor", {P::kFloor, {"in"}}},
+            {"ceil", {P::kCeil, {"in"}}},
+            {"sin", {P::kSin, {"in"}}},
+            {"cos", {P::kCos, {"in"}}},
+            {"sqrt", {P::kSqrt, {"in"}}},
+            {"exp", {P::kExp, {"in"}}},
+            {"ln", {P::kLog, {"in"}}},
+            {"invert", {P::kInvert, {"in", "amount"}}},
+            {"mix", {P::kMix, {"bg", "fg", "mix"}}},
+            {"overlay", {P::kOverlay, {"fg", "bg", "mix"}}},
+            {"clamp", {P::kClamp, {"in", "low", "high"}}},
+            {"smoothstep", {P::kSmoothstep, {"in", "low", "high"}}},
+            {"dotproduct", {P::kDot, {"in1", "in2"}}},
+            {"normalize", {P::kNormalize, {"in"}}},
+            {"luminance", {P::kLuminance, {"in", "lumacoeffs"}}},
+            {"ifgreater", {P::kIfGreater, {"value1", "value2", "in1", "in2"}}},
+            {"ifgreatereq", {P::kIfGreaterEq, {"value1", "value2", "in1", "in2"}}},
+            {"ifequal", {P::kIfEqual, {"value1", "value2", "in1", "in2"}}},
+            {"hsvadjust", {P::kHsvAdjust, {"in", "amount"}}},
+            {"rgbtohsv", {P::kRgbToHsv, {"in"}}},
+            {"hsvtorgb", {P::kHsvToRgb, {"in"}}},
+            {"normalmap", {P::kNormalMap, {"in", "scale"}}},
+            {"combine2", {P::kCombine, {"in1", "in2"}}},
+            {"combine3", {P::kCombine, {"in1", "in2", "in3"}}},
+            {"combine4", {P::kCombine, {"in1", "in2", "in3", "in4"}}},
+        };
+        if (const auto it = plain.find(k.name); it != plain.end()) {
+            std::vector<Value> args;
+            for (const char *name : it->second.second) {
+                const std::optional<Value> v = in(name);
+                if (!v) {
+                    return std::nullopt;
+                }
+                args.push_back(*v);
+            }
+            return _Emit(it->second.first, std::move(args));
+        }
+        if (k.name == "constant") {
+            return _Const(_Parameter(n, TfToken("value")));
+        }
+        if (k.name == "convert" || k.name == "dot") {
+            return in("in");
+        }
+        if (k.name == "extract" || k.name.rfind("separate", 0) == 0) {
+            // separateN's outputs outr/outx .. outa/outw.
+            const std::string &o = output.GetString();
+            const char c = o.empty() ? 'x' : o.back();
+            const std::optional<float> index = k.name == "extract" ? _ConstantInput(n, TfToken("index"))
+                                                                   : std::optional<float>(float(c == 'r' || c == 'x' ? 0
+                                                                                                : c == 'g' || c == 'y' ? 1
+                                                                                                : c == 'b' || c == 'z' ? 2
+                                                                                                                       : 3));
+            const std::optional<Value> v = in("in");
+            if (!v || !index) {
+                return std::nullopt;
+            }
+            return _Emit(P::kExtract, {*v}, 0, uint32_t(std::clamp(*index, 0.0f, 3.0f)));
+        }
+        if (k.name == "remap") {
+            const std::optional<Value> a = in("in"), b = in("inlow"), c = in("inhigh"), d = in("outlow");
+            if (!a || !b || !c || !d || _Connected(n, TfToken("outhigh"))) {
+                return std::nullopt;
+            }
+            const Value high = _Const(_Parameter(n, TfToken("outhigh")));
+            return _Emit(P::kRemap, {*a, *b, *c, *d}, high.index);
+        }
+        if (k.name == "ramplr" || k.name == "ramptb") {
+            // mix(valuel, valuer, u) and mix(valueb, valuet, v), clamped.
+            const bool lr = k.name == "ramplr";
+            const std::optional<Value> uv = _Uv(n, _tokens->texcoord, depth);
+            const std::optional<Value> from = in(lr ? "valuel" : "valueb"), to = in(lr ? "valuer" : "valuet");
+            if (!uv || !from || !to) {
+                return std::nullopt;
+            }
+            const Value x = _Emit(P::kExtract, {*uv}, 0, lr ? 0 : 1);
+            const Value c = _Emit(P::kClamp, {x, _Const(GfVec4f(0.0f)), _Const(GfVec4f(1.0f))});
+            return _Emit(P::kMix, {*from, *to, c});
+        }
+        if (k.name == "texcoord") {
+            const int index = int(_Parameter(n, _tokens->index)[0]);
+            return _Texcoord(index == 0 ? _tokens->st : TfToken("st" + std::to_string(index)));
+        }
+        if (k.name == "geompropvalue" || k.name == "UsdPrimvarReader") {
+            TfToken name;
+            std::string str;
+            const TfToken &param = k.name == "geompropvalue" ? _tokens->geomprop : _tokens->varname;
+            if (!Read(n.parameters, param, &name) && Read(n.parameters, param, &str)) {
+                name = TfToken(str);
+            }
+            if (name.IsEmpty()) {
+                return std::nullopt;
+            }
+            if (name == _tokens->displayColor) {
+                return _Emit(P::kDisplayColor, {});
+            }
+            if (Components(k.type) == 2 && (name == _tokens->st || name == *_uvPrimvar)) {
+                return _Texcoord(name);
+            }
+            const std::optional<Value> fallback = in(k.name == "geompropvalue" ? "default" : "fallback");
+            if (!fallback) {
+                return std::nullopt;
+            }
+            auto slot = std::find(_p.primvars.begin(), _p.primvars.end(), name.GetString());
+            if (slot == _p.primvars.end()) {
+                slot = _p.primvars.insert(slot, name.GetString());
+            }
+            return _Emit(P::kPrimvar, {*fallback}, uint32_t(slot - _p.primvars.begin()));
+        }
+        if (k.name == "image" || k.name == "tiledimage" || k.name == "UsdUVTexture") {
+            const bool preview = k.name == "UsdUVTexture";
+            vkr::TextureRef ref;
+            LoadFile(n, preview, _textures, &ref);
+            std::optional<Value> uv = _Uv(n, preview ? _tokens->st : _tokens->texcoord, depth);
+            const std::optional<Value> fallback = in(preview ? "fallback" : "default");
+            if (!uv || !fallback) {
+                return std::nullopt;
+            }
+            if (k.name == "tiledimage") {
+                float m[6];
+                TiledImageMatrix(n.parameters, m);
+                uv = _Emit(P::kAffine, {*uv, _Const(GfVec4f(m[0], m[1], m[2], 0)), _Const(GfVec4f(m[3], m[4], m[5], 0))});
+            }
+            if (preview) {
+                const TfToken &o = output;
+                ref.channel = o == _tokens->r ? 0 : o == _tokens->g ? 1 : o == _tokens->b ? 2 : o == _tokens->a ? 3 : -1;
+                GfVec4f v;
+                if (Read(n.parameters, _tokens->scale, &v)) {
+                    std::copy(v.data(), v.data() + 4, ref.scale);
+                }
+                if (Read(n.parameters, _tokens->bias, &v)) {
+                    std::copy(v.data(), v.data() + 4, ref.bias);
+                }
+            } else if (k.type == "float") {
+                ref.channel = 0;
+            }
+            _p.images.push_back(std::move(ref));
+            return _Emit(P::kImage, {*uv, *fallback}, uint32_t(_p.images.size() - 1));
+        }
+        if (k.name == "place2d" || k.name == "UsdTransform2d") {
+            for (const char *p : {"pivot", "scale", "rotate", "offset", "rotation", "translation"}) {
+                if (_Connected(n, TfToken(p))) {
+                    return std::nullopt;
+                }
+            }
+            const std::optional<Value> uv = _Uv(n, k.name == "place2d" ? _tokens->texcoord : _tokens->in, depth);
+            if (!uv) {
+                return std::nullopt;
+            }
+            float m[6];
+            (k.name == "place2d" ? Place2dMatrix : Transform2dMatrix)(n.parameters, m);
+            return _Emit(P::kAffine, {*uv, _Const(GfVec4f(m[0], m[1], m[2], 0)), _Const(GfVec4f(m[3], m[4], m[5], 0))});
+        }
+        // Houdini's ramps (hmtlxramp graphs): hinvlinear finds where its
+        // input falls among num keys, huniformramp interpolates num values
+        // spread evenly over [0, 1]; linear between keys. Both nodes hold
+        // ten (key0 = 0, key1..key9; value0..value9); a larger num (a ramp
+        // with more points) reads those ten.
+        // ponytail: Houdini's definitions aren't available here; this is
+        // what their inputs imply, unverified against Houdini/Karma.
+        if (k.name == "hinvlinear" || k.name == "huniformramp") {
+            const std::optional<float> count = _ConstantInput(n, TfToken("num"));
+            const std::optional<Value> t = in("ramp");
+            if (!count || !t) {
+                return std::nullopt;
+            }
+            const uint32_t num = uint32_t(std::clamp(*count, 1.0f, 10.0f));
+            if (k.name == "hinvlinear") {
+                std::vector<float> keys;
+                for (uint32_t i = 0; i < num; ++i) {
+                    keys.push_back(_Parameter(n, TfToken("key" + std::to_string(i)))[0]);
+                }
+                return _Emit(P::kInvLinear, {*t}, _Packed(std::move(keys)), num);
+            }
+            const uint32_t first = uint32_t(_p.constants.size() / 4);
+            for (uint32_t i = 0; i < num; ++i) {
+                _Const(_Parameter(n, TfToken("value" + std::to_string(i))));
+            }
+            return _Emit(P::kUniformRamp, {*t}, first, num);
+        }
+        return std::nullopt;
+    }
+
+    HdMaterialNetwork2 const &_net;
+    HdVkTextureCache *_textures;
+    P &_p;
+    TfToken *_uvPrimvar;
+    std::vector<Ins> _ops;
+    std::map<std::pair<SdfPath, TfToken>, Value> _memo;
+    std::string _failed;
+};
 
 // ponytail: metallic workflow only. Ignored for now: specular workflow,
 // coat, sheen, transmission, subsurface, ior and displacement.
@@ -563,9 +1079,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     }
 
     // One input: its constant (authored, else the default) times the weight,
-    // or a texture whose scale and bias carry the weight.
+    // or a texture whose scale and bias carry the weight, or else a program
+    // computing it.
+    GraphCompiler graph(net, textures, &m->program, uvPrimvar);
     auto input = [&](TfToken const &name, TfToken const &weightName, float weightDefault, float valueDefault,
-                     float *constant, int size, vkr::TextureRef *ref) {
+                     float *constant, int size, vkr::TextureRef *ref, vkr::MaterialProgram::Input target) {
         if (name.IsEmpty()) {
             return;
         }
@@ -604,20 +1122,52 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
             ref->scale[i] *= weight;
             ref->bias[i] *= weight;
         }
+        const auto c = surface.inputConnections.find(name);
+        if (!ref->texture && c != surface.inputConnections.end() && !c->second.empty() &&
+            !(ref == &m->baseColorTex && m->baseColorFromDisplayColor) &&
+            !graph.Output(surface, name, target, size == 3 ? weight : 1.0f)) {
+            static std::mutex mutex;
+            static std::set<std::string> warned;
+            std::lock_guard<std::mutex> lock(mutex);
+            if (warned.insert(graph.Failed()).second) {
+                TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
+                        graph.Failed().c_str());
+            }
+        }
     };
 
+    if (!kind->specular.IsEmpty()) {
+        float weight = 1.0f;
+        GfVec3f color(1.0f);
+        Read(surface.parameters, kind->specular, &weight);
+        if (Read(surface.parameters, kind->specularColor, &color) &&
+            NeedsConversion(ParameterColorSpace(surface.parameters, kind->specularColor))) {
+            color = GfColor(GfColor(color, GfColorSpace(ParameterColorSpace(surface.parameters, kind->specularColor))),
+                            GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+        }
+        for (int i = 0; i < 3; ++i) {
+            m->specular[i] = weight * color[i];
+        }
+    }
+    using P = vkr::MaterialProgram;
     input(kind->baseColor, kind->baseWeight, kind->baseWeightDefault, kind->baseColorDefault, m->baseColor, 3,
-          &m->baseColorTex);
+          &m->baseColorTex, P::kBaseColor);
     input(kind->emission, kind->emissionWeight, kind->emissionWeightDefault, kind->emissionDefault, m->emissive,
-          3, &m->emissiveTex);
-    input(kind->metallic, TfToken(), 1.0f, 0.0f, &m->metallic, 1, &m->metallicTex);
-    input(kind->roughness, TfToken(), 1.0f, kind->roughnessDefault, &m->roughness, 1, &m->roughnessTex);
-    input(kind->occlusion, TfToken(), 1.0f, 1.0f, &m->occlusion, 1, &m->occlusionTex);
+          3, &m->emissiveTex, P::kEmissive);
+    input(kind->metallic, TfToken(), 1.0f, 0.0f, &m->metallic, 1, &m->metallicTex, P::kMetallic);
+    input(kind->roughness, TfToken(), 1.0f, kind->roughnessDefault, &m->roughness, 1, &m->roughnessTex,
+          P::kRoughness);
+    input(kind->occlusion, TfToken(), 1.0f, 1.0f, &m->occlusion, 1, &m->occlusionTex, P::kOcclusion);
     float unusedNormal[3];
-    input(kind->normal, TfToken(), 1.0f, 0.0f, unusedNormal, 3, &m->normalTex);
+    input(kind->normal, TfToken(), 1.0f, 0.0f, unusedNormal, 3, &m->normalTex, P::kNormal);
     // standard_surface's opacity is a colour: its constant stays 1, a
     // texture is read through its first channel.
-    input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex);
+    input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex, P::kOpacity);
+    if (!graph.Finish()) {
+        TF_WARN("HdVk: a material's shading graph needs more than %u registers; its inputs keep their constants",
+                P::kRegisters);
+    }
     if (!Read(surface.parameters, _tokens->opacityThreshold, &m->opacityThreshold) && m->opacityTex.texture &&
         StartsWith(surface.nodeTypeId, "ND_")) {
         // MaterialX has no threshold: an opacity texture is a cutout, as
@@ -675,6 +1225,10 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             ReadSurface(HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
                         _textures, &m, &_uvPrimvar);
+        }
+        _primvars.clear();
+        for (const std::string &name : m.program.primvars) {
+            _primvars.emplace_back(name);
         }
         *_material = std::move(m);
     }

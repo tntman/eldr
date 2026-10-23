@@ -7,6 +7,7 @@
 namespace vkr {
 class Scene;
 struct Mesh;
+struct Primvar;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -34,6 +35,8 @@ private:
     void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();
     bool _Skinned() const;
+    std::vector<TfToken> _ProgramPrimvarNames(HdSceneDelegate *sceneDelegate) const;
+    void _ApplyInstancePrimvars(vkr::Mesh &mesh) const;
 
     vkr::Scene *_scene;
     vkr::Mesh *_mesh;  // the faces outside material subsets
@@ -67,6 +70,22 @@ private:
     VtFloatArray _blendWeights;      // per shape, or per instance and shape
     int _numBlendShapeWeights = 0;   // > 0: _blendWeights holds every instance
     bool _dualQuaternion = false;    // hydra:numSkinningMethod 1
+
+    // Primvars the material programs read (the mesh's material's and its
+    // subsets'), as authored on the mesh, and per instance from its instancer.
+    struct ProgramPrimvar {
+        TfToken name;
+        HdInterpolation interp = HdInterpolationConstant;
+        uint32_t components = 1;
+        std::vector<float> values;
+        bool operator==(ProgramPrimvar const &o) const
+        {
+            return name == o.name && interp == o.interp && components == o.components && values == o.values;
+        }
+    };
+    std::vector<TfToken> _programPrimvarNames;
+    std::vector<ProgramPrimvar> _programPrimvars;
+    std::vector<vkr::Primvar> _instancePrimvars;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

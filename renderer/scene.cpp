@@ -30,6 +30,7 @@ struct GpuMaterial {
     // MaterialProgram: first op (uvec4) in programCode, ops, first constant
     // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
     uint32_t program[4];
+    float specular[4];  // Material::specular
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1075,6 +1076,7 @@ void Scene::Commit()
             for (int i = 0; i < 7; ++i) {
                 g.tex[i] = texRef(*refs[i]);
             }
+            std::copy(m.specular, m.specular + 3, g.specular);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);

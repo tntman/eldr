@@ -448,9 +448,11 @@ void main()
     bool hasNormalMap = false;
     bool present = true;
     float alpha = 1.0;
+    vec3 specularTint = vec3(1.0);
     if (inMaterial != kNoMaterial) {
         Material m = materials[inMaterial];
         present = Present(m, inUv);
+        specularTint = m.specular.rgb;
         // Translucent (opacity without a cutout threshold): diffuse light and
         // emission scale with opacity, highlights don't (premultiplied, as
         // glass). Opaque materials have opacity 1.
@@ -499,8 +501,11 @@ void main()
     // (Fdez-Aguera 2019; Filament's energy compensation for direct light).
     vec2 ab = texture(brdfLut, vec2(NoV, perceptual)).rg;
     float Ess = ab.x + ab.y;
-    vec3 FssEss = f0 * ab.x + ab.y;
-    vec3 energyCompensation = 1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0);
+    // standard_surface's specular weight and colour scale the dielectric
+    // lobe (and give its energy back to the diffuse one).
+    vec3 tint = mix(specularTint, vec3(1.0), metallic);
+    vec3 FssEss = (f0 * ab.x + ab.y) * tint;
+    vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {

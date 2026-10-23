@@ -1,0 +1,250 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# MaterialX graphs HdVk runs per pixel (material programs), standard_surface
+# base colours: top row multiply(texture, constant), mix(red, texture, 0.5),
+# overlay(texture over gray); middle row a constant primvar, a vertex
+# primvar, hsvadjust(red, hue + 0.5) = cyan; bottom row three point-
+# instanced quads tinted by a per-instance primvar, and a Houdini ramp
+# (hinvlinear + huniformramp) at a constant primvar 0.5 (Storm has no
+# definition for Houdini's nodes).
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 10)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+}
+
+class Mesh "_quad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Scope "mtl"
+{
+    def Material "multiply"
+    {
+        token outputs:mtlx:surface.connect = </mtl/multiply/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/multiply/mul.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "mul"
+        {
+            uniform token info:id = "ND_multiply_color3"
+            color3f inputs:in1.connect = </mtl/multiply/image.outputs:out>
+            color3f inputs:in2 = (0.25, 1, 1)
+            color3f outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+    }
+    def Material "mix"
+    {
+        token outputs:mtlx:surface.connect = </mtl/mix/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/mix/mix.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg = (1, 0, 0)
+            color3f inputs:fg.connect = </mtl/mix/image.outputs:out>
+            float inputs:mix = 0.5
+            color3f outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+    }
+    def Material "overlay"
+    {
+        token outputs:mtlx:surface.connect = </mtl/overlay/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/overlay/overlay.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "overlay"
+        {
+            uniform token info:id = "ND_overlay_color3"
+            color3f inputs:fg.connect = </mtl/overlay/image.outputs:out>
+            color3f inputs:bg = (0.5, 0.5, 0.5)
+            color3f outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+    }
+    def Material "tint"
+    {
+        token outputs:mtlx:surface.connect = </mtl/tint/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/tint/tint.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "tint"
+        {
+            uniform token info:id = "ND_geompropvalue_color3"
+            string inputs:geomprop = "tint"
+            color3f inputs:default = (1, 0, 1)
+            color3f outputs:out
+        }
+    }
+    def Material "hsv"
+    {
+        token outputs:mtlx:surface.connect = </mtl/hsv/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/hsv/hsv.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "hsv"
+        {
+            uniform token info:id = "ND_hsvadjust_color3"
+            color3f inputs:in = (0.8, 0, 0)
+            vector3f inputs:amount = (0.5, 1, 1)
+            color3f outputs:out
+        }
+    }
+    def Material "ramp"
+    {
+        token outputs:mtlx:surface.connect = </mtl/ramp/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color.connect = </mtl/ramp/uniformramp.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "random"
+        {
+            uniform token info:id = "ND_geompropvalue_float"
+            string inputs:geomprop = "random"
+            float outputs:out
+        }
+        def Shader "numkeys"
+        {
+            uniform token info:id = "ND_constant_float"
+            float inputs:value = 3
+            float outputs:out
+        }
+        def Shader "invlinear"
+        {
+            uniform token info:id = "ND_hinvlinear_float"
+            float inputs:ramp.connect = </mtl/ramp/random.outputs:out>
+            float inputs:num.connect = </mtl/ramp/numkeys.outputs:out>
+            float inputs:key1 = 0.25
+            float inputs:key2 = 1
+            float outputs:out
+        }
+        def Shader "uniformramp"
+        {
+            uniform token info:id = "ND_huniformramp_color3"
+            float inputs:ramp.connect = </mtl/ramp/invlinear.outputs:out>
+            float inputs:num.connect = </mtl/ramp/numkeys.outputs:out>
+            color3f inputs:value0 = (1, 0, 0)
+            color3f inputs:value1 = (0, 1, 0)
+            color3f inputs:value2 = (0, 0, 1)
+            color3f outputs:out
+        }
+    }
+}
+
+def Mesh "multiply" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/multiply>
+    double3 xformOp:translate = (-2.5, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "mix" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/mix>
+    double3 xformOp:translate = (0, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "overlay" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/overlay>
+    double3 xformOp:translate = (2.5, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "constantTint" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/tint>
+    color3f[] primvars:tint = [(0.1, 0.8, 0.1)] (interpolation = "constant")
+    double3 xformOp:translate = (-2.5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "vertexTint" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/tint>
+    color3f[] primvars:tint = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)] (interpolation = "vertex")
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "hsv" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/hsv>
+    double3 xformOp:translate = (2.5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def PointInstancer "instanced"
+{
+    rel prototypes = [</instanced/quad>]
+    int[] protoIndices = [0, 0, 0]
+    point3f[] positions = [(-3.2, -2.4, 0), (-1.8, -2.4, 0), (-0.4, -2.4, 0)]
+    color3f[] primvars:tint = [(1, 0.5, 0), (0, 0.6, 1), (0.6, 0, 1)] (interpolation = "vertex")
+
+    def Mesh "quad" (inherits = </_quad>)
+    {
+        rel material:binding = </mtl/tint>
+        float3 xformOp:scale = (0.6, 0.9, 1)
+        uniform token[] xformOpOrder = ["xformOp:scale"]
+    }
+}
+def Mesh "ramp" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/ramp>
+    float[] primvars:random = [0.5] (interpolation = "constant")
+    double3 xformOp:translate = (2.5, -2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

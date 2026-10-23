@@ -64,7 +64,7 @@ add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp)
-target_link_libraries(hdVk PRIVATE ar hd hdsi hio vkrenderer)
+target_link_libraries(hdVk PRIVATE ar hd hdsi hio sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
@@ -92,6 +92,8 @@ if(WIN32)
     set_tests_properties(curves PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME stats COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_stats.py)
     set_tests_properties(stats PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME materialx COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_materialx.py)
+    set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

@@ -264,6 +264,28 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         const size_t joints = _numJoints > 0 ? size_t(_numJoints) : _skinningXforms.size();
         geometryDirty |= _Skinned() && joints != _mesh->jointCount;
     }
+    // Primvars the material programs read, as the mesh has them (re-read
+    // with any primvar change; flattened with the geometry).
+    // ponytail: like the uv set, a material rewired to other primvars takes
+    // effect with the mesh's next primvar, topology or binding change.
+    const std::vector<TfToken> programNames = _ProgramPrimvarNames(sceneDelegate);
+    const bool programNamesChanged = programNames != _programPrimvarNames;
+    if (programNamesChanged || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
+        std::vector<ProgramPrimvar> read;
+        for (const TfToken &name : programNames) {
+            ProgramPrimvar p{name};
+            if (FindPrimvar(sceneDelegate, id, name, &p.interp) &&
+                HdVkToFloats(sceneDelegate->Get(id, name), &p.values, &p.components) && p.components <= 4) {
+                read.push_back(std::move(p));
+            }
+        }
+        if (!(read == _programPrimvars)) {
+            _programPrimvars = std::move(read);
+            geometryDirty = true;
+        }
+        _programPrimvarNames = programNames;
+    }
     if (geometryDirty) {
         _Flatten();
         _SplitSubsets();
@@ -285,6 +307,23 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             m.transformsDirty = true;
         }
     }
+    // Per-instance primvars (the instancer's), in the transforms' order.
+    if (programNamesChanged || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        _instancePrimvars.clear();
+        if (auto *instancer = GetInstancerId().IsEmpty()
+                                  ? nullptr
+                                  : static_cast<HdVkInstancer *>(
+                                        sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()))) {
+            for (const TfToken &name : _programPrimvarNames) {
+                vkr::Primvar p{name.GetString(), vkr::Primvar::Rate::Instance};
+                if (instancer->ComputeInstancePrimvar(id, name, &p.values, &p.components) && p.components <= 4) {
+                    _instancePrimvars.push_back(std::move(p));
+                }
+            }
+        }
+    }
+    _ApplyInstancePrimvars(m);
     if (jointsDirty || geometryDirty) {
         _UpdateJoints();
     }
@@ -363,6 +402,23 @@ void HdVkMesh::_SplitSubsets()
         }
     };
     auto split = [&](std::vector<size_t> const &tris, vkr::Mesh *d) {
+        d->primvars.clear();
+        for (const vkr::Primvar &p : m.primvars) {
+            vkr::Primvar q{p.name, p.rate, p.components};
+            if (p.rate == vkr::Primvar::Rate::Vertex) {
+                pick(p.values, p.components, tris, &q.values);
+            } else if (p.rate == vkr::Primvar::Rate::Uniform && p.values.size() == triangles * p.components) {
+                for (const size_t t : tris) {
+                    q.values.insert(q.values.end(), p.values.begin() + t * p.components,
+                                    p.values.begin() + (t + 1) * p.components);
+                }
+            } else if (p.rate == vkr::Primvar::Rate::Constant) {
+                q.values = p.values;
+            }
+            if (!q.values.empty()) {
+                d->primvars.push_back(std::move(q));
+            }
+        }
         pick(m.points, 3, tris, &d->points);
         pick(m.normals, 3, tris, &d->normals);
         pick(m.uvs, 2, tris, &d->uvs);
@@ -388,6 +444,7 @@ void HdVkMesh::_SplitSubsets()
     m.jointIndices = std::move(rest.jointIndices);
     m.jointWeights = std::move(rest.jointWeights);
     m.blendRanges = std::move(rest.blendRanges);
+    m.primvars = std::move(rest.primvars);
 }
 
 // Subset meshes share everything but their triangles and material.
@@ -416,7 +473,39 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
         d.material = material ? material->Get() : nullptr;
+        _ApplyInstancePrimvars(d);
     }
+}
+
+// The primvars the programs of the mesh's material and its subsets' read.
+std::vector<TfToken> HdVkMesh::_ProgramPrimvarNames(HdSceneDelegate *sceneDelegate) const
+{
+    std::vector<TfToken> names;
+    auto add = [&](SdfPath const &materialId) {
+        const auto *material = static_cast<const HdVkMaterial *>(
+            sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, materialId));
+        for (const TfToken &name : material ? material->Primvars() : std::vector<TfToken>()) {
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                names.push_back(name);
+            }
+        }
+    };
+    add(sceneDelegate->GetMaterialId(GetId()));
+    for (const HdGeomSubset &s : _topology.GetGeomSubsets()) {
+        if (!s.materialId.IsEmpty()) {
+            add(s.materialId);
+        }
+    }
+    return names;
+}
+
+// Replaces `mesh`'s per-instance primvars with the instancer's.
+void HdVkMesh::_ApplyInstancePrimvars(vkr::Mesh &mesh) const
+{
+    auto &p = mesh.primvars;
+    p.erase(std::remove_if(p.begin(), p.end(), [](auto const &v) { return v.rate == vkr::Primvar::Rate::Instance; }),
+            p.end());
+    p.insert(p.end(), _instancePrimvars.begin(), _instancePrimvars.end());
 }
 
 bool HdVkMesh::_Skinned() const
@@ -452,6 +541,7 @@ void HdVkMesh::_Flatten()
 {
     vkr::Mesh &m = *_mesh;
     m.geometryDirty = true;
+    m.primvars.clear();  // rebuilt at the end; instance ones are applied after
     const HdMeshUtil util(&_topology, GetId());
 
     // Joint influences per corner: up to eight (four when the skeleton
@@ -542,6 +632,61 @@ void HdVkMesh::_Flatten()
     if (_colorsInterp != HdInterpolationConstant) {
         FlattenPrimvar<GfVec3f>(_colors, _colorsInterp, util, _triangles, _primitiveParams,
                                 HdTypeFloatVec3, &m.colors);
+    }
+
+    // The programs' primvars: one value (constant), one per triangle
+    // (uniform) or per corner (vertex, varying, faceVarying).
+    for (const ProgramPrimvar &p : _programPrimvars) {
+        const size_t n = p.components, elements = p.values.size() / n;
+        vkr::Primvar out{p.name.GetString(), vkr::Primvar::Rate::Vertex, p.components};
+        auto element = [&](size_t i) {
+            if (i < elements) {
+                out.values.insert(out.values.end(), p.values.begin() + i * n, p.values.begin() + (i + 1) * n);
+            } else {
+                out.values.insert(out.values.end(), n, 0.0f);
+            }
+        };
+        switch (p.interp) {
+        case HdInterpolationConstant:
+            out.rate = vkr::Primvar::Rate::Constant;
+            element(0);
+            break;
+        case HdInterpolationUniform:
+            out.rate = vkr::Primvar::Rate::Uniform;
+            for (const int param : _primitiveParams) {
+                element(size_t(std::max(HdMeshUtil::DecodeFaceIndexFromCoarseFaceParam(param), 0)));
+            }
+            break;
+        case HdInterpolationVertex:
+        case HdInterpolationVarying:
+            for (const GfVec3i &tri : _triangles) {
+                for (int k = 0; k < 3; ++k) {
+                    element(size_t(std::max(tri[k], 0)));
+                }
+            }
+            break;
+        case HdInterpolationFaceVarying: {
+            static const HdType types[4] = {HdTypeFloat, HdTypeFloatVec2, HdTypeFloatVec3, HdTypeFloatVec4};
+            VtValue triangulated;
+            const HdMeshComputationResult r = util.ComputeTriangulatedFaceVaryingPrimvar(
+                p.values.data(), int(elements), types[n - 1], &triangulated);
+            uint32_t components = 0;
+            if (r == HdMeshComputationResult::Success) {
+                HdVkToFloats(triangulated, &out.values, &components);
+            } else if (r == HdMeshComputationResult::Unchanged) {
+                out.values = p.values;
+            }
+            if (out.values.size() != _triangles.size() * 3 * n) {
+                out.values.clear();
+            }
+            break;
+        }
+        default:
+            break;
+        }
+        if (!out.values.empty()) {
+            m.primvars.push_back(std::move(out));
+        }
     }
 }
 

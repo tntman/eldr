@@ -144,6 +144,9 @@ struct Material {
     float occlusion = 1;
     float opacity = 1;           // below 1 (or a texture) without a threshold: translucent
     float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
+    // Dielectric specular weight times colour (standard_surface's specular
+    // and specular_color); metals keep theirs.
+    float specular[3] = {1, 1, 1};
     bool baseColorFromDisplayColor = false;  // diffuseColor <- primvar reader "displayColor"
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
         normalTex,  // tangent space, after scale/bias

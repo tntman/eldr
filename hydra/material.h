@@ -48,10 +48,13 @@ public:
     std::shared_ptr<vkr::Material> const &Get() const { return _material; }
     // The primvar its textures' coordinates come from; empty: no textures.
     TfToken const &UvPrimvar() const { return _uvPrimvar; }
+    // The primvars its program reads (vkr::MaterialProgram::primvars).
+    std::vector<TfToken> const &Primvars() const { return _primvars; }
 
 private:
     HdVkTextureCache *_textures;
     TfToken _uvPrimvar;
+    std::vector<TfToken> _primvars;
     std::shared_ptr<vkr::Material> _material;
 };
 
