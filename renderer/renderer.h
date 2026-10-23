@@ -104,12 +104,14 @@ private:
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
-    VkPipeline _prepassPipeline = VK_NULL_HANDLE;  // depth only
-    VkPipeline _translucentPipeline = VK_NULL_HANDLE;  // shading, blended over the opaque
+    // Mesh pipelines, each twice: [1] for eight skinning influences
+    // (mesh.vert's kWideSkin).
+    VkPipeline _prepassPipeline[2] = {};      // depth only
+    VkPipeline _translucentPipeline[2] = {};  // shading, blended over the opaque
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
-    VkPipeline _prepassCutoutPipeline = VK_NULL_HANDLE, _shadowCutoutPipeline = VK_NULL_HANDLE;
-    VkPipeline _pipeline = VK_NULL_HANDLE;         // shading, depth read-only
-    VkPipeline _shadowPipeline = VK_NULL_HANDLE;
+    VkPipeline _prepassCutoutPipeline[2] = {}, _shadowCutoutPipeline[2] = {};
+    VkPipeline _pipeline[2] = {};             // shading, depth read-only
+    VkPipeline _shadowPipeline[2] = {};
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment

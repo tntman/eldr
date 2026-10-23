@@ -80,7 +80,7 @@ void MemoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccess
 // Hashable bit pattern of one vertex, for deduplicating corners.
 struct VertexKey {
     Vertex v;
-    SkinVertex skin;
+    SkinVertex skin, skin2;  // skin2: influences 4..7, zero with four
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
@@ -373,8 +373,9 @@ void Scene::_UploadGeometry(Mesh &m)
                        (m.normals.empty() || m.normals.size() == m.points.size()) &&
                        (m.uvs.empty() || m.uvs.size() == corners * 2) &&
                        (m.colors.empty() || m.colors.size() == m.points.size()) &&
-                       (!skinned || (m.jointIndices.size() == corners * 4 &&
-                                     m.jointWeights.size() == corners * 4 && m.jointCount > 0));
+                       (!skinned || ((m.influences == 4 || m.influences == 8) &&
+                                     m.jointIndices.size() == corners * m.influences &&
+                                     m.jointWeights.size() == corners * m.influences && m.jointCount > 0));
     if (!valid || corners == 0) {
         return;
     }
@@ -426,12 +427,13 @@ void Scene::_UploadGeometry(Mesh &m)
             }
         }
         if (skinned) {
-            const uint16_t *j = &m.jointIndices[i * 4];
-            const float *w = &m.jointWeights[i * 4];
-            key.skin.joints[0] = j[0] | (uint32_t(j[1]) << 16);
-            key.skin.joints[1] = j[2] | (uint32_t(j[3]) << 16);
-            key.skin.weights[0] = PackUnorm16(w[0], w[1]);
-            key.skin.weights[1] = PackUnorm16(w[2], w[3]);
+            const uint16_t *j = &m.jointIndices[i * m.influences];
+            const float *w = &m.jointWeights[i * m.influences];
+            for (uint32_t k = 0; k < m.influences; k += 2) {
+                SkinVertex &s = k < 4 ? key.skin : key.skin2;
+                s.joints[(k % 4) / 2] = j[k] | (uint32_t(j[k + 1]) << 16);
+                s.weights[(k % 4) / 2] = PackUnorm16(w[k], w[k + 1]);
+            }
             // How far blend shapes can move this point (weights up to 1)
             // widens the bounds of the joints it follows.
             float reach = 0.0f;
@@ -444,7 +446,7 @@ void Scene::_UploadGeometry(Mesh &m)
                     reach += std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
                 }
             }
-            for (int k = 0; k < 4; ++k) {
+            for (uint32_t k = 0; k < m.influences; ++k) {
                 if (w[k] > 0.0f && j[k] < m.jointCount) {
                     float *b = &m._jointBounds[size_t(j[k]) * 6];
                     for (int c = 0; c < 3; ++c) {
@@ -459,6 +461,9 @@ void Scene::_UploadGeometry(Mesh &m)
             vertices.push_back(key.v);
             if (skinned) {
                 skin.push_back(key.skin);
+                if (m.influences == 8) {
+                    skin.push_back(key.skin2);
+                }
             }
             for (int k = 0; k < 3; ++k) {
                 m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k]);
@@ -489,16 +494,18 @@ void Scene::_UploadGeometry(Mesh &m)
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
     if (skinned) {
+        const uint32_t skinCount = uint32_t(skin.size());
         uint32_t skinOffset;
-        while (!_skinAlloc.Allocate(vertexCount, &skinOffset)) {
-            _EnsureCapacity(_skin, _skinAlloc, vertexCount, sizeof(SkinVertex),
+        while (!_skinAlloc.Allocate(skinCount, &skinOffset)) {
+            _EnsureCapacity(_skin, _skinAlloc, skinCount, sizeof(SkinVertex),
                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
         }
         _copies.push_back({_skin.buffer, VkDeviceSize(skinOffset) * sizeof(SkinVertex),
                            _Stage(skin.data(), skin.size() * sizeof(SkinVertex)),
                            skin.size() * sizeof(SkinVertex)});
         m._skinOffset = skinOffset;
-        m._skinCount = vertexCount;
+        m._skinCount = skinCount;
+        m._skinStride = m.influences == 8 ? 2 : 1;
 
         _boundsAlloc.Free(m._boundsBase, m._boundsSlots);
         uint32_t boundsBase;
@@ -1012,6 +1019,7 @@ void Scene::Commit()
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
     _gpu.translucent.clear();
+    _gpu.translucentWide.clear();
     _gpu.translucentCenters.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
@@ -1035,9 +1043,13 @@ void Scene::Commit()
         } else if (drawable && m.material && (m.material->opacity < 1 || m.material->opacityTex.texture)) {
             kind[slot] = Gpu::kTranslucent;
             _gpu.translucent.push_back(uint32_t(slot));
+            _gpu.translucentWide.push_back(m._skinStride == 2);
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
+        }
+        if (m._skinStride == 2) {
+            kind[slot] |= Gpu::kWide;
         }
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;

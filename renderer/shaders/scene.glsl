@@ -47,6 +47,7 @@ struct DrawInfo {
     uint pad0, pad1;
 };
 
+// One per vertex, two with eight influences (mesh.vert's kWideSkin).
 struct SkinVertex {
     uvec4 influence;  // four 16-bit joints (x, y), four unorm16 weights (z, w)
     uvec4 blend;      // first blend shape offset, count

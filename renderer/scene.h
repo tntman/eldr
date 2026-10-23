@@ -103,8 +103,9 @@ struct Mesh {
     // (instances * jointCount). Per frame only the skinning transforms
     // change: set jointsDirty alone. The GPU combines them with the instance
     // transforms into the joint matrices.
-    std::vector<uint16_t> jointIndices;  // 4 per corner; empty: rigid mesh
-    std::vector<float> jointWeights;     // 4 per corner
+    std::vector<uint16_t> jointIndices;  // `influences` per corner; empty: rigid mesh
+    std::vector<float> jointWeights;     // `influences` per corner
+    uint32_t influences = 4;             // 4 or 8
     uint32_t jointCount = 0;
     std::vector<float> skinningTransforms;
     bool jointsDirty = false;
@@ -123,7 +124,8 @@ private:
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
     uint32_t _instanceBase = 0, _instanceCount = 0;
-    uint32_t _skinOffset = 0, _skinCount = 0;    // SkinVertex pool, one per vertex
+    uint32_t _skinOffset = 0, _skinCount = 0;    // SkinVertex pool, _skinStride per vertex
+    uint32_t _skinStride = 1;
     uint32_t _jointBase = 0, _jointSlots = 0;    // joint matrices (GPU-built), instances * jointCount
     uint32_t _skinXformBase = 0, _skinXformSlots = 0;  // skinning transforms
     uint32_t _boundsBase = 0, _boundsSlots = 0;  // JointBounds pool, one per joint
@@ -220,10 +222,12 @@ struct JointBounds {
 };
 // Joint influences of one skinned vertex: four 16-bit joint indices and
 // four unorm16 weights.
+// Per vertex; meshes with eight influences have two, the second holding
+// influences 4..7 (drawn by the renderer's kWideSkin pipelines).
 struct SkinVertex {
-    uint32_t joints[2];
-    uint32_t weights[2];
-    uint32_t blend[2];  // first blend shape offset, count
+    uint32_t joints[2];   // four 16-bit joint indices
+    uint32_t weights[2];  // four unorm16 weights
+    uint32_t blend[2];    // first blend shape offset, count
     uint32_t pad[2];
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
@@ -300,11 +304,14 @@ public:
         std::vector<uint32_t> drawChunks;
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
-        // opaque); chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent };
+        // opaque), plus kWide for eight skinning influences (other
+        // pipelines); chunks also end where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4 };
         std::vector<uint8_t> chunkKind;
-        // The translucent slots and their world bounds' centres (xyz).
+        // The translucent slots (with kWide when wide) and their world
+        // bounds' centres (xyz).
         std::vector<uint32_t> translucent;
+        std::vector<uint8_t> translucentWide;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant

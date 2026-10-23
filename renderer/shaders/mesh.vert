@@ -37,13 +37,31 @@ layout(location = 4) flat out uint outMaterial;
 #endif
 layout(location = 2) out vec2 outUv;
 
-mat4 SkinMatrix(uvec4 s, vec4 w, uint base, bool previous)
+mat4 Joint(uint i, bool previous)
 {
-    mat4 m0 = previous ? prevJoints[base + (s.x & 0xFFFFu)] : joints[base + (s.x & 0xFFFFu)];
-    mat4 m1 = previous ? prevJoints[base + (s.x >> 16)] : joints[base + (s.x >> 16)];
-    mat4 m2 = previous ? prevJoints[base + (s.y & 0xFFFFu)] : joints[base + (s.y & 0xFFFFu)];
-    mat4 m3 = previous ? prevJoints[base + (s.y >> 16)] : joints[base + (s.y >> 16)];
-    return (w.x * m0 + w.y * m1 + w.z * m2 + w.w * m3) / max(w.x + w.y + w.z + w.w, 1e-6);
+    return previous ? prevJoints[i] : joints[i];
+}
+
+// Meshes with eight joint influences (two SkinVertex each, the second
+// holding influences 4..7) are drawn by pipelines with this set; without it
+// the shader is exactly the four-influence one (any extra code, even never
+// run, cost a crowd's vertex stage ~4%).
+layout(constant_id = 0) const bool kWideSkin = false;
+
+// Linear blend skinning: the weighted sum of the vertex's joint matrices
+// (16-bit joints in s.xy, unorm16 weights w; s2: influences 4..7).
+mat4 SkinMatrix(uvec4 s, vec4 w, uvec4 s2, uint base, bool previous)
+{
+    mat4 m = w.x * Joint(base + (s.x & 0xFFFFu), previous) + w.y * Joint(base + (s.x >> 16), previous) +
+             w.z * Joint(base + (s.y & 0xFFFFu), previous) + w.w * Joint(base + (s.y >> 16), previous);
+    float sum = w.x + w.y + w.z + w.w;
+    if (kWideSkin) {
+        vec4 w2 = vec4(unpackUnorm2x16(s2.z), unpackUnorm2x16(s2.w));
+        m += w2.x * Joint(base + (s2.x & 0xFFFFu), previous) + w2.y * Joint(base + (s2.x >> 16), previous) +
+             w2.z * Joint(base + (s2.y & 0xFFFFu), previous) + w2.w * Joint(base + (s2.y >> 16), previous);
+        sum += w2.x + w2.y + w2.z + w2.w;
+    }
+    return m / max(sum, 1e-6);
 }
 
 // The depth prepass and the main pass must produce bit-identical depth.
@@ -65,7 +83,10 @@ void main()
     }
 #endif
     if (d.skin != kFreeSlot) {
-        SkinVertex v = skin[d.skin + uint(gl_VertexIndex) - d.vertexBase];
+        uint sv = d.skin + (uint(gl_VertexIndex) - d.vertexBase) * (kWideSkin ? 2u : 1u);
+        SkinVertex v = skin[sv];
+        uvec4 s = v.influence, s2 = kWideSkin ? skin[sv + 1u].influence : uvec4(0u);
+        vec4 w = vec4(unpackUnorm2x16(s.z), unpackUnorm2x16(s.w));
         // Blend shapes move the rest point first (UsdSkel's order).
         if (d.blendShapes > 0u) {
             uint weights = d.blendWeights + (d.blendPerInstance != 0u ? uint(inst.index) * d.blendShapes : 0u);
@@ -74,13 +95,10 @@ void main()
                 position += o.xyz * blendWeights[weights + min(uint(o.w), d.blendShapes - 1u)];
             }
         }
-        // Linear blend skinning: the weighted sum of this vertex's joint matrices.
-        uvec4 s = v.influence;
-        vec4 w = vec4(unpackUnorm2x16(s.z), unpackUnorm2x16(s.w));
-        model = SkinMatrix(s, w, inst.joints, false);
+        model = SkinMatrix(s, w, s2, inst.joints, false);
 #ifndef DEPTH_ONLY
         // ponytail: last frame's blend shape weights aren't kept.
-        prevModel = pc.motion == 1u ? SkinMatrix(s, w, inst.joints, true) : model;
+        prevModel = pc.motion == 1u ? SkinMatrix(s, w, s2, inst.joints, true) : model;
 #endif
         normalMatrix = mat3(model);  // ponytail: no inverse-transpose for scaled joints
     } else {

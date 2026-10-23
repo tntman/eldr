@@ -99,18 +99,21 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 
 // The opaque and cutout draws of one command list (commands[first] at
 // offset), one indirect call per chunk (Scene::Gpu::drawChunks), each with
-// its pipeline: `cutout` for chunks of cutout materials. Translucent chunks
-// are left to the translucent pass (and cast no shadows).
+// its pipeline: `cutout` for chunks of cutout materials, [1] for eight
+// skinning influences. Translucent chunks are left to the translucent pass
+// (and cast no shadows).
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
-                VkPipeline opaque, VkPipeline cutout)
+                const VkPipeline opaque[2], const VkPipeline cutout[2])
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
-        if (gpu.chunkKind[i] == Scene::Gpu::kTranslucent) {
+        const uint8_t kind = gpu.chunkKind[i] & ~Scene::Gpu::kWide;
+        if (kind == Scene::Gpu::kTranslucent) {
             continue;
         }
-        const VkPipeline pipeline = gpu.chunkKind[i] == Scene::Gpu::kCutout ? cutout : opaque;
+        const int wide = (gpu.chunkKind[i] & Scene::Gpu::kWide) ? 1 : 0;
+        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[wide];
         if (pipeline != bound) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             bound = pipeline;
@@ -226,10 +229,14 @@ Renderer::~Renderer()
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
-    for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
-                         _lightsPipeline, _skinPipeline, _prepassCutoutPipeline, _shadowCutoutPipeline,
-                         _translucentPipeline}) {
+    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
+    }
+    for (int wide = 0; wide < 2; ++wide) {
+        for (VkPipeline p : {_prepassPipeline[wide], _pipeline[wide], _shadowPipeline[wide], _prepassCutoutPipeline[wide],
+                             _shadowCutoutPipeline[wide], _translucentPipeline[wide]}) {
+            vkDestroyPipeline(_dev.device, p, nullptr);
+        }
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
@@ -447,7 +454,23 @@ void Renderer::_CreatePipelines()
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dynamic;
     ci.layout = _layout;
-    VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &_pipeline);
+    // Every mesh pipeline twice: [1] with kWideSkin set in its vertex stage
+    // (eight skinning influences, see mesh.vert).
+    const VkBool32 wideSkin = VK_TRUE;
+    const VkSpecializationMapEntry wideEntry{0, 0, sizeof(VkBool32)};
+    const VkSpecializationInfo wideSpec{1, &wideEntry, sizeof(VkBool32), &wideSkin};
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline out[2]) {
+        VkResult res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[0]);
+        VkPipelineShaderStageCreateInfo wideStages[2] = {};
+        std::copy(info.pStages, info.pStages + info.stageCount, wideStages);
+        wideStages[0].pSpecializationInfo = &wideSpec;  // the vertex stage comes first
+        info.pStages = wideStages;
+        if (res == VK_SUCCESS) {
+            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[1]);
+        }
+        return res;
+    };
+    VkResult r = createMesh(ci, _pipeline);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -464,7 +487,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &tci, nullptr, &_translucentPipeline);
+        r = createMesh(tci, _translucentPipeline);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -480,7 +503,7 @@ void Renderer::_CreatePipelines()
         pci.pStages = depthStages;
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &_prepassPipeline);
+        r = createMesh(pci, _prepassPipeline);
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
@@ -490,7 +513,7 @@ void Renderer::_CreatePipelines()
         sci.pRasterizationState = &shadowRaster;
         sci.pDynamicState = &shadowDynamic;
         if (r == VK_SUCCESS) {
-            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowPipeline);
+            r = createMesh(sci, _shadowPipeline);
         }
 
         // Cutouts: the same two with the alpha test.
@@ -499,10 +522,10 @@ void Renderer::_CreatePipelines()
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
         if (r == VK_SUCCESS) {
-            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &_prepassCutoutPipeline);
+            r = createMesh(pci, _prepassCutoutPipeline);
         }
         if (r == VK_SUCCESS) {
-            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowCutoutPipeline);
+            r = createMesh(sci, _shadowCutoutPipeline);
         }
     }
 
@@ -1018,7 +1041,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
         // GTAO bound its own set; the shadow pass needs the scene's.
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline[0]);
         vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
@@ -1269,7 +1292,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             const VkRect2D scissor{{0, 0}, {kShadowSize, kShadowSize}};
             vkCmdSetViewport(_cmd, 0, 1, &vp);
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
-            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline[0]);
             vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
             PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
@@ -1315,7 +1338,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdSetViewport(_cmd, 0, 1, &vp);
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
     if (draw) {
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline[0]);
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
@@ -1380,7 +1403,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // GTAO bound its own set; the sky and shading need the scene's again.
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
     if (draw) {
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline[0]);
         PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
@@ -1394,18 +1417,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // test the opaque depth but write none.
     // ponytail: sorted per mesh, not per instance or triangle.
     if (draw && !gpu.translucent.empty()) {
-        std::vector<std::pair<float, uint32_t>> order;
+        std::vector<std::pair<float, size_t>> order;
         for (size_t i = 0; i < gpu.translucent.size(); ++i) {
             const float *c = &gpu.translucentCenters[i * 3];
             const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
-            order.push_back({Dot(d, d), gpu.translucent[i]});
+            order.push_back({Dot(d, d), i});
         }
         std::sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _translucentPipeline);
         PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        for (const auto &[distance, slot] : order) {
+        VkPipeline bound = VK_NULL_HANDLE;
+        for (const auto &[distance, i] : order) {
+            const uint32_t slot = gpu.translucent[i];
+            if (_translucentPipeline[gpu.translucentWide[i]] != bound) {
+                bound = _translucentPipeline[gpu.translucentWide[i]];
+                vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+            }
             vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(slot) * sizeof(VkDrawIndexedIndirectCommand),
                                      1, sizeof(VkDrawIndexedIndirectCommand));
         }

@@ -375,8 +375,9 @@ void HdVkMesh::_SplitSubsets()
         pick(m.normals, 3, tris, &d->normals);
         pick(m.uvs, 2, tris, &d->uvs);
         pick(m.colors, 3, tris, &d->colors);
-        pick(m.jointIndices, 4, tris, &d->jointIndices);
-        pick(m.jointWeights, 4, tris, &d->jointWeights);
+        pick(m.jointIndices, m.influences, tris, &d->jointIndices);
+        pick(m.jointWeights, m.influences, tris, &d->jointWeights);
+        d->influences = m.influences;
         pick(m.blendRanges, 2, tris, &d->blendRanges);
         d->blendOffsets = m.blendOffsets;
         d->jointCount = m.jointCount;
@@ -460,8 +461,8 @@ void HdVkMesh::_Flatten()
     m.geometryDirty = true;
     const HdMeshUtil util(&_topology, GetId());
 
-    // Joint influences per corner: the four strongest, renormalized.
-    // ponytail: more than four influences per point are cut to four.
+    // Joint influences per corner: up to eight (four when the skeleton
+    // binding has no more), the strongest, renormalized.
     m.jointIndices.clear();
     m.jointWeights.clear();
     m.jointCount = 0;
@@ -491,22 +492,27 @@ void HdVkMesh::_Flatten()
                 }
             }
         }
+        const size_t kept = perPoint > 4 ? 8 : 4;
+        m.influences = uint32_t(kept);
         for (const GfVec3i &tri : _triangles) {
             for (int k = 0; k < 3; ++k) {
                 const size_t base = _constantInfluences ? 0 : size_t(std::max(tri[k], 0)) * perPoint;
-                std::array<std::pair<float, uint16_t>, 4> top{};
+                std::array<std::pair<float, uint16_t>, 8> top{};
                 for (size_t n = 0; n < perPoint && base + n < _influences.size(); ++n) {
                     const GfVec2f &influence = _influences[base + n];
                     const int joint = int(influence[0]);
-                    if (influence[1] > top[3].first && joint >= 0 && uint32_t(joint) < joints) {
-                        top[3] = {influence[1], uint16_t(joint)};
-                        std::sort(top.begin(), top.end(), [](auto &a, auto &b) { return a.first > b.first; });
+                    if (influence[1] > top[kept - 1].first && joint >= 0 && uint32_t(joint) < joints) {
+                        top[kept - 1] = {influence[1], uint16_t(joint)};
+                        std::sort(top.begin(), top.begin() + kept, [](auto &a, auto &b) { return a.first > b.first; });
                     }
                 }
-                const float sum = top[0].first + top[1].first + top[2].first + top[3].first;
-                for (const auto &[weight, joint] : top) {
-                    m.jointIndices.push_back(joint);
-                    m.jointWeights.push_back(sum > 0.0f ? weight / sum : 0.0f);
+                float sum = 0.0f;
+                for (size_t n = 0; n < kept; ++n) {
+                    sum += top[n].first;
+                }
+                for (size_t n = 0; n < kept; ++n) {
+                    m.jointIndices.push_back(top[n].second);
+                    m.jointWeights.push_back(sum > 0.0f ? top[n].first / sum : 0.0f);
                 }
             }
         }

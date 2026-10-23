@@ -280,6 +280,33 @@ int main()
             Expect(img.Prim(32, 58) == 3 && img.Prim(32, 62) == -1, "skinned top edge follows joint 1 (y 0.9)");
             Expect(img.Prim(32, 17) == -1 && img.Prim(32, 22) == 3, "skinned bottom edge halfway (y -0.3)");
 
+            // Eight influences: the same weights spread over joints 0..7,
+            // where 2, 4, 6 copy joint 0 and 3, 5, 7 joint 1: the same shape.
+            {
+                vkr::Mesh *wide = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+                wide->primId = 4;
+                wide->jointCount = 8;
+                wide->influences = 8;
+                for (size_t c = 0; c < wide->points.size() / 3; ++c) {
+                    const float w0 = wide->points[c * 3 + 1] > 0 ? 0.0f : 0.125f, w1 = 0.25f - w0;
+                    wide->jointIndices.insert(wide->jointIndices.end(), {0, 1, 2, 3, 4, 5, 6, 7});
+                    wide->jointWeights.insert(wide->jointWeights.end(), {w0, w1, w0, w1, w0, w1, w0, w1});
+                }
+                for (int k = 0; k < 4; ++k) {
+                    const std::vector<float> p = pose(0.4f);
+                    wide->skinningTransforms.insert(wide->skinningTransforms.end(), p.begin(), p.end());
+                }
+                quad->visible = false;
+                scene.Commit();
+                const Image eight = Render(renderer, scene);
+                Expect(eight.Prim(32, 58) == 4 && eight.Prim(32, 62) == -1 && eight.Prim(32, 17) == -1 &&
+                           eight.Prim(32, 22) == 4,
+                       "eight influences skin like the same four");
+                scene.RemoveMesh(wide);
+                quad->visible = true;
+                scene.Commit();
+            }
+
             // Two agents sharing the pose, one far off screen: culled by the
             // bounds its joints imply.
             quad->transforms = at(-0.5f);
