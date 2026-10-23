@@ -1144,6 +1144,58 @@ int main()
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
+
+        {
+            // Wrap modes: emissive rows with st (0..2, 0..1) over a 2x1
+            // texture (left texel red, right blue), one row per mode, the
+            // last a program's image; u 1.27 (pixel 40) and 1.77 (pixel 56)
+            // read past the texture. A last row wraps t (0..2) black above
+            // v = 1, s repeating.
+            vkr::Scene scene(&device);
+            auto tex = std::make_shared<vkr::Texture>();
+            tex->width = 2;
+            tex->height = 1;
+            tex->pixels = {255, 0, 0, 255, 0, 0, 255, 255};
+            using W = vkr::Wrap;
+            const W modes[4] = {W::Repeat, W::Mirror, W::Clamp, W::Black};
+            auto row = [&](int i, W s, W t, bool program, float v1) {
+                vkr::Mesh *q = AddEmitter(scene, -1, -1 + 0.3f * float(i), 1, -0.75f + 0.3f * float(i), 0, 0.0f);
+                q->uvs = {0, 0, 2, 0, 2, v1, 0, 0, 2, v1, 0, v1};
+                vkr::TextureRef ref;
+                ref.texture = tex;
+                ref.wrap[0] = s;
+                ref.wrap[1] = t;
+                using P = vkr::MaterialProgram;
+                if (program) {
+                    P &p = q->material->program;
+                    p.images.push_back(ref);
+                    p.Emit(P::kTexcoord, 0);
+                    p.Emit(P::kImage, 1, {0, p.Constant(0, 0, 0, 0)}, 0);
+                    p.Emit(P::kOutput, 0, {1}, P::kEmissive);
+                } else {
+                    q->material->emissiveTex = ref;
+                }
+            };
+            for (int i = 0; i < 4; ++i) {
+                row(i, modes[i], W::Repeat, false, 1);
+            }
+            row(4, W::Mirror, W::Repeat, true, 1);
+            row(5, W::Repeat, W::Black, false, 2);
+            scene.Commit();
+            Expect(scene.GetGpu().textures.size() == 5, "a texture per wrap pair in the bindless array");
+            const Image img = Render(renderer, scene);
+            auto red = [&](int x, int y) { return img.At(x, y, 0) > 0.9f && img.At(x, y, 2) < 0.1f; };
+            auto blue = [&](int x, int y) { return img.At(x, y, 2) > 0.9f && img.At(x, y, 0) < 0.1f; };
+            auto black = [&](int x, int y) { return img.At(x, y, 0) < 0.01f && img.At(x, y, 2) < 0.01f; };
+            auto y = [](int i) { return int((0.3f * float(i) + 0.125f) * 32.0f); };  // a row's middle
+            Expect(red(8, y(0)) && red(40, y(0)) && blue(56, y(0)), "wrap repeat");
+            Expect(red(8, y(1)) && blue(40, y(1)) && red(56, y(1)), "wrap mirror");
+            Expect(red(8, y(2)) && blue(40, y(2)) && blue(56, y(2)), "wrap clamp");
+            Expect(red(8, y(3)) && black(40, y(3)) && black(56, y(3)), "wrap black");
+            Expect(red(8, y(4)) && blue(40, y(4)) && red(56, y(4)), "wrap mirror in a program's image");
+            // (The one texel row blends 1/8 with the border at v 0.625.)
+            Expect(img.At(8, y(5) - 2, 0) > 0.8f && black(8, y(5) + 2), "wrap t black, s repeat");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

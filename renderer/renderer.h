@@ -146,7 +146,7 @@ private:
     bool _hasLastFrame = false;
     bool _adapting = false;       // last frame ran auto-exposure
     bool _lastAutoExposure = false;
-    VkSampler _sampler = VK_NULL_HANDLE;        // materials: trilinear, aniso, repeat
+    VkSampler _samplers[kWrapModes * kWrapModes] = {};  // materials: trilinear, aniso, per wrap s and t
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
@@ -187,7 +187,7 @@ private:
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
     uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
-    float _anisotropy = 0;                      // _sampler's (Frame::anisotropy)
+    float _anisotropy = 0;                      // _samplers' (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
     // What the atlas holds: redrawn only when the scene or the tiles change.

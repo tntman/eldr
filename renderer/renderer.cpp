@@ -70,14 +70,20 @@ const uint32_t kSkinComp[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 
-// Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
-// ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
-VkSampler CreateMaterialSampler(VkDevice device, float anisotropy)
+// A material sampler: trilinear, `anisotropy` (1: none), wrap modes
+// s + kWrapModes * t (Scene::Gpu::textureWraps).
+VkSampler CreateMaterialSampler(VkDevice device, float anisotropy, uint32_t wrap)
 {
+    static const VkSamplerAddressMode modes[kWrapModes] = {
+        VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER};
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.addressModeU = modes[wrap % kWrapModes];
+    sci.addressModeV = modes[wrap / kWrapModes % kWrapModes];
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;  // Storm's HdWrapBlack
     sci.anisotropyEnable = anisotropy > 1.0f;
     sci.maxAnisotropy = anisotropy;
     sci.maxLod = VK_LOD_CLAMP_NONE;
@@ -286,7 +292,10 @@ Renderer::~Renderer()
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(_dev.device, _setLayout, nullptr);
-    for (VkSampler s : {_sampler, _clampSampler, _shadowSampler}) {
+    for (VkSampler s : _samplers) {
+        vkDestroySampler(_dev.device, s, nullptr);
+    }
+    for (VkSampler s : {_clampSampler, _shadowSampler}) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
     vkDestroyFence(_dev.device, _fence, nullptr);
@@ -296,7 +305,7 @@ Renderer::~Renderer()
 
 void Renderer::_CreateDescriptors()
 {
-    // The materials' sampler is made by Render (Frame::anisotropy).
+    // The materials' samplers are made by Render (Frame::anisotropy).
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -716,7 +725,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
 {
     std::vector<VkDescriptorImageInfo> images(gpu.textures.size());
     for (size_t i = 0; i < images.size(); ++i) {
-        images[i] = {_sampler, gpu.textures[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[i] = {_samplers[gpu.textureWraps[i]], gpu.textures[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
     const VkDescriptorBufferInfo materials{gpu.materials, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lights{gpu.lights, 0, VK_WHOLE_SIZE};
@@ -1185,8 +1194,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     const float anisotropy = float(std::clamp(frame.anisotropy, 1u, 16u));
     if (anisotropy != _anisotropy) {
-        vkDestroySampler(_dev.device, _sampler, nullptr);
-        _sampler = CreateMaterialSampler(_dev.device, anisotropy);
+        for (uint32_t wrap = 0; wrap < kWrapModes * kWrapModes; ++wrap) {
+            vkDestroySampler(_dev.device, _samplers[wrap], nullptr);
+            _samplers[wrap] = CreateMaterialSampler(_dev.device, anisotropy, wrap);
+        }
         _anisotropy = anisotropy;
     }
 

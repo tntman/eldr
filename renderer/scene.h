@@ -13,6 +13,12 @@ namespace vkr {
 
 class Scene;
 
+// How a texture reads outside st [0, 1] (UsdUVTexture wrapS/wrapT, MaterialX
+// uaddressmode/vaddressmode): Black is a transparent black border. Each s, t
+// pair is its own sampler, so the shaders don't wrap.
+enum class Wrap : uint8_t { Repeat, Mirror, Clamp, Black };
+constexpr uint32_t kWrapModes = 4;
+
 // Decoded image, rows bottom-up (so USD st (0,0) is the first texel),
 // 4 channels, tightly packed. Its GPU copy is made by Scene::Commit and
 // freed with the texture; drop the last reference only while the GPU is idle.
@@ -25,6 +31,9 @@ struct Texture {
     uint32_t height = 0;
     Format format = Format::RGBA8;
     std::vector<uint8_t> pixels;
+    // The file's own wrap modes (s, t) from its metadata, what UsdUVTexture's
+    // "useMetadata" reads; Black where it has none, as in Storm.
+    Wrap fileWrap[2] = {Wrap::Black, Wrap::Black};
 
     Texture() = default;
     Texture(const Texture &) = delete;
@@ -56,6 +65,8 @@ struct TextureRef {
     float bias[4] = {0, 0, 0, 0};
     // Texture coordinates: (u', v') = ((a b c) (d e f)) (u v 1), row-major.
     float uvTransform[6] = {1, 0, 0, 0, 1, 0};
+    // Wrap modes: s, t. UDIM tiles always repeat inside their tile.
+    Wrap wrap[2] = {Wrap::Repeat, Wrap::Repeat};
 };
 
 // Material inputs a shading graph computes per pixel (MaterialX math,
@@ -439,6 +450,8 @@ public:
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
+        // Per texture its sampler's wrap modes: s + kWrapModes * t (Wrap).
+        std::vector<uint8_t> textureWraps;
 
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
@@ -496,7 +509,7 @@ private:
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
     void _Upload(Texture &texture);
-    int32_t _TextureIndex(Texture *t);
+    int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);
     void _DestroyEnvironment();
     template <typename T>
@@ -517,7 +530,8 @@ private:
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;
-    std::unordered_map<const Texture *, int32_t> _textureSlots;  // rebuilt per Commit
+    // (texture, wrap modes) -> bindless index, rebuilt per Commit.
+    std::map<std::pair<const Texture *, uint32_t>, int32_t> _textureSlots;
 
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
