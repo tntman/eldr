@@ -188,6 +188,24 @@ HdBprim *HdVkRenderDelegate::CreateFallbackBprim(TfToken const &typeId)
 
 void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim) { delete bprim; }
 
+VtDictionary HdVkRenderDelegate::GetRenderStats() const
+{
+    VtDictionary stats;
+    if (!_device) {
+        return stats;
+    }
+    // "GPU mem" is graphics memory: render targets, shadow maps, the
+    // environment, textures and the scene's pools. hostMemoryUsed is the
+    // system memory the GPU reads (per-frame tables, staging).
+    const vkr::Device::MemoryStats memory = _device->Memory();
+    stats[HdPerfTokens->gpuMemoryUsed.GetString()] = size_t(memory.deviceLocal);
+    stats[HdPerfTokens->textureMemory.GetString()] = size_t(memory.textures);
+    stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
+    stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
+    stats["hostMemoryUsed"] = size_t(memory.host);
+    return stats;
+}
+
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
     try {

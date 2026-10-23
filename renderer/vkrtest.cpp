@@ -257,6 +257,32 @@ int main()
         }
 
         {
+            // Memory accounting (usdview's GPU Stats): a texture counts as
+            // device-local texture memory while it lives, a mapped buffer as
+            // host memory; freed, both are gone.
+            const vkr::Device::MemoryStats before = device.Memory();
+            {
+                vkr::Scene scene(&device);
+                vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+                auto material = std::make_shared<vkr::Material>();
+                material->baseColorTex.texture = std::make_shared<vkr::Texture>();
+                vkr::Texture &t = *material->baseColorTex.texture;
+                t.width = t.height = 64;
+                t.pixels.assign(64 * 64 * 4, 255);
+                quad->material = material;
+                scene.Commit();
+                const vkr::Device::MemoryStats loaded = device.Memory();
+                Expect(loaded.textures >= before.textures + 64 * 64 * 4 && loaded.deviceLocal > before.deviceLocal &&
+                           loaded.host > before.host,
+                       "memory counts a scene's texture and buffers");
+            }
+            const vkr::Device::MemoryStats after = device.Memory();
+            Expect(after.textures == before.textures && after.deviceLocal == before.deviceLocal &&
+                       after.host == before.host,
+                   "memory returns to where it was when the scene goes");
+        }
+
+        {
             // Indexed meshes (curves, points): per-vertex arrays and triangles.
             vkr::Scene scene(&device);
             AddLight(scene, 0, 0, -1);

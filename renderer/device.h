@@ -5,7 +5,9 @@
 
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace vkr {
 
@@ -54,8 +56,18 @@ public:
     Device &operator=(const Device &) = delete;
 
     // Memory with `props`; a type that also has `preferred` wins if there is one.
+    // `texture`: counted as texture memory in Memory().
     VkDeviceMemory Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
-                            VkMemoryPropertyFlags preferred = 0);
+                            VkMemoryPropertyFlags preferred = 0, bool texture = false);
+    void Free(VkDeviceMemory memory);  // memory from Allocate, or null
+
+    // Bytes of all memory from Allocate: device-local (graphics memory) and
+    // the rest (system memory the GPU reads); textures are part of the
+    // device-local bytes.
+    struct MemoryStats {
+        VkDeviceSize deviceLocal = 0, host = 0, textures = 0;
+    };
+    MemoryStats Memory() const;
     // Grows `b` to hold at least `bytes`, discarding its contents. GPU must be idle.
     // Host-visible, coherent and mapped. Pass HOST_CACHED as `preferred` for
     // buffers the CPU reads: uncached (write-combined) memory reads crawl.
@@ -84,6 +96,14 @@ private:
 
     VkCommandPool _submitPool = VK_NULL_HANDLE;
     VkFence _submitFence = VK_NULL_HANDLE;
+
+    struct Allocation {
+        VkDeviceSize size;
+        bool deviceLocal, texture;
+    };
+    mutable std::mutex _memoryMutex;
+    std::unordered_map<VkDeviceMemory, Allocation> _allocations;
+    MemoryStats _memory;
 };
 
 } // namespace vkr

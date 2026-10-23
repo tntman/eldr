@@ -198,7 +198,7 @@ Texture::~Texture()
     if (_device) {
         vkDestroyImageView(_device->device, _view, nullptr);
         vkDestroyImage(_device->device, _image, nullptr);
-        vkFreeMemory(_device->device, _memory, nullptr);
+        _device->Free(_memory);
     }
 }
 
@@ -232,6 +232,16 @@ Mesh *Scene::AddMesh()
     _meshes.push_back(std::make_unique<Mesh>());
     _meshes.back()->_slot = _meshes.size() - 1;
     return _meshes.back().get();
+}
+
+VkDeviceSize Scene::VertexBytes() const
+{
+    VkDeviceSize bytes = 0;
+    for (const Buffer *b : {&_vertices, &_instances, &_visible, &_skin, &_joints, &_skinXforms, &_jointBoundsPool,
+                            &_blendOffsets, &_blendWeights}) {
+        bytes += b->size;
+    }
+    return bytes;
 }
 
 void Scene::RemoveMesh(Mesh *mesh)
@@ -739,7 +749,7 @@ void Scene::_Upload(Texture &t)
     t._device = _device;  // from here on ~Texture frees whatever exists
     VkMemoryRequirements req;
     vkGetImageMemoryRequirements(device, t._image, &req);
-    t._memory = _device->Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    t._memory = _device->Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0, true);
     Check(vkBindImageMemory(device, t._image, t._memory, 0), "vkBindImageMemory");
 
     VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -825,7 +835,7 @@ void Scene::_DestroyEnvironment()
 {
     vkDestroyImageView(_device->device, _envView, nullptr);
     vkDestroyImage(_device->device, _envImage, nullptr);
-    vkFreeMemory(_device->device, _envMemory, nullptr);
+    _device->Free(_envMemory);
     _envView = VK_NULL_HANDLE;
     _envImage = VK_NULL_HANDLE;
     _envMemory = VK_NULL_HANDLE;

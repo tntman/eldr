@@ -72,6 +72,8 @@ public:
     void DestroyBprim(HdBprim *bprim) override;
 
     void CommitResources(HdChangeTracker *tracker) override;
+    // GPU memory, shown by usdview's GPU Stats HUD.
+    VtDictionary GetRenderStats() const override;
 
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;

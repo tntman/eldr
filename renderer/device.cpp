@@ -225,7 +225,7 @@ void Device::_Release()
 }
 
 VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
-                                VkMemoryPropertyFlags preferred)
+                                VkMemoryPropertyFlags preferred, bool texture)
 {
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(physical, &mp);
@@ -238,6 +238,11 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                 ai.memoryTypeIndex = i;
                 VkDeviceMemory memory = VK_NULL_HANDLE;
                 Check(vkAllocateMemory(device, &ai, nullptr, &memory), "vkAllocateMemory");
+                const bool local = mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                std::lock_guard<std::mutex> lock(_memoryMutex);
+                _allocations[memory] = {req.size, local, texture};
+                (local ? _memory.deviceLocal : _memory.host) += req.size;
+                _memory.textures += texture ? req.size : 0;
                 return memory;
             }
         }
@@ -346,11 +351,35 @@ Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint
     return img;
 }
 
+void Device::Free(VkDeviceMemory memory)
+{
+    if (!memory) {
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_memoryMutex);
+        const auto it = _allocations.find(memory);
+        if (it != _allocations.end()) {
+            const Allocation &a = it->second;
+            (a.deviceLocal ? _memory.deviceLocal : _memory.host) -= a.size;
+            _memory.textures -= a.texture ? a.size : 0;
+            _allocations.erase(it);
+        }
+    }
+    vkFreeMemory(device, memory, nullptr);
+}
+
+Device::MemoryStats Device::Memory() const
+{
+    std::lock_guard<std::mutex> lock(_memoryMutex);
+    return _memory;
+}
+
 void Device::Destroy(Image &img)
 {
     vkDestroyImageView(device, img.view, nullptr);
     vkDestroyImage(device, img.image, nullptr);
-    vkFreeMemory(device, img.memory, nullptr);
+    Free(img.memory);
     img = Image();
 }
 
@@ -359,9 +388,7 @@ void Device::Destroy(Buffer &b)
     if (b.buffer) {
         vkDestroyBuffer(device, b.buffer, nullptr);
     }
-    if (b.memory) {
-        vkFreeMemory(device, b.memory, nullptr);
-    }
+    Free(b.memory);
     b = Buffer();
 }
 
