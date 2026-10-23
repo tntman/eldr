@@ -6,6 +6,7 @@
 #include "post.h"
 #include "scene.h"
 #include "taa.h"
+#include "transparency.h"
 
 #include <chrono>
 
@@ -66,6 +67,11 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Translucency (transparency.h): weighted blended OIT, its weights
+        // falling with distance to this power (0: a plain average); off:
+        // sorted per mesh, blended over.
+        bool oit = true;
+        float oitDepthWeight = 4.0f;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -129,12 +135,15 @@ private:
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
+    void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
+                             uint32_t motion, VkRenderingAttachmentInfo depth);
 
     Device &_dev;
     Gtao _gtao;
     TemporalAA _taa;
     Lens _lens;
     PostProcess _post;
+    Transparency _transparency;
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
@@ -159,6 +168,7 @@ private:
     // program (the GRAPH shaders).
     VkPipeline _prepassPipeline[4] = {};      // depth only
     VkPipeline _translucentPipeline[8] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[8] = {};          // shading, OIT accumulation (Transparency)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
     VkPipeline _pipeline[8] = {};             // shading, depth read-only
@@ -178,7 +188,7 @@ private:
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     // GPU timestamps: one at the start, then one closing each pass.
-    static constexpr uint32_t kMaxTimestamps = 16;
+    static constexpr uint32_t kMaxTimestamps = 24;
     VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes

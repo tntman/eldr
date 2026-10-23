@@ -29,6 +29,7 @@ struct FrameData {
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
+    float translucency[4];   // see frame.glsl
 };
 
 namespace {
@@ -217,6 +218,7 @@ Renderer::Renderer(Device &device)
     , _taa(device)
     , _lens(device)
     , _post(device)
+    , _transparency(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -282,6 +284,7 @@ Renderer::~Renderer()
     for (int v = 0; v < 8; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
+        vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
@@ -516,10 +519,14 @@ void Renderer::_CreatePipelines()
     const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
                                                      {1, sizeof(VkBool32), sizeof(VkBool32)}};
     const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants) {
+    // `fragmentSpec`: the fragment stage's specialization (shading
+    // pipelines: transparency.glsl's kTranslucentPass).
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants,
+                          const VkSpecializationInfo *fragmentSpec = nullptr) {
         VkPipelineShaderStageCreateInfo stages[2] = {};
         std::copy(info.pStages, info.pStages + info.stageCount, stages);
         info.pStages = stages;
+        stages[1].pSpecializationInfo = fragmentSpec;
         VkResult res = VK_SUCCESS;
         for (int v = 0; v < variants && res == VK_SUCCESS; ++v) {
             const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
@@ -550,6 +557,31 @@ void Renderer::_CreatePipelines()
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
         r = createMesh(tci, _translucentPipeline, 8);
+    }
+    // Weighted blended OIT (Transparency): colour and coverage summed,
+    // ids as above, location 3 the revealage, multiplied by 1 - coverage.
+    if (r == VK_SUCCESS) {
+        VkPipelineColorBlendAttachmentState oit[4] = {attachments[0], attachments[1], attachments[2],
+                                                      attachments[3]};
+        oit[0].blendEnable = VK_TRUE;
+        oit[0].srcColorBlendFactor = oit[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        oit[0].dstColorBlendFactor = oit[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        oit[3].blendEnable = VK_TRUE;
+        oit[3].srcColorBlendFactor = oit[3].srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+        oit[3].dstColorBlendFactor = oit[3].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+        VkPipelineColorBlendStateCreateInfo oitBlend = blend;
+        oitBlend.pAttachments = oit;
+        const VkFormat oitFormats[4] = {Transparency::kAccumFormat, kIdFormat, kIdFormat,
+                                        Transparency::kRevealageFormat};
+        VkPipelineRenderingCreateInfo oitRendering = rendering;
+        oitRendering.pColorAttachmentFormats = oitFormats;
+        VkGraphicsPipelineCreateInfo oci = ci;
+        oci.pNext = &oitRendering;
+        oci.pColorBlendState = &oitBlend;
+        const VkSpecializationMapEntry passEntry{12, 0, sizeof(uint32_t)};
+        const uint32_t oitPass = 1;
+        const VkSpecializationInfo oitSpec{1, &passEntry, sizeof(oitPass), &oitPass};
+        r = createMesh(oci, _oitPipeline, 8, &oitSpec);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -706,6 +738,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
     _lens.Resize(width, height, _color.image, _color.view, _depth.view, _velocity.view, _taa.OutputImage(),
                  _taa.Output(), _taa.History());
     _post.Resize(width, height, _taa.Output());
+    _transparency.Resize(width, height);
     _taaValid = false;
     _historyValid = false;
 }
@@ -1152,6 +1185,90 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
+// Translucent meshes after the opaque pass and the sky, back to front by
+// their bounds' centres; they test the opaque depth but write none.
+// Frame::oit sums them, weighted by distance, into the Transparency
+// targets and resolves that over the colour; otherwise each is blended
+// over the last. Both draw back to front, so the nearest mesh's ids win
+// picking.
+// ponytail: sorted per mesh, not per instance or triangle (OIT's weights
+// need no order but only approximate it).
+void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data,
+                                   const float *viewProj, uint32_t motion, VkRenderingAttachmentInfo depth)
+{
+    std::vector<std::pair<float, size_t>> order;
+    for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+        const float *c = &gpu.translucentCenters[i * 3];
+        const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
+        order.push_back({Dot(d, d), i});
+    }
+    std::sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+    data->translucency[2] = 1.0f / std::max(std::sqrt(order.back().first), 1e-6f);
+    data->translucency[3] = std::max(frame.oitDepthWeight, 0.0f);
+
+    // The opaque pass's colour, ids and (without a prepass) depth are
+    // written before this pass loads them.
+    VkMemoryBarrier2 opaque{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    opaque.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    opaque.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    opaque.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT |
+                          VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    opaque.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT |
+                           VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &opaque;
+    vkCmdPipelineBarrier2(_cmd, &dep);
+
+    const bool oit = frame.oit;
+    if (oit) {
+        _transparency.BeginAccumulation(_cmd);
+    }
+    const VkImageView views[4] = {oit ? _transparency.Accum().view : _color.view, _primId.view, _instanceId.view,
+                                  oit ? _transparency.Revealage().view : _velocity.view};
+    VkRenderingAttachmentInfo atts[4] = {};
+    for (int i = 0; i < 4; ++i) {
+        atts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        atts[i].imageView = views[i];
+        atts[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        atts[i].loadOp = oit && (i == 0 || i == 3) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        atts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    }
+    atts[3].clearValue.color.float32[0] = 1.0f;  // revealage: nothing in front yet
+    depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth.storeOp = frame.depthPrepass ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {_width, _height}};
+    ri.layerCount = 1;
+    ri.colorAttachmentCount = 4;
+    ri.pColorAttachments = atts;
+    ri.pDepthAttachment = &depth;
+    vkCmdBeginRendering(_cmd, &ri);
+    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+    vkCmdSetViewport(_cmd, 0, 1, &vp);
+    vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+    PushDraw(_cmd, _layout, viewProj, 0, motion);
+    const VkDeviceSize vertexOffset = 0;
+    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+    const VkPipeline *pipelines = oit ? _oitPipeline : _translucentPipeline;
+    VkPipeline bound = VK_NULL_HANDLE;
+    for (const auto &[distance, i] : order) {
+        if (pipelines[gpu.translucentVariant[i]] != bound) {
+            bound = pipelines[gpu.translucentVariant[i]];
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+        }
+        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                 VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand), 1,
+                                 sizeof(VkDrawIndexedIndirectCommand));
+    }
+    vkCmdEndRendering(_cmd);
+    if (oit) {
+        _transparency.Resolve(_cmd, _color.view);
+    }
+}
+
 bool Renderer::IsConverged() const
 {
     return (!_adapting || _post.ExposureConverged()) && _taaConverged;
@@ -1564,32 +1681,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
         vkCmdDraw(_cmd, 3, 1, 0, 0);
     }
-    // Translucent meshes last, back to front by their bounds' centres; they
-    // test the opaque depth but write none.
-    // ponytail: sorted per mesh, not per instance or triangle.
-    if (draw && frame.translucency && !gpu.translucent.empty()) {
-        std::vector<std::pair<float, size_t>> order;
-        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
-            const float *c = &gpu.translucentCenters[i * 3];
-            const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
-            order.push_back({Dot(d, d), i});
-        }
-        std::sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
-        PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
-        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
-        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        VkPipeline bound = VK_NULL_HANDLE;
-        for (const auto &[distance, i] : order) {
-            const uint32_t slot = gpu.translucent[i];
-            if (_translucentPipeline[gpu.translucentVariant[i]] != bound) {
-                bound = _translucentPipeline[gpu.translucentVariant[i]];
-                vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
-            }
-            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(slot) * sizeof(VkDrawIndexedIndirectCommand),
-                                     1, sizeof(VkDrawIndexedIndirectCommand));
-        }
-    }
     vkCmdEndRendering(_cmd);
+    pass("shading");
+    if (draw && frame.translucency && !gpu.translucent.empty()) {
+        _RenderTranslucency(gpu, frame, &fd, jitteredViewProj, motion, depthAtt);
+        pass("translucency");
+    }
     if (!frame.depthPrepass) {
         ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
                      kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -1597,7 +1694,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
     }
-    pass("shading");
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,

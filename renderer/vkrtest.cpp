@@ -1144,6 +1144,46 @@ int main()
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
+
+        {
+            // Order-independent transparency: one translucent mesh (opacity
+            // 0.5, displayColor) of two quads over the left half of an opaque
+            // red one, the near green quad's triangles listed before the far
+            // blue one's. Weighted blended OIT lets the nearer dominate
+            // whatever the triangle order; the sorted mode blends in list
+            // order (blue over green).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto red = std::make_shared<vkr::Material>(), glass = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 1;
+            red->baseColor[1] = red->baseColor[2] = 0;
+            red->roughness = 1;
+            glass->baseColorFromDisplayColor = true;
+            glass->roughness = 1;
+            glass->opacity = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = red;
+            vkr::Mesh *layers = AddQuad(scene, -1, -1, 0, 1, 0);
+            const std::vector<float> points = layers->points, uvs = layers->uvs;
+            layers->points.insert(layers->points.end(), points.begin(), points.end());
+            layers->uvs.insert(layers->uvs.end(), uvs.begin(), uvs.end());
+            for (size_t i = 18; i < 36; i += 3) {
+                layers->points[i + 2] = 0.25f;  // the second quad behind the first
+            }
+            for (int corner = 0; corner < 12; ++corner) {
+                layers->colors.insert(layers->colors.end(), {0, corner < 6 ? 1.0f : 0.0f, corner < 6 ? 0.0f : 1.0f});
+            }
+            layers->material = glass;
+            scene.Commit();
+            const Image oit = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.oit = false;
+            const Image sorted = Render(renderer, scene, frame);
+            Expect(oit.At(16, 32, 1) > oit.At(16, 32, 2) + 0.1f && std::abs(oit.At(16, 32, 0) - 0.25f) < 0.06f,
+                   "OIT: the nearer layer dominates whatever the triangle order, the opaque shows by revealage");
+            Expect(sorted.At(16, 32, 2) > sorted.At(16, 32, 1) + 0.1f, "sorted mode: blended in list order");
+            Expect(std::abs(oit.At(48, 32, 0) - sorted.At(48, 32, 0)) < 1e-3f && oit.At(48, 32, 1) < 0.05f,
+                   "OIT leaves pixels without translucency alone");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

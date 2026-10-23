@@ -128,6 +128,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
+        {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
+        {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
         {"TAA Samples (still camera)", t.taaSamples, VtValue(int(frame.taaSamples))},

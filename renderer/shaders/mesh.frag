@@ -66,6 +66,8 @@ layout(location = 2) out int outInstanceId;
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
 
+#include "transparency.glsl"
+
 vec4 Fetch(TexRef r, vec4 constant)
 {
     return Fetch(r, constant, inUv);
@@ -578,4 +580,5 @@ void main()
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
     vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
     outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
+    TranslucentOutput(color, alpha);
 }
