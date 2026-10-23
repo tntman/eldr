@@ -26,6 +26,8 @@ layout(push_constant) uniform CullParams {
     float nearDistance;  // view depth of the near plane
     float minRadius;     // pixels
     float orthographic;
+    uint listBase;       // this pass's list of instance indices
+    uint commandBase;    // and its draw commands
 } pc;
 
 layout(local_size_x = 64) in;
@@ -42,12 +44,35 @@ void main()
     }
     DrawInfo d = draws[inst.draw];
 
-    // World AABB of the instance, tested against each plane.
-    vec3 c = 0.5 * (d.boundsMin.xyz + d.boundsMax.xyz);
-    vec3 e = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
-    mat3 m = mat3(inst.transform);
-    vec3 wc = (inst.transform * vec4(c, 1.0)).xyz;
-    vec3 we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
+    // World AABB of the instance, tested against each plane. A skinned
+    // instance's is the union of every joint's matrix applied to the rest
+    // bounds of the vertices that joint moves (conservative for linear
+    // blend skinning).
+    vec3 wc, we;
+    if (d.jointCount > 0u) {
+        vec3 lo = vec3(1e30), hi = vec3(-1e30);
+        for (uint j = 0u; j < d.jointCount; ++j) {
+            vec4 bmin = jointBounds[(d.jointBounds + j) * 2u], bmax = jointBounds[(d.jointBounds + j) * 2u + 1u];
+            if (bmin.x > bmax.x) {
+                continue;
+            }
+            mat4 jm = joints[inst.joints + j];
+            vec3 c = 0.5 * (bmin.xyz + bmax.xyz), e = 0.5 * (bmax.xyz - bmin.xyz);
+            mat3 r = mat3(jm);
+            vec3 jc = (jm * vec4(c, 1.0)).xyz;
+            vec3 je = abs(r[0]) * e.x + abs(r[1]) * e.y + abs(r[2]) * e.z;
+            lo = min(lo, jc - je);
+            hi = max(hi, jc + je);
+        }
+        wc = 0.5 * (lo + hi);
+        we = max(0.5 * (hi - lo), vec3(0.0));
+    } else {
+        vec3 c = 0.5 * (d.boundsMin.xyz + d.boundsMax.xyz);
+        vec3 e = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+        mat3 m = mat3(inst.transform);
+        wc = (inst.transform * vec4(c, 1.0)).xyz;
+        we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
+    }
     for (int p = 0; p < 6; ++p) {
         vec4 plane = pc.planes[p];
         if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
@@ -59,6 +84,7 @@ void main()
     if (radius < pc.minRadius) {
         return;
     }
-    uint slot = atomicAdd(commands[inst.draw].instanceCount, 1u);
-    visible[commands[inst.draw].firstInstance + slot] = i;
+    uint command = pc.commandBase + inst.draw;
+    uint slot = atomicAdd(commands[command].instanceCount, 1u);
+    visible[pc.listBase + commands[command].firstInstance + slot] = i;
 }

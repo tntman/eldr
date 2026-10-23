@@ -263,36 +263,73 @@ int main()
                 quad->jointIndices.insert(quad->jointIndices.end(), {0, 1, 0, 0});
                 quad->jointWeights.insert(quad->jointWeights.end(), {top ? 0.0f : 0.5f, top ? 1.0f : 0.5f, 0, 0});
             }
-            auto agent = [](float dx, float lift) {
-                return std::vector<float>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, 0, 0, 1,
-                                          1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, lift, 0, 1};
+            auto pose = [](float lift) {  // joint 0 stays, joint 1 lifts
+                return std::vector<float>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+                                          1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, lift, 0, 1};
             };
-            quad->jointMatrices = agent(0, 0.4f);
+            auto at = [](float x, float scale = 1.0f) {
+                return std::vector<float>{scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, x, 0, 0, 1};
+            };
+            quad->skinningTransforms = pose(0.4f);
             scene.Commit();
             Image img = Render(renderer, scene);
             // Rows: y = -0.3 + 0.2 (bottom edge) .. 0.5 + 0.4 (top edge).
             Expect(img.Prim(32, 58) == 3 && img.Prim(32, 62) == -1, "skinned top edge follows joint 1 (y 0.9)");
             Expect(img.Prim(32, 17) == -1 && img.Prim(32, 22) == 3, "skinned bottom edge halfway (y -0.3)");
 
-            // Two agents with their own matrices (one per instance), one far
-            // off screen: culled by the bounds its joints imply.
-            std::vector<float> both = agent(-0.5f, 0.0f), far = agent(50.0f, 0.0f);
-            both.insert(both.end(), far.begin(), far.end());
-            quad->jointMatrices = both;
-            quad->jointsDirty = true;
+            // Two agents sharing the pose, one far off screen: culled by the
+            // bounds its joints imply.
+            quad->transforms = at(-0.5f);
+            const std::vector<float> far = at(50.0f);
+            quad->transforms.insert(quad->transforms.end(), far.begin(), far.end());
+            quad->transformsDirty = true;
             scene.Commit();
             img = Render(renderer, scene);
-            Expect(img.Prim(4, 32) == 3 && img.Inst(4, 32) == 0 && img.Prim(40, 32) == -1, "agent 0 moved left");
+            Expect(img.Prim(4, 58) == 3 && img.Inst(4, 58) == 0 && img.Prim(40, 32) == -1, "agent 0 moved left");
             Expect(renderer.VisibleInstances() == 1, "agent 1 culled from its joint bounds");
 
+            // Each agent with its own pose (per-instance skinning transforms):
+            // the second, now next to the first, does not lift.
+            quad->transforms = at(-0.5f);
+            const std::vector<float> right = at(0.5f), still = pose(0.0f);
+            quad->transforms.insert(quad->transforms.end(), right.begin(), right.end());
+            quad->transformsDirty = true;
+            quad->skinningTransforms.insert(quad->skinningTransforms.end(), still.begin(), still.end());
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(img.Prim(16, 58) == 3 && img.Prim(48, 58) == -1 && img.Prim(48, 40) == 3,
+                   "per-instance poses: left agent lifted, right one not");
+
             // An agent scaled down to a fraction of a pixel is culled too.
-            const float s = 0.005f;
-            quad->jointMatrices = {s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1,
-                                   s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1};
-            quad->jointsDirty = true;
+            quad->transforms = at(0.0f, 0.005f);
+            quad->transformsDirty = true;
+            quad->skinningTransforms = pose(0.4f);
             scene.Commit();
             Render(renderer, scene);
             Expect(renderer.VisibleInstances() == 0, "sub-pixel agent culled");
+
+            // Blend shapes on the rest points before skinning: one shape lifts
+            // the top corners by 0.4 (weight 1) while the joints stay put.
+            quad->transforms = at(0.0f);
+            quad->transformsDirty = true;
+            quad->skinningTransforms = pose(0.0f);
+            quad->blendOffsets = {0, 0.4f, 0, 0};
+            quad->blendRanges.clear();
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                const bool top = quad->points[c * 3 + 1] > 0;
+                quad->blendRanges.insert(quad->blendRanges.end(), {0u, top ? 1u : 0u});
+            }
+            quad->blendShapeCount = 1;
+            quad->blendWeights = {1.0f};
+            quad->geometryDirty = true;
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(img.Prim(32, 58) == 3, "blend shape at weight 1 lifts the top edge");
+            quad->blendWeights = {0.0f};
+            quad->jointsDirty = true;
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(img.Prim(32, 58) == -1 && img.Prim(32, 40) == 3, "blend shape at weight 0 leaves it");
         }
 
         {

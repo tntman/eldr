@@ -16,7 +16,8 @@ find_package(pxr CONFIG REQUIRED)
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
-foreach(shader mesh.vert mesh.frag fullscreen.vert sky.frag cull.comp lights.comp gtao.frag gtao_denoise.frag
+foreach(shader mesh.vert mesh.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
+               gtao_denoise.frag
                taa.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag tonemap.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}

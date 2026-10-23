@@ -148,16 +148,25 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     bool geometryDirty = false;
     m.primId = GetPrimId();  // assigned by the render index after construction
 
+    // Skinned meshes get points and topology dirtied with every new pose
+    // (UsdSkelImaging's own points come from the pose), while HdVk's are
+    // the rest points: re-flatten only on a real change.
     if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
-        _topology = HdMeshTopology(GetMeshTopology(sceneDelegate), 0);
-        HdMeshUtil(&_topology, id).ComputeTriangleIndices(&_triangles, &_primitiveParams);
-        geometryDirty = true;
+        HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
+        if (!(topology == _topology)) {
+            _topology = topology;
+            HdMeshUtil(&_topology, id).ComputeTriangleIndices(&_triangles, &_primitiveParams);
+            geometryDirty = true;
+        }
     }
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         const VtValue value = GetPoints(sceneDelegate);
-        _points = value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>()
-                                                  : VtVec3fArray();
-        geometryDirty = true;
+        VtVec3fArray points = value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>()
+                                                              : VtVec3fArray();
+        if (points != _points) {
+            _points = std::move(points);
+            geometryDirty = true;
+        }
     }
     // DirtyPrimvar is all primvars at once, and a skinned mesh gets it every
     // frame for its skinning transforms: re-flatten only what really changed.
@@ -192,12 +201,22 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         const VtVec2fArray influences = get(HdSkinningInputTokens->influences).GetWithDefault(VtVec2fArray());
         const int perPoint = get(HdSkinningInputTokens->numInfluencesPerComponent).GetWithDefault(0);
         const bool constant = get(HdSkinningInputTokens->hasConstantInfluences).GetWithDefault(false);
-        if (influences != _influences || perPoint != _influencesPerPoint || constant != _constantInfluences) {
+        const VtVec4fArray blendOffsets = get(HdSkinningInputTokens->blendShapeOffsets).GetWithDefault(VtVec4fArray());
+        const VtVec2iArray blendRanges =
+            get(HdSkinningInputTokens->blendShapeOffsetRanges).GetWithDefault(VtVec2iArray());
+        const int blendRangeCount = get(HdSkinningInputTokens->numBlendShapeOffsetRanges).GetWithDefault(0);
+        if (influences != _influences || perPoint != _influencesPerPoint || constant != _constantInfluences ||
+            blendOffsets != _blendOffsets || blendRanges != _blendRanges || blendRangeCount != _blendRangeCount) {
             _influences = influences;
             _influencesPerPoint = perPoint;
             _constantInfluences = constant;
+            _blendOffsets = blendOffsets;
+            _blendRanges = blendRanges;
+            _blendRangeCount = blendRangeCount;
             geometryDirty = true;
         }
+        _blendWeights = get(HdSkinningInputTokens->blendShapeWeights).GetWithDefault(VtFloatArray());
+        _numBlendShapeWeights = get(HdSkinningInputTokens->numBlendShapeWeights).GetWithDefault(0);
         _geomBind = GfMatrix4d(get(HdSkinningSkelInputTokens->geomBindTransform).GetWithDefault(GfMatrix4f(1.0f)));
         _skinningXforms = get(HdSkinningInputTokens->skinningXforms).GetWithDefault(VtMatrix4fArray());
         _numJoints = get(HdSkinningInputTokens->numJoints).GetWithDefault(0);
@@ -226,15 +245,17 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                 sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()));
             instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
         }
-        _instanceXforms.resize(instances.size());
-        m.transforms.resize(instances.size() * 16);
+        std::vector<float> transforms(instances.size() * 16);
         for (size_t i = 0; i < instances.size(); ++i) {
-            _instanceXforms[i] = xf * instances[i];  // prototype first, then instance
-            const GfMatrix4f world(_instanceXforms[i]);
-            std::copy(world.data(), world.data() + 16, m.transforms.data() + i * 16);
+            const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
+            std::copy(world.data(), world.data() + 16, transforms.data() + i * 16);
         }
-        m.transformsDirty = true;
-        jointsDirty = true;
+        // Animated skinned prototypes arrive with their instancer dirty every
+        // frame; re-upload thousands of instances only when they moved.
+        if (transforms != m.transforms) {
+            m.transforms = std::move(transforms);
+            m.transformsDirty = true;
+        }
     }
     if (jointsDirty || geometryDirty) {
         _UpdateJoints();
@@ -261,38 +282,28 @@ bool HdVkMesh::_Skinned() const
     return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
 }
 
-// Joint j of instance i takes a rest point through geomBind, the joint's
-// skinning transform, skeleton to prim space and the instance's world
-// transform: the whole chain of UsdSkelImaging's skinning kernel plus the
-// prim's own transform, in one matrix (USD row-vector order).
+// Skinning transform of joint j: a rest point through geomBind, the joint's
+// skinning transform and skeleton to prim space, the chain of
+// UsdSkelImaging's skinning kernel in one matrix (USD row-vector order). The
+// GPU adds each instance's transform. Deferred skinning gives every
+// instance its own set (_numJoints per instance).
 void HdVkMesh::_UpdateJoints()
 {
     vkr::Mesh &m = *_mesh;
-    if (!_Skinned() || m.jointCount == 0) {
-        if (!m.jointMatrices.empty()) {
-            m.jointMatrices.clear();
-            m.transformsDirty = true;
-        }
-        return;
-    }
-    const size_t joints = m.jointCount, instances = _instanceXforms.size();
-    const bool perInstance = _numJoints > 0 && _skinningXforms.size() == joints * instances;
-    if (!perInstance && _skinningXforms.size() != joints) {
-        m.jointMatrices.clear();  // inconsistent: draw nothing rather than garbage
-        m.jointsDirty = true;
-        return;
-    }
-    const GfMatrix4f geomBind(_geomBind);
-    m.jointMatrices.resize(instances * joints * 16);
-    for (size_t i = 0; i < instances; ++i) {
-        const GfMatrix4f toWorld(_skelToPrim * _instanceXforms[i]);
-        for (size_t j = 0; j < joints; ++j) {
-            const GfMatrix4f &skinning = _skinningXforms[perInstance ? i * joints + j : j];
-            const GfMatrix4f joint = geomBind * skinning * toWorld;
-            std::copy(joint.data(), joint.data() + 16, m.jointMatrices.data() + (i * joints + j) * 16);
-        }
-    }
     m.jointsDirty = true;
+    if (!_Skinned() || m.jointCount == 0) {
+        m.skinningTransforms.clear();
+        m.blendWeights.clear();
+        return;
+    }
+    m.blendWeights.assign(_blendWeights.cbegin(), _blendWeights.cend());
+    m.blendShapeCount = uint32_t(_numBlendShapeWeights > 0 ? _numBlendShapeWeights : int(_blendWeights.size()));
+    const GfMatrix4f geomBind(_geomBind), skelToPrim(_skelToPrim);
+    m.skinningTransforms.resize(_skinningXforms.size() * 16);
+    for (size_t s = 0; s < _skinningXforms.size(); ++s) {
+        const GfMatrix4f joint = geomBind * _skinningXforms[s] * skelToPrim;
+        std::copy(joint.data(), joint.data() + 16, m.skinningTransforms.data() + s * 16);
+    }
 }
 
 void HdVkMesh::_Flatten()
@@ -306,12 +317,32 @@ void HdVkMesh::_Flatten()
     m.jointIndices.clear();
     m.jointWeights.clear();
     m.jointCount = 0;
+    m.blendOffsets.clear();
+    m.blendRanges.clear();
     const size_t perPoint = size_t(std::max(_influencesPerPoint, 0));
     const uint32_t joints = uint32_t(_numJoints > 0 ? _numJoints : _skinningXforms.size());
     if (_Skinned() && _influences.size() >= (_constantInfluences ? perPoint : _points.size() * perPoint)) {
         m.jointCount = joints;
         m.jointIndices.reserve(_triangles.size() * 12);
         m.jointWeights.reserve(_triangles.size() * 12);
+        // Blend shapes: the offsets as they are, a range per corner.
+        if (!_blendOffsets.empty() && _blendRangeCount > 0) {
+            m.blendOffsets.reserve(_blendOffsets.size() * 4);
+            for (const GfVec4f &o : _blendOffsets) {
+                m.blendOffsets.insert(m.blendOffsets.end(), o.data(), o.data() + 4);
+            }
+            m.blendRanges.reserve(_triangles.size() * 6);
+            for (const GfVec3i &tri : _triangles) {
+                for (int k = 0; k < 3; ++k) {
+                    const int point = tri[k];
+                    const bool has = point >= 0 && point < _blendRangeCount && size_t(point) < _blendRanges.size();
+                    const GfVec2i r = has ? _blendRanges[point] : GfVec2i(0, 0);
+                    const bool ok = r[0] >= 0 && r[1] >= r[0] && size_t(r[1]) <= _blendOffsets.size();
+                    m.blendRanges.push_back(ok ? uint32_t(r[0]) : 0u);
+                    m.blendRanges.push_back(ok ? uint32_t(r[1] - r[0]) : 0u);
+                }
+            }
+        }
         for (const GfVec3i &tri : _triangles) {
             for (int k = 0; k < 3; ++k) {
                 const size_t base = _constantInfluences ? 0 : size_t(std::max(tri[k], 0)) * perPoint;

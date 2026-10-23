@@ -75,17 +75,26 @@ struct Mesh {
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
 
-    // Linear blend skinning (UsdSkel), skinned on the GPU. Up to 4 joints
-    // per corner with weights summing to 1; per instance, jointCount
-    // matrices (USD row-vector order) that take `points` straight to world
-    // space, so `transforms` is ignored and the instance count is
-    // jointMatrices.size() / (16 * jointCount). Only the matrices change per
-    // frame: set jointsDirty alone.
+    // Linear blend skinning (UsdSkel), on the GPU. Up to 4 joints per corner
+    // with weights summing to 1, and jointCount skinning transforms (USD
+    // row-vector order) that take `points` to the posed mesh in its own
+    // space; `transforms` then place each instance as usual. One set is
+    // shared by all instances, or there is one per instance
+    // (instances * jointCount). Per frame only the skinning transforms
+    // change: set jointsDirty alone. The GPU combines them with the instance
+    // transforms into the joint matrices.
     std::vector<uint16_t> jointIndices;  // 4 per corner; empty: rigid mesh
     std::vector<float> jointWeights;     // 4 per corner
     uint32_t jointCount = 0;
-    std::vector<float> jointMatrices;
+    std::vector<float> skinningTransforms;
     bool jointsDirty = false;
+    // UsdSkel blend shapes, added to the rest points before skinning: per
+    // corner a range of offsets (xyz, shape index); blendShapeCount weights
+    // set together with the skinning transforms (shared, or per instance).
+    std::vector<float> blendOffsets;     // 4 per offset
+    std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
+    uint32_t blendShapeCount = 0;
+    std::vector<float> blendWeights;
 
 private:
     friend class Scene;
@@ -95,8 +104,15 @@ private:
     uint32_t _firstIndex = 0, _indexCount = 0;
     uint32_t _instanceBase = 0, _instanceCount = 0;
     uint32_t _skinOffset = 0, _skinCount = 0;    // SkinVertex pool, one per vertex
-    uint32_t _jointBase = 0, _jointSlots = 0;    // joint matrix pool, instances * jointCount
+    uint32_t _jointBase = 0, _jointSlots = 0;    // joint matrices (GPU-built), instances * jointCount
+    uint32_t _skinXformBase = 0, _skinXformSlots = 0;  // skinning transforms
+    uint32_t _boundsBase = 0, _boundsSlots = 0;  // JointBounds pool, one per joint
+    uint32_t _blendBase = 0, _blendSlots = 0;    // blend shape offsets
+    uint32_t _weightBase = 0, _weightSlots = 0;  // blend shape weights
+    bool _blendPerInstance = false;
+    bool _skinPerInstance = false;
     std::vector<float> _jointBounds;             // per joint: rest bounds of the vertices it moves
+    float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
 };
@@ -152,7 +168,7 @@ struct Instance {
     float transform[16];
     uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
     int32_t index;       // index into Mesh::transforms (instanceId AOV)
-    uint32_t joints;     // skinned: first joint matrix; transform then only bounds culling
+    uint32_t joints;     // skinned: first of the instance's joint matrices
     uint32_t pad;
 };
 struct DrawInfo {
@@ -165,17 +181,36 @@ struct DrawInfo {
     uint32_t skin;        // first SkinVertex of the mesh, kNone if rigid
     uint32_t vertexBase;  // the mesh's first vertex in the vertex pool
     uint32_t vertexColors;  // 1: per-vertex displayColor, else `color`
-    uint32_t pad[2];
+    uint32_t jointCount;
+    uint32_t skinXforms;    // first skinning transform
+    uint32_t jointBounds;   // first JointBounds
+    uint32_t skinPerInstance;  // 1: jointCount skinning transforms per instance
+    uint32_t blendWeights;     // first blend shape weight
+    uint32_t blendShapes;      // weights per pose; 0: no blend shapes
+    uint32_t blendPerInstance; // 1: blendShapes weights per instance
+    uint32_t pad[3];
+};
+static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
+// Rest bounds of the vertices one joint moves (min.x > max.x: none).
+struct JointBounds {
+    float min[4];
+    float max[4];
 };
 // Joint influences of one skinned vertex: four 16-bit joint indices and
 // four unorm16 weights.
 struct SkinVertex {
     uint32_t joints[2];
     uint32_t weights[2];
+    uint32_t blend[2];  // first blend shape offset, count
+    uint32_t pad[2];
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 constexpr uint32_t kNone = 0xFFFFFFFFu;
 constexpr uint32_t kMaxTextures = 4096;
+// Lists of instance indices in Gpu::visible, instanceCapacity each:
+// [0] culled for the camera, [1] identity (every instance), [2, 6) culled
+// for the shadow cascades.
+constexpr uint32_t kVisibleLists = 6;
 
 // Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
 class RangeAllocator {
@@ -214,16 +249,20 @@ public:
         VkBuffer vertices = VK_NULL_HANDLE;
         VkBuffer indices = VK_NULL_HANDLE;
         VkBuffer instances = VK_NULL_HANDLE;   // Instance[instanceCapacity]
-        // [0, cap): per-mesh lists of visible instances, written by culling;
-        // [cap, 2*cap): identity, used by passes that don't cull (shadows).
+        // kVisibleLists lists of instance indices, see kVisibleLists. Draws
+        // index list L at L * instanceCapacity + firstInstance.
         VkBuffer visible = VK_NULL_HANDLE;
         VkBuffer draws = VK_NULL_HANDLE;           // DrawInfo per mesh slot
         VkBuffer commandTemplate = VK_NULL_HANDLE; // per slot, instanceCount 0
-        VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances
+        VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances (identity list)
         VkBuffer materials = VK_NULL_HANDLE;
         VkBuffer lights = VK_NULL_HANDLE;      // distant lights, then sphere/rect lights
         VkBuffer skin = VK_NULL_HANDLE;        // SkinVertex pool
-        VkBuffer joints = VK_NULL_HANDLE;      // joint matrix pool (mat4)
+        VkBuffer joints = VK_NULL_HANDLE;      // joint matrices, built on the GPU (mat4)
+        VkBuffer skinXforms = VK_NULL_HANDLE;  // skinning transforms (mat4)
+        VkBuffer jointBounds = VK_NULL_HANDLE; // JointBounds pool
+        VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)
+        VkBuffer blendWeights = VK_NULL_HANDLE; // blend shape weights (float)
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
@@ -288,8 +327,10 @@ private:
     std::vector<std::unique_ptr<Light>> _lights;
     std::vector<std::unique_ptr<Dome>> _domes;
     // Device-local pools and their allocators.
-    Buffer _vertices, _indices, _instances, _visible, _skin, _joints;
-    RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc;
+    Buffer _vertices, _indices, _instances, _visible, _skin, _joints, _skinXforms, _jointBoundsPool,
+        _blendOffsets, _blendWeights;
+    RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
+        _boundsAlloc, _blendAlloc, _weightAlloc;
     // Host-visible per-commit tables.
     Buffer _draws, _commandTemplate, _shadowCommands, _materials, _lightBuffer, _staging;
     std::vector<uint8_t> _stagingBytes;

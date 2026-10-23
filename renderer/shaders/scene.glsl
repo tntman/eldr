@@ -5,6 +5,11 @@
 #else
 #define SCENE_ACCESS readonly
 #endif
+#ifdef JOINTS_WRITABLE
+#define JOINTS_ACCESS
+#else
+#define JOINTS_ACCESS readonly
+#endif
 
 const uint kFreeSlot = 0xFFFFFFFFu;
 
@@ -12,7 +17,7 @@ struct Instance {
     mat4 transform;  // USD row-major memory read column-major: model * p works
     uint draw;       // mesh slot, kFreeSlot if unused
     int index;       // index into the mesh's instances (instanceId AOV)
-    uint joints;     // skinned: first joint matrix (transform is then culling bounds only)
+    uint joints;     // skinned: first of the instance's joint matrices
     uint pad;
 };
 
@@ -26,14 +31,33 @@ struct DrawInfo {
     uint skin;        // first SkinVertex, kFreeSlot if rigid
     uint vertexBase;  // the mesh's first vertex in the vertex pool
     uint vertexColors;  // 1: per-vertex displayColor, else color
-    uint pad0, pad1;
+    uint jointCount;
+    uint skinXforms;       // first skinning transform
+    uint jointBounds;      // first JointBounds (two vec4 each)
+    uint skinPerInstance;  // 1: jointCount skinning transforms per instance
+    uint blendWeights;     // first blend shape weight
+    uint blendShapes;      // weights per pose; 0: no blend shapes
+    uint blendPerInstance; // 1: blendShapes weights per instance
+    uint pad0, pad1, pad2;
+};
+
+struct SkinVertex {
+    uvec4 influence;  // four 16-bit joints (x, y), four unorm16 weights (z, w)
+    uvec4 blend;      // first blend shape offset, count
 };
 
 layout(std430, set = 0, binding = 7) readonly buffer Instances { Instance instances[]; };
 layout(std430, set = 0, binding = 8) readonly buffer Draws { DrawInfo draws[]; };
 // [0, cap): visible instances per mesh (culling output), [cap, 2*cap): identity.
 layout(std430, set = 0, binding = 9) SCENE_ACCESS buffer Visible { uint visible[]; };
-// Skinning: per vertex four 16-bit joints (x, y) and unorm16 weights (z, w);
-// joint matrices take rest points to world space.
-layout(std430, set = 0, binding = 15) readonly buffer Skin { uvec4 skin[]; };
-layout(std430, set = 0, binding = 16) readonly buffer Joints { mat4 joints[]; };
+// Skinning: per vertex its joint influences and blend shape range; joint
+// matrices take rest points to world space (built by skin.comp from the
+// skinning transforms and the instance transform); per joint the rest
+// bounds of the vertices it moves (min, max); blend shape offsets (xyz,
+// shape index) and weights.
+layout(std430, set = 0, binding = 15) readonly buffer Skin { SkinVertex skin[]; };
+layout(std430, set = 0, binding = 16) JOINTS_ACCESS buffer Joints { mat4 joints[]; };
+layout(std430, set = 0, binding = 21) readonly buffer SkinXforms { mat4 skinXforms[]; };
+layout(std430, set = 0, binding = 22) readonly buffer JointBounds { vec4 jointBounds[]; };
+layout(std430, set = 0, binding = 23) readonly buffer BlendOffsets { vec4 blendOffsets[]; };
+layout(std430, set = 0, binding = 24) readonly buffer BlendWeights { float blendWeights[]; };

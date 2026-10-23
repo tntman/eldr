@@ -50,6 +50,9 @@ const uint32_t kCullComp[] =
 const uint32_t kLightsComp[] =
 #include "lights.comp.inc"
 ;
+const uint32_t kSkinComp[] =
+#include "skin.comp.inc"
+;
 
 // Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and 63
 // indices each.
@@ -65,8 +68,25 @@ struct CullParams {
     float nearDistance;  // view depth of the near plane
     float minRadius;     // in pixels: smaller instances are dropped
     float orthographic;
+    uint32_t listBase;     // list of instance indices written (see kVisibleLists)
+    uint32_t commandBase;  // first of its draw commands
 };
+
 constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+// What the vertex stage reads of the same push range.
+struct DrawParams {
+    float viewProj[16];
+    uint32_t listBase;
+};
+
+void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewProj, uint32_t listBase)
+{
+    DrawParams p;
+    std::memcpy(p.viewProj, viewProj, sizeof(p.viewProj));
+    p.listBase = listBase;
+    vkCmdPushConstants(cmd, layout, kPushStages, 0, sizeof(p), &p);
+}
 
 // World-space frustum planes (xyz . p + w >= 0 inside) of a GL clip-space
 // viewProj in row-vector order (Gribb/Hartmann).
@@ -173,7 +193,7 @@ Renderer::~Renderer()
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
     for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
-                         _lightsPipeline}) {
+                         _lightsPipeline, _skinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -220,11 +240,13 @@ void Renderer::_CreateDescriptors()
     // lists and the culled indirect commands; 11 is the GTAO result, 12
     // and 13 last frame's color and this frame's depth for reflections, 14
     // the light clusters (written by lights.comp, which also reads 2 and 3),
-    // 15 and 16 the skinning pools (SkinVertex, joint matrices), 17..19
+    // 15, 16, 21 and 22 skinning (SkinVertex, joint matrices built by
+    // skin.comp, skinning transforms, per-joint rest bounds), 23 and 24
+    // blend shape offsets and weights, 17..19
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[21] = {
+    const VkDescriptorSetLayoutBinding bindings[25] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -246,20 +268,24 @@ void Renderer::_CreateDescriptors()
         {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {21, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
     };
-    const VkDescriptorBindingFlags bindingFlags[21] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[25] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 21;
+    flags.bindingCount = 25;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 21;
+    slci.bindingCount = 25;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 11},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 15},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -289,7 +315,8 @@ void Renderer::_CreatePipelines()
 
     const VkDevice device = _dev.device;
     for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
-                                         std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline}}) {
+                                         std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline},
+                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
         VkShaderModule module = CreateShaderModule(device, code, bytes);
         VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
@@ -529,6 +556,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo clusters{_clusters.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo skin{gpu.skin, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo joints{gpu.joints, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo skinXforms{gpu.skinXforms, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo jointBounds{gpu.jointBounds, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo blendOffsets{gpu.blendOffsets, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo blendWeights{gpu.blendWeights, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -566,6 +597,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lightShadows, nullptr);
     write(19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &shadowTiles, nullptr);
     write(20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &atlasDepth);
+    write(21, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &skinXforms, nullptr);
+    write(22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &jointBounds, nullptr);
+    write(23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendOffsets, nullptr);
+    write(24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendWeights, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -818,7 +853,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         const VkRect2D scissor{{int32_t(x), int32_t(y)}, {kShadowTileSize, kShadowTileSize}};
         vkCmdSetViewport(_cmd, 0, 1, &vp);
         vkCmdSetScissor(_cmd, 0, 1, &scissor);
-        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, t.viewProj);
+        PushDraw(_cmd, _layout, t.viewProj, gpu.instanceCapacity);  // identity list
         vkCmdDrawIndexedIndirect(_cmd, gpu.shadowCommands, 0, gpu.drawCount, sizeof(VkDrawIndexedIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
@@ -914,7 +949,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
     // Culling output; host-visible so VisibleInstances() can read it back.
-    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand),
+    // One set of commands for the camera and one per cascade.
+    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (1 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     _UpdateDescriptors(gpu);
@@ -929,9 +965,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const VkDeviceSize vertexOffset = 0;
     if (draw) {
         // GPU culling: reset the commands from the scene's template, then one
-        // invocation per instance slot appends survivors and counts them.
-        const VkBufferCopy reset{0, 0, VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand)};
-        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1, &reset);
+        // invocation per instance slot appends survivors and counts them,
+        // for the camera and for each shadow cascade.
+        const VkDeviceSize commandBytes = VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand);
+        VkBufferCopy resets[1 + kCascades];
+        for (uint32_t k = 0; k <= kCascades; ++k) {
+            resets[k] = {0, k * commandBytes, commandBytes};
+        }
+        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, shadows ? 1 + kCascades : 1, resets);
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toCull.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
         toCull.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
@@ -940,6 +981,19 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dep.memoryBarrierCount = 1;
         dep.pMemoryBarriers = &toCull;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+
+        // Joint matrices of all skinned instances, read by culling (bounds)
+        // and every vertex stage.
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _skinPipeline);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+        vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        VkMemoryBarrier2 jointsBuilt{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        jointsBuilt.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        jointsBuilt.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        jointsBuilt.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+        jointsBuilt.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
 
         CullParams cull{};
@@ -962,6 +1016,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
         vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        // Each cascade's ortho box (which spans the scene's whole depth
+        // towards the light, so every caster in it stays); instances under
+        // half a shadow texel are dropped.
+        for (uint32_t c = 0; shadows && c < kCascades; ++c) {
+            FrustumPlanes(fd.cascadeViewProj[c], cull.planes);
+            cull.orthographic = 1.0f;
+            cull.pixelScale = 1.0f / fd.cascadeTexel[c];
+            cull.listBase = (2 + c) * gpu.instanceCapacity;
+            cull.commandBase = (1 + c) * gpu.drawCount;
+            vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
+            vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        }
 
         VkMemoryBarrier2 toDraw{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toDraw.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -1016,12 +1082,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
             vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
-            vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, fd.cascadeViewProj[c]);
+            PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (2 + c) * gpu.instanceCapacity);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-            // ponytail: shadows draw every instance; per-cascade culling later.
-            vkCmdDrawIndexedIndirect(_cmd, gpu.shadowCommands, 0, gpu.drawCount,
-                                     sizeof(VkDrawIndexedIndirectCommand));
+            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                     VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
+                                     gpu.drawCount, sizeof(VkDrawIndexedIndirectCommand));
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -1061,7 +1127,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline);
-        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, jitteredViewProj);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
@@ -1118,7 +1184,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
-        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, jitteredViewProj);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,

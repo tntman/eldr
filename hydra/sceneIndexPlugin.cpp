@@ -37,7 +37,11 @@ TF_DEFINE_PRIVATE_TOKENS(
     (hasConstantInfluences)
     (skinningXforms)
     (skelLocalToWorld)
-    (primWorldToLocal));
+    (primWorldToLocal)
+    (blendShapeOffsets)
+    (blendShapeOffsetRanges)
+    (numBlendShapeOffsetRanges)
+    (blendShapeWeights));
 
 TF_DECLARE_REF_PTRS(_SkinningSceneIndex);
 
@@ -85,6 +89,10 @@ public:
             HdSkinningInputTokens->skinningXforms,
             HdSkinningInputTokens->skelLocalToCommonSpace,
             HdSkinningInputTokens->commonSpaceToPrimLocal,
+            HdSkinningInputTokens->blendShapeOffsets,
+            HdSkinningInputTokens->blendShapeOffsetRanges,
+            HdSkinningInputTokens->numBlendShapeOffsetRanges,
+            HdSkinningInputTokens->blendShapeWeights,
         };
         const HdDataSourceBaseHandle values[] = {
             primvar(rest.Get(_tokens->restPoints), HdPrimvarSchemaTokens->vertex, HdPrimvarRoleTokens->point),
@@ -95,9 +103,12 @@ public:
             primvar(pose.Get(_tokens->skinningXforms), constant, TfToken()),
             primvar(pose.Get(_tokens->skelLocalToWorld), constant, TfToken()),
             primvar(pose.Get(_tokens->primWorldToLocal), constant, TfToken()),
+            primvar(rest.Get(_tokens->blendShapeOffsets), constant, TfToken()),
+            primvar(rest.Get(_tokens->blendShapeOffsetRanges), constant, TfToken()),
+            primvar(rest.Get(_tokens->numBlendShapeOffsetRanges), constant, TfToken()),
+            primvar(pose.Get(_tokens->blendShapeWeights), constant, TfToken()),
         };
-        // ponytail: blend shapes and dual-quaternion skinning are dropped
-        // (linear blend of the rest points only).
+        // ponytail: dual-quaternion skinning is treated as linear blend.
         prim.dataSource = HdOverlayContainerDataSource::New(
             HdRetainedContainerDataSource::New(
                 HdPrimvarsSchema::GetSchemaToken(),
@@ -157,11 +168,15 @@ protected:
                 locators = {primvar(HdTokens->points), primvar(HdSkinningSkelInputTokens->geomBindTransform),
                             primvar(HdSkinningInputTokens->influences),
                             primvar(HdSkinningInputTokens->numInfluencesPerComponent),
-                            primvar(HdSkinningInputTokens->hasConstantInfluences)};
+                            primvar(HdSkinningInputTokens->hasConstantInfluences),
+                            primvar(HdSkinningInputTokens->blendShapeOffsets),
+                            primvar(HdSkinningInputTokens->blendShapeOffsetRanges),
+                            primvar(HdSkinningInputTokens->numBlendShapeOffsetRanges)};
             } else {
                 locators = {primvar(HdSkinningInputTokens->skinningXforms),
                             primvar(HdSkinningInputTokens->skelLocalToCommonSpace),
-                            primvar(HdSkinningInputTokens->commonSpaceToPrimLocal)};
+                            primvar(HdSkinningInputTokens->commonSpaceToPrimLocal),
+                            primvar(HdSkinningInputTokens->blendShapeWeights)};
             }
             dirtied.emplace_back(e.primPath.GetParentPath(), locators);
         }

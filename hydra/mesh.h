@@ -52,7 +52,11 @@ private:
     VtMatrix4fArray _skinningXforms; // per joint, or per instance and joint
     int _numJoints = 0;              // > 0: _skinningXforms holds every instance
     GfMatrix4d _skelToPrim{1.0};     // skelLocalToWorld * primWorldToLocal
-    VtMatrix4dArray _instanceXforms; // world transform per instance (mesh xform first)
+    VtVec4fArray _blendOffsets;      // xyz offset, shape index
+    VtVec2iArray _blendRanges;       // per point: [first, end) into _blendOffsets
+    int _blendRangeCount = 0;        // points with a range
+    VtFloatArray _blendWeights;      // per shape, or per instance and shape
+    int _numBlendShapeWeights = 0;   // > 0: _blendWeights holds every instance
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

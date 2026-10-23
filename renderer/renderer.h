@@ -103,6 +103,7 @@ private:
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
+    VkPipeline _skinPipeline = VK_NULL_HANDLE;      // joint matrices from skinning transforms
     Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
     uint32_t _lastDrawCount = 0;

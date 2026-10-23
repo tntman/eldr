@@ -14,6 +14,7 @@ layout(location = 3) in vec4 inVertexColor;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
+    uint listBase;  // which list of instance indices (kVisibleLists) this pass draws
 } pc;
 
 layout(location = 0) out vec3 outWorldPos;
@@ -29,13 +30,23 @@ invariant gl_Position;
 
 void main()
 {
-    Instance inst = instances[visible[gl_InstanceIndex]];
+    Instance inst = instances[visible[pc.listBase + gl_InstanceIndex]];
     DrawInfo d = draws[inst.draw];
     mat4 model = inst.transform;
     mat3 normalMatrix;
+    vec3 position = inPosition;
     if (d.skin != kFreeSlot) {
+        SkinVertex v = skin[d.skin + uint(gl_VertexIndex) - d.vertexBase];
+        // Blend shapes move the rest point first (UsdSkel's order).
+        if (d.blendShapes > 0u) {
+            uint weights = d.blendWeights + (d.blendPerInstance != 0u ? uint(inst.index) * d.blendShapes : 0u);
+            for (uint k = 0u; k < v.blend.y; ++k) {
+                vec4 o = blendOffsets[v.blend.x + k];
+                position += o.xyz * blendWeights[weights + min(uint(o.w), d.blendShapes - 1u)];
+            }
+        }
         // Linear blend skinning: the weighted sum of this vertex's joint matrices.
-        uvec4 s = skin[d.skin + uint(gl_VertexIndex) - d.vertexBase];
+        uvec4 s = v.influence;
         vec4 w = vec4(unpackUnorm2x16(s.z), unpackUnorm2x16(s.w));
         model = (w.x * joints[inst.joints + (s.x & 0xFFFFu)] + w.y * joints[inst.joints + (s.x >> 16)] +
                  w.z * joints[inst.joints + (s.y & 0xFFFFu)] + w.w * joints[inst.joints + (s.y >> 16)]) /
@@ -44,7 +55,7 @@ void main()
     } else {
         normalMatrix = transpose(inverse(mat3(model)));
     }
-    vec4 world = model * vec4(inPosition, 1.0);
+    vec4 world = model * vec4(position, 1.0);
     gl_Position = pc.viewProj * world;
     // Hydra hands us GL clip space (z in [-w, w]); Vulkan clips z to [0, w].
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
