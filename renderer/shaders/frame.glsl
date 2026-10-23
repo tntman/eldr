@@ -40,11 +40,14 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 probeMax;
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
+    vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
 // 256: kFeatureProcedurals (program.glsl)
+const uint kFeatureDisplacement = 1024u;  // a drawn material displaces (displace.glsl)
+const uint kFeatureLod = 2048u;           // levels of detail (cull.comp)
 // Soft sun shadows (PCSS from the distant light's angle), volumetric fog,
 // the reflection probe, planar reflections.
 const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 262144u, kFeaturePlanar = 524288u;

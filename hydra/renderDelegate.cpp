@@ -13,6 +13,7 @@
 #include "field.h"
 #include "volume.h"
 #endif
+#include "subdivision.h"
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
@@ -147,6 +148,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
+        {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
+        {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
+        {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
+        {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
@@ -208,6 +213,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
+        {"Displacement", t.displacement, VtValue(frame.displacement)},
+        {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
@@ -242,6 +249,23 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     });
 #endif
     return settings;
+}
+
+void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &value)
+{
+    const auto &t = *HdVkRenderSettingsTokens;
+    const bool geometry = (key == t.subdivision || key == t.maxRefineLevel) && GetRenderSetting(key) != value;
+    HdRenderDelegate::SetRenderSetting(key, value);
+    // Through the scene: a scene index render index's change tracker can't
+    // dirty prims, and nothing may during a sync (this runs between frames).
+    if (geometry && _terminalSceneIndex) {
+        HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+    }
+}
+
+void HdVkRenderDelegate::SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex)
+{
+    _terminalSceneIndex = terminalSceneIndex;
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(
@@ -363,7 +387,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["trianglesTotal"] = size_t(gpu.triangleCount);
     stats["instancesDrawn"] = size_t(frame.instances);
     stats["instancesTotal"] = size_t(gpu.instanceCount);
-    stats["meshes"] = size_t(gpu.drawCount);
+    stats["meshes"] = size_t(gpu.meshCount);
     stats["drawCalls"] = size_t(frame.drawCalls);
     stats["volumes"] = size_t(gpu.volumeCount);
     stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;

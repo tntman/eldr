@@ -3,6 +3,9 @@
 #include "device.h"
 #include "ibl.h"
 #include "volume.h"
+#include "lod.h"
+
+#include <future>
 
 #include <map>
 #include <memory>
@@ -256,6 +259,15 @@ struct Material {
     float subsurface = 0;
     float subsurfaceColor[3] = {1, 1, 1};
     float subsurfaceRadius[3] = {1, 1, 1};
+
+    // Displacement (mesh.vert, every pass): an offset along the vertex
+    // normal in object units, displacementTex's texel (its channel, scale
+    // and bias) where it has a texture, else `displacement`; the shading
+    // pass bumps the normal by the texture's slope. displacementBound: the
+    // largest offset either way (culling bounds).
+    float displacement = 0;
+    float displacementBound = 0;
+    TextureRef displacementTex;
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -365,6 +377,17 @@ private:
     // Emissive lights: the object-space area of `points`, at this version.
     float _emitterArea = 0;
     uint64_t _emitterAreaVersion = 0;
+    // Levels of detail (lod.h), coarser and coarser: their triangles in the
+    // index pool after the mesh's own, and instance slots (never valid)
+    // reserving levels 2 and 3 their range of the visible lists.
+    struct Lod {
+        uint32_t firstIndex, indexCount;
+        float error;  // relative to the bounding radius
+    };
+    std::vector<Lod> _lods;
+    uint32_t _lodFirstIndex = 0, _lodIndexCount = 0;
+    uint32_t _lodInstanceBase = 0, _lodInstanceCount = 0;
+    uint32_t _lodGeneration = 0;  // geometry uploads, to drop stale levels
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -429,7 +452,7 @@ struct Instance {
 static_assert(sizeof(Instance) == 64, "std430 mirror in shaders/scene.glsl");
 struct DrawInfo {
     float boundsMin[4];  // object space
-    float boundsMax[4];
+    float boundsMax[4];  // w: Material::displacementBound
     float color[4];      // displayColor
     uint32_t material;   // kNoMaterial: color + default material
     int32_t primId;
@@ -475,6 +498,11 @@ constexpr uint32_t kMaxTextures = 4096;
 // shadow atlas tile being drawn (reused tile after tile). Passes that draw
 // every instance read the instance pool directly (list kNone).
 constexpr uint32_t kVisibleLists = 6;
+// Levels of detail: meshes from kLodMinTriangles get up to kMaxLods coarser
+// levels, each about half the triangles, none moving the surface more than
+// kLodMaxError of the mesh's bounding radius.
+constexpr uint32_t kLodMinTriangles = 1000, kMaxLods = 3, kLodMaxInstances = 1u << 20;
+constexpr float kLodMaxError = 0.25f;
 
 // Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
 class RangeAllocator {
@@ -510,6 +538,8 @@ public:
 
     // Uploads dirty data. The GPU must be idle.
     void Commit();
+    // Levels of detail are still building (a later Commit adds them).
+    bool LodsPending() const { return !_pendingLods.empty(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
@@ -554,7 +584,7 @@ public:
         VkBuffer primvarTable = VK_NULL_HANDLE;
         VkBuffer primvarData = VK_NULL_HANDLE;      // float
         VkBuffer primvarVertices = VK_NULL_HANDLE;  // vec4 per vertex of meshes with vertex-rate primvars
-        uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
+        uint32_t drawCount = 0;         // command slots: meshCount meshes' (some may draw nothing), then levels'
         // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
         // even with every instance visible.
@@ -565,10 +595,12 @@ public:
         // kProgram (a material program, shading pass only) with kProcedural
         // (it runs noise, MaterialProgram::Procedural), kLayers (lobes
         // beyond the metallic base, Material::Layered, or Mesh::hair; shading
-        // pass only): kind >> 2 picks the renderer's pipeline variant. Chunks
-        // also end where it changes.
+        // pass only), kDisplaced (a displacing material; every pass): kind >>
+        // 2 picks the renderer's pipeline variant. Chunks also end where it
+        // changes.
         enum : uint8_t {
-            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64
+            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
+            kDisplaced = 128
         };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
@@ -651,6 +683,17 @@ public:
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        // Displacement: per material (as `materials`) its constant, bound
+        // and texture (shaders/displace.glsl); whether a drawn one displaces.
+        VkBuffer displacements = VK_NULL_HANDLE;
+        bool displaced = false;
+        // Levels of detail: per mesh slot its LOD commands and their ranges
+        // of the visible lists (shaders/cull.comp's Lod). The LOD commands
+        // are slots after the meshes' (drawCount counts both): level 1
+        // fills the mesh's range from its end, levels 2 and 3 a second
+        // range from either end.
+        VkBuffer lods = VK_NULL_HANDLE;
+        uint32_t meshCount = 0;  // mesh slots, the first of the drawCount slots
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -726,6 +769,18 @@ private:
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> _poolGrids;
 
     Gpu _gpu;
+    Buffer _displacements;  // Gpu::displacements
+    Buffer _lodTable;       // Gpu::lods
+    void _StoreLods(Mesh &mesh, std::vector<LodLevel> levels);
+    void _ReserveLodInstances(Mesh &mesh);
+    // Levels of detail building in the background, for a mesh's upload
+    // (generation); mesh null once it was removed.
+    struct PendingLods {
+        Mesh *mesh;
+        uint32_t generation;
+        std::future<std::vector<LodLevel>> levels;
+    };
+    std::vector<PendingLods> _pendingLods;
 };
 
 } // namespace vkr

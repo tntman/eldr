@@ -1,8 +1,10 @@
 ﻿#include "scene.h"
 
 #include "vkmath.h"
+#include "lod.h"
 
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -48,6 +50,15 @@ struct GpuMaterial {
     float subsurfaceRadius[4];  // Material::subsurfaceRadius
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
+struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
+    float params[4];      // Material::displacement, displacementBound
+    GpuTexRef tex;
+};
+struct GpuLod {           // mirror of Lod in shaders/cull.comp
+    uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
+    uint32_t regions[4];  // where level 1 fills back from; levels 2, 3: the second range's start and end
+    float errors[4];      // levels 1..3, relative to the bounding radius
+};
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
@@ -106,12 +117,17 @@ struct VertexKey {
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
+    // Eight bytes a step (FNV-1a byte by byte was a good part of a big
+    // scene's upload time).
     size_t operator()(const VertexKey &k) const
     {
-        uint64_t h = 1469598103934665603ull;  // FNV-1a
+        uint64_t h = 1469598103934665603ull;
         const auto *p = reinterpret_cast<const uint8_t *>(&k);
-        for (size_t i = 0; i < sizeof(VertexKey); ++i) {
-            h = (h ^ p[i]) * 1099511628211ull;
+        for (size_t i = 0; i < sizeof(VertexKey); i += 8) {
+            uint64_t w = 0;
+            std::memcpy(&w, p + i, std::min<size_t>(8, sizeof(VertexKey) - i));
+            h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+            h ^= h >> 29;
         }
         return size_t(h);
     }
@@ -239,6 +255,8 @@ Scene::~Scene()
                           &_volumeGrids}) {
             _device->Destroy(*b);
         }
+        _device->Destroy(_displacements);
+        _device->Destroy(_lodTable);
         _DestroyEnvironment();
     }
 }
@@ -412,7 +430,11 @@ void Scene::RemoveMesh(Mesh *mesh)
         _blendAlloc.Free(mesh->_blendBase, mesh->_blendSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
         _primvarVertexAlloc.Free(mesh->_primvarVertexOffset, mesh->_primvarVertexCount);
+        _indexAlloc.Free(mesh->_lodFirstIndex, mesh->_lodIndexCount);
         _FreeInstances(*mesh);
+        for (PendingLods &p : _pendingLods) {
+            p.mesh = p.mesh == mesh ? nullptr : p.mesh;  // finishes, then is dropped
+        }
     }
     const size_t slot = mesh->_slot;
     _RemoveSlot(_meshes, mesh);
@@ -541,7 +563,10 @@ void Scene::_UploadGeometry(Mesh &m)
     _skinAlloc.Free(m._skinOffset, m._skinCount);
     _blendAlloc.Free(m._blendBase, m._blendSlots);
     _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
-    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = 0;
+    _indexAlloc.Free(m._lodFirstIndex, m._lodIndexCount);
+    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = m._lodIndexCount = 0;
+    m._lods.clear();
+    ++m._lodGeneration;  // levels still building for the last upload don't fit
     m._jointBounds.clear();
     m.geometryDirty = false;
     static std::atomic<uint64_t> geometryVersions{0};
@@ -738,6 +763,53 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = vertexCount;
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
+    // Levels of detail of heavy meshes (lod.h), built on other threads; a
+    // later Commit stores them (the mesh draws whole until then).
+    if (indexCount / 3 >= kLodMinTriangles) {
+        std::vector<float> positions(vertices.size() * 3);
+        for (size_t v = 0; v < vertices.size(); ++v) {
+            std::copy_n(vertices[v].position, 3, &positions[v * 3]);
+        }
+        // Skinned: each vertex's influences (joint, weight), m.influences each.
+        std::vector<std::pair<uint32_t, float>> influences;
+        for (size_t v = 0; skinned && v < vertices.size(); ++v) {
+            for (uint32_t k = 0; k < m.influences; ++k) {
+                const SkinVertex &sv = skin[v * (m.influences == 8 ? 2 : 1) + k / 4];
+                const uint32_t pair = sv.weights[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu;
+                influences.push_back({sv.joints[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu, float(pair) / 65535.0f});
+            }
+        }
+        const uint32_t n = m.influences;
+        _pendingLods.push_back(
+            {&m, m._lodGeneration,
+             std::async(std::launch::async, [positions = std::move(positions), indices,
+                                             influences = std::move(influences), n] {
+                 // Half the L1 distance of two vertices' joint weights.
+                 auto difference = [&](uint32_t a, uint32_t b) {
+                     float d = 0.0f;
+                     for (uint32_t i = 0; i < n; ++i) {
+                         const auto [joint, weight] = influences[size_t(a) * n + i];
+                         float other = 0.0f;
+                         for (uint32_t k = 0; k < n; ++k) {
+                             other += influences[size_t(b) * n + k].first == joint ? influences[size_t(b) * n + k].second
+                                                                                   : 0.0f;
+                         }
+                         d += std::abs(weight - other);
+                     }
+                     for (uint32_t k = 0; k < n; ++k) {  // b's joints a lacks
+                         const auto [joint, weight] = influences[size_t(b) * n + k];
+                         bool shared = false;
+                         for (uint32_t i = 0; i < n; ++i) {
+                             shared = shared || influences[size_t(a) * n + i].first == joint;
+                         }
+                         d += shared ? 0.0f : weight;
+                     }
+                     return 0.5f * d;
+                 };
+                 return BuildLods(positions.data(), 3, positions.size() / 3, indices, kMaxLods, kLodMaxError,
+                                  influences.empty() ? std::function<float(uint32_t, uint32_t)>() : difference);
+             })});
+    }
     if (packed > 0) {
         while (!_primvarVertexAlloc.Allocate(vertexCount, &m._primvarVertexOffset)) {
             _EnsureCapacity(_primvarVertices, _primvarVertexAlloc, vertexCount, 4 * sizeof(float),
@@ -781,6 +853,48 @@ void Scene::_UploadGeometry(Mesh &m)
     }
 }
 
+// A mesh's levels of detail (BuildLods' output): their triangles after its
+// own in the index pool.
+void Scene::_StoreLods(Mesh &m, std::vector<LodLevel> levels)
+{
+    std::vector<uint32_t> indices;
+    for (const LodLevel &level : levels) {
+        m._lods.push_back({uint32_t(indices.size()), uint32_t(level.indices.size()), level.error});
+        indices.insert(indices.end(), level.indices.begin(), level.indices.end());
+    }
+    m._lodIndexCount = uint32_t(indices.size());
+    while (!_indexAlloc.Allocate(m._lodIndexCount, &m._lodFirstIndex)) {
+        _EnsureCapacity(_indices, _indexAlloc, m._lodIndexCount, sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                        false);
+    }
+    for (Mesh::Lod &lod : m._lods) {
+        lod.firstIndex += m._lodFirstIndex;
+    }
+    if (!indices.empty()) {
+        _copies.push_back({_indices.buffer, VkDeviceSize(m._lodFirstIndex) * sizeof(uint32_t),
+                           _Stage(indices.data(), indices.size() * sizeof(uint32_t)),
+                           indices.size() * sizeof(uint32_t)});
+    }
+    _ReserveLodInstances(m);
+}
+
+// Levels 2 and 3 of detail fill a range of the visible lists of their own
+// (Gpu::lods): instance slots that stay invalid.
+// ponytail: past kLodMaxInstances instances a mesh keeps one coarser level
+// (no second range), so huge instancing doesn't double its pools.
+void Scene::_ReserveLodInstances(Mesh &m)
+{
+    const uint32_t slots = m._lods.size() > 1 && m._instanceCount <= kLodMaxInstances ? m._instanceCount : 0;
+    if (slots != m._lodInstanceCount) {
+        _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);
+        while (!_instanceAlloc.Allocate(slots, &m._lodInstanceBase)) {
+            _EnsureCapacity(_instances, _instanceAlloc, slots, sizeof(Instance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            true);
+        }
+        m._lodInstanceCount = slots;
+    }
+}
+
 void Scene::_FreeInstances(Mesh &m)
 {
     if (m._instanceCount > 0) {
@@ -789,6 +903,8 @@ void Scene::_FreeInstances(Mesh &m)
                           VkDeviceSize(m._instanceCount) * sizeof(Instance)});
     }
     m._instanceCount = 0;
+    _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);  // never written: still invalid
+    m._lodInstanceCount = 0;
 }
 
 // Rewrites only this mesh's range of the instance pool; reallocates it when
@@ -808,6 +924,7 @@ void Scene::_UploadInstances(Mesh &m)
         m._instanceBase = base;
         m._instanceCount = count;
     }
+    _ReserveLodInstances(m);
     if (count == 0) {
         return;
     }
@@ -1228,6 +1345,19 @@ void Scene::Commit()
         _gpu.moved = _gpu.moved || (joints && !geometry);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
+    // Levels of detail that finished building, for meshes they still fit.
+    for (auto it = _pendingLods.begin(); it != _pendingLods.end();) {
+        if (it->levels.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+        std::vector<LodLevel> levels = it->levels.get();
+        if (it->mesh && it->generation == it->mesh->_lodGeneration) {
+            _StoreLods(*it->mesh, std::move(levels));
+            changed = true;
+        }
+        it = _pendingLods.erase(it);
+    }
     _Flush();
 
     // Per-mesh tables, materials and textures are small: rebuilt every
@@ -1323,9 +1453,13 @@ void Scene::Commit()
     };
 
     const size_t slots = _meshes.size();
+    size_t commandSlots = slots;  // levels of detail have commands after the meshes'
+    for (const auto &m : _meshes) {
+        commandSlots += m->_lods.size();
+    }
     const uint32_t capacity = _instanceAlloc.Capacity();
     _device->Reserve(_draws, slots * sizeof(DrawInfo), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    _device->Reserve(_commandTemplate, slots * sizeof(VkDrawIndexedIndirectCommand),
+    _device->Reserve(_commandTemplate, commandSlots * sizeof(VkDrawIndexedIndirectCommand),
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
@@ -1354,6 +1488,7 @@ void Scene::Commit()
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
+        d.boundsMax[3] = drawable && m.material ? m.material->displacementBound : 0.0f;
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
@@ -1363,7 +1498,8 @@ void Scene::Commit()
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
                                 (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
-                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0);
+                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
+                                (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;
@@ -1450,14 +1586,47 @@ void Scene::Commit()
     // ponytail: a single slot over the budget stays one call; splitting it
     // needs instance ranges.
     constexpr double kChunkTriangles = 5e8;
+    // Levels of detail (cull.comp picks one per instance): commands drawn
+    // with their mesh's pipeline, counted at most all its instances.
+    std::vector<GpuLod> lods(std::max<size_t>(slots, 1), GpuLod{});
+    std::vector<double> weight(commandSlots);  // triangles a slot draws at most
+    kind.resize(commandSlots);
+    for (size_t slot = 0, next = slots; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        weight[slot] = double(drawn[slot]) * double(m._indexCount / 3);
+        GpuLod &g = lods[slot];
+        g.slots[0] = uint32_t(next);
+        // Translucent meshes draw per slot, without levels; displaced ones
+        // keep their density (the levels' errors don't see displacement).
+        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ? 0
+                     : m._lodInstanceCount > 0                           ? uint32_t(m._lods.size())
+                                                                         : std::min<uint32_t>(uint32_t(m._lods.size()), 1);
+        const uint32_t firsts[3] = {m._instanceBase + m._instanceCount, m._lodInstanceBase,
+                                    m._lodInstanceBase + m._lodInstanceCount};
+        std::copy(firsts, firsts + 3, g.regions);
+        for (size_t k = 0; k < m._lods.size(); ++k, ++next) {
+            const Mesh::Lod &lod = m._lods[k];
+            templates[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
+            kind[next] = kind[slot];
+            weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
+            g.errors[k] = lod.error;
+        }
+    }
+    _device->Reserve(_lodTable, lods.size() * sizeof(GpuLod), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(lods.begin(), lods.end(), static_cast<GpuLod *>(_lodTable.mapped));
+    _gpu.lods = _lodTable.buffer;
+    _gpu.meshCount = uint32_t(slots);
+
     _gpu.drawChunks.assign(1, 0);
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
     _gpu.instanceCount = _gpu.triangleCount = 0;
     double triangles = 0;
-    for (size_t slot = 0; slot < slots; ++slot) {
-        const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
-        _gpu.instanceCount += drawn[slot];
-        _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
+    for (size_t slot = 0; slot < commandSlots; ++slot) {
+        const double t = weight[slot];
+        if (slot < slots) {
+            _gpu.instanceCount += drawn[slot];
+            _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
+        }
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
@@ -1469,7 +1638,7 @@ void Scene::Commit()
         _gpu.chunkKind.back() = kind[slot];
         triangles += t;
     }
-    _gpu.drawChunks.push_back(uint32_t(slots));
+    _gpu.drawChunks.push_back(uint32_t(commandSlots));
 
     // Visibility edits change what shadows draw without any upload.
     if (changed || drawn != _lastDrawn) {
@@ -1481,6 +1650,20 @@ void Scene::Commit()
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
 
+    // Displacement, per material slot.
+    std::vector<GpuDisplacement> displacements(std::max<size_t>(materials.size(), 1), GpuDisplacement{});
+    _gpu.displaced = false;
+    for (const auto &[material, slot] : materialSlots) {
+        GpuDisplacement &g = displacements[slot];
+        g.params[0] = material->displacement;
+        g.params[1] = material->displacementBound;
+        g.tex = texRef(material->displacementTex);
+        _gpu.displaced = _gpu.displaced || material->displacementBound > 0;
+    }
+    _device->Reserve(_displacements, displacements.size() * sizeof(GpuDisplacement),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
+    _gpu.displacements = _displacements.buffer;
     // Planar reflections' mirror: a flagged flat mesh, else the largest
     // glossy one (its world bounds' diagonal) spanning a third of the scene.
     // ponytail: one mirror, from its first instance.
@@ -1737,7 +1920,7 @@ void Scene::Commit()
     _gpu.blendOffsets = _blendOffsets.buffer;
     _gpu.blendWeights = _blendWeights.buffer;
     _gpu.blendWeightsBytes = _blendWeights.size;
-    _gpu.drawCount = uint32_t(slots);
+    _gpu.drawCount = uint32_t(commandSlots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;

@@ -1,13 +1,16 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 #define SCENE_WRITABLE
+#include "frame.glsl"
 #include "scene.glsl"
+#include "displace.glsl"
 
 // Frustum and small-object culling, one invocation per instance slot:
 // survivors are appended to their mesh's visible list and counted into its
-// indirect command. Instances under half a pixel in radius are dropped (the
-// coarsest level of detail, e.g. distant crowd agents).
-// ponytail: no Hi-Z occlusion, and no mesh LODs to pick from yet.
+// indirect command, or a level of detail's. Instances under half a pixel in
+// radius are dropped (the coarsest level, e.g. distant crowd agents).
+// ponytail: no Hi-Z occlusion.
 
 struct DrawCommand {  // VkDrawIndexedIndirectCommand
     uint indexCount;
@@ -29,6 +32,48 @@ layout(push_constant) uniform CullParams {
     uint listBase;       // this pass's list of instance indices
     uint commandBase;    // and its draw commands
 } pc;
+
+// Levels of detail (Scene::Gpu::lods), per mesh slot.
+struct Lod {
+    uvec4 slots;    // x: level 1's command slot (2 and 3 follow), y: levels
+    uvec4 regions;  // visible ranges: x level 1 fills back from; y level 2 fills from, z level 3 back from
+    vec4 errors;    // levels 1..3: how far the surface moved, relative to the bounding radius
+};
+layout(std430, set = 0, binding = 40) readonly buffer Lods { Lod lods[]; };
+// Per instance slot the camera's last level (bits 0..1) and the frame it
+// picked it in (frame.geometry.z).
+layout(std430, set = 0, binding = 41) buffer LodState { uint lodState[]; };
+
+// The coarsest level whose error stays under a pixel (times 2^bias) at
+// `radius` pixels. The camera's keeps a band around its last level, so an
+// instance near the threshold doesn't flicker between two. Shadows take
+// the camera's level where the camera draws the instance this frame: a
+// shadow map of other geometry than the shaded one shadows its facets.
+uint LodLevel(Lod l, uint i, float radius)
+{
+    uint epoch = uint(frame.geometry.z);  // this frame, as lodState holds it
+    if (pc.listBase != 0u && lodState[i] >> 2u == epoch) {
+        return min(lodState[i] & 3u, l.slots.y);
+    }
+    float limit = exp2(frame.geometry.y);
+    uint level = 0u, strict = 0u;
+    for (uint k = 1u; k <= l.slots.y; ++k) {
+        float e = l.errors[k - 1u] * radius;
+        level = e <= limit ? k : level;
+        strict = e <= 0.8 * limit ? k : strict;
+    }
+    if (pc.listBase != 0u) {
+        return level;
+    }
+    uint last = min(lodState[i] & 3u, l.slots.y);
+    if (last > level && l.errors[last - 1u] * radius <= 1.25 * limit) {
+        level = last;  // finer only clearly over the limit
+    } else if (last < level) {
+        level = max(strict, last);  // coarser only clearly under it
+    }
+    lodState[i] = level | epoch << 2u;
+    return level;
+}
 
 layout(local_size_x = 64) in;
 
@@ -74,6 +119,7 @@ void main()
         wc = (xf * vec4(c, 1.0)).xyz;
         we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
     }
+    we += DisplacementReach(d, inst);
     for (int p = 0; p < 6; ++p) {
         vec4 plane = pc.planes[p];
         if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
@@ -86,6 +132,21 @@ void main()
         return;
     }
     uint command = pc.commandBase + inst.draw;
-    uint slot = atomicAdd(commands[command].instanceCount, 1u);
-    visible[pc.listBase + commands[command].firstInstance + slot] = i;
+    uint level = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u
+        ? LodLevel(lods[inst.draw], i, radius) : 0u;
+    if (level == 0u) {
+        uint slot = atomicAdd(commands[command].instanceCount, 1u);
+        visible[pc.listBase + commands[command].firstInstance + slot] = i;
+        return;
+    }
+    // Levels 1 and 3 fill their range from its end: the command starts at
+    // the last one written.
+    Lod l = lods[inst.draw];
+    command = pc.commandBase + l.slots.x + level - 1u;
+    uint n = atomicAdd(commands[command].instanceCount, 1u);
+    uint at = level == 2u ? l.regions.y + n : (level == 1u ? l.regions.x : l.regions.z) - 1u - n;
+    if (level != 2u) {
+        atomicMin(commands[command].firstInstance, at);
+    }
+    visible[pc.listBase + at] = i;
 }

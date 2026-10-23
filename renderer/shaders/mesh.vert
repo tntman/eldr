@@ -1,7 +1,10 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 
+#include "frame.glsl"
 #include "scene.glsl"
+#include "displace.glsl"
 
 // Shared by the main pass (camera viewProj, culled instance lists) and the
 // shadow pass (cascade viewProj, identity lists); the shadow pipeline has no
@@ -165,7 +168,9 @@ void main()
     DrawInfo d = draws[inst.draw];
     mat4 model = InstanceTransform(inst);
     mat3 normalMatrix;
-    vec3 position = inPosition, prevPosition = inPosition;
+    // Displaced along the rest normal before anything moves it, the same in
+    // every pass (displace.glsl).
+    vec3 position = Displace(inPosition, inNormal, d.material, inUv), prevPosition = position;
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {

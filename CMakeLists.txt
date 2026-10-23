@@ -34,7 +34,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
-                renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
+                renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -61,7 +62,7 @@ foreach(shader mesh.vert mesh.frag aov.frag)
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
-                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
@@ -79,7 +80,7 @@ foreach(variant layers graph_layers)
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
-                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -87,7 +88,8 @@ set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
-    DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl)
+    DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
+            renderer/shaders/displace.glsl)
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
@@ -95,7 +97,7 @@ add_library(vkrenderer STATIC
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp
-    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
@@ -107,8 +109,8 @@ target_link_libraries(vkrtest PRIVATE vkrenderer)
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
-    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp)
-target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio sdr vkrenderer)
+    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp)
+target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
 # which installs OpenVDB and its NanoVDB headers beside USD): the volume
@@ -183,6 +185,12 @@ if(WIN32)
         add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
         set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
+    add_test(NAME subdivision COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_subdivision.py)
+    set_tests_properties(subdivision PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME displacement COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_displacement.py)
+    set_tests_properties(displacement PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lod COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lod.py)
+    set_tests_properties(lod PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

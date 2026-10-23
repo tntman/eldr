@@ -1,0 +1,160 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Subdivision surfaces, refined with usdview's Complexity (Low draws the
+# cages). Left to right: a catmullClark cube with an infinitely sharp
+# crease around its top face, a sharp corner and face-varying uvs (a
+# texture's quadrants on each face); a smooth cube with vertex colours and a
+# red GeomSubset on its front face; a cube with its top face a hole; a loop
+# octahedron; a bilinear cube (stays a cube, faceted).
+
+def Camera "cam"
+{
+    float focalLength = 24
+    float horizontalAperture = 36
+    float verticalAperture = 18
+    double3 xformOp:translate = (0, 3.2, 12)
+    float xformOp:rotateX = -12
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.4
+}
+
+def Scope "mtl"
+{
+    def Material "ground"
+    {
+        token outputs:surface.connect = </mtl/ground/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.9
+            token outputs:surface
+        }
+    }
+
+    def Material "quadrants"
+    {
+        token outputs:surface.connect = </mtl/quadrants/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/quadrants/tex.outputs:rgb>
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/quadrants/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.05, 0.05)
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+}
+
+def Mesh "ground" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-8, 0, -6), (8, 0, -6), (8, 0, 6), (-8, 0, 6)]
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/ground>
+}
+
+class Mesh "_cube"
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-1, -1, 1), (1, -1, 1), (-1, 1, 1), (1, 1, 1), (-1, 1, -1), (1, 1, -1), (-1, -1, -1), (1, -1, -1)]
+    uniform token subdivisionScheme = "catmullClark"
+}
+
+def Mesh "creased" (inherits = </_cube>; prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] creaseIndices = [2, 3, 5, 4, 2]
+    int[] creaseLengths = [5]
+    float[] creaseSharpnesses = [10]
+    int[] cornerIndices = [1]
+    float[] cornerSharpnesses = [10]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    int[] primvars:st:indices = [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 2, 3]
+    rel material:binding = </mtl/quadrants>
+    double3 xformOp:translate = (-5.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "smooth" (inherits = </_cube>)
+{
+    color3f[] primvars:displayColor = [(1, 0.2, 0.2), (0.2, 1, 0.2), (0.2, 0.2, 1), (1, 1, 0.2), (0.2, 1, 1), (1, 0.2, 1), (1, 1, 1), (0.2, 0.2, 0.2)] (interpolation = "vertex")
+    double3 xformOp:translate = (-2.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def GeomSubset "front" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        uniform token elementType = "face"
+        uniform token familyName = "materialBind"
+        int[] indices = [0]
+        rel material:binding = </mtl/red>
+    }
+}
+
+def Mesh "holed" (inherits = </_cube>)
+{
+    int[] holeIndices = [1]
+    color3f[] primvars:displayColor = [(0.9, 0.7, 0.3)]
+    double3 xformOp:translate = (0, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "loop"
+{
+    int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+    int[] faceVertexIndices = [0, 2, 4, 2, 1, 4, 1, 3, 4, 3, 0, 4, 2, 0, 5, 1, 2, 5, 3, 1, 5, 0, 3, 5]
+    point3f[] points = [(1.3, 0, 0), (-1.3, 0, 0), (0, 0, -1.3), (0, 0, 1.3), (0, 1.3, 0), (0, -1.3, 0)]
+    uniform token subdivisionScheme = "loop"
+    color3f[] primvars:displayColor = [(0.3, 0.6, 0.9)]
+    double3 xformOp:translate = (2.6, 1.3, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "bilinear" (inherits = </_cube>)
+{
+    uniform token subdivisionScheme = "bilinear"
+    color3f[] primvars:displayColor = [(0.7, 0.7, 0.7)]
+    double3 xformOp:translate = (5.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

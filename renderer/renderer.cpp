@@ -44,6 +44,7 @@ struct FrameData {
     float probeMax[4];
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
+    float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
 };
 
 namespace {
@@ -94,6 +95,7 @@ const uint32_t kShadowTintFrag[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 constexpr uint32_t kFeatureProcedurals = 256;
+constexpr uint32_t kFeatureDisplacement = 1024, kFeatureLod = 2048;
 // Material lobes, as shaders/brdf.glsl numbers them.
 constexpr uint32_t kFeatureSpecularWorkflow = 8, kFeatureClearcoat = 16, kFeatureSheen = 32, kFeatureThinFilm = 64,
                    kFeatureAnisotropy = 128;
@@ -328,6 +330,7 @@ Renderer::~Renderer()
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
     _dev.Destroy(_prevJoints);
+    _dev.Destroy(_lodState);
     _dev.Destroy(_prevBlendWeights);
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
@@ -335,13 +338,13 @@ Renderer::~Renderer()
     for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
-    for (int v = 0; v < 4; ++v) {
+    for (uint32_t v = 0; v < kVariants; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
                              _shadowCutoutPipeline[v], _tintDepthPipeline[v], _tintColorPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
-    for (int v = 0; v < 32; ++v) {
+    for (uint32_t v = 0; v < kVariants; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
@@ -410,11 +413,14 @@ void Renderer::_CreateDescriptors()
     const VkShaderStageFlags kRt = _dev.rayTracing ? VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
                                                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR
                                                    : 0;
+    // Displacement (displace.glsl) reads textures, the frame and the UDIM
+    // table in the vertex stage too.
+    constexpr VkShaderStageFlags kVertex = VK_SHADER_STAGE_VERTEX_BIT;
     const VkDescriptorSetLayoutBinding bindings[] = {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kRt},
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kRt | kVertex},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},
-        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kRt},
+        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kRt | kVertex},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -436,7 +442,7 @@ void Renderer::_CreateDescriptors()
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
+        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -473,6 +479,11 @@ void Renderer::_CreateDescriptors()
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        // Displacement per material, levels of detail per mesh slot and the
+        // camera's level per instance slot (cull.comp).
+        {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
+        {40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -488,7 +499,7 @@ void Renderer::_CreateDescriptors()
 
     const VkDescriptorPoolSize sizes[5] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
@@ -506,8 +517,11 @@ void Renderer::_CreateDescriptors()
     Check(vkAllocateDescriptorSets(_dev.device, &dsai, &_set), "vkAllocateDescriptorSets");
 }
 
-void Renderer::_CreatePipelines()
+// `displaced`: only the mesh pipelines of displaced materials (variant
+// bit 5), made once a scene has some, so others never compile them.
+void Renderer::_CreatePipelines(bool displaced)
 {
+    const VkDevice device = _dev.device;
     // One range for both users (vertex: mat4 viewProj; cull: CullParams), so
     // every push names the same stages and the ranges never partly overlap.
     VkPushConstantRange range{kPushStages, 0, sizeof(CullParams)};
@@ -516,12 +530,15 @@ void Renderer::_CreatePipelines()
     lci.pSetLayouts = &_setLayout;
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
-    Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-
-    const VkDevice device = _dev.device;
+    if (!displaced) {
+        Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
+    }
     for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
                                          std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline},
                                          std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
+        if (displaced) {
+            break;
+        }
         VkShaderModule module = CreateShaderModule(device, code, bytes);
         VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
@@ -629,44 +646,43 @@ void Renderer::_CreatePipelines()
     // kDualQuaternion (bit 1), see mesh.vert; the shading ones four more
     // with the GRAPH shaders (bit 2: material programs) and four more of
     // those with noise (bit 3: program.glsl's kProcedurals); all of those
-    // again with the LAYERS fragment shaders (bit 4: lobes, brdf.glsl).
-    const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
-                                                     {1, sizeof(VkBool32), sizeof(VkBool32)}};
-    const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
-    // The shading pipelines' fragment constants: transparency.glsl's
-    // kShadingPass (`pass`: 1 OIT, 2 subsurface) and, with noise,
-    // program.glsl's kProcedurals.
-    const VkSpecializationMapEntry fragmentEntries[2] = {{12, 0, sizeof(uint32_t)},
-                                                         {8, sizeof(uint32_t), sizeof(VkBool32)}};
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants, uint32_t pass = 0) {
-        VkPipelineShaderStageCreateInfo stages[2] = {};
-        std::copy(info.pStages, info.pStages + info.stageCount, stages);
-        info.pStages = stages;
-        const uint32_t fragmentData[2] = {pass, VK_TRUE};
-        const VkSpecializationInfo passSpec{1, fragmentEntries, sizeof(uint32_t), fragmentData};
-        const VkSpecializationInfo proceduralSpec{2, fragmentEntries, sizeof(fragmentData), fragmentData};
-        if (pass) {
-            stages[1].pSpecializationInfo = &passSpec;
-        }
+    // again with the LAYERS fragment shaders (bit 4: lobes, brdf.glsl); all
+    // of them again for displaced materials (bit 5: displace.glsl's
+    // kDisplacement in both stages), made by _CreatePipelines(true).
+    const VkSpecializationMapEntry vertexEntries[3] = {
+        {0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}, {10, 2 * sizeof(VkBool32), sizeof(VkBool32)}};
+    // The fragment constants: transparency.glsl's kShadingPass (`pass`: 1
+    // OIT, 2 subsurface), program.glsl's kProcedurals, kDisplacement.
+    const VkSpecializationMapEntry fragmentEntries[3] = {
+        {12, 0, sizeof(uint32_t)}, {8, sizeof(uint32_t), sizeof(VkBool32)}, {10, 2 * sizeof(uint32_t), sizeof(VkBool32)}};
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, uint32_t variants, uint32_t pass = 0) {
         VkResult res = VK_SUCCESS;
-        for (int v = 0; v < variants && res == VK_SUCCESS; ++v) {
-            if ((v & 8) && !(v & 4)) {
-                continue;  // noise comes with a program
+        for (uint32_t v = 0; v < kVariants && res == VK_SUCCESS; ++v) {
+            if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced) {
+                continue;  // not this pass's or call's; noise comes with a program
             }
-            const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
-            stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
-            if (v >= 4) {  // shading pipelines only
+            const VkBool32 vertexData[3] = {v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE,
+                                            v & 32 ? VK_TRUE : VK_FALSE};
+            const uint32_t fragmentData[3] = {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE};
+            const VkSpecializationInfo vertexSpec{3, vertexEntries, sizeof(vertexData), vertexData};
+            const VkSpecializationInfo fragmentSpec{3, fragmentEntries, sizeof(fragmentData), fragmentData};
+            VkPipelineShaderStageCreateInfo stages[2] = {};
+            std::copy(info.pStages, info.pStages + info.stageCount, stages);
+            stages[0].pSpecializationInfo = &vertexSpec;  // the vertex stage comes first
+            stages[1].pSpecializationInfo = &fragmentSpec;
+            if (v & (4 | 16)) {  // shading pipelines only
                 const bool program = v & 4;
                 const VkShaderModule frags[4] = {meshFrag, graphFrag, layersFrag, graphLayersFrag};
                 stages[0].module = program ? graphVert : meshVert;
                 stages[1].module = frags[(program ? 1 : 0) + (v & 16 ? 2 : 0)];
-                stages[1].pSpecializationInfo = v & 8 ? &proceduralSpec : &passSpec;
             }
-            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
+            VkGraphicsPipelineCreateInfo create = info;
+            create.pStages = stages;
+            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create, nullptr, &out[v]);
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline, 32);
+    VkResult r = createMesh(ci, _pipeline, kVariants - 1);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -683,7 +699,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline, 32);
+        r = createMesh(tci, _translucentPipeline, kVariants - 1);
     }
     // Weighted blended OIT (Transparency): colour and coverage summed,
     // ids as above, location 3 the revealage, multiplied by 1 - coverage.
@@ -705,7 +721,7 @@ void Renderer::_CreatePipelines()
         VkGraphicsPipelineCreateInfo oci = ci;
         oci.pNext = &oitRendering;
         oci.pColorBlendState = &oitBlend;
-        r = createMesh(oci, _oitPipeline, 32, 1);
+        r = createMesh(oci, _oitPipeline, kVariants - 1, 1);
     }
     // Subsurface pass (Subsurface): the subsurface lobe's light and the
     // radii (locations 0 and 1), nothing else written.
@@ -721,7 +737,7 @@ void Renderer::_CreatePipelines()
         VkGraphicsPipelineCreateInfo sci = ci;
         sci.pNext = &sssRendering;
         sci.pColorBlendState = &sssBlend;
-        r = createMesh(sci, _subsurfacePipeline, 32, 2);
+        r = createMesh(sci, _subsurfacePipeline, kVariants - 1, 2);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -738,7 +754,7 @@ void Renderer::_CreatePipelines()
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
         pci.pDynamicState = &dynamic;
-        r = createMesh(pci, _prepassPipeline, 4);
+        r = createMesh(pci, _prepassPipeline, kDepthVariants);
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
@@ -748,7 +764,7 @@ void Renderer::_CreatePipelines()
         sci.pRasterizationState = &shadowRaster;
         sci.pDynamicState = &shadowDynamic;
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowPipeline, 4);
+            r = createMesh(sci, _shadowPipeline, kDepthVariants);
         }
 
         // Cutouts: the same two with the alpha test.
@@ -757,10 +773,10 @@ void Renderer::_CreatePipelines()
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
         if (r == VK_SUCCESS) {
-            r = createMesh(pci, _prepassCutoutPipeline, 4);
+            r = createMesh(pci, _prepassCutoutPipeline, kDepthVariants);
         }
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowCutoutPipeline, 4);
+            r = createMesh(sci, _shadowCutoutPipeline, kDepthVariants);
         }
 
         // Translucent shadow casters (Transparency's tint maps): depth like
@@ -782,7 +798,7 @@ void Renderer::_CreatePipelines()
         tci.pStages = tintStages;
         tci.pColorBlendState = &tintBlend;
         if (r == VK_SUCCESS) {
-            r = createMesh(tci, _tintDepthPipeline, 4);
+            r = createMesh(tci, _tintDepthPipeline, kDepthVariants);
         }
         tintAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                         VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -792,12 +808,12 @@ void Renderer::_CreatePipelines()
         VkPipelineDepthStencilStateCreateInfo noDepth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         tci.pDepthStencilState = &noDepth;
         if (r == VK_SUCCESS) {
-            r = createMesh(tci, _tintColorPipeline, 4);
+            r = createMesh(tci, _tintColorPipeline, kDepthVariants);
         }
     }
 
     // Sky: full-screen triangle at depth 1, drawn after geometry.
-    if (r == VK_SUCCESS) {
+    if (r == VK_SUCCESS && !displaced) {
         VkPipelineShaderStageCreateInfo skyStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, skyVert),
                                                         stage(VK_SHADER_STAGE_FRAGMENT_BIT, skyFrag)};
         VkGraphicsPipelineCreateInfo kci = ci;
@@ -963,6 +979,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo displacements{gpu.displacements, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo lods{gpu.lods, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo lodState{_lodState.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo prevBlendWeights{
         _prevBlendWeights.buffer ? _prevBlendWeights.buffer : gpu.blendWeights, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -1027,6 +1046,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &displacements, nullptr);
+    write(40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lods, nullptr);
+    write(41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lodState, nullptr);
     write(42, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &refraction);
     for (uint32_t i = 0; i < 4; ++i) {
         write(43 + i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &tints[i]);
@@ -1462,7 +1484,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         PushDraw(_cmd, _layout, t.viewProj, tileList);
-        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, 3);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
         vkCmdEndRendering(_cmd);
         if (tint) {
             const Transparency::TintMap &map = _transparency.AtlasTint();
@@ -1595,8 +1617,8 @@ void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
     for (const VkPipeline *pipelines : {_tintDepthPipeline, _tintColorPipeline}) {
         VkPipeline bound = VK_NULL_HANDLE;
         for (size_t i = 0; i < gpu.translucent.size(); ++i) {
-            if (pipelines[gpu.translucentVariant[i] & 3] != bound) {
-                bound = pipelines[gpu.translucentVariant[i] & 3];
+            if (pipelines[gpu.translucentVariant[i] & kDepthVariants] != bound) {
+                bound = pipelines[gpu.translucentVariant[i] & kDepthVariants];
                 vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
             }
             vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
@@ -1694,6 +1716,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
+    if (gpu.displaced && !_displacedPipelines) {  // the first displaced material
+        _CreatePipelines(true);
+        _displacedPipelines = true;
+    }
     const uint32_t shadowSize = std::clamp(frame.shadowResolution, 256u, 8192u);
     if (shadowSize != _shadowSize) {
         _CreateShadowMap(shadowSize);
@@ -1731,6 +1757,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
+    if (frame.displacement && gpu.displaced) {
+        fd.features[0] |= kFeatureDisplacement;
+        fd.geometry[0] = frame.displacementScale;
+    }
+    if (frame.lod) {
+        fd.features[0] |= kFeatureLod;
+        fd.geometry[1] = frame.lodBias;
+        fd.geometry[2] = float(++_lodFrame & 0xFFFFFFu);  // exact as a float
+    }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
 
@@ -1848,6 +1883,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
+    // The camera's level of detail per instance slot, kept across frames
+    // (cull.comp); a new pool starts from whatever is there.
+    if (VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t) > _lodState.size) {
+        _dev.Destroy(_lodState);
+        _lodState = _dev.CreateDeviceBuffer(VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t),
+                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    }
     // Blend shape motion: last frame's weights, kept like the joints.
     const bool blendMotion = frame.objectMotion && frame.blendShapeMotion && gpu.blendWeightsBytes > 0;
     const bool prevBlend = blendMotion && _prevBlendValid && _prevBlendSource == gpu.blendWeights &&
@@ -1986,6 +2028,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
         vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        // Shadows draw the levels of detail the camera picked (cull.comp).
+        VkMemoryBarrier2 lodPicked{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        lodPicked.srcStageMask = lodPicked.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        lodPicked.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        lodPicked.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        dep.pMemoryBarriers = &lodPicked;
+        vkCmdPipelineBarrier2(_cmd, &dep);
         // Each cascade's ortho box (which spans the scene's whole depth
         // towards the light, so every caster in it stays); instances under
         // half a shadow texel are dropped.
@@ -2060,7 +2109,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
                        VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
-                       _shadowPipeline, _shadowCutoutPipeline, 3);
+                       _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
             vkCmdEndRendering(_cmd);
         }
         // Translucent casters into the sun's tint map, cascade by cascade.
@@ -2135,7 +2184,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             PushDraw(_cmd, _layout, jitteredViewProj, 0);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, 3);
+            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, kDepthVariants);
         }
         vkCmdEndRendering(_cmd);
         ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -2155,6 +2204,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _gtao.Clear(_cmd);
     }
 
+    // The atlas draws the camera's levels of detail (cull.comp): it is
+    // redrawn when the camera moves while there are levels.
+    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
+        std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
+        _atlasVersion = 0;
+    }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
     if (!shadowTiles.empty()) {
         pass("localShadows");
@@ -2220,7 +2275,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 31);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, kVariants - 1);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky || (fog && frame.postProcess)) {
@@ -2417,7 +2472,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 PushDraw(_cmd, _layout, jitteredViewProj, 0);
                 vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
                 vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, 15);
+                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, Aovs::kVariants);
             };
         }
         _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, out.aovs,

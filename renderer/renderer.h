@@ -176,6 +176,14 @@ public:
         // OpenVDB volumes, raymarched over the shaded image (VolumePass).
         bool volumes = true;
         VolumePass::Settings volume;
+        // Displacement (Material::displacement): off draws the undisplaced
+        // surfaces; the scale multiplies every material's offset.
+        bool displacement = true;
+        float displacementScale = 1.0f;
+        // Levels of detail (Scene builds them for heavy meshes): off draws
+        // every mesh whole; a bias of 1 allows twice the screen error.
+        bool lod = true;
+        float lodBias = 0.0f;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -248,7 +256,7 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines();
+    void _CreatePipelines(bool displaced = false);
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -299,18 +307,23 @@ private:
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
     // program (the GRAPH shaders), and bit 3 with it, one with noise
-    // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders).
-    VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[32] = {};  // shading, blended over the opaque
-    VkPipeline _oitPipeline[32] = {};          // shading, OIT accumulation (Transparency)
+    // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders); bit
+    // 5 displaced materials (every pass: displace.glsl's kDisplacement),
+    // made once a scene has some (_displacedPipelines). Depth passes use the
+    // kDepthVariants bits.
+    static constexpr uint32_t kVariants = 64, kDepthVariants = 1 | 2 | 32;
+    VkPipeline _prepassPipeline[kVariants] = {};      // depth only
+    VkPipeline _translucentPipeline[kVariants] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[kVariants] = {};          // shading, OIT accumulation (Transparency)
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
-    VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
-    VkPipeline _subsurfacePipeline[32] = {};   // shading, the subsurface lobe (Subsurface)
+    VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _subsurfacePipeline[kVariants] = {};   // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
-    VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[32] = {};             // shading, depth read-only
-    VkPipeline _shadowPipeline[4] = {};
+    VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
+    VkPipeline _pipeline[kVariants] = {};             // shading, depth read-only
+    VkPipeline _shadowPipeline[kVariants] = {};
+    bool _displacedPipelines = false;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
@@ -320,6 +333,9 @@ private:
     // Last frame's joint matrices for motion vectors, copied before skin.comp
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
+    Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
+    uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;

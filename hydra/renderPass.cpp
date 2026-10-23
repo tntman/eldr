@@ -34,9 +34,11 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 {
 }
 
+// Not while levels of detail build either: the app keeps drawing until
+// they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
-    return !_renderer || _renderer->IsConverged();
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending());
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -150,7 +152,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
                                 {t.planarReflections, &frame.planarReflections},
-                                {t.volumes, &frame.volumes}}) {
+                                {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
+                                {t.lod, &frame.lod}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -165,7 +168,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.planarScale, &frame.planarScale},
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
-                                {t.volumeAnisotropy, &frame.volume.anisotropy}}) {
+                                {t.volumeAnisotropy, &frame.volume.anisotropy},
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a

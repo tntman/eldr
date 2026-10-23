@@ -1511,6 +1511,91 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     }
 }
 
+// The largest |texel * scale + bias| of ref's channel (the red one without
+// a channel): 8- and 16-bit textures hold 0..1, float ones are scanned.
+float TexelBound(vkr::TextureRef const &ref)
+{
+    using F = vkr::Texture::Format;
+    float largest = 0.0f;
+    auto scan = [&](vkr::Texture const *t) {
+        if (!t) {
+            return;
+        }
+        if (t->format == F::R16F || t->format == F::RG16F || t->format == F::RGBA16F) {
+            for (size_t i = 0; i + 1 < t->pixels.size(); i += 2) {
+                uint16_t bits;
+                std::memcpy(&bits, &t->pixels[i], 2);
+                GfHalf h;
+                h.setBits(bits);
+                largest = std::isfinite(float(h)) ? std::max(largest, std::abs(float(h))) : largest;
+            }
+        } else if (t->format == F::RGBA32F) {
+            for (size_t i = 0; i + 3 < t->pixels.size(); i += 4) {
+                float f;
+                std::memcpy(&f, &t->pixels[i], 4);
+                largest = std::isfinite(f) ? std::max(largest, std::abs(f)) : largest;
+            }
+        } else {
+            largest = std::max(largest, 1.0f);
+        }
+    };
+    scan(ref.texture.get());
+    for (const auto &tile : ref.udim) {
+        scan(tile.get());
+    }
+    const int c = std::max(ref.channel, 0);
+    return largest * std::abs(ref.scale[c]) + std::abs(ref.bias[c]);
+}
+
+// The displacement terminal: a UsdPreviewSurface's `displacement` input, or
+// a MaterialX displacement shader's `displacement` (along the normal; of a
+// vector, its normal component z) times its `scale`. A constant, or a
+// texture through what ReadTexture follows, read with the material's uv set.
+// ponytail: no shading graphs (the vertex stage runs no programs), and
+// vector displacement drops its tangent components (per-vertex tangents).
+void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m,
+                      TfToken *uvPrimvar)
+{
+    const auto terminal = net.terminals.find(HdMaterialTerminalTokens->displacement);
+    const auto it = terminal == net.terminals.end() ? net.nodes.end() : net.nodes.find(terminal->second.upstreamNode);
+    if (it == net.nodes.end()) {
+        return;
+    }
+    const HdMaterialNode2 &node = it->second;
+    const TfToken &id = node.nodeTypeId, &input = HdMaterialTerminalTokens->displacement;
+    const bool vector = id == "ND_displacement_vector3", mtlx = vector || id == "ND_displacement_float";
+    if (!mtlx && id != _tokens->UsdPreviewSurface && id != _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        return;
+    }
+    const float scale = mtlx ? ReadOr(node.parameters, _tokens->scale, 1.0f) : 1.0f;
+    GfVec3f v(0.0f);
+    if (!Read(node.parameters, input, &m->displacement) && Read(node.parameters, input, &v)) {
+        m->displacement = v[2];
+    }
+    m->displacement *= scale;
+    m->displacementBound = std::abs(m->displacement);
+    TfToken primvar;
+    vkr::TextureRef &ref = m->displacementTex;
+    ReadTexture(net, &node, input, textures, m, &ref, &primvar);
+    if (!ref.texture) {
+        return;
+    }
+    if (vector && ref.channel < 0) {
+        ref.channel = 2;  // (dPdu, dPdv, N) space: z is along the normal
+    }
+    for (int i = 0; i < 4; ++i) {
+        ref.scale[i] *= scale;
+        ref.bias[i] *= scale;
+    }
+    if (uvPrimvar->IsEmpty()) {
+        *uvPrimvar = primvar;
+    } else if (primvar != *uvPrimvar) {
+        TF_WARN("HdVk: a material reads uv sets '%s' and '%s'; all textures use '%s'", uvPrimvar->GetText(),
+                primvar.GetText(), uvPrimvar->GetText());
+    }
+    m->displacementBound = TexelBound(ref);
+}
+
 } // namespace
 
 std::shared_ptr<vkr::Texture> HdVkTextureCache::Get(std::string const &path,
@@ -1558,8 +1643,9 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _uvPrimvar = TfToken();
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
-            ReadSurface(HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
-                        _textures, &m, &_uvPrimvar);
+            const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
+            ReadSurface(net, _textures, &m, &_uvPrimvar);
+            ReadDisplacement(net, _textures, &m, &_uvPrimvar);
         }
         _primvars.clear();
         for (const std::string &name : m.program.primvars) {

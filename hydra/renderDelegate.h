@@ -3,6 +3,7 @@
 #include "pxr/pxr.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
+#include "pxr/imaging/hd/sceneIndex.h"
 
 #include <memory>
 #include <string>
@@ -94,14 +95,20 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeResolution, "hdvk:probeResolution"))              \
     ((probePosition, "hdvk:probePosition"))                  \
     ((planarReflections, "hdvk:planarReflections"))          \
-    ((planarScale, "hdvk:planarScale"))                  \
+    ((planarScale, "hdvk:planarScale"))                      \
     ((volumes, "hdvk:volumes"))                              \
     ((volumeStepSize, "hdvk:volumeStepSize"))                \
     ((volumeMaxSteps, "hdvk:volumeMaxSteps"))                \
     ((volumeShadowSteps, "hdvk:volumeShadowSteps"))          \
     ((volumeDensity, "hdvk:volumeDensity"))                  \
     ((volumeEmission, "hdvk:volumeEmission"))                \
-    ((volumeAnisotropy, "hdvk:volumeAnisotropy"))
+    ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
+    ((subdivision, "hdvk:subdivision"))                      \
+    ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
+    ((displacement, "hdvk:displacement"))                    \
+    ((displacementScale, "hdvk:displacementScale"))          \
+    ((lod, "hdvk:lod"))                                      \
+    ((lodBias, "hdvk:lodBias"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
@@ -118,6 +125,10 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
+
+// Dirties every mesh's display style in the scene upstream of `terminal` (a
+// render index's), so they sync again (sceneIndexPlugin.cpp).
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
 
 class HdVkTextureCache;
 class HdVkGLInterop;
@@ -160,6 +171,9 @@ public:
     // and HdVk's stats window (usdview/hdvkUsdview) read it, and Houdini's
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
+    // Settings the meshes read when they sync (subdivision) re-sync them.
+    void SetRenderSetting(TfToken const &key, VtValue const &value) override;
+    void SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex) override;
 
     // Cryptomatte manifests of the last frame with those AOVs (JSON: name
     // to hex id), reported in GetRenderStats()["cryptomatte"].
@@ -184,6 +198,7 @@ private:
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.
     Hgi *_hgi = nullptr;
