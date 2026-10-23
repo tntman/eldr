@@ -1,7 +1,10 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 #define SCENE_WRITABLE
+#include "frame.glsl"
 #include "scene.glsl"
+#include "displace.glsl"
 
 // Frustum and small-object culling, one invocation per instance slot:
 // survivors are appended to their mesh's visible list and counted into its
@@ -74,6 +77,7 @@ void main()
         wc = (xf * vec4(c, 1.0)).xyz;
         we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
     }
+    we += DisplacementReach(d, inst);
     for (int p = 0; p < 6; ++p) {
         vec4 plane = pc.planes[p];
         if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {

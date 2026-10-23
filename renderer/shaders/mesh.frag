@@ -6,6 +6,8 @@
 #include "lights.glsl"
 #include "material.glsl"
 #include "scene.glsl"
+#define DISPLACE_FRAGMENT
+#include "displace.glsl"
 
 // Depth is read-only here (the prepass wrote it), so the depth test can run
 // before the shader even though cutouts discard.
@@ -486,6 +488,7 @@ void main()
     if (dot(n, ng) < 0.0) {
         n = -n;
     }
+    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
     if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }

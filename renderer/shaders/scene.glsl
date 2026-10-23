@@ -28,7 +28,7 @@ mat4 InstanceTransform(Instance inst)
 
 struct DrawInfo {
     vec4 boundsMin;  // object space
-    vec4 boundsMax;
+    vec4 boundsMax;  // w: the material's largest displacement (displace.glsl)
     vec4 color;      // displayColor
     uint material;
     int primId;

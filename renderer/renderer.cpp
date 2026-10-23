@@ -29,6 +29,7 @@ struct FrameData {
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
+    float geometry[4];       // displacement scale (kFeatureDisplacement)
 };
 
 namespace {
@@ -70,6 +71,7 @@ const uint32_t kSkinComp[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 constexpr uint32_t kFeatureProcedurals = 256;
+constexpr uint32_t kFeatureDisplacement = 1024;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -280,13 +282,11 @@ Renderer::~Renderer()
     for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
-    for (int v = 0; v < 4; ++v) {
+    for (uint32_t v = 0; v < kVariants; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
                              _shadowCutoutPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
-    }
-    for (int v = 0; v < 16; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
     }
@@ -339,13 +339,15 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars.
+    // and vertex-rate primvars, 39 displacement per material (mesh.vert
+    // displaces with textures, so 0, 3 and 25 reach the vertex stage).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[33] = {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
+    constexpr VkShaderStageFlags kVertex = VK_SHADER_STAGE_VERTEX_BIT;
+    const VkDescriptorSetLayoutBinding bindings[34] = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kVertex},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
-        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting},
+        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kVertex},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -367,7 +369,7 @@ void Renderer::_CreateDescriptors()
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -375,20 +377,21 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[33] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[34] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 33;
+    flags.bindingCount = 34;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 33;
+    slci.bindingCount = 34;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -523,34 +526,37 @@ void Renderer::_CreatePipelines()
     // kWideSkin (variant bit 0: eight skinning influences) and
     // kDualQuaternion (bit 1), see mesh.vert; the shading ones four more
     // with the GRAPH shaders (bit 2: material programs) and four more of
-    // those with noise (bit 3: program.glsl's kProcedurals).
-    const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
-                                                     {1, sizeof(VkBool32), sizeof(VkBool32)}};
-    const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
-    const VkSpecializationMapEntry proceduralEntry{8, 0, sizeof(VkBool32)};
-    const VkBool32 procedural = VK_TRUE;
-    const VkSpecializationInfo proceduralSpec{1, &proceduralEntry, sizeof(procedural), &procedural};
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants) {
+    // those with noise (bit 3: program.glsl's kProcedurals); all of them
+    // again for displaced materials (bit 4: displace.glsl's kDisplacement).
+    const VkSpecializationMapEntry vertexEntries[3] = {
+        {0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}, {10, 2 * sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkSpecializationMapEntry fragmentEntries[2] = {{8, 0, sizeof(VkBool32)}, {10, sizeof(VkBool32), sizeof(VkBool32)}};
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, uint32_t variants) {
         VkPipelineShaderStageCreateInfo stages[2] = {};
-        std::copy(info.pStages, info.pStages + info.stageCount, stages);
-        info.pStages = stages;
         VkResult res = VK_SUCCESS;
-        for (int v = 0; v < variants && res == VK_SUCCESS; ++v) {
-            if ((v & 8) && !(v & 4)) {
-                continue;  // noise comes with a program
+        for (uint32_t v = 0; v < kVariants && res == VK_SUCCESS; ++v) {
+            if ((v & ~variants) || ((v & 8) && !(v & 4))) {
+                continue;  // not this pass's; noise comes with a program
             }
-            const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
-            stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
-            if (v >= 4) {  // shading pipelines only
+            const VkBool32 vertexFlags[3] = {v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE,
+                                             v & 16 ? VK_TRUE : VK_FALSE};
+            const VkBool32 fragmentFlags[2] = {v & 8 ? VK_TRUE : VK_FALSE, v & 16 ? VK_TRUE : VK_FALSE};
+            const VkSpecializationInfo vertexSpec{3, vertexEntries, sizeof(vertexFlags), vertexFlags};
+            const VkSpecializationInfo fragmentSpec{2, fragmentEntries, sizeof(fragmentFlags), fragmentFlags};
+            std::copy(info.pStages, info.pStages + info.stageCount, stages);
+            stages[0].pSpecializationInfo = &vertexSpec;  // the vertex stage comes first
+            stages[1].pSpecializationInfo = &fragmentSpec;
+            if (v & 4) {  // shading pipelines only
                 stages[0].module = graphVert;
                 stages[1].module = graphFrag;
-                stages[1].pSpecializationInfo = v >= 8 ? &proceduralSpec : nullptr;
             }
-            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
+            VkGraphicsPipelineCreateInfo create = info;
+            create.pStages = stages;
+            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create, nullptr, &out[v]);
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline, 16);
+    VkResult r = createMesh(ci, _pipeline, kVariants - 1);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -567,7 +573,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline, 16);
+        r = createMesh(tci, _translucentPipeline, kVariants - 1);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -584,7 +590,7 @@ void Renderer::_CreatePipelines()
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
         pci.pDynamicState = &dynamic;
-        r = createMesh(pci, _prepassPipeline, 4);
+        r = createMesh(pci, _prepassPipeline, kDepthVariants);
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
@@ -594,7 +600,7 @@ void Renderer::_CreatePipelines()
         sci.pRasterizationState = &shadowRaster;
         sci.pDynamicState = &shadowDynamic;
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowPipeline, 4);
+            r = createMesh(sci, _shadowPipeline, kDepthVariants);
         }
 
         // Cutouts: the same two with the alpha test.
@@ -603,10 +609,10 @@ void Renderer::_CreatePipelines()
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
         if (r == VK_SUCCESS) {
-            r = createMesh(pci, _prepassCutoutPipeline, 4);
+            r = createMesh(pci, _prepassCutoutPipeline, kDepthVariants);
         }
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowCutoutPipeline, 4);
+            r = createMesh(sci, _shadowCutoutPipeline, kDepthVariants);
         }
     }
 
@@ -773,6 +779,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo displacements{gpu.displacements, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -822,6 +829,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &displacements, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1162,7 +1170,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         PushDraw(_cmd, _layout, t.viewProj, tileList);
-        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, 3);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
         vkCmdEndRendering(_cmd);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -1217,6 +1225,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
+    if (frame.displacement && gpu.displaced) {
+        fd.features[0] |= kFeatureDisplacement;
+        fd.geometry[0] = frame.displacementScale;
+    }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
 
@@ -1455,7 +1467,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
                        VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
-                       _shadowPipeline, _shadowCutoutPipeline, 3);
+                       _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -1501,7 +1513,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             PushDraw(_cmd, _layout, jitteredViewProj, 0);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, 3);
+            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, kDepthVariants);
         }
         vkCmdEndRendering(_cmd);
         ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -1578,7 +1590,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 15);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, kVariants - 1);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky) {

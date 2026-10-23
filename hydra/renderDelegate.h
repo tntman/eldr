@@ -49,7 +49,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((anisotropy, "hdvk:anisotropy"))                        \
     ((proceduralTextures, "hdvk:proceduralTextures"))        \
     ((subdivision, "hdvk:subdivision"))                      \
-    ((maxRefineLevel, "hdvk:maxRefineLevel"))
+    ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
+    ((displacement, "hdvk:displacement"))                    \
+    ((displacementScale, "hdvk:displacementScale"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

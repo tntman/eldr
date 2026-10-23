@@ -131,6 +131,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
+        {"Displacement", t.displacement, VtValue(frame.displacement)},
+        {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},

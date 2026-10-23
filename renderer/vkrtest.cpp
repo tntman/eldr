@@ -1242,6 +1242,37 @@ int main()
             Expect(near(off, 40, 16, 0.25f, 0.25f, 0.25f) && near(off, 56, 4, 0.25f, 0.25f, 0.25f),
                    "Frame::proceduralTextures off: noise reads 0 (its pivot)");
         }
+
+        {
+            // Displacement: a quad behind the far plane (z 1.1, culled and
+            // clipped as it is) displaced 0.3 along its normal (-z, towards
+            // the camera) comes into view at z 0.8, depth 0.9, in every pass.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 1.1f);
+            quad->normals.clear();
+            for (int i = 0; i < 6; ++i) {
+                quad->normals.insert(quad->normals.end(), {0, 0, -1});
+            }
+            auto material = std::make_shared<vkr::Material>();
+            material->displacement = 0.3f;
+            material->displacementBound = 0.3f;
+            quad->material = material;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(std::abs(img.depth[32 * 64 + 16] - 0.9f) < 1e-3f && img.At(16, 32, 0) > 0.1f,
+                   "displacement: the quad moved along its normal into view");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.depthPrepass = false;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) == 0.0f,
+                   "displacement: the depth prepass sees the same positions");
+            frame = IdentityFrame();
+            frame.displacementScale = 0.5f;
+            Expect(std::abs(Render(renderer, scene, frame).depth[32 * 64 + 16] - 0.975f) < 1e-3f,
+                   "Frame::displacementScale scales the offset");
+            frame.displacement = false;
+            Expect(Render(renderer, scene, frame).depth[32 * 64 + 16] == 1.0f, "Frame::displacement off: not displaced");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

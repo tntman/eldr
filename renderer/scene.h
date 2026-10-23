@@ -185,6 +185,15 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
+
+    // Displacement (mesh.vert, every pass): an offset along the vertex
+    // normal in object units, displacementTex's texel (its channel, scale
+    // and bias) where it has a texture, else `displacement`; the shading
+    // pass bumps the normal by the texture's slope. displacementBound: the
+    // largest offset either way (culling bounds).
+    float displacement = 0;
+    float displacementBound = 0;
+    TextureRef displacementTex;
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -335,7 +344,7 @@ struct Instance {
 static_assert(sizeof(Instance) == 64, "std430 mirror in shaders/scene.glsl");
 struct DrawInfo {
     float boundsMin[4];  // object space
-    float boundsMax[4];
+    float boundsMax[4];  // w: Material::displacementBound
     float color[4];      // displayColor
     uint32_t material;   // kNoMaterial: color + default material
     int32_t primId;
@@ -460,7 +469,9 @@ public:
         // kProgram (a material program, shading pass only) with kProcedural
         // (it runs noise, MaterialProgram::Procedural): kind >> 2 picks the
         // renderer's pipeline variant. Chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32 };
+        // kDisplaced: a displacing material (every pass).
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32,
+                         kDisplaced = 64 };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
@@ -501,6 +512,11 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+
+        // Displacement: per material (as `materials`) its constant, bound
+        // and texture (shaders/displace.glsl); whether a drawn one displaces.
+        VkBuffer displacements = VK_NULL_HANDLE;
+        bool displaced = false;
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -565,6 +581,7 @@ private:
     VkImageView _envView = VK_NULL_HANDLE;
 
     Gpu _gpu;
+    Buffer _displacements;  // Gpu::displacements
 };
 
 } // namespace vkr

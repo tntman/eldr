@@ -33,6 +33,10 @@ struct GpuMaterial {
     float specular[4];  // Material::specular
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
+struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
+    float params[4];      // Material::displacement, displacementBound
+    GpuTexRef tex;
+};
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
@@ -228,6 +232,7 @@ Scene::~Scene()
                           &_programCode, &_programConstants, &_primvarTable, &_primvarData}) {
             _device->Destroy(*b);
         }
+        _device->Destroy(_displacements);
         _DestroyEnvironment();
     }
 }
@@ -1134,6 +1139,7 @@ void Scene::Commit()
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
+        d.boundsMax[3] = drawable && m.material ? m.material->displacementBound : 0.0f;
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
@@ -1141,7 +1147,8 @@ void Scene::Commit()
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
-                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0);
+                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
+                                (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;
@@ -1246,6 +1253,21 @@ void Scene::Commit()
     _gpu.hasBounds = anyDrawable;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
+
+    // Displacement, per material slot.
+    std::vector<GpuDisplacement> displacements(std::max<size_t>(materials.size(), 1), GpuDisplacement{});
+    _gpu.displaced = false;
+    for (const auto &[material, slot] : materialSlots) {
+        GpuDisplacement &g = displacements[slot];
+        g.params[0] = material->displacement;
+        g.params[1] = material->displacementBound;
+        g.tex = texRef(material->displacementTex);
+        _gpu.displaced = _gpu.displaced || material->displacementBound > 0;
+    }
+    _device->Reserve(_displacements, displacements.size() * sizeof(GpuDisplacement),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
+    _gpu.displacements = _displacements.buffer;
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
