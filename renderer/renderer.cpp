@@ -188,6 +188,7 @@ Renderer::Renderer(Device &device)
     : _dev(device)
     , _gtao(device)
     , _taa(device)
+    , _lens(device)
     , _post(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -629,6 +630,8 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _gtao.Resize(width, height, _depth.view);
     _taa.Resize(width, height, _color.view, _depth.view, _velocity.view);
+    _lens.Resize(width, height, _color.image, _color.view, _depth.view, _velocity.view, _taa.OutputImage(),
+                 _taa.Output(), _taa.History());
     _post.Resize(width, height, _taa.Output());
     _taaValid = false;
     _historyValid = false;
@@ -1448,6 +1451,37 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     constexpr VkPipelineStageFlags2 kPostStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
+    // The camera's lens: depth of field when it has an fStop; motion blur
+    // with an open shutter when the camera or the scene moved. That frame
+    // is final as it is: still frames after it would only average the blur
+    // away (usdrecord renders until converged).
+    const bool dof = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
+                     frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
+    const bool cameraMoved = _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+    const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && _historyValid &&
+                            (cameraMoved || gpu.moved);
+    Lens::Params lens{};
+    if (dof || motionBlur) {
+        const Mat4 back = motionBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
+        std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
+        std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
+        if (dof) {
+            // Thin lens: a circle of confusion f^2 / (N (S - f)) * |D - S| / D
+            // across on the sensor, as a radius in pixels.
+            const float f = frame.focalLength, s = frame.focusDistance;
+            lens.cocScale = 0.5f * f * f / (frame.fStop * (s - f)) * float(frame.width) / frame.sensorWidth;
+            lens.focusDistance = s;
+        }
+        // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
+        lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);
+        lens.frame = float(_haltonIndex % 64);
+        lens.shutter = motionBlur ? frame.shutter : 0.0f;
+        lens.maxHalfBlur = std::min(0.025f * float(frame.width), 32.0f);
+        _lens.RecordTiles(_cmd, lens);
+    }
+    if (dof) {
+        _lens.RecordDepthOfField(_cmd, lens);
+    }
     if (frame.postProcess) {
         // HDR color feeds TAA and post (TAA also reads the read-only depth).
         ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
@@ -1497,6 +1531,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
 
         _taa.Record(_cmd, &reprojection.m[0][0], alpha);
+        if (motionBlur) {
+            _lens.RecordMotionBlur(_cmd, lens);
+            _taaConverged = true;
+        }
         _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
         std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
         _historyValid = true;

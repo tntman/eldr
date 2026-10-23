@@ -2,6 +2,7 @@
 
 #include "device.h"
 #include "gtao.h"
+#include "lens.h"
 #include "post.h"
 #include "scene.h"
 #include "taa.h"
@@ -33,6 +34,18 @@ public:
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
+        // The camera's lens (UsdGeomCamera, world units), with postProcess:
+        // depth of field when fStop > 0, motion blur while the shutter is open.
+        bool depthOfField = true;
+        bool motionBlur = true;
+        float focalLength = 0.0f;
+        float fStop = 0.0f;
+        float focusDistance = 0.0f;
+        float sensorWidth = 0.0f;     // horizontal aperture the projection shows
+        float shutter = 0.0f;         // open interval in frames (shutter:close - shutter:open)
+        // Inverse projection's z and w columns over NDC z (row-vector order):
+        // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
+        float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
     };
 
@@ -85,6 +98,7 @@ private:
     Device &_dev;
     Gtao _gtao;
     TemporalAA _taa;
+    Lens _lens;
     PostProcess _post;
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;

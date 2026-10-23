@@ -1,0 +1,50 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+
+// Per 32x32 tile: the longest motion (half its blur, in pixels) and the
+// largest circle of confusion in front of the focus, so the lens passes
+// can spread a moving or near out-of-focus object past its own pixels
+// (McGuire 2012's tile max; the gathers take the max over 3x3 tiles).
+// 16x16 threads, 2x2 pixels each.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 1) uniform sampler2D sceneDepth;
+layout(set = 0, binding = 2) uniform sampler2D velocity;
+layout(set = 0, binding = 4, rgba16f) writeonly uniform image2D tiles;
+
+#include "lens.glsl"
+
+shared vec4 best[256];
+
+vec4 Longer(vec4 a, vec4 b)
+{
+    return vec4(dot(a.xy, a.xy) >= dot(b.xy, b.xy) ? a.xy : b.xy, max(a.z, b.z), 0.0);
+}
+
+void main()
+{
+    ivec2 size = textureSize(sceneDepth, 0);
+    vec4 r = vec4(0.0);
+    for (int k = 0; k < 4; ++k) {
+        ivec2 p = ivec2(gl_WorkGroupID.xy) * 32 + ivec2(gl_LocalInvocationID.xy) * 2 + ivec2(k & 1, k >> 1);
+        if (all(lessThan(p, size))) {
+            float depth = texelFetch(sceneDepth, p, 0).r;
+            float distance = Distance(depth);
+            float near = pc.lens.x > 0.0 && distance < pc.lens.y ? Circle(distance) : 0.0;
+            r = Longer(r, vec4(Motion(p, depth, texelFetch(velocity, p, 0).xy), near, 0.0));
+        }
+    }
+    uint i = gl_LocalInvocationIndex;
+    best[i] = r;
+    barrier();
+    for (uint s = 128u; s > 0u; s >>= 1) {
+        if (i < s) {
+            best[i] = Longer(best[i], best[i + s]);
+        }
+        barrier();
+    }
+    if (i == 0u) {
+        imageStore(tiles, ivec2(gl_WorkGroupID.xy), best[0]);
+    }
+}

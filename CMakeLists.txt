@@ -18,13 +18,15 @@ find_package(pxr CONFIG REQUIRED)
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
-               taa.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag tonemap.frag)
+               taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
+               tonemap.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
-                renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl)
+                renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
+                renderer/shaders/lens.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -37,7 +39,8 @@ list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
-    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/fullscreen.cpp ${shader_incs})
+    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
+    ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 

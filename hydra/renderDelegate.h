@@ -27,7 +27,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((localShadows, "hdvk:localShadows"))                    \
     ((softShadows, "hdvk:softShadows"))                      \
     ((taaSamples, "hdvk:taaSamples"))                        \
-    ((cullPixels, "hdvk:cullPixels"))
+    ((cullPixels, "hdvk:cullPixels"))                        \
+    ((depthOfField, "hdvk:depthOfField"))                    \
+    ((motionBlur, "hdvk:motionBlur"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

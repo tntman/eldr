@@ -52,6 +52,8 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(identity, identity + 16, frame.invViewProj);
     frame.cameraPos[0] = frame.cameraPos[1] = 0;
     frame.cameraPos[2] = -2;
+    const float toDistance[4] = {-1, -2, 0, 1};  // camera distance z + 2
+    std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
     return frame;
@@ -68,6 +70,8 @@ static vkr::Renderer::Frame PerspectiveFrame()
     const float inv[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1 / d, 0, 0, -1, c / d};
     std::copy(proj, proj + 16, frame.viewProj);
     std::copy(inv, inv + 16, frame.invViewProj);
+    const float toDistance[4] = {inv[10], inv[14], inv[11], inv[15]};
+    std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.cameraPos[2] = 0;
     return frame;
 }
@@ -818,6 +822,79 @@ int main()
             const int smooth = partial(RenderPost(device, scene, 0.0f, true));
             const int hard = partial(RenderPost(device, scene, 0.0f, false));
             Expect(smooth > 30 && hard < 5, "TAA turns the hard edge into partial coverage");
+        }
+
+        {
+            // Depth of field: an emissive quad over the left half, 4 units
+            // away, through PerspectiveFrame's 90 degree lens (f 0.5 on a
+            // 1-unit sensor). At f/1 focused at 1 its edge spreads right (a
+            // circle of 2.6 pixels, the cap at 64 wide); focused on it, or
+            // with fStop 0, the edge stays hard.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            AddQuad(scene, -10, -10, 0, 10, -4)->material = white;
+            scene.Commit();
+            auto beside = [&](float fStop, float focus) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = PerspectiveFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.focalLength = 0.5f;
+                frame.sensorWidth = 1.0f;
+                frame.fStop = fStop;
+                frame.focusDistance = focus;
+                Image img;
+                for (int i = 0; i < 64 && (i == 0 || !renderer.IsConverged()); ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                return img.At(33, 32, 0);
+            };
+            const float sharp = beside(0.0f, 1.0f), blurred = beside(1.0f, 1.0f), focused = beside(1.0f, 4.0f);
+            Expect(sharp < 0.01f && focused < 0.01f && blurred > 0.05f,
+                   "depth of field spreads an out-of-focus edge, not a focused one");
+        }
+
+        {
+            // Motion blur: an emissive quad over the left half moves right by
+            // 0.25 (8 pixels; the blur is capped at 3.2 at 64 wide). With the
+            // shutter open a whole frame it smears over the background beyond
+            // its new edge, and that frame is final at once; shutter closed,
+            // the edge is hard.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 0);
+            quad->material = white;
+            auto edge = [&](float shutter, float *inside, bool *converged) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.shutter = shutter;
+                quad->transforms[12] = 0.0f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                Render(renderer, scene, frame);
+                quad->prevTransforms = quad->transforms;
+                quad->transforms[12] = 0.25f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                const Image img = Render(renderer, scene, frame);
+                *inside = img.At(16, 32, 0);
+                *converged = renderer.IsConverged();
+                return img.At(40, 32, 0);  // the first pixel past the edge
+            };
+            float inside = 0.0f, sharpInside = 0.0f;
+            bool final = false, sharpFinal = true;
+            const float blurred = edge(1.0f, &inside, &final), sharp = edge(0.0f, &sharpInside, &sharpFinal);
+            Expect(blurred > 0.05f * inside && sharp < 0.01f * sharpInside && inside > 0.1f,
+                   "motion blur smears a moving edge over what it passes");
+            Expect(final && !sharpFinal, "a motion-blurred frame is final, a sharp one keeps accumulating");
         }
 
         {

@@ -114,6 +114,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Local Light Shadows", HdVkRenderSettingsTokens->localShadows, VtValue(frame.localShadows)},
         {"Soft Shadows (PCSS)", HdVkRenderSettingsTokens->softShadows, VtValue(frame.softShadows)},
         {"TAA Samples (still camera)", HdVkRenderSettingsTokens->taaSamples, VtValue(int(frame.taaSamples))},
+        {"Depth of Field (camera fStop)", HdVkRenderSettingsTokens->depthOfField, VtValue(frame.depthOfField)},
+        {"Motion Blur (camera shutter)", HdVkRenderSettingsTokens->motionBlur, VtValue(frame.motionBlur)},
         {"Small Object Culling (pixels, 0 = off)", HdVkRenderSettingsTokens->cullPixels,
          VtValue(frame.cullPixels)},
     };

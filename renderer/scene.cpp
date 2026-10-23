@@ -946,6 +946,7 @@ void Scene::Commit()
     // transforms for motion vectors (a new or re-flattened mesh has none).
     bool changed = _changed;
     _changed = false;
+    _gpu.moved = false;
     std::vector<float> motion;
     std::vector<uint32_t> motionBase(_meshes.size(), kNone);
     for (const auto &m : _meshes) {
@@ -975,7 +976,9 @@ void Scene::Commit()
             _UpdateWorldBounds(*m);
         }
         changed = changed || geometry || transforms || joints;
+        _gpu.moved = _gpu.moved || (joints && !geometry);
     }
+    _gpu.moved = _gpu.moved || !motion.empty();
     _Flush();
 
     // Per-mesh tables, materials and textures are small: rebuilt every

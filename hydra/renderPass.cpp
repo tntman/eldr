@@ -4,6 +4,7 @@
 #include "renderer.h"
 
 #include "pxr/base/gf/matrix4f.h"
+#include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -110,6 +111,26 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.taaSamples = uint32_t(std::max(
         delegate->GetRenderSetting<int>(HdVkRenderSettingsTokens->taaSamples, int(frame.taaSamples)), 1));
     frame.cullPixels = delegate->GetRenderSetting<float>(HdVkRenderSettingsTokens->cullPixels, frame.cullPixels);
+    frame.depthOfField = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->depthOfField,
+                                                          frame.depthOfField);
+    frame.motionBlur = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->motionBlur, frame.motionBlur);
+    // The scene camera's lens; usdview's free camera has none.
+    const GfMatrix4d projection = state->GetProjectionMatrix();
+    if (const HdCamera *camera = state->GetCamera()) {
+        frame.shutter = float(camera->GetShutterClose() - camera->GetShutterOpen());
+        if (camera->GetProjection() == HdCamera::Perspective && projection[0][0] > 0.0) {
+            frame.focalLength = camera->GetFocalLength();
+            frame.fStop = camera->GetFStop();
+            frame.focusDistance = camera->GetFocusDistance();
+            // The aperture the conformed projection shows (2 f / P[0][0]).
+            frame.sensorWidth = float(2.0 * frame.focalLength / projection[0][0]);
+        }
+    }
+    const GfMatrix4d invProjection = projection.GetInverse();
+    frame.depthToDistance[0] = float(invProjection[2][2]);
+    frame.depthToDistance[1] = float(invProjection[3][2]);
+    frame.depthToDistance[2] = float(invProjection[2][3]);
+    frame.depthToDistance[3] = float(invProjection[3][3]);
     const GfVec3d eye = view.GetInverse().ExtractTranslation();
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);
