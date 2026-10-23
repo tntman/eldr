@@ -471,7 +471,8 @@ public:
     const Gpu &GetGpu() const { return _gpu; }
 
     // Bytes of the GPU pools: per-vertex and per-instance data (skinning,
-    // blend shapes, joints included), and triangle indices.
+    // blend shapes, joints and vertex-rate primvars included), and triangle
+    // indices.
     VkDeviceSize VertexBytes() const;
     VkDeviceSize IndexBytes() const { return _indices.size; }
 

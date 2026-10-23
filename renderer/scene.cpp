@@ -246,7 +246,7 @@ VkDeviceSize Scene::VertexBytes() const
 {
     VkDeviceSize bytes = 0;
     for (const Buffer *b : {&_vertices, &_instances, &_visible, &_skin, &_joints, &_skinXforms, &_jointBoundsPool,
-                            &_blendOffsets, &_blendWeights}) {
+                            &_blendOffsets, &_blendWeights, &_primvarVertices}) {
         bytes += b->size;
     }
     return bytes;
