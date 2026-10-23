@@ -25,6 +25,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
+// Soft sun shadows (PCSS from the distant light's angle).
+const uint kFeatureSoftSun = 65536u;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

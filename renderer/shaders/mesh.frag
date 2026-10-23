@@ -30,6 +30,7 @@ layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 layout(set = 0, binding = 20) uniform sampler2D shadowAtlasDepth;  // same atlas, raw depths
+layout(set = 0, binding = 49) uniform sampler2DArray shadowMapDepth;  // the sun's cascades, raw depths
 
 const vec2 kPoisson[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870),
@@ -350,8 +351,60 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
 }
 
-// Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
-float Shadow(vec3 p, vec3 ng, vec3 l)
+// Soft sun shadows: PCSS in the cascade's light space, as LocalShadow()
+// but with the sun's angular radius (tan, `tanHalf`) and a parallel
+// projection: penumbra radius = blocker-to-receiver distance * tanHalf.
+// Every tap compares against the receiver's plane there (the geometric
+// normal's slope in light space), so wide kernels don't shadow the surface
+// itself. Blockers are searched on a spiral whose radius grows
+// geometrically from 1.5 texels to as far as the penumbra of one at the
+// light box's near side reaches, and only count where their own penumbra
+// reaches the receiver: every scale gets taps, and a wide search doesn't
+// soften contact shadows. uv/ref are the hard lookup's, c its cascade.
+// ponytail: kernels clamped to 5% of the cascade; no blend between cascades.
+float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
+{
+    mat4 m = frame.cascadeViewProj[c];
+    vec3 gx = vec3(m[0][0], m[1][0], m[2][0]), gy = vec3(m[0][1], m[1][1], m[2][1]);
+    vec3 gz = vec3(m[0][2], m[1][2], m[2][2]);  // NDC per world unit (orthographic)
+    float depthRange = 2.0 / length(gz);        // world units per unit of window depth
+    float uvPerUnit = 0.5 * length(gx);
+    vec2 grad = -dot(gz, l) / max(dot(ng, l), 0.2) * vec2(dot(ng, gx) / dot(gx, gx), dot(ng, gy) / dot(gy, gy));
+    float size = float(textureSize(shadowMap, 0).x);
+    float maxUv = 0.05;
+    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
+                                                           vec2(0.06711056, 0.00583715))));
+    mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    int samples = int(frame.features.z);
+
+    float minUv = 1.5 / size;
+    float growth = max(ref * depthRange * tanHalf * uvPerUnit, minUv) / minUv;
+    float blockers = 0.0, count = 0.0;
+    for (int i = 0; i < samples; ++i) {
+        float r = minUv * pow(growth, (float(i) + 0.5) / float(samples)), a = angle + 2.3999632 * float(i);
+        vec2 o = min(r, maxUv) * vec2(cos(a), sin(a));
+        ivec2 texel = clamp(ivec2((uv + o) * size), ivec2(0), ivec2(size - 1.0));
+        float above = ref + dot(grad, o) - texelFetch(shadowMapDepth, ivec3(texel, c), 0).r;
+        if (above > 0.0 && length(o) <= max(above * depthRange * tanHalf * uvPerUnit, minUv)) {
+            blockers += above;
+            count += 1.0;
+        }
+    }
+    if (count == 0.0 || count == float(samples)) {
+        return count == 0.0 ? 1.0 : 0.0;  // no blocker, or the umbra
+    }
+    float filterUv = clamp(blockers / count * depthRange * tanHalf * uvPerUnit, 1.5 / size, maxUv);
+    float sum = 0.0;
+    for (int i = 0; i < samples; ++i) {
+        vec2 o = rotation * kPoisson[i] * filterUv;
+        sum += texture(shadowMap, vec4(uv + o, float(c), ref + dot(grad, o)));
+    }
+    return sum / float(samples);
+}
+
+// Cascaded shadow lookup with normal offset and 3x3 hardware PCF; soft
+// (SoftSunShadow) for a sun with an angle when soft sun shadows are on.
+float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
 {
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
     int c = 0;
@@ -368,6 +421,9 @@ float Shadow(vec3 p, vec3 ng, vec3 l)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
+    if (tanHalf > 0.0 && (frame.features.x & kFeatureSoftSun) != 0u) {
+        return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
+    }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y) {
@@ -578,7 +634,7 @@ void main()
                          Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l);
+            radiance *= Shadow(inWorldPos, ng, l, light.axis.w);
         }
         color += radiance;
     }

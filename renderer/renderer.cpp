@@ -69,6 +69,7 @@ const uint32_t kSkinComp[] =
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
+constexpr uint32_t kFeatureSoftSun = 65536;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -329,9 +330,10 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars.
+    // and vertex-rate primvars. 49 the sun's cascades without depth compare
+    // (soft sun shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[33] = {
+    const VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -365,19 +367,21 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
-    const VkDescriptorBindingFlags bindingFlags[33] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    constexpr uint32_t kBindings = uint32_t(std::size(bindings));
+    const VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 33;
+    flags.bindingCount = kBindings;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 33;
+    slci.bindingCount = kBindings;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
@@ -723,6 +727,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     const VkDescriptorBufferInfo frame{_frameData.buffer, 0, sizeof(FrameData)};
     const VkDescriptorImageInfo shadow{_shadowSampler, _shadowMap.view,
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo shadowDepth{_clampSampler, _shadowMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo env{_clampSampler, gpu.environment ? gpu.environment : _blackCube.view,
                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo lut{_clampSampler, _brdfLut.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -804,6 +809,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1193,7 +1199,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
-                     (frame.clusteredLights ? kFeatureClusters : 0);
+                     (frame.clusteredLights ? kFeatureClusters : 0) |
+                     (frame.softShadows && frame.softSunShadows ? kFeatureSoftSun : 0);
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));

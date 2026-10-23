@@ -119,6 +119,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
             color *= 2.0f * kPi * (1.0f - std::cos(halfAngle));
         }
         std::copy(color.data(), color.data() + 3, light.irradiance);
+        light.angle = 2.0f * halfAngle;
         light.castShadows = param(HdLightTokens->shadowEnable, true);
         *dirtyBits = Clean;
         return;

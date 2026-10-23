@@ -66,6 +66,9 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Soft sun shadows: penumbrae from the distant light's angle (PCSS
+        // on the cascades), with softShadows on.
+        bool softSunShadows = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

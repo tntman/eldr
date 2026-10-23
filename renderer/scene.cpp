@@ -36,7 +36,7 @@ static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
-    float axis[4];       // emission axis; w: sphere radius
+    float axis[4];       // emission axis; w: sphere/cylinder radius, distant: tan of the sun's angular radius
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
@@ -1283,6 +1283,7 @@ void Scene::Commit()
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);
+                g.axis[3] = std::tan(0.5f * std::clamp(l->angle, 0.0f, 3.0f));
                 ++lightCount;
                 continue;
             }

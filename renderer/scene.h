@@ -273,6 +273,8 @@ struct Light {
     float specular = 1.0f;
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
+    // Soft sun shadows: distant: the sun's angular diameter (inputs:angle), radians.
+    float angle = 0.0f;
 
 private:
     friend class Scene;

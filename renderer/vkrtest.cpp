@@ -1207,6 +1207,42 @@ int main()
             Expect(shadowed.At(32, 32, 0) < 0.3f * shadowed.At(41, 32, 0) && shadowed.At(41, 32, 0) > 0.01f,
                    "cylinder light shadow (atlas cube faces)");
         }
+
+        {
+            // Soft sun shadows: the sun shadow test's occluder (one unit above
+            // the ground along z, light at 45 degrees). A 10 degree sun spreads
+            // the shadow's right edge (around x = -0.75, pixel 8) over a
+            // penumbra of about 1.4 * tan(5 degrees) each side, ~4 pixels; a
+            // point sun or the settings off keep it hard. The tilted ground
+            // stays lit beside it (the taps follow the receiver's plane).
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);
+            auto penumbra = [&](float angle, bool soft, bool softSun, float *lit) {
+                sun->angle = angle;
+                scene.Commit();
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.softShadows = soft;
+                frame.softSunShadows = softSun;
+                const Image img = Render(renderer, scene, frame);
+                *lit = img.At(51, 32, 0);
+                int partial = 0;
+                for (int x = 0; x < 24; ++x) {
+                    const float v = img.At(x, 32, 0) / *lit;
+                    partial += v > 0.1f && v < 0.9f;
+                }
+                return partial;
+            };
+            float lit = 0, hardLit = 0, unused = 0;
+            const int hard = penumbra(0.0f, true, true, &hardLit), soft = penumbra(0.1745f, true, true, &lit);
+            Expect(soft >= hard + 4, "soft sun shadows: a 10 degree sun has a penumbra");
+            Expect(std::abs(lit / hardLit - 1.0f) < 0.02f, "soft sun shadows: no self-shadowing on a tilted receiver");
+            Expect(penumbra(0.1745f, true, false, &unused) <= hard + 1, "Frame::softSunShadows off: hard sun shadows");
+            Expect(penumbra(0.1745f, false, true, &unused) <= hard + 1, "Frame::softShadows off: hard sun shadows");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

@@ -45,7 +45,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((softShadowSamples, "hdvk:softShadowSamples"))          \
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
-    ((anisotropy, "hdvk:anisotropy"))
+    ((anisotropy, "hdvk:anisotropy"))                        \
+    ((softSunShadows, "hdvk:softSunShadows"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

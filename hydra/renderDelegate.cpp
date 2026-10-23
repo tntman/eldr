@@ -123,6 +123,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Local Light Shadow Resolution (64-2048)", t.localShadowResolution,
          VtValue(int(frame.localShadowResolution))},
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
+        {"Soft Sun Shadows (distant light angle)", t.softSunShadows, VtValue(frame.softSunShadows)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},

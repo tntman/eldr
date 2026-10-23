@@ -85,5 +85,34 @@ expect(gray(image, 32, 54) > 2 * gray(image, 54, 32), "rotated cylinder light: a
 image = render(stage, {"hdvk:localLights": False})
 expect(gray(image, 32, 32) < 5, "hdvk:localLights off: no cylinder light")
 
+# Soft sun shadows: a square floating one unit over the ground, seen from
+# above, under a 10 degree sun: its shadow's edges spread over a penumbra
+# of about 2 * tan(5 degrees) = 0.17 units (2 pixels) each side.
+stage = wall_stage()
+UsdGeom.Xformable(stage.GetPrimAtPath("/wall")).AddTranslateOp().Set(Gf.Vec3d(0, 0, -1))
+square = UsdGeom.Mesh.Define(stage, "/square")
+square.CreatePointsAttr([(-0.5, -0.5, 0), (0.5, -0.5, 0), (0.5, 0.5, 0), (-0.5, 0.5, 0)])
+square.CreateFaceVertexCountsAttr([4])
+square.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+square.CreateDisplayColorAttr([(0, 0, 0)])
+square.AddTranslateOp().Set(Gf.Vec3d(1, 0, 1))
+sun = UsdLux.DistantLight.Define(stage, "/sun")
+sun.CreateIntensityAttr(2)
+sun.CreateNormalizeAttr(True)
+sun.CreateAngleAttr(10)
+sun.AddRotateYOp().Set(30)  # shadow shifted towards -x, its left edge in the open
+
+
+def penumbra(image):
+    """Partly lit pixels along the middle row, left of the square."""
+    lit = gray(image, 2, 32)
+    return sum(0.15 * lit < gray(image, x, 32) < 0.85 * lit for x in range(2, 30))
+
+
+soft, hard = penumbra(render(stage)), penumbra(render(stage, {"hdvk:softSunShadows": False}))
+expect(soft >= hard + 2, "soft sun shadows from the distant light's angle")
+sun.CreateAngleAttr(0)
+expect(penumbra(render(stage)) <= hard + 1, "a sun without angle casts hard shadows")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
