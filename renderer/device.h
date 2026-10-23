@@ -56,9 +56,10 @@ public:
     Device &operator=(const Device &) = delete;
 
     // Memory with `props`; a type that also has `preferred` wins if there is one.
-    // `texture`: counted as texture memory in Memory().
+    // `texture`: counted as texture memory in Memory(). `next`: chained to
+    // VkMemoryAllocateInfo (dedicated, exported).
     VkDeviceMemory Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
-                            VkMemoryPropertyFlags preferred = 0, bool texture = false);
+                            VkMemoryPropertyFlags preferred = 0, bool texture = false, const void *next = nullptr);
     void Free(VkDeviceMemory memory);  // memory from Allocate, or null
 
     // Bytes of all memory from Allocate: device-local (graphics memory) and
@@ -94,6 +95,17 @@ public:
     uint32_t queueFamily = 0;
     VkQueue queue = VK_NULL_HANDLE;
     bool memoryBudget = false;  // VK_EXT_memory_budget is enabled
+    // GPU sharing: memory and semaphores export as Windows handles
+    // (VK_KHR_external_memory_win32, VK_KHR_external_semaphore_win32).
+    bool externalWin32 = false;
+    // VK_KHR_ray_tracing_pipeline and VK_KHR_acceleration_structure are
+    // enabled (with bufferDeviceAddress; every allocation can back a
+    // device address): see RayTracing. HDVK_NO_RAY_TRACING=1 leaves them
+    // off, as on GPUs without them.
+    bool rayTracing = false;
+    // What buffers acceleration structures are built from (and ray tracing
+    // shaders read) add to their usage; 0 without rayTracing.
+    VkBufferUsageFlags rayTracingInputUsage = 0;
 
 private:
     void _Release();

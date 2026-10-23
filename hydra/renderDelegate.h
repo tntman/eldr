@@ -6,6 +6,7 @@
 #include "pxr/imaging/hd/sceneIndex.h"
 
 #include <memory>
+#include <string>
 
 namespace vkr {
 class Device;
@@ -48,6 +49,53 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
     ((proceduralTextures, "hdvk:proceduralTextures"))        \
+    ((tonemapper, "hdvk:tonemapper"))                        \
+    ((lensDistortion, "hdvk:lensDistortion"))                \
+    ((blendShapeMotion, "hdvk:blendShapeMotion"))            \
+    ((extraAovs, "hdvk:extraAovs"))                          \
+    ((shareFrame, "hdvk:shareFrame"))                        \
+    ((specularWorkflow, "hdvk:specularWorkflow"))            \
+    ((clearcoat, "hdvk:clearcoat"))                          \
+    ((sheen, "hdvk:sheen"))                                  \
+    ((thinFilm, "hdvk:thinFilm"))                            \
+    ((anisotropicSpecular, "hdvk:anisotropicSpecular"))      \
+    ((toon, "hdvk:toon"))                                    \
+    ((toonBands, "hdvk:toonBands"))                          \
+    ((hairShading, "hdvk:hairShading"))                      \
+    ((rtShadows, "hdvk:rtShadows"))                          \
+    ((rtShadowSamples, "hdvk:rtShadowSamples"))              \
+    ((rtReflections, "hdvk:rtReflections"))                  \
+    ((rtReflectionSamples, "hdvk:rtReflectionSamples"))      \
+    ((gi, "hdvk:gi"))                                        \
+    ((giProbes, "hdvk:giProbes"))                            \
+    ((giRays, "hdvk:giRaysPerProbe"))                        \
+    ((giHysteresis, "hdvk:giHysteresis"))                    \
+    ((emissiveLights, "hdvk:emissiveLights"))                \
+    ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))        \
+    ((oit, "hdvk:oit"))                                      \
+    ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
+    ((refraction, "hdvk:refraction"))                        \
+    ((refractionSamples, "hdvk:refractionSamples"))              \
+    ((translucentShadows, "hdvk:translucentShadows"))        \
+    ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
+    ((subsurface, "hdvk:subsurface"))                        \
+    ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
+    ((holdouts, "hdvk:holdouts")) \
+    ((softSunShadows, "hdvk:softSunShadows"))                \
+    ((fog, "hdvk:fog"))                                      \
+    ((fogDensity, "hdvk:fogDensity"))                        \
+    ((fogHeight, "hdvk:fogHeight"))                          \
+    ((fogHeightFalloff, "hdvk:fogHeightFalloff"))            \
+    ((fogAnisotropy, "hdvk:fogAnisotropy"))                  \
+    ((fogColor, "hdvk:fogColor"))                            \
+    ((fogMaxDistance, "hdvk:fogMaxDistance"))                \
+    ((fogGridSize, "hdvk:fogGridSize"))                      \
+    ((fogZUp, "hdvk:fogZUp"))                                \
+    ((reflectionProbe, "hdvk:reflectionProbe"))              \
+    ((probeResolution, "hdvk:probeResolution"))              \
+    ((probePosition, "hdvk:probePosition"))                  \
+    ((planarReflections, "hdvk:planarReflections"))          \
+    ((planarScale, "hdvk:planarScale"))                      \
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \
@@ -56,6 +104,16 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lodBias, "hdvk:lodBias"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+
+// AOVs of HdVk's own beyond HdAovTokens: base colour, emission and
+// Cryptomatte's first layer (ranks 0 and 1) of object and material ids.
+#define HDVK_AOV_TOKENS                           \
+    (albedo)                                                 \
+    (emission)                                               \
+    ((cryptoObject, "CryptoObject00"))                       \
+    ((cryptoMaterial, "CryptoMaterial00"))
+
+TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
@@ -66,6 +124,8 @@ uint32_t HdVkRenderTagBit(TfToken const &tag);
 void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
 
 class HdVkTextureCache;
+class HdVkGLInterop;
+class Hgi;
 
 class HdVkRenderDelegate final : public HdRenderDelegate
 {
@@ -108,6 +168,20 @@ public:
     void SetRenderSetting(TfToken const &key, VtValue const &value) override;
     void SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex) override;
 
+    // Cryptomatte manifests of the last frame with those AOVs (JSON: name
+    // to hex id), reported in GetRenderStats()["cryptomatte"].
+    void SetCryptomatteManifests(std::string object, std::string material);
+
+    // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
+    void SetDrivers(HdDriverVector const &drivers) override;
+    // Hands frames to the app's OpenGL on the GPU (made on first use, with
+    // its context current); null when that can't work.
+    HdVkGLInterop *GLInterop();
+    // After it failed: read back from then on.
+    void DisableGLInterop();
+    // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
+    void SetFrameShared(bool shared) { _frameShared = shared; }
+
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
@@ -118,6 +192,11 @@ private:
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
     HdSceneIndexBasePtr _terminalSceneIndex;
+    std::string _cryptomatteObject, _cryptomatteMaterial;
+    // GPU sharing; declared last: released before the renderer and device.
+    Hgi *_hgi = nullptr;
+    bool _interopTried = false, _frameShared = false;
+    std::unique_ptr<HdVkGLInterop> _interop;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

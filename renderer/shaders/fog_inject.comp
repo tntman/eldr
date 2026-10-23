@@ -1,0 +1,181 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
+#include "lights.glsl"
+#include "fog.glsl"
+
+// Volumetric fog, one invocation per froxel: the medium at a depth jittered
+// within the slice (height fog: density * exp(-falloff * (height - base)))
+// and the light it scatters towards the camera (Henyey-Greenstein): every
+// distant light (the shadow-casting one through its cascades), the local
+// lights of the froxel's cluster as points (through their atlas tiles) and
+// the dome's average radiance. Blended with last frame's grid reprojected
+// to the same point, so the jitter averages out over frames.
+// ponytail: single-tap shadows (no PCF: the jitter and the history blur
+// them); local lights as points of their area's intensity; no dome
+// occlusion.
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 47, rgba16f) uniform image3D fogImages[3];  // this frame's, last frame's, integrated
+layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
+// Local lights' shadow atlas, as in mesh.frag.
+const float kSpotShadowCone = 1.3962634;
+struct ShadowTile {
+    mat4 viewProj;
+    vec4 rect;
+    vec4 params;
+};
+layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
+layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
+layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
+
+vec3 Unproject(vec3 ndc)
+{
+    vec4 p = frame.invViewProj * vec4(ndc, 1.0);
+    return p.xyz / p.w;
+}
+
+float SunShadow(vec3 p, float viewDepth)
+{
+    int c = 0;
+    while (c < 4 && viewDepth > frame.cascadeSplits[c]) {
+        ++c;
+    }
+    if (c == 4) {
+        return 1.0;
+    }
+    vec4 clip = frame.cascadeViewProj[c] * vec4(p, 1.0);
+    return texture(shadowMap, vec4(clip.xy / clip.w * 0.5 + 0.5, float(c), clip.z / clip.w * 0.5 + 0.5));
+}
+
+float LocalShadow(uint index, Light light, vec3 p)
+{
+    uint tile = lightShadow[index];
+    if (tile == kNone) {
+        return 1.0;
+    }
+    vec3 fromLight = p - light.position.xyz;
+    if (light.shaping.y > kSpotShadowCone) {
+        vec3 a = abs(fromLight);
+        tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
+              : a.y >= a.z               ? (fromLight.y > 0.0 ? 2u : 3u)
+                                         : (fromLight.z > 0.0 ? 4u : 5u);
+    }
+    ShadowTile t = shadowTiles[tile];
+    vec4 clip = t.viewProj * vec4(p, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    if (clip.w <= 0.0 || any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
+        return 1.0;  // outside a spot's tile: its cone doesn't light it anyway
+    }
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+}
+
+float Phase(float cosTheta)
+{
+    float g = frame.fogMedium.w;
+    float d = 1.0 + g * g - 2.0 * g * cosTheta;
+    return (1.0 - g * g) / (4.0 * PI * d * sqrt(d));
+}
+
+// A local light seen from p as a point of its area's intensity, with its
+// shaping, range window and shadow.
+vec3 LocalLight(uint index, vec3 p, vec3 toCamera)
+{
+    Light light = lights[index];
+    vec3 toLight = light.position.xyz - p;
+    float d = length(toLight);
+    float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
+    if (window <= 0.0 || d <= 0.0) {
+        return vec3(0.0);
+    }
+    vec3 l = toLight / d;
+    float cosOff = dot(-l, light.axis.xyz);
+    float theta = acos(clamp(cosOff, -1.0, 1.0));
+    float shaping = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
+                                                       : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
+    vec3 radiance = light.color.rgb * shaping;
+    if (light.shaping.z > 0.0) {
+        radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
+    }
+    // Projected area towards p.
+    uint type = uint(light.position.w);
+    float area;
+    if (type == kLightSphere) {
+        area = PI * light.axis.w * light.axis.w;
+    } else if (type == kLightCylinder) {
+        float h = length(light.halfWidth.xyz);
+        area = 4.0 * light.axis.w * h * length(cross(light.halfWidth.xyz / max(h, 1e-8), l));
+    } else {
+        area = (type == kLightRect ? 4.0 : PI) * length(cross(light.halfWidth.xyz, light.halfHeight.xyz)) *
+               max(cosOff, 0.0);
+    }
+    return radiance * (area * window * window / (d * d) * Phase(dot(-l, toCamera)) * light.halfHeight.w) *
+           LocalShadow(index, light, p);
+}
+
+vec4 History(vec3 coord)
+{
+    // Trilinear from texel centers at integer coordinates, edges clamped.
+    ivec3 size = ivec3(frame.fogGrid.xyz) - 1;
+    vec3 base = floor(coord), f = coord - base;
+    vec4 sum = vec4(0.0);
+    for (int i = 0; i < 8; ++i) {
+        ivec3 o = ivec3(i & 1, (i >> 1) & 1, i >> 2);
+        vec3 w = mix(1.0 - f, f, vec3(o));
+        sum += w.x * w.y * w.z * imageLoad(fogImages[1], clamp(ivec3(base) + o, ivec3(0), size));
+    }
+    return sum;
+}
+
+void main()
+{
+    uvec3 id = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(id, frame.fogGrid.xyz))) {
+        return;
+    }
+    vec3 grid = vec3(frame.fogGrid.xyz);
+    vec2 ndc = (vec2(id.xy) + 0.5) / grid.xy * 2.0 - 1.0;
+    float depth = FogSliceDepth((float(id.z) + frame.fogTemporal.x) / grid.z);
+    vec3 a = Unproject(vec3(ndc, -1.0)), b = Unproject(vec3(ndc, 0.0));
+    vec3 forward = frame.cameraForward.xyz;
+    float fa = dot(a - frame.cameraPos.xyz, forward), fb = dot(b - frame.cameraPos.xyz, forward);
+    vec3 p = a + (b - a) * ((depth - fa) / (fb - fa));
+    vec3 toCamera = normalize(a - b);
+
+    float height = frame.fogGrid.w != 0u ? p.z : p.y;
+    float density = frame.fogMedium.x * exp(clamp(-frame.fogMedium.y * (height - frame.fogMedium.z), -80.0, 20.0));
+    vec3 light = vec3(0.0);
+    for (uint i = 0u; i < frame.counts.x; ++i) {
+        Light sun = lights[i];
+        float shadow = i == frame.counts.y ? SunShadow(p, depth) : 1.0;
+        light += sun.color.rgb * (sun.halfHeight.w * Phase(dot(-sun.position.xyz, toCamera)) * shadow);
+    }
+    if (frame.localLights.x > 0u && (frame.features.x & kFeatureClusters) != 0u) {
+        uint base = ClusterIndex((vec2(id.xy) + 0.5) / grid.xy * frame.viewport.xy, depth) * (kMaxClusterLights + 1u);
+        uint count = clusterLights[base];
+        for (uint k = 0u; k < count; ++k) {
+            light += LocalLight(clusterLights[base + 1u + k], p, toCamera);
+        }
+    } else {
+        for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
+            light += LocalLight(i, p, toCamera);
+        }
+    }
+    if (frame.envRadiance.w > 0.0) {
+        light += max(frame.envSh[0].rgb, 0.0) * (0.282095 / PI) * frame.envRadiance.rgb;  // average radiance
+    }
+    vec4 current = vec4(density * frame.fogAlbedo.rgb * light, density);
+
+    if (frame.fogTemporal.y > 0.0) {
+        vec4 prev = frame.prevViewProj * vec4(p, 1.0);
+        float prevDepth = frame.fogTemporal.w > 0.0 ? depth : prev.w;
+        if (prev.w > 0.0 && prevDepth > 0.0) {
+            vec3 coord = vec3((prev.xy / prev.w * 0.5 + 0.5) * grid.xy,
+                              sqrt(prevDepth / frame.fogTemporal.z) * grid.z) - 0.5;
+            if (all(greaterThanEqual(coord, vec3(-0.5))) && all(lessThanEqual(coord, grid - 0.5))) {
+                current = mix(History(coord), current, 1.0 - frame.fogTemporal.y);
+            }
+        }
+    }
+    imageStore(fogImages[0], ivec3(id), current);
+}

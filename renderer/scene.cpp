@@ -1,5 +1,6 @@
 ﻿#include "scene.h"
 
+#include "vkmath.h"
 #include "lod.h"
 
 #include <algorithm>
@@ -34,6 +35,19 @@ struct GpuMaterial {
     // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
     uint32_t program[4];
     float specular[4];  // Material::specular
+    // Lobes (shaders/brdf.glsl).
+    float specularColor[4];  // specular workflow F0, w = 1 when used
+    float coat[4];           // weight, roughness, F0
+    float coatColor[4];
+    float sheen[4];          // weight, roughness
+    float sheenColor[4];
+    float thinFilm[4];       // weight, thickness (nm), ior
+    float anisotropy[4];     // amount, rotation (turns), 1: OpenPBR's mapping
+    float toon[4];           // bands, softness
+    float transmission[4];  // Material::transmissionColor, transmission
+    float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
+    float subsurface[4];        // Material::subsurfaceColor, subsurface
+    float subsurfaceRadius[4];  // Material::subsurfaceRadius
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
@@ -48,7 +62,7 @@ struct GpuLod {           // mirror of Lod in shaders/cull.comp
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
-    float axis[4];       // emission axis; w: sphere radius
+    float axis[4];       // emission axis; w: sphere/cylinder radius, distant: tan of the sun's angular radius
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
@@ -253,6 +267,135 @@ bool Scene::SetTagMask(uint32_t mask)
     return changed;
 }
 
+bool Scene::SetEmissiveLights(bool on, float threshold)
+{
+    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
+    _emissiveLights = on;
+    _emissiveThreshold = threshold;
+    return changed;
+}
+
+// An instance of an emissive mesh as lights: a flat one (a panel) as a
+// rect light on each face, of its radiance; any other as a sphere light
+// around it of the same power.
+struct Scene::Emitter {
+    const Mesh *mesh;
+    bool flat;
+    float center[3];
+    float radius;                          // sphere
+    float thin[3], wide[3], high[3];       // flat: half axes, thin one the faces' normal
+    float radiance[3];                     // of the light's surface
+    float power;                           // luminous, for picking the brightest
+};
+
+// Emissive meshes promoted to lights (SetEmissiveLights), at most
+// kMaxEmitters instances, the most powerful first. Small means a bounding
+// sphere under a quarter of the scene's diagonal: big emitters light the
+// scene through GI only. The lights never see the emitter itself: a
+// sphere bounds it (its shadow maps' near plane and its shadow rays, aimed
+// at the cap facing the receiver, stay outside), rects lie just off its
+// faces.
+// ponytail: constant emissive colours only (textured and program-driven
+// emission is left to GI), rigid meshes only, panels' edges don't emit,
+// and the lights are diffuse (highlights come from reflections of the
+// emitter).
+std::vector<Scene::Emitter> Scene::_FindEmitters()
+{
+    constexpr size_t kMaxEmitters = 32;
+    std::vector<Emitter> found;
+    if (!_emissiveLights || !_gpu.hasBounds) {
+        return found;
+    }
+    float diagonal = 0;
+    for (int k = 0; k < 3; ++k) {
+        diagonal += (_gpu.boundsMax[k] - _gpu.boundsMin[k]) * (_gpu.boundsMax[k] - _gpu.boundsMin[k]);
+    }
+    const float maxRadius = 0.25f * std::sqrt(diagonal);
+    for (const auto &mp : _meshes) {
+        Mesh &m = *mp;
+        const Material *mat = m.material.get();
+        if (!mat || mat->emissiveTex.texture || !mat->emissiveTex.udim.empty() ||
+            (!mat->program.Empty() && mat->program.Outputs(MaterialProgram::kEmissive)) ||
+            std::max({mat->emissive[0], mat->emissive[1], mat->emissive[2]}) * mat->opacity < _emissiveThreshold ||
+            !m.visible || !(m.tag & _tagMask) || m._indexCount == 0 || m._instanceCount == 0 || m._skinCount > 0) {
+            continue;
+        }
+        if (m._emitterAreaVersion != m._geometryVersion) {
+            // Object-space area of the triangles, per corner or indexed.
+            const bool indexed = !m.indices.empty();
+            const size_t corners = indexed ? m.indices.size() : m.points.size() / 3;
+            double area = 0;
+            for (size_t t = 0; t + 2 < corners; t += 3) {
+                const float *p[3];
+                for (int k = 0; k < 3; ++k) {
+                    p[k] = &m.points[size_t(indexed ? m.indices[t + k] : t + k) * 3];
+                }
+                const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]};
+                const float b[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]};
+                const float c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+                area += 0.5 * std::sqrt(double(c[0]) * c[0] + double(c[1]) * c[1] + double(c[2]) * c[2]);
+            }
+            m._emitterArea = float(area);
+            m._emitterAreaVersion = m._geometryVersion;
+        }
+        float emitted[3];
+        for (int k = 0; k < 3; ++k) {
+            emitted[k] = mat->emissive[k] * mat->opacity;
+        }
+        const float luminance = 0.2126f * emitted[0] + 0.7152f * emitted[1] + 0.0722f * emitted[2];
+        for (uint32_t i = 0; i < m._instanceCount; ++i) {
+            // The object bounds as an oriented box: center and half axes
+            // (row-vector transform: p' = p * M).
+            const float *x = &m.transforms[size_t(i) * 16];
+            Emitter e{&m};
+            float axes[3][3], length[3];
+            for (int k = 0; k < 3; ++k) {
+                const float c = 0.5f * (m._boundsMin[k] + m._boundsMax[k]), h = 0.5f * (m._boundsMax[k] - m._boundsMin[k]);
+                for (int j = 0; j < 3; ++j) {
+                    e.center[j] += c * x[k * 4 + j];
+                    axes[k][j] = h * x[k * 4 + j];
+                }
+                length[k] = std::sqrt(axes[k][0] * axes[k][0] + axes[k][1] * axes[k][1] + axes[k][2] * axes[k][2]);
+            }
+            for (int j = 0; j < 3; ++j) {
+                e.center[j] += x[12 + j];
+            }
+            e.radius = std::sqrt(length[0] * length[0] + length[1] * length[1] + length[2] * length[2]);
+            if (!(e.radius > 0.0f) || e.radius > maxRadius) {
+                continue;
+            }
+            // Flat: the thinnest axis under a fifth of the next one.
+            const int thin = int(std::min_element(length, length + 3) - length);
+            const int wide = (thin + 1) % 3, high = (thin + 2) % 3;
+            e.flat = length[thin] < 0.2f * std::min(length[wide], length[high]);
+            float area;
+            if (e.flat) {
+                std::copy(axes[thin], axes[thin] + 3, e.thin);
+                std::copy(axes[wide], axes[wide] + 3, e.wide);
+                std::copy(axes[high], axes[high] + 3, e.high);
+                area = 8.0f * length[wide] * length[high];  // both faces
+                std::copy(emitted, emitted + 3, e.radiance);
+            } else {
+                // World area: scaled by the transform's area scale (det^(2/3)).
+                const float det = x[0] * (x[5] * x[10] - x[6] * x[9]) - x[1] * (x[4] * x[10] - x[6] * x[8]) +
+                                  x[2] * (x[4] * x[9] - x[5] * x[8]);
+                area = m._emitterArea * std::pow(std::abs(det), 2.0f / 3.0f);
+                for (int k = 0; k < 3; ++k) {
+                    e.radiance[k] = emitted[k] * area / (4.0f * 3.14159265f * e.radius * e.radius);
+                }
+            }
+            e.power = luminance * area;
+            found.push_back(e);
+        }
+    }
+    if (found.size() > kMaxEmitters) {
+        std::nth_element(found.begin(), found.begin() + kMaxEmitters, found.end(),
+                         [](const Emitter &a, const Emitter &b) { return a.power > b.power; });
+        found.resize(kMaxEmitters);
+    }
+    return found;
+}
+
 Mesh *Scene::AddMesh()
 {
     _changed = true;
@@ -370,6 +513,9 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
                             VkDeviceSize elementSize, VkBufferUsageFlags usage, bool instances)
 {
     _Flush();  // pending copies/fills target the old buffer
+    if (&buffer == &_vertices || &buffer == &_indices) {
+        usage |= _device->rayTracingInputUsage;  // BLAS inputs
+    }
     const uint32_t old = alloc.Capacity();
     const uint32_t step = VkDeviceSize(old) * elementSize > (VkDeviceSize(256) << 20) ? old / 4 : old;
     const uint32_t capacity = std::max({old + step, old + needed, 1024u});
@@ -410,6 +556,8 @@ void Scene::_UploadGeometry(Mesh &m)
     ++m._lodGeneration;  // levels still building for the last upload don't fit
     m._jointBounds.clear();
     m.geometryDirty = false;
+    static std::atomic<uint64_t> geometryVersions{0};
+    m._geometryVersion = ++geometryVersions;
 
     // Elements of the per-corner arrays: corners, or vertices with indices.
     const bool indexed = !m.indices.empty();
@@ -428,6 +576,39 @@ void Scene::_UploadGeometry(Mesh &m)
                        std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
+    }
+    // Planar reflections: is the mesh flat? Its first proper triangle,
+    // and every point within a thousandth of its size of that plane.
+    m._flat = false;
+    if (!skinned && m.blendRanges.empty()) {
+        auto point = [&](size_t corner) {
+            const size_t e = indexed ? m.indices[corner] : corner;
+            return Vec3{m.points[e * 3], m.points[e * 3 + 1], m.points[e * 3 + 2]};
+        };
+        float lo[3] = {m.points[0], m.points[1], m.points[2]}, hi[3] = {lo[0], lo[1], lo[2]};
+        for (size_t i = 0; i < m.points.size(); ++i) {
+            lo[i % 3] = std::min(lo[i % 3], m.points[i]);
+            hi[i % 3] = std::max(hi[i % 3], m.points[i]);
+        }
+        const float size = Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+        for (size_t t = 0; t < corners && !m._flat; t += 3) {
+            const Vec3 a = point(t), b = point(t + 1), c = point(t + 2);
+            const Vec3 n = Cross(b - a, c - a);
+            if (Length(n) > 1e-6f * size * size) {
+                const Vec3 u = Normalize(n);
+                m._flat = true;
+                for (size_t k = 0; k < m.points.size() && m._flat; k += 3) {
+                    m._flat = std::abs(Dot(Vec3{m.points[k], m.points[k + 1], m.points[k + 2]} - a, u)) <= 1e-3f * size;
+                }
+                const Vec3 tri[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) {
+                    m._flatTriangle[k * 3] = tri[k].x;
+                    m._flatTriangle[k * 3 + 1] = tri[k].y;
+                    m._flatTriangle[k * 3 + 2] = tri[k].z;
+                }
+                break;
+            }
+        }
     }
     // Vertex-rate primvars: the first that fit in four components.
     m._primvarComponents.assign(m.primvars.size(), kNone);
@@ -1212,6 +1393,32 @@ void Scene::Commit()
                 g.tex[i] = texRef(*refs[i]);
             }
             std::copy(m.specular, m.specular + 3, g.specular);
+            std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
+            g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.coat[0] = m.coat;
+            g.coat[1] = m.coatRoughness;
+            g.coat[2] = m.coatF0;
+            std::copy(m.coatColor, m.coatColor + 3, g.coatColor);
+            g.sheen[0] = m.sheen;
+            g.sheen[1] = m.sheenRoughness;
+            std::copy(m.sheenColor, m.sheenColor + 3, g.sheenColor);
+            g.thinFilm[0] = m.thinFilm;
+            g.thinFilm[1] = m.thinFilmThickness;
+            g.thinFilm[2] = m.thinFilmIor;
+            g.anisotropy[0] = m.anisotropy;
+            g.anisotropy[1] = m.anisotropyRotation;
+            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
+            g.toon[0] = m.toonBands;
+            g.toon[1] = m.toonSoftness;
+            std::copy(m.transmissionColor, m.transmissionColor + 3, g.transmission);
+            g.transmission[3] = m.transmission;
+            g.refraction[0] = m.ior;
+            g.refraction[1] = m.thinWalled ? 1.0f : 0.0f;
+            g.refraction[2] = m.transmissionDepth;
+            g.refraction[3] = m.opacityRefracts ? 1.0f : 0.0f;
+            std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
+            g.subsurface[3] = m.subsurface;
+            std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);
@@ -1250,6 +1457,10 @@ void Scene::Commit()
     _gpu.translucent.clear();
     _gpu.translucentVariant.clear();
     _gpu.translucentCenters.clear();
+    _gpu.slotGeometry.resize(slots);
+    _gpu.refraction = false;
+    _gpu.subsurface.clear();
+    _gpu.subsurfaceVariant.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -1268,11 +1479,13 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        d.hair = m.hair ? 1 : 0;
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
                                 (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
+                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
                                 (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
@@ -1310,17 +1523,23 @@ void Scene::Commit()
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture ||
+                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->transmission > 0 ||
                     (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
+            _gpu.refraction = _gpu.refraction || m.material->transmission > 0 || m.material->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
+        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->subsurface > 0) {
+            _gpu.subsurface.push_back(uint32_t(slot));
+            _gpu.subsurfaceVariant.push_back(variant >> 2);
+        }
         kind[slot] |= variant;
         d.primId = m.primId;
+        d.holdout = m.holdout ? 1u : 0u;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
@@ -1334,6 +1553,12 @@ void Scene::Commit()
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
+        // ponytail: ray tracing skips skinned meshes (no per-frame BLAS
+        // refits) and translucent ones (they cast no shadows here either).
+        const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
+        const bool traced = drawable && m._skinCount == 0 && blend != Gpu::kTranslucent;
+        _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
+                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;
@@ -1426,6 +1651,45 @@ void Scene::Commit()
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
     _gpu.displacements = _displacements.buffer;
+    // Planar reflections' mirror: a flagged flat mesh, else the largest
+    // glossy one (its world bounds' diagonal) spanning a third of the scene.
+    // ponytail: one mirror, from its first instance.
+    _gpu.mirrorSlot = kNone;
+    const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
+    float mirrorScore = 0.0f;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
+            m.transforms.size() < 16) {
+            continue;
+        }
+        const Material *mat = m.material.get();
+        const bool glossy = mat && mat->roughness <= 0.3f && !mat->roughnessTex.texture &&
+                            !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
+        const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
+                                       m._worldMax[2] - m._worldMin[2]});
+        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
+        if (score <= mirrorScore) {
+            continue;
+        }
+        const float *x = m.transforms.data();  // row-vector order
+        Vec3 p[3];
+        for (int k = 0; k < 3; ++k) {
+            const float *t = &m._flatTriangle[k * 3];
+            p[k] = {t[0] * x[0] + t[1] * x[4] + t[2] * x[8] + x[12], t[0] * x[1] + t[1] * x[5] + t[2] * x[9] + x[13],
+                    t[0] * x[2] + t[1] * x[6] + t[2] * x[10] + x[14]};
+        }
+        const Vec3 n = Normalize(Cross(p[1] - p[0], p[2] - p[0]));
+        if (Dot(n, n) < 0.5f) {
+            continue;
+        }
+        mirrorScore = score;
+        _gpu.mirrorSlot = uint32_t(slot);
+        const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
+        std::copy(plane, plane + 4, _gpu.mirrorPlane);
+        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
+        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+    }
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1451,7 +1715,8 @@ void Scene::Commit()
                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     }
 
-    _device->Reserve(_lightBuffer, _lights.size() * sizeof(GpuLight),
+    const std::vector<Emitter> emitters = _FindEmitters();
+    _device->Reserve(_lightBuffer, (_lights.size() + 2 * emitters.size()) * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
@@ -1473,17 +1738,19 @@ void Scene::Commit()
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);
+                g.axis[3] = 0.5f * l->angle * 0.0174532925f;
                 ++lightCount;
                 continue;
             }
             const bool sphere = l->type == Light::Type::Sphere;
+            const bool cylinder = l->type == Light::Type::Cylinder;
             std::copy(l->position, l->position + 3, g.position);
-            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : 3.0f;
+            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : cylinder ? 4.0f : 3.0f;
             std::copy(l->radiance, l->radiance + 3, g.color);
             std::copy(l->direction, l->direction + 3, g.axis);
-            g.axis[3] = sphere ? l->radius : 0.0f;
+            g.axis[3] = sphere || cylinder ? l->radius : 0.0f;
             std::copy(l->halfWidth, l->halfWidth + 3, g.halfWidth);
-            g.halfWidth[3] = sphere && !l->point ? l->radius : 0.0f;
+            g.halfWidth[3] = (sphere || cylinder) && !l->point ? l->radius : 0.0f;
             std::copy(l->halfHeight, l->halfHeight + 3, g.halfHeight);
             const float cone = l->coneAngle * 0.0174532925f;
             g.shaping[0] = cone * (1.0f - std::clamp(l->coneSoftness, 0.0f, 1.0f));
@@ -1503,6 +1770,14 @@ void Scene::Commit()
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;
                     c.size = l->point ? 0.0f : l->radius;
+                } else if (cylinder) {
+                    // Seen from the side it is a 2r x length rect; casters
+                    // can come within r / sqrt 2 of the center (radius 0).
+                    const float h = std::sqrt(l->halfWidth[0] * l->halfWidth[0] + l->halfWidth[1] * l->halfWidth[1] +
+                                              l->halfWidth[2] * l->halfWidth[2]);
+                    c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
+                    c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
+                    c.extent = h;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];
@@ -1520,6 +1795,63 @@ void Scene::Commit()
             ++localLightCount;
         }
     }
+    // Emissive meshes (SetEmissiveLights): diffuse lights after the scene's
+    // own, shadowed like them.
+    std::unordered_map<const Mesh *, uint32_t> promoted;
+    for (const Emitter &e : emitters) {
+        for (const float side : {1.0f, -1.0f}) {
+            if (!e.flat && side < 0.0f) {
+                break;
+            }
+            GpuLight &g = lights[lightCount + localLightCount];
+            g = GpuLight{};
+            std::copy(e.radiance, e.radiance + 3, g.color);
+            g.halfHeight[3] = 1.0f;
+            g.shaping[0] = g.shaping[1] = 3.14159265f;  // no cone; specular multiplier 0
+            Scene::Gpu::ShadowCaster c{};
+            c.light = lightCount + localLightCount;
+            c.coneAngle = 3.14159265f;
+            const float peak = std::max({e.radiance[0], e.radiance[1], e.radiance[2]});
+            if (e.flat) {
+                // A rect just off this face (its normal from the wide axes:
+                // a quad has no thickness), emitting away from it.
+                const float n[3] = {e.wide[1] * e.high[2] - e.wide[2] * e.high[1],
+                                    e.wide[2] * e.high[0] - e.wide[0] * e.high[2],
+                                    e.wide[0] * e.high[1] - e.wide[1] * e.high[0]};
+                const float nl = std::max(std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]), 1e-30f);
+                const float offset = std::sqrt(e.thin[0] * e.thin[0] + e.thin[1] * e.thin[1] + e.thin[2] * e.thin[2]) +
+                                     1e-3f * e.radius;
+                for (int k = 0; k < 3; ++k) {
+                    g.axis[k] = side * n[k] / nl;
+                    g.position[k] = e.center[k] + g.axis[k] * offset;
+                    g.halfWidth[k] = e.wide[k];
+                    g.halfHeight[k] = e.high[k];
+                    c.extent += (e.wide[k] + e.high[k]) * (e.wide[k] + e.high[k]);
+                }
+                g.position[3] = 2.0f;
+                const float area = 4.0f * std::sqrt(e.wide[0] * e.wide[0] + e.wide[1] * e.wide[1] + e.wide[2] * e.wide[2]) *
+                                   std::sqrt(e.high[0] * e.high[0] + e.high[1] * e.high[1] + e.high[2] * e.high[2]);
+                c.rangeIntensity = peak * area / 3.14159265f;  // as for rect lights above
+                c.size = std::sqrt(area / 3.14159265f);
+                c.extent = std::sqrt(c.extent);
+            } else {
+                std::copy(e.center, e.center + 3, g.position);
+                g.position[3] = 1.0f;
+                g.axis[2] = -1.0f;
+                g.axis[3] = g.halfWidth[3] = e.radius;
+                c.rangeIntensity = peak * e.radius * e.radius;
+                c.radius = c.size = e.radius;
+            }
+            std::copy(g.position, g.position + 3, c.position);
+            std::copy(g.axis, g.axis + 3, c.axis);
+            _gpu.shadowCasters.push_back(c);
+            ++localLightCount;
+        }
+        ++promoted[e.mesh];
+    }
+    for (const auto &[mesh, instances] : promoted) {
+        _gpu.slotGeometry[mesh->_slot].emitter = instances == mesh->_instanceCount;
+    }
 
     const auto dome = std::find_if(_domes.begin(), _domes.end(),
                                    [](const auto &d) { return d->visible; });
@@ -1533,6 +1865,23 @@ void Scene::Commit()
         const int32_t index = _TextureIndex((*dome)->texture.get());
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
+
+    // What lighting depends on besides geometry (FNV-1a, a word at a time).
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t bytes) {
+        const auto *b = static_cast<const uint8_t *>(data);
+        for (size_t i = 0; i < bytes; i += 8) {
+            uint64_t word = 0;
+            std::memcpy(&word, b + i, std::min<size_t>(8, bytes - i));
+            hash = (hash ^ word) * 1099511628211ull;
+        }
+    };
+    mix(lights, (lightCount + localLightCount) * sizeof(GpuLight));
+    mix(materials.data(), materials.size() * sizeof(GpuMaterial));
+    mix(&_gpu.environment, sizeof(_gpu.environment));
+    mix(_gpu.environmentRadiance, sizeof(_gpu.environmentRadiance));
+    mix(_gpu.environmentWorldToLocal, sizeof(_gpu.environmentWorldToLocal));
+    _gpu.lightingHash = hash;
 
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;
@@ -1556,6 +1905,7 @@ void Scene::Commit()
     _gpu.jointBounds = _jointBoundsPool.buffer;
     _gpu.blendOffsets = _blendOffsets.buffer;
     _gpu.blendWeights = _blendWeights.buffer;
+    _gpu.blendWeightsBytes = _blendWeights.size;
     _gpu.drawCount = uint32_t(commandSlots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;

@@ -11,6 +11,8 @@ if(MSVC)
 endif()
 
 find_package(Vulkan REQUIRED)
+# garch (GPU sharing with usdview's OpenGL) links OpenGL::GL.
+find_package(OpenGL REQUIRED)
 # -DCMAKE_PREFIX_PATH=<USD install root>; pxr_DIR alone misses its TBB/OpenSubdiv configs.
 find_package(pxr CONFIG REQUIRED)
 
@@ -19,7 +21,8 @@ find_package(pxr CONFIG REQUIRED)
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
-               tonemap.frag)
+               tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
+               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
@@ -27,21 +30,54 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
-                renderer/shaders/displace.glsl)
+                renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
+                renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
+    list(APPEND shader_incs ${spv})
+endforeach()
+# Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
+foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit)
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+                renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
+                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
 # primvars, mesh.frag with the interpreter; other materials never run it.
-foreach(shader mesh.vert mesh.frag)
-    string(REPLACE "mesh." "mesh_graph." graph ${shader})
+# Extra AOVs' G-buffer pass likewise (aov.frag).
+foreach(shader mesh.vert mesh.frag aov.frag)
+    string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DGRAPH -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/noise.glsl
-                renderer/shaders/displace.glsl)
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
+    list(APPEND shader_incs ${spv})
+endforeach()
+# Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
+# with variants of their own, so plain materials don't pay for them.
+foreach(variant layers graph_layers)
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_${variant}.frag.inc)
+    set(defines -DLAYERS)
+    if(variant STREQUAL "graph_layers")
+        list(APPEND defines -DGRAPH)
+    endif()
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
+        DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+                renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -55,7 +91,10 @@ list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
-    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp renderer/lod.cpp
+    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
+    renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
+    renderer/transparency.cpp renderer/subsurface.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/lod.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
@@ -67,8 +106,8 @@ target_link_libraries(vkrtest PRIVATE vkrenderer)
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
-    hydra/sceneIndexPlugin.cpp hydra/subdivision.cpp)
-target_link_libraries(hdVk PRIVATE ar hd hdsi hio pxOsd sdr vkrenderer)
+    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp)
+target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
@@ -101,10 +140,24 @@ if(WIN32)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lobes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lobes.py)
+    set_tests_properties(lobes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME textures COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_textures.py)
     set_tests_properties(textures PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME procedural COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_procedural.py)
     set_tests_properties(procedural PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME distortion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_distortion.py)
+    set_tests_properties(distortion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME aovs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aovs.py)
+    set_tests_properties(aovs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME interop COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_interop.py)
+    set_tests_properties(interop PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME transmission COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_transmission.py)
+    set_tests_properties(transmission PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME holdout COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_holdout.py)
+    set_tests_properties(holdout PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lighting COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lighting.py)
+    set_tests_properties(lighting PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME subdivision COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_subdivision.py)
     set_tests_properties(subdivision PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME displacement COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_displacement.py)

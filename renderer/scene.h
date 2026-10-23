@@ -188,6 +188,62 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
+    // Lobes beyond the metallic base (shaders/brdf.glsl), constants only.
+    // ponytail: no textures or programs for them; add a TextureRef (or a
+    // MaterialProgram::Input) per input when assets need it.
+    // UsdPreviewSurface useSpecularWorkflow: F0 is specularColor (F90 white),
+    // metallic is ignored.
+    bool specularWorkflow = false;
+    float specularColor[3] = {0, 0, 0};
+    // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
+    // coatColor and loses what the coat reflects. Weight 0: none.
+    float coat = 0;
+    float coatRoughness = 0.01f;
+    float coatF0 = 0.04f;  // from the coat's IOR
+    float coatColor[3] = {1, 1, 1};
+    // Sheen (fabric, fuzz): a microfiber lobe over the diffuse. Weight 0: none.
+    float sheen = 0;
+    float sheenColor[3] = {1, 1, 1};
+    float sheenRoughness = 0.3f;
+    // Thin-film iridescence on the base's specular. Weight 0: none.
+    float thinFilm = 0;
+    float thinFilmThickness = 0;  // nanometres
+    float thinFilmIor = 1.5f;
+    // Anisotropic specular, stretched along the uv set's u direction turned
+    // by the rotation (in turns). 0: isotropic.
+    float anisotropy = 0;
+    float anisotropyRotation = 0;
+    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    // NPR toon: the lit result's intensity quantized into this many flat
+    // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
+    // `toonSoftness` of a band wide.
+    float toonBands = 0;
+    float toonSoftness = 0.05f;
+
+    // Whether any lobe beyond the metallic base is on: such materials shade
+    // with the renderer's LAYERS pipelines, the others never pay for them.
+    bool Layered() const
+    {
+        return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0;
+    }
+    // Transmission (refraction, transparency.glsl): of the surface opacity
+    // leaves, `transmission` lets light through, tinted by
+    // transmissionColor (Beer-Lambert at transmissionDepth along the path
+    // inside; 0: at the surface) and bent by ior unless thinWalled. With
+    // opacityRefracts what opacity lets through is refracted too
+    // (UsdPreviewSurface with an ior). Constants only.
+    float transmission = 0;
+    float transmissionColor[3] = {1, 1, 1};
+    float transmissionDepth = 0;
+    float ior = 1.5f;
+    bool thinWalled = false;
+    bool opacityRefracts = false;
+    // Subsurface scattering (subsurface.h): the weight of the diffuse
+    // light that scatters under the surface, its colour, and how far each
+    // channel travels (mean free path, world units). Constants only.
+    float subsurface = 0;
+    float subsurfaceColor[3] = {1, 1, 1};
+    float subsurfaceRadius[3] = {1, 1, 1};
 
     // Displacement (mesh.vert, every pass): an offset along the vertex
     // normal in object units, displacementTex's texel (its channel, scale
@@ -239,6 +295,9 @@ struct Mesh {
     // Primvars the material's program reads, by name; vertex-rate ones are
     // geometry (geometryDirty), the others are read again every Commit.
     std::vector<Primvar> primvars;
+    // Shade as hair (BasisCurves): strand highlights along the uv set's u,
+    // which runs along each curve (shaders/brdf.glsl).
+    bool hair = false;
 
     // UsdSkel skinning, on the GPU: linear blend, or dual quaternions with
     // `dualQuaternion`. 4 or 8 joints per corner (`influences`), strongest
@@ -263,10 +322,20 @@ struct Mesh {
     std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
     uint32_t blendShapeCount = 0;
     std::vector<float> blendWeights;
+    // Holdout (matte): drawn black with zero alpha, cut out of the image
+    // but still hiding what's behind it and casting shadows.
+    bool holdout = false;
+    // Planar reflections: make this (flat) mesh the mirror
+    // (primvars:hdvk:planarReflection), whatever its size and roughness.
+    bool planarReflection = false;
 
 private:
     friend class Scene;
     size_t _slot = 0;
+    // Planar reflections: all points on one plane, through this triangle
+    // (object space, three points).
+    bool _flat = false;
+    float _flatTriangle[9] = {};
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -288,6 +357,11 @@ private:
     float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
+    // Ray tracing: unique per geometry upload (a new BLAS when it changes).
+    uint64_t _geometryVersion = 0;
+    // Emissive lights: the object-space area of `points`, at this version.
+    float _emitterArea = 0;
+    uint64_t _emitterAreaVersion = 0;
     // Levels of detail (lod.h), coarser and coarser: their triangles in the
     // index pool after the mesh's own, and instance slots (never valid)
     // reserving levels 2 and 3 their range of the visible lists.
@@ -305,16 +379,20 @@ private:
 // (intensity, exposure, color, temperature, normalize) into irradiance for
 // distant lights and the emitting surface's radiance for sphere/rect lights.
 struct Light {
-    enum class Type { Distant, Sphere, Rect, Disk };
+    enum class Type { Distant, Sphere, Rect, Disk, Cylinder };
     Type type = Type::Distant;
     float direction[3] = {0, 0, 1};      // distant: towards the light; sphere/rect: emission axis (light -Z)
     float irradiance[3] = {1, 1, 1};     // distant, linear RGB
     float radiance[3] = {1, 1, 1};       // sphere/rect, linear RGB
     float position[3] = {0, 0, 0};       // sphere/rect center
-    float halfWidth[3] = {0.5f, 0, 0};   // rect: center to the +X edge; disk: radius along X
+    // Rect: center to the +X edge; disk: radius along X; cylinder: center to
+    // the +X end of its axis (half its length).
+    float halfWidth[3] = {0.5f, 0, 0};
     float halfHeight[3] = {0, 0.5f, 0};  // rect: center to the +Y edge; disk: radius along Y
-    float radius = 0.5f;                 // sphere
-    bool point = false;                  // sphere: shade as a point (treatAsPoint), same power
+    float radius = 0.5f;                 // sphere, cylinder
+    // Sphere: shade as a point (treatAsPoint); cylinder: as a line
+    // (treatAsLine). Same power, only the highlight loses the radius.
+    bool point = false;
     float coneAngle = 180.0f;            // UsdLuxShapingAPI around the emission axis, degrees
     float coneSoftness = 0.0f;
     float focus = 0.0f;
@@ -323,6 +401,7 @@ struct Light {
     float specular = 1.0f;
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
+    float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
 
 private:
     friend class Scene;
@@ -376,6 +455,9 @@ struct DrawInfo {
     uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
     uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
+    uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
+    uint32_t holdout;          // 1: Mesh::holdout
+    uint32_t pad[2];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -444,6 +526,12 @@ public:
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
+    // Emissive meshes as lights: from the next Commit, each instance of a
+    // small rigid mesh whose material emits at least `threshold` (a constant
+    // emissiveColor's brightest channel, scene-referred radiance) also
+    // lights the scene as a sphere light around it, of the same power
+    // (pi x radiance x area), casting shadows. Returns whether it changed.
+    bool SetEmissiveLights(bool on, float threshold);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -479,7 +567,7 @@ public:
         VkBuffer primvarTable = VK_NULL_HANDLE;
         VkBuffer primvarData = VK_NULL_HANDLE;      // float
         VkBuffer primvarVertices = VK_NULL_HANDLE;  // vec4 per vertex of meshes with vertex-rate primvars
-        uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
+        uint32_t drawCount = 0;         // command slots: meshCount meshes' (some may draw nothing), then levels'
         // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
         // even with every instance visible.
@@ -488,11 +576,15 @@ public:
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
         // kProgram (a material program, shading pass only) with kProcedural
-        // (it runs noise, MaterialProgram::Procedural): kind >> 2 picks the
-        // renderer's pipeline variant. Chunks also end where it changes.
-        // kDisplaced: a displacing material (every pass).
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32,
-                         kDisplaced = 64 };
+        // (it runs noise, MaterialProgram::Procedural), kLayers (lobes
+        // beyond the metallic base, Material::Layered, or Mesh::hair; shading
+        // pass only), kDisplaced (a displacing material; every pass): kind >>
+        // 2 picks the renderer's pipeline variant. Chunks also end where it
+        // changes.
+        enum : uint8_t {
+            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
+            kDisplaced = 128
+        };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
@@ -533,6 +625,41 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+        // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
+        VkDeviceSize blendWeightsBytes = 0;
+
+        // Ray tracing (RayTracing builds a BLAS per slot from these): per mesh
+        // slot its vertices and triangles in the pools, `version` unique per
+        // upload, 0 for slots ray tracing skips (not drawn, translucent or
+        // skinned).
+        struct SlotGeometry {
+            uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
+            uint64_t version;
+            bool cutout;   // alpha-tested: any-hit shaders run
+            bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
+        };
+        std::vector<SlotGeometry> slotGeometry;
+        // A drawn translucent material refracts or tints what's behind it
+        // (Material::transmission, opacityRefracts): the renderer copies
+        // the opaque colour for it.
+        bool refraction = false;
+        // Slots of opaque and cutout meshes with subsurface materials (and
+        // their pipeline variants), shaded again by the subsurface pass.
+        std::vector<uint32_t> subsurface;
+        std::vector<uint8_t> subsurfaceVariant;
+
+        // Volumetric fog, reflection probes: changes with what lighting
+        // depends on besides geometry (the light and material tables, the
+        // dome), so their histories and captures know when to start over.
+        uint64_t lightingHash = 0;
+        // Planar reflections: the mirror, the flat mesh flagged by
+        // Mesh::planarReflection or else the largest flat, glossy (roughness
+        // up to 0.3), opaque one at least a third of the scene's size; kNone:
+        // none. Its first instance's plane (unit normal n, n . x + d = 0) and
+        // world bounds.
+        uint32_t mirrorSlot = kNone;
+        float mirrorPlane[4] = {};
+        float mirrorMin[3] = {}, mirrorMax[3] = {};
 
         // Displacement: per material (as `materials`) its constant, bound
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
@@ -576,6 +703,8 @@ private:
     void _Upload(Texture &texture);
     int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);
+    struct Emitter;
+    std::vector<Emitter> _FindEmitters();
     void _DestroyEnvironment();
     template <typename T>
     static void _RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item);
@@ -602,6 +731,8 @@ private:
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
     uint32_t _tagMask = ~0u;
+    bool _emissiveLights = true;
+    float _emissiveThreshold = 4.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;

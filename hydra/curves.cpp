@@ -2,6 +2,7 @@
 
 #include "instancer.h"
 #include "material.h"
+#include "mesh.h"
 #include "renderDelegate.h"
 #include "scene.h"
 
@@ -102,13 +103,17 @@ T Value(Primvar<T> const &pv, size_t curve, size_t point, T const &fallback)
 struct Builder {
     vkr::Mesh &m;
     bool colors;  // per vertex; else the mesh's constant colour
+    bool uvs;     // per vertex (curves)
 
-    uint32_t Vertex(GfVec3f const &p, GfVec3f const &n, GfVec3f const &c)
+    uint32_t Vertex(GfVec3f const &p, GfVec3f const &n, GfVec3f const &c, float u = 0.0f, float v = 0.0f)
     {
         m.points.insert(m.points.end(), p.data(), p.data() + 3);
         m.normals.insert(m.normals.end(), n.data(), n.data() + 3);
         if (colors) {
             m.colors.insert(m.colors.end(), c.data(), c.data() + 3);
+        }
+        if (uvs) {
+            m.uvs.insert(m.uvs.end(), {u, v});
         }
         return uint32_t(m.points.size() / 3 - 1);
     }
@@ -116,13 +121,21 @@ struct Builder {
 };
 
 // A tube along a polyline, or with normals a ribbon across them. A closed
-// polyline (last sample on the first) is welded there.
+// polyline (last sample on the first) is welded there. Their uvs: u runs
+// along the curve, 0 at its first point to 1 at its last (hair shading's
+// strand direction, shaders/brdf.glsl), v around or across it.
+// ponytail: a closed curve's u jumps back to 0 at the weld.
 void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder &out)
 {
     const size_t n = line.size();
     closed = closed && n >= 3;
     const uint32_t ring = ribbon ? 2 : kTubeSides;
     const uint32_t first = uint32_t(out.m.points.size() / 3);
+    std::vector<float> along(n, 0.0f);
+    for (size_t i = 1; i < n; ++i) {
+        along[i] = along[i - 1] + (line[i].p - line[i - 1].p).GetLength();
+    }
+    const float length = n > 0 && along.back() > 0.0f ? along.back() : 1.0f;
     GfVec3f tangent(0.0f), frame(0.0f);
     for (size_t i = 0; i < (closed ? n - 1 : n); ++i) {
         const size_t next = i + 1 < n ? i + 1 : closed ? 1 : n - 1;
@@ -130,11 +143,11 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder 
         const GfVec3f d = line[next].p - line[prev].p;
         tangent = d.GetLength() > 1e-12f ? d.GetNormalized() : tangent;
         const Sample &s = line[i];
-        const float r = 0.5f * s.width;
+        const float r = 0.5f * s.width, u = along[i] / length;
         if (ribbon) {
             const GfVec3f side = GfCross(tangent, s.normal).GetNormalized() * r;
-            out.Vertex(s.p - side, s.normal, s.color);
-            out.Vertex(s.p + side, s.normal, s.color);
+            out.Vertex(s.p - side, s.normal, s.color, u, 0.0f);
+            out.Vertex(s.p + side, s.normal, s.color, u, 1.0f);
             continue;
         }
         // Parallel transport: the last frame vector, made perpendicular again.
@@ -147,7 +160,7 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder 
         for (uint32_t k = 0; k < ring; ++k) {
             const float a = 6.2831853f * float(k) / float(ring);
             const GfVec3f dir = std::cos(a) * frame + std::sin(a) * binormal;
-            out.Vertex(s.p + r * dir, dir, s.color);
+            out.Vertex(s.p + r * dir, dir, s.color, u, float(k) / float(ring));
         }
     }
     for (size_t i = 0; i + 1 < n; ++i) {
@@ -333,8 +346,10 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.uvs.clear();
         m.colors.clear();
         m.indices.clear();
-        Builder out{m, colors.interp != HdInterpolationConstant};
-        if constexpr (std::is_same_v<Base, HdBasisCurves>) {
+        constexpr bool curves = std::is_same_v<Base, HdBasisCurves>;
+        Builder out{m, colors.interp != HdInterpolationConstant, curves};
+        m.hair = curves;  // ponytail: every curve is hair, thick ones too
+        if constexpr (curves) {
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors,
                    Primvar<GfVec3f>(sceneDelegate, id, HdTokens->normals), color, out);
         } else {
@@ -360,9 +375,13 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         this->_UpdateVisibility(sceneDelegate, dirtyBits);
         m.visible = this->IsVisible();
     }
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        m.holdout = HdVkHoldout(sceneDelegate, id);
+    }
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
+        this->SetMaterialId(sceneDelegate->GetMaterialId(id));  // Cryptomatte's material ids
         const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(
-            HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
+            HdPrimTypeTokens->material, this->GetMaterialId()));
         m.material = material ? material->Get() : nullptr;
     }
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;

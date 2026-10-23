@@ -1,0 +1,71 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Soft sun shadows: a 4 degree sun (inputs:angle; the real one is 0.53)
+# casts contact-hardening shadows, sharp where the posts meet the ground
+# and soft under the high beam. Compare hdvk:softSunShadows on and off.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 5, 12)
+    float xformOp:rotateX = -22
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float inputs:angle = 4
+    float3 xformOp:rotateXYZ = (-55, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.5, 0.65, 1)
+    float inputs:intensity = 0.3
+}
+
+def Mesh "ground"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-10, 0, -10), (-10, 0, 10), (10, 0, 10), (10, 0, -10)]
+    color3f[] primvars:displayColor = [(0.7, 0.7, 0.7)]
+}
+
+def Cube "postLeft"
+{
+    double size = 1
+    double3 xformOp:translate = (-2.5, 2, 0)
+    float3 xformOp:scale = (0.25, 4, 0.25)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Cube "postRight"
+{
+    double size = 1
+    double3 xformOp:translate = (2.5, 2, 0)
+    float3 xformOp:scale = (0.25, 4, 0.25)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Cube "beam"
+{
+    double size = 1
+    double3 xformOp:translate = (0, 4.1, 0)
+    float3 xformOp:scale = (5.5, 0.2, 0.4)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "ball"
+{
+    double radius = 0.6
+    double3 xformOp:translate = (0, 0.6, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

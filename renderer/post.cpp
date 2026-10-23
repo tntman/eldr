@@ -92,8 +92,10 @@ PostProcess::PostProcess(Device &device)
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
-    _dev.Reserve(_histogramBuffer, 256 * sizeof(uint32_t),
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    // Device-local: every histogram workgroup adds to it atomically (in
+    // host memory that crossed PCIe, ~5 ms at 720p).
+    _histogramBuffer = _dev.CreateDeviceBuffer(256 * sizeof(uint32_t),
+                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     _dev.Reserve(_exposureBuffer, sizeof(ExposureState), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::memset(_exposureBuffer.mapped, 0, sizeof(ExposureState));
 
@@ -305,7 +307,8 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool 
     ImageBarrier(cmd, _output.image, Mip(0), VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    Params tonemapParams{{s.bloomIntensity, float(levels), 0, 0}, {1.0f / _width, 1.0f / _height, 0, 0}, {}};
+    Params tonemapParams{{s.bloomIntensity, float(levels), float(s.tonemapper), 0},
+                         {1.0f / _width, 1.0f / _height, 0, 0}, {}};
     std::copy(background, background + 4, tonemapParams.c);
     fullscreen(_tonemap, _hdrSet, _output.view, _width, _height, false, tonemapParams);
     ImageBarrier(cmd, _output.image, Mip(0),

@@ -21,9 +21,33 @@ struct Material {
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
     vec4 specular;   // dielectric specular weight times colour
+    // Lobes (brdf.glsl).
+    vec4 specularColor;  // specular workflow F0, w = 1 when used
+    vec4 coat;           // weight (0: none), roughness, F0
+    vec4 coatColor;      // tints the base beneath
+    vec4 sheen;          // weight (0: none), roughness
+    vec4 sheenColor;
+    vec4 thinFilm;       // weight (0: none), thickness (nm), ior
+    vec4 anisotropy;     // amount (0: none), rotation (turns), 1: OpenPBR's roughness mapping
+    vec4 toon;           // bands (0: none), softness
+    vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
+    vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
+    vec4 subsurface;        // colour, weight (subsurface.glsl)
+    vec4 subsurfaceRadius;  // per channel, world units
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile
+
+#ifdef RAY_TRACING
+// Ray tracing stages have no derivatives: hit shaders set the ray cone's
+// footprint in uv here (rt.glsl).
+float rtUvFootprint = 0.0;
+#define UV_DX(uv) vec2(rtUvFootprint, 0.0)
+#define UV_DY(uv) vec2(0.0, rtUvFootprint)
+#else
+#define UV_DX(uv) dFdx(uv)
+#define UV_DY(uv) dFdy(uv)
+#endif
 
 vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
 {
@@ -33,7 +57,7 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     int index = r.index;
     // UsdTransform2d / MaterialX place2d; gradients through the same matrix.
     mat2 a = mat2(r.uvRow0.x, r.uvRow1.x, r.uvRow0.y, r.uvRow1.y);
-    vec2 dx = a * dFdx(uv), dy = a * dFdy(uv);
+    vec2 dx = a * UV_DX(uv), dy = a * UV_DY(uv);
     uv = a * uv + vec2(r.uvRow0.z, r.uvRow1.z);
     vec2 tileUv = uv;
     if (r.udim != 0) {

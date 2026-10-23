@@ -10,17 +10,27 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 
 # GPU passes in the order HdVk runs them (renderer.cpp's pass names).
 PASSES = [
+    ("probeCapture", "Reflection probe capture"),
+    ("planarReflection", "Planar reflection"),
     ("culling", "Culling, skinning"),
     ("lightClusters", "Light clusters"),
     ("sunShadows", "Sun shadows"),
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
+    ("fog", "Volumetric fog"),
+    ("accelerationStructures", "Acceleration structures (TLAS)"),
+    ("giProbes", "Global illumination probes"),
+    ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
+    ("subsurface", "Subsurface scattering"),
+    ("translucency", "Translucency (refraction, OIT)"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
     ("post", "Bloom, exposure, tonemap"),
+    ("aovs", "Extra AOVs"),
+    ("lensDistortion", "Lens distortion"),
     ("readback", "Readback to Hydra"),
 ]
 
@@ -36,6 +46,7 @@ def Rows(stats):
             ("GPU", ms("gpuTimeMs")),
             ("Render call (CPU, waits for GPU)", ms("renderTimeMs")),
             ("Scene upload (CPU)", ms("commitTimeMs")),
+            ("Frame to the viewport", "GPU (OpenGL)" if stats.get("frameSharing") == "OpenGL" else "CPU readback"),
             ("GPU passes", None)]
     passes = stats.get("gpuPassMs", {})
     rows += [(label, "%.2f ms" % passes[key]) for key, label in PASSES if key in passes]
@@ -53,6 +64,7 @@ def Rows(stats):
              ("  textures", ReportMetricSize(get("textureMemory"))),
              ("  vertices, instances", ReportMetricSize(get("primvar"))),
              ("  indices", ReportMetricSize(get("topology"))),
+             ("  acceleration structures", ReportMetricSize(get("accelerationStructureMemory"))),
              ("  peak", ReportMetricSize(get("peakMemory"))),
              ("System memory the GPU reads", ReportMetricSize(get("hostMemoryUsed")))]
     if get("vramSize"):
