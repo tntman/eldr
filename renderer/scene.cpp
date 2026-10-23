@@ -1154,11 +1154,12 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        d.hair = m.hair ? 1 : 0;
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
-                                (drawable && m.material && m.material->Layered() ? Gpu::kLayers : 0);
+                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;

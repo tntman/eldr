@@ -111,7 +111,7 @@ vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
 #ifdef LAYERS
     if (layers.anisotropy > 0.0) {
-        return AnisotropicSpecular(n, v, l, a, f0, NoV);  // brdf.glsl
+        return TangentSpecular(n, v, l, a, f0, NoV);  // brdf.glsl: anisotropic or hair
     }
 #endif
     float NoL = clamp(dot(n, l), 0.0, 1.0);

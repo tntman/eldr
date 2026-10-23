@@ -52,7 +52,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((thinFilm, "hdvk:thinFilm"))                            \
     ((anisotropicSpecular, "hdvk:anisotropicSpecular"))      \
     ((toon, "hdvk:toon"))                                    \
-    ((toonBands, "hdvk:toonBands"))
+    ((toonBands, "hdvk:toonBands"))                          \
+    ((hairShading, "hdvk:hairShading"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

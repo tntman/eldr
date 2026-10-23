@@ -128,6 +128,9 @@ plain = flat(render({}), "/plain")
 everything = flat(render({"hdvk:toonBands": 3}), "/plain")
 engine.SetRendererSetting("hdvk:toonBands", 0)
 expect(everything > 0.6 and plain < 0.3, "hdvk:toonBands bands every material (%.2f flat, %.2f off)" % (everything, plain))
+on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
+change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
+expect(change > 0.1, "hair: strand highlights (%.2f of the image changes)" % change)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

@@ -1,10 +1,10 @@
 // Shading beyond mesh.frag's metallic-roughness base (Lambert diffuse, GGX
 // specular), from the material's constants (material.glsl): the specular
-// workflow, a clearcoat, sheen, thin-film iridescence, anisotropy and toon
-// bands. mesh.frag includes it after its inputs and calls PrepareLayers
-// once per pixel (before the lights), LayerLight per light (and
-// AnisotropicSpecular for the base's GGX), BentNormal and LayerAmbient for
-// the dome, ToonShade last. Only materials with lobes
+// workflow, a clearcoat, sheen, thin-film iridescence, anisotropy, hair
+// (curves) and toon bands. mesh.frag includes it after its inputs and calls
+// PrepareLayers once per pixel (before the lights), LayerLight per light
+// (and TangentSpecular for the base's GGX), BentNormal and LayerAmbient
+// for the dome, ToonShade last. Only materials with lobes
 // (vkr::Material::Layered) shade with the LAYERS build of mesh.frag; the
 // plain build gets the empty versions at the end, so plain materials pay
 // nothing. Within LAYERS each lobe costs a branch unless the material uses
@@ -14,7 +14,7 @@
 const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
            kFeatureAnisotropy = 128u;
 // frame.styles.x bits.
-const uint kStyleToon = 1u;
+const uint kStyleToon = 1u, kStyleHair = 2u;
 
 #ifdef LAYERS
 
@@ -40,6 +40,8 @@ struct Layers {
     float toonBands;       // the material's own (0: the frame's)
     float toonSoftness;
     vec3 albedo;           // the base's, before the lobes change it (toon bands)
+    bool hair;             // strands along the bitangent (curves)
+    vec3 hairTint;         // the hair's colour: the diffuse colour
 };
 Layers layers;
 
@@ -108,12 +110,35 @@ vec3 Iridescence(float cosTheta1, float thickness, float eta2, vec3 f0)
     return max(I, vec3(0.0));
 }
 
+// The uv set's u direction on the surface (from screen-space derivatives,
+// the frame normal maps use), unit length; without uvs around the world's
+// up axis. Call in uniform control flow.
+vec3 UvTangent(vec3 n)
+{
+    vec3 t = CotangentFrame(n, inWorldPos, inUv)[0];
+    t -= n * dot(n, t);
+    if (dot(t, t) < 1e-12) {
+        t = cross(abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n);
+    }
+    return normalize(t);
+}
+
 // Before the lights: the pixel's lobes, and the base's F0 and colours as
 // they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
 {
     layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0), 0.0, 0.0,
-                    diffuseColor + f0);
+                    diffuseColor + f0, false, diffuseColor);
+    // Hair (curves, whose uvs run along each curve; hydra/curves.cpp):
+    // strands along the curve, highlights stretched around it, also without
+    // a material.
+    if (draws[instances[inSlot].draw].hair != 0u && (frame.styles.x & kStyleHair) != 0u) {
+        vec3 t = UvTangent(n);
+        layers.hair = true;
+        layers.anisotropy = 1.0;  // BentNormal: reflections around the strand
+        layers.tangent = cross(t, n);
+        layers.bitangent = t;
+    }
     if (inMaterial == kNoMaterial) {
         return;
     }
@@ -160,15 +185,10 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
     // around the world's up axis.
     // ponytail: no tangent primvars; a "tangents" primvar would replace the
     // derivative frame.
-    if (m.anisotropy.x > 0.0 && (frame.features.x & kFeatureAnisotropy) != 0u) {
+    if (m.anisotropy.x > 0.0 && (frame.features.x & kFeatureAnisotropy) != 0u && !layers.hair) {
         layers.anisotropy = clamp(m.anisotropy.x, 0.0, 1.0);
         layers.openPbrAnisotropy = m.anisotropy.z > 0.0;
-        vec3 t = CotangentFrame(n, inWorldPos, inUv)[0];
-        t -= n * dot(n, t);
-        if (dot(t, t) < 1e-12) {
-            t = cross(abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n);
-        }
-        t = normalize(t);
+        vec3 t = UvTangent(n);
         float angle = 2.0 * PI * m.anisotropy.y;
         layers.tangent = cos(angle) * t + sin(angle) * cross(n, t);
         layers.bitangent = cross(n, layers.tangent);
@@ -201,6 +221,38 @@ vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
     float lambdaV = NoL * length(vec3(at * dot(t, v), ab * dot(b, v), NoV));
     float lambdaL = NoV * length(vec3(at * dot(t, l), ab * dot(b, l), NoL));
     return D * 0.5 / (lambdaV + lambdaL) * F_Schlick(f0, max(dot(l, h), 0.0)) * NoL;
+}
+
+// Hair: Kajiya-Kay's strand highlights in Scheuermann's two-lobe form, a
+// primary reflection (Fresnel F0) shifted towards the root and a wider
+// secondary through the fibre (tinted by the hair's colour) shifted
+// towards the tip. Each lobe is Blinn-Phong-normalized with the exponent
+// as wide as GGX at roughness `a`, times 1/4 for visibility, times cos
+// (the strands are opaque tubes).
+// ponytail: no transmission (TT) lobe, so backlit hair gets no glow; a
+// Marschner model (Karis 2016) would add it.
+float Strand(vec3 t, vec3 h, float p)
+{
+    float th = dot(t, h);
+    return (p + 2.0) / (2.0 * PI) * pow(max(1.0 - th * th, 0.0), 0.5 * p) * smoothstep(-1.0, 0.0, th);
+}
+
+vec3 HairSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0)
+{
+    vec3 h = normalize(v + l), t = layers.bitangent;
+    a = max(a, 0.01);
+    float p = 2.0 / (a * a) - 2.0;
+    float primary = Strand(normalize(t - 0.1 * n), h, p);
+    float secondary = Strand(normalize(t + 0.15 * n), h, 0.25 * p);
+    return (F_Schlick(f0, max(dot(l, h), 0.0)) * primary + 0.5 * layers.hairTint * secondary) * 0.25 *
+           clamp(dot(n, l), 0.0, 1.0);
+}
+
+// The base's specular where it has a tangent frame (mesh.frag's
+// Specular): hair, or anisotropic GGX.
+vec3 TangentSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
+{
+    return layers.hair ? HairSpecular(n, v, l, a, f0) : AnisotropicSpecular(n, v, l, a, f0, NoV);
 }
 
 // The normal the dome's reflection is looked up with: anisotropic
@@ -253,6 +305,13 @@ vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
         c += layers.coat * layers.coatAlbedo * textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb * specularAO;
     }
     c += layers.sheen * layers.sheenAlbedo * Lavg * diffuseAO;
+    if (layers.hair) {
+        // The secondary strand lobe: the dome around the strand (bent
+        // normal), blurrier than the primary, tinted.
+        vec3 r = normalize(mat3(frame.envWorldToLocal) * reflect(-v, BentNormal(n, v, 1.0)));
+        c += 0.25 * layers.hairTint * textureLod(envCube, r, 0.6 * float(frame.counts.z - 1u)).rgb *
+             frame.envRadiance.rgb * specularAO;
+    }
     return c;
 }
 

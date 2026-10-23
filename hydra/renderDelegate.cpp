@@ -131,6 +131,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Sheen (fabric, fuzz)", t.sheen, VtValue(frame.sheen)},
         {"Thin Film Iridescence", t.thinFilm, VtValue(frame.thinFilm)},
         {"Anisotropic Specular (brushed metal)", t.anisotropicSpecular, VtValue(frame.anisotropicSpecular)},
+        {"Hair Shading (curves)", t.hairShading, VtValue(frame.hairShading)},
         {"Toon Shading (materials' eldr:toonBands)", t.toon, VtValue(frame.toon)},
         {"Toon Bands for Every Material (0 = off)", t.toonBands, VtValue(int(frame.toonBands))},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},

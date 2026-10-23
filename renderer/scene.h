@@ -234,6 +234,9 @@ struct Mesh {
     // Primvars the material's program reads, by name; vertex-rate ones are
     // geometry (geometryDirty), the others are read again every Commit.
     std::vector<Primvar> primvars;
+    // Shade as hair (BasisCurves): strand highlights along the uv set's u,
+    // which runs along each curve (shaders/brdf.glsl).
+    bool hair = false;
 
     // UsdSkel skinning, on the GPU: linear blend, or dual quaternions with
     // `dualQuaternion`. 4 or 8 joints per corner (`influences`), strongest
@@ -360,6 +363,8 @@ struct DrawInfo {
     uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
     uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
+    uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
+    uint32_t pad[3];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -465,7 +470,8 @@ public:
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
         // kProgram (a material program, shading pass only), kLayers (lobes
-        // beyond the metallic base, Material::Layered; shading pass only):
+        // beyond the metallic base, Material::Layered, or Mesh::hair;
+        // shading pass only):
         // kind >> 2 picks the renderer's pipeline variant. Chunks also end
         // where it changes.
         enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kLayers = 32 };

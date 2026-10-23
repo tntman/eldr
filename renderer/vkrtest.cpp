@@ -1336,6 +1336,32 @@ int main()
             frame.toonBands = 2;
             banded("Frame::toonBands: every material in bands");
         }
+
+        {
+            // Hair: strands along u (x here) light up where the half vector
+            // is across them. A red strip without a material: in green (the
+            // white primary lobe; the diffuse is red) a light tilted 45
+            // degrees towards y shines on the centre far more than one tilted
+            // as much towards x. Without hair shading it is isotropic GGX.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            vkr::Mesh *strip = AddQuad(scene, -1, -0.2f, 1, 0.2f, 0);
+            strip->color[0] = 1;
+            strip->color[1] = strip->color[2] = 0;
+            strip->hair = true;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 1);
+            };
+            Expect(specular(0, 1) > 2 * specular(1, 0), "hair: highlights across the strands");
+            frame.hairShading = false;
+            Expect(std::abs(specular(0, 1) / specular(1, 0) - 1) < 0.05f, "Frame::hairShading off: isotropic");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
