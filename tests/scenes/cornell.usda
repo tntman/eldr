@@ -1,0 +1,133 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Cornell box for global illumination (hdvk:gi): a closed room, open at the
+# front, lit only by the rect light under its ceiling, so the ceiling, the
+# shadows and the colour on the white walls all come from bounced light.
+# A chrome ball shows ray-traced reflections (hdvk:rtReflections).
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:intensity = 40
+    float inputs:width = 0.5
+    float inputs:height = 0.5
+    double3 xformOp:translate = (0, 1.98, 0)
+    float xformOp:rotateX = -90
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+}
+
+def Xform "room"
+{
+    def Mesh "floor" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, 1), (1, 0, 1), (1, 0, -1), (-1, 0, -1)]
+        rel material:binding = </mtl/white>
+    }
+    def Mesh "ceiling" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 2, -1), (1, 2, -1), (1, 2, 1), (-1, 2, 1)]
+        rel material:binding = </mtl/white>
+    }
+    def Mesh "back" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 2, -1), (-1, 2, -1)]
+        rel material:binding = </mtl/white>
+    }
+    def Mesh "left" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(-1, 0, 1), (-1, 0, -1), (-1, 2, -1), (-1, 2, 1)]
+        rel material:binding = </mtl/red>
+    }
+    def Mesh "right" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(1, 0, -1), (1, 0, 1), (1, 2, 1), (1, 2, -1)]
+        rel material:binding = </mtl/green>
+    }
+}
+
+def Cube "tallBox" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    double3 xformOp:translate = (-0.35, 0.6, -0.3)
+    float xformOp:rotateY = 18
+    float3 xformOp:scale = (0.55, 1.2, 0.55)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY", "xformOp:scale"]
+    rel material:binding = </mtl/white>
+}
+
+def Sphere "ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 0.33
+    double3 xformOp:translate = (0.42, 0.33, 0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/chrome>
+}

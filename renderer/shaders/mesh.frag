@@ -39,6 +39,9 @@ const vec2 kPoisson[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367),
     vec2(0.14383161, -0.14100790));
 
+#define RT_RESULTS
+#include "gi.glsl"  // ray-traced shadows and reflections, GI probes
+
 // mesh.vert's packed outputs.
 layout(location = 0) in vec4 inWorldPosPrevX;
 layout(location = 1) in vec4 inNormalPrevY;
@@ -65,6 +68,8 @@ layout(location = 2) out int outInstanceId;
 // camera saw it (camera motion comes from depth in TAA). Static geometry
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
+
+#include "brdf.glsl"
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -107,6 +112,11 @@ vec3 F_Schlick(vec3 f0, float VoH)
 // GGX specular times cos for light from direction l.
 vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
+#ifdef LAYERS
+    if (layers.anisotropy > 0.0) {
+        return TangentSpecular(n, v, l, a, f0, NoV);  // brdf.glsl: anisotropic or hair
+    }
+#endif
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
@@ -146,6 +156,10 @@ float ShadowDistance(float depth, float n, float f)
 // tile (cube face seams can show under very soft shadows).
 float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
 {
+    float traced;
+    if (RtShadow(index, traced)) {
+        return traced;
+    }
     uint tile = lightShadow[index];
     if (tile == kNone) {
         return 1.0;
@@ -289,12 +303,17 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
+    specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
 }
 
 // Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
 float Shadow(vec3 p, vec3 ng, vec3 l)
 {
+    float traced;
+    if (RtShadow(frame.counts.y, traced)) {
+        return traced;
+    }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
     int c = 0;
     while (c < 4 && depth > frame.cascadeSplits[c]) {
@@ -505,6 +524,7 @@ void main()
     // standard_surface's specular weight and colour scale the dielectric
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
+    PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
@@ -517,7 +537,8 @@ void main()
             continue;
         }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
+                         (Specular(n, v, l, a, f0, NoV) * energyCompensation + LayerLight(n, v, l, NoV, 0.0)) *
+                             light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
             radiance *= Shadow(inWorldPos, ng, l);
@@ -545,11 +566,12 @@ void main()
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
     if (frame.envRadiance.w > 0.0) {
         mat3 toLocal = mat3(frame.envWorldToLocal);
-        vec3 r = normalize(toLocal * reflect(-v, n));
+        vec3 r = normalize(toLocal * reflect(-v, BentNormal(n, v, perceptual)));
         float lod = perceptual * float(frame.counts.z - 1u);
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
     }
+    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
@@ -558,16 +580,22 @@ void main()
     // Screen-space reflections replace the dome where they hit something;
     // where the hit is partly background the dome shows through.
     float ssrWeight = frame.ssr.x > 0.0 ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+#ifdef LAYERS
+    ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
+#endif
     if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
     }
+    specular = RtReflection(specular, inWorldPos, n, perceptual);
     float Ems = 1.0 - Ess;
     vec3 Favg = f0 + (1.0 - f0) / 21.0;
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+    color = ToonShade(color, emissive, diffuseColor + f0);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;

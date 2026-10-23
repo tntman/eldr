@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@cornell.usda@]
+)
+
+# The Cornell box lit by emissive surfaces only: its rect light off, a
+# glowing panel under the ceiling and a small warm bulb on the floor. They
+# light the room as lights (hdvk:emissiveLights) and through GI (hdvk:gi).
+
+over RectLight "light"
+{
+    float inputs:intensity = 0
+}
+
+over "mtl"
+{
+    def Material "panel"
+    {
+        token outputs:surface.connect = </mtl/panel/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (40, 40, 38)
+            token outputs:surface
+        }
+    }
+    def Material "bulb"
+    {
+        token outputs:surface.connect = </mtl/bulb/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (60, 30, 8)
+            token outputs:surface
+        }
+    }
+}
+
+def Cube "panel" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double size = 1
+    double3 xformOp:translate = (0, 1.97, 0)
+    float3 xformOp:scale = (0.5, 0.02, 0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    rel material:binding = </mtl/panel>
+}
+
+def Sphere "bulb" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 0.06
+    double3 xformOp:translate = (0.1, 0.06, 0.65)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/bulb>
+}

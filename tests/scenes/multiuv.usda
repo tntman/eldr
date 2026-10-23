@@ -1,0 +1,181 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Several uv sets per mesh, with step3's quadrants texture (red, green /
+# blue, white) as emission: st is the quad's (0, 0)..(1, 1), st1 mirrors u
+# and st2 (face-varying) mirrors v. Each material's base colour reads st
+# (black: scale 0, base 0), so st is the uv set in the mesh's vertices and
+# the emission reads other sets. Left: UsdPreviewSurface, emission on st1
+# through a primvar reader. Middle: MaterialX, emission on texcoord index 1
+# ("st1"). Right: MaterialX, emission half st1 and half st2 through
+# geompropvalue nodes.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "mtl"
+{
+    def Material "preview"
+    {
+        token outputs:surface.connect = </mtl/preview/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/preview/base.outputs:rgb>
+            color3f inputs:emissiveColor.connect = </mtl/preview/glow.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "base"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/preview/st.outputs:result>
+            float4 inputs:scale = (0, 0, 0, 1)
+            float3 outputs:rgb
+        }
+        def Shader "glow"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/preview/st1.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+        def Shader "st1"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st1"
+            float2 outputs:result
+        }
+    }
+    def Material "texcoord"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texcoord/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            color3f inputs:base_color.connect = </mtl/texcoord/base.outputs:out>
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/texcoord/glow.outputs:out>
+            token outputs:out
+        }
+        def Shader "base"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+        def Shader "glow"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            float2 inputs:texcoord.connect = </mtl/texcoord/uv1.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "uv1"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            int inputs:index = 1
+            float2 outputs:out
+        }
+    }
+    def Material "twoSets"
+    {
+        token outputs:mtlx:surface.connect = </mtl/twoSets/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            color3f inputs:base_color.connect = </mtl/twoSets/base.outputs:out>
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/twoSets/mix.outputs:out>
+            token outputs:out
+        }
+        def Shader "base"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color3f outputs:out
+        }
+        def Shader "a"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            float2 inputs:texcoord.connect = </mtl/twoSets/st1.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "b"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            float2 inputs:texcoord.connect = </mtl/twoSets/st2.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "st1"
+        {
+            uniform token info:id = "ND_geompropvalue_vector2"
+            string inputs:geomprop = "st1"
+            float2 outputs:out
+        }
+        def Shader "st2"
+        {
+            uniform token info:id = "ND_geompropvalue_vector2"
+            string inputs:geomprop = "st2"
+            float2 outputs:out
+        }
+        def Shader "mix"
+        {
+            uniform token info:id = "ND_mix_color3"
+            color3f inputs:bg.connect = </mtl/twoSets/a.outputs:out>
+            color3f inputs:fg.connect = </mtl/twoSets/b.outputs:out>
+            float inputs:mix = 0.5
+            color3f outputs:out
+        }
+    }
+}
+
+class Mesh "_quad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    texCoord2f[] primvars:st1 = [(1, 0), (0, 0), (0, 1), (1, 1)] (interpolation = "vertex")
+    texCoord2f[] primvars:st2 = [(0, 1), (1, 1), (1, 0), (0, 0)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "preview" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/preview>
+    double3 xformOp:translate = (-2.5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "texcoord" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/texcoord>
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "twoSets" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/twoSets>
+    double3 xformOp:translate = (2.5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
