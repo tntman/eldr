@@ -129,6 +129,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.translucentShadowDivisor))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
+        {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},

@@ -68,6 +68,8 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Procedural textures: MaterialX noise in material programs (off: it reads 0).
+        bool proceduralTextures = true;
         // Translucency (transparency.h): weighted blended OIT, its weights
         // falling with distance to this power (0: a plain average); off:
         // sorted per mesh, blended over.
@@ -175,7 +177,7 @@ private:
     bool _hasLastFrame = false;
     bool _adapting = false;       // last frame ran auto-exposure
     bool _lastAutoExposure = false;
-    VkSampler _sampler = VK_NULL_HANDLE;        // materials: trilinear, aniso, repeat
+    VkSampler _samplers[kWrapModes * kWrapModes] = {};  // materials: trilinear, aniso, per wrap s and t
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
@@ -185,17 +187,18 @@ private:
     // Mesh pipelines in variants (Scene::Gpu::chunkKind >> 2): bit 0 eight
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
-    // program (the GRAPH shaders).
+    // program (the GRAPH shaders), and bit 3 with it, one with noise
+    // (program.glsl's kProcedurals).
     VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[8] = {};  // shading, blended over the opaque
-    VkPipeline _oitPipeline[8] = {};          // shading, OIT accumulation (Transparency)
+    VkPipeline _translucentPipeline[16] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[16] = {};         // shading, OIT accumulation (Transparency)
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
-    VkPipeline _subsurfacePipeline[8] = {};   // shading, the subsurface lobe (Subsurface)
+    VkPipeline _subsurfacePipeline[16] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[8] = {};             // shading, depth read-only
+    VkPipeline _pipeline[16] = {};             // shading, depth read-only
     VkPipeline _shadowPipeline[4] = {};
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
@@ -221,7 +224,7 @@ private:
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
     uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
-    float _anisotropy = 0;                      // _sampler's (Frame::anisotropy)
+    float _anisotropy = 0;                      // _samplers' (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
     // What the atlas holds: redrawn only when the scene or the tiles change.

@@ -6,7 +6,8 @@
 
 # Texture coordinates, all with step3's quadrants texture (red, green / blue,
 # white). Top row: a uv set named "uv" through a primvar reader;
-# UsdTransform2d scale 2 (tiles 2x2); UsdTransform2d rotation 90 and
+# UsdTransform2d scale 2 (one tile, black around it: no wrap modes, so
+# useMetadata, as Storm reads a png); UsdTransform2d rotation 90 and
 # translation (1, 0). Bottom row: MaterialX place2d (scale 0.5, rotate 30);
 # MaterialX tiledimage (uvtiling 3); a mesh whose only texture coordinates
 # are "map1" and a texture without a reader (first texCoord primvar).

@@ -1146,6 +1146,104 @@ int main()
         }
 
         {
+            // Wrap modes: emissive rows with st (0..2, 0..1) over a 2x1
+            // texture (left texel red, right blue), one row per mode, the
+            // last a program's image; u 1.27 (pixel 40) and 1.77 (pixel 56)
+            // read past the texture. A last row wraps t (0..2) black above
+            // v = 1, s repeating.
+            vkr::Scene scene(&device);
+            auto tex = std::make_shared<vkr::Texture>();
+            tex->width = 2;
+            tex->height = 1;
+            tex->pixels = {255, 0, 0, 255, 0, 0, 255, 255};
+            using W = vkr::Wrap;
+            const W modes[4] = {W::Repeat, W::Mirror, W::Clamp, W::Black};
+            auto row = [&](int i, W s, W t, bool program, float v1) {
+                vkr::Mesh *q = AddEmitter(scene, -1, -1 + 0.3f * float(i), 1, -0.75f + 0.3f * float(i), 0, 0.0f);
+                q->uvs = {0, 0, 2, 0, 2, v1, 0, 0, 2, v1, 0, v1};
+                vkr::TextureRef ref;
+                ref.texture = tex;
+                ref.wrap[0] = s;
+                ref.wrap[1] = t;
+                using P = vkr::MaterialProgram;
+                if (program) {
+                    P &p = q->material->program;
+                    p.images.push_back(ref);
+                    p.Emit(P::kTexcoord, 0);
+                    p.Emit(P::kImage, 1, {0, p.Constant(0, 0, 0, 0)}, 0);
+                    p.Emit(P::kOutput, 0, {1}, P::kEmissive);
+                } else {
+                    q->material->emissiveTex = ref;
+                }
+            };
+            for (int i = 0; i < 4; ++i) {
+                row(i, modes[i], W::Repeat, false, 1);
+            }
+            row(4, W::Mirror, W::Repeat, true, 1);
+            row(5, W::Repeat, W::Black, false, 2);
+            scene.Commit();
+            Expect(scene.GetGpu().textures.size() == 5, "a texture per wrap pair in the bindless array");
+            const Image img = Render(renderer, scene);
+            auto red = [&](int x, int y) { return img.At(x, y, 0) > 0.9f && img.At(x, y, 2) < 0.1f; };
+            auto blue = [&](int x, int y) { return img.At(x, y, 2) > 0.9f && img.At(x, y, 0) < 0.1f; };
+            auto black = [&](int x, int y) { return img.At(x, y, 0) < 0.01f && img.At(x, y, 2) < 0.01f; };
+            auto y = [](int i) { return int((0.3f * float(i) + 0.125f) * 32.0f); };  // a row's middle
+            Expect(red(8, y(0)) && red(40, y(0)) && blue(56, y(0)), "wrap repeat");
+            Expect(red(8, y(1)) && blue(40, y(1)) && red(56, y(1)), "wrap mirror");
+            Expect(red(8, y(2)) && blue(40, y(2)) && blue(56, y(2)), "wrap clamp");
+            Expect(red(8, y(3)) && black(40, y(3)) && black(56, y(3)), "wrap black");
+            Expect(red(8, y(4)) && blue(40, y(4)) && red(56, y(4)), "wrap mirror in a program's image");
+            // (The one texel row blends 1/8 with the border at v 0.625.)
+            Expect(img.At(8, y(5) - 2, 0) > 0.8f && black(8, y(5) + 2), "wrap t black, s repeat");
+        }
+
+        {
+            // Procedurals: emission programs. Left half: the object-space
+            // position of a quad its instance scales by 0.5 and moves left by
+            // 0.5. Upper right: the world position. Lower right: noise2d
+            // (amplitude 0.5, pivot 0.25) at uv * 4, which
+            // Frame::proceduralTextures off makes its pivot.
+            vkr::Scene scene(&device);
+            using P = vkr::MaterialProgram;
+            vkr::Mesh *object = AddEmitter(scene, -1, -1, 1, 1, 0, 0.0f);
+            object->transforms = {0.5f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5f, 0, 0, 1};
+            P &po = object->material->program;
+            po.Emit(P::kPosition, 0, {}, 0);
+            po.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            P &pw = AddEmitter(scene, 0, 0, 1, 1, 0, 0.0f)->material->program;
+            pw.Emit(P::kPosition, 0, {}, 1);
+            pw.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            P &pn = AddEmitter(scene, 0, -1, 1, 0, 0, 0.0f)->material->program;
+            pn.Emit(P::kTexcoord, 0);
+            pn.Emit(P::kMultiply, 0, {0, pn.Constant(4, 4, 4, 4)});
+            pn.Emit(P::kNoise, 0, {0, pn.Constant(0.5f, 0.5f, 0.5f, 0.5f), pn.Constant(0.25f, 0.25f, 0.25f, 0.25f)}, 2, 1);
+            pn.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            auto near = [&](const Image &i, int x, int y, float r, float g, float b) {
+                return std::abs(i.At(x, y, 0) - r) < 0.01f && std::abs(i.At(x, y, 1) - g) < 0.01f &&
+                       std::abs(i.At(x, y, 2) - b) < 0.01f;
+            };
+            Expect(near(img, 24, 40, (PixelNdc(24) + 0.5f) / 0.5f, PixelNdc(40), 0) &&
+                       near(img, 6, 60, (PixelNdc(6) + 0.5f) / 0.5f, PixelNdc(60), 0),
+                   "procedural: object-space position under the instance transform");
+            Expect(near(img, 40, 50, PixelNdc(40), PixelNdc(50), 0), "procedural: world position");
+            float lo = 1, hi = 0;
+            for (int x = 34; x < 62; ++x) {
+                lo = std::min(lo, img.At(x, 16, 0));
+                hi = std::max(hi, img.At(x, 16, 0));
+            }
+            Expect(lo > -0.25f && hi < 0.75f && hi - lo > 0.1f &&
+                       near(img, 48, 16, img.At(48, 16, 0), img.At(48, 16, 0), img.At(48, 16, 0)),
+                   "procedural: noise2d varies around its pivot, float splat");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.proceduralTextures = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(near(off, 40, 16, 0.25f, 0.25f, 0.25f) && near(off, 56, 4, 0.25f, 0.25f, 0.25f),
+                   "Frame::proceduralTextures off: noise reads 0 (its pivot)");
+        }
+
+        {
             // Order-independent transparency: one translucent mesh (opacity
             // 0.5, displayColor) of two quads over the left half of an opaque
             // red one, the near green quad's triangles listed before the far

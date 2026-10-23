@@ -73,19 +73,26 @@ const uint32_t kShadowTintFrag[] =
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
+constexpr uint32_t kFeatureProcedurals = 256;
 // Translucency (transparency.glsl).
 constexpr uint32_t kFeatureRefraction = 4096, kFeatureTranslucentShadows = 8192;
 // Subsurface scattering (subsurface.glsl).
 constexpr uint32_t kFeatureSubsurface = 16384;
 
-// Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
-// ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
-VkSampler CreateMaterialSampler(VkDevice device, float anisotropy)
+// A material sampler: trilinear, `anisotropy` (1: none), wrap modes
+// s + kWrapModes * t (Scene::Gpu::textureWraps).
+VkSampler CreateMaterialSampler(VkDevice device, float anisotropy, uint32_t wrap)
 {
+    static const VkSamplerAddressMode modes[kWrapModes] = {
+        VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER};
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.addressModeU = modes[wrap % kWrapModes];
+    sci.addressModeV = modes[wrap / kWrapModes % kWrapModes];
+    sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.borderColor = VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;  // Storm's HdWrapBlack
     sci.anisotropyEnable = anisotropy > 1.0f;
     sci.maxAnisotropy = anisotropy;
     sci.maxLod = VK_LOD_CLAMP_NONE;
@@ -289,7 +296,7 @@ Renderer::~Renderer()
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
-    for (int v = 0; v < 8; ++v) {
+    for (int v = 0; v < 16; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
@@ -298,7 +305,10 @@ Renderer::~Renderer()
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(_dev.device, _setLayout, nullptr);
-    for (VkSampler s : {_sampler, _clampSampler, _shadowSampler}) {
+    for (VkSampler s : _samplers) {
+        vkDestroySampler(_dev.device, s, nullptr);
+    }
+    for (VkSampler s : {_clampSampler, _shadowSampler}) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
     vkDestroyFence(_dev.device, _fence, nullptr);
@@ -308,7 +318,7 @@ Renderer::~Renderer()
 
 void Renderer::_CreateDescriptors()
 {
-    // The materials' sampler is made by Render (Frame::anisotropy).
+    // The materials' samplers are made by Render (Frame::anisotropy).
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -532,31 +542,43 @@ void Renderer::_CreatePipelines()
     // Every mesh pipeline four times, its vertex stage specialized with
     // kWideSkin (variant bit 0: eight skinning influences) and
     // kDualQuaternion (bit 1), see mesh.vert; the shading ones four more
-    // with the GRAPH shaders (bit 2: material programs).
+    // with the GRAPH shaders (bit 2: material programs) and four more of
+    // those with noise (bit 3: program.glsl's kProcedurals).
     const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
                                                      {1, sizeof(VkBool32), sizeof(VkBool32)}};
     const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
-    // `fragmentSpec`: the fragment stage's specialization (shading
-    // pipelines: transparency.glsl's kTranslucentPass).
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants,
-                          const VkSpecializationInfo *fragmentSpec = nullptr) {
+    // The shading pipelines' fragment constants: transparency.glsl's
+    // kShadingPass (`pass`: 1 OIT, 2 subsurface) and, with noise,
+    // program.glsl's kProcedurals.
+    const VkSpecializationMapEntry fragmentEntries[2] = {{12, 0, sizeof(uint32_t)},
+                                                         {8, sizeof(uint32_t), sizeof(VkBool32)}};
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants, uint32_t pass = 0) {
         VkPipelineShaderStageCreateInfo stages[2] = {};
         std::copy(info.pStages, info.pStages + info.stageCount, stages);
         info.pStages = stages;
-        stages[1].pSpecializationInfo = fragmentSpec;
+        const uint32_t fragmentData[2] = {pass, VK_TRUE};
+        const VkSpecializationInfo passSpec{1, fragmentEntries, sizeof(uint32_t), fragmentData};
+        const VkSpecializationInfo proceduralSpec{2, fragmentEntries, sizeof(fragmentData), fragmentData};
+        if (pass) {
+            stages[1].pSpecializationInfo = &passSpec;
+        }
         VkResult res = VK_SUCCESS;
         for (int v = 0; v < variants && res == VK_SUCCESS; ++v) {
+            if ((v & 8) && !(v & 4)) {
+                continue;  // noise comes with a program
+            }
             const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
             stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
             if (v >= 4) {  // shading pipelines only
                 stages[0].module = graphVert;
                 stages[1].module = graphFrag;
+                stages[1].pSpecializationInfo = v >= 8 ? &proceduralSpec : &passSpec;
             }
             res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline, 8);
+    VkResult r = createMesh(ci, _pipeline, 16);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -573,7 +595,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline, 8);
+        r = createMesh(tci, _translucentPipeline, 16);
     }
     // Weighted blended OIT (Transparency): colour and coverage summed,
     // ids as above, location 3 the revealage, multiplied by 1 - coverage.
@@ -595,10 +617,7 @@ void Renderer::_CreatePipelines()
         VkGraphicsPipelineCreateInfo oci = ci;
         oci.pNext = &oitRendering;
         oci.pColorBlendState = &oitBlend;
-        const VkSpecializationMapEntry passEntry{12, 0, sizeof(uint32_t)};
-        const uint32_t oitPass = 1;
-        const VkSpecializationInfo oitSpec{1, &passEntry, sizeof(oitPass), &oitPass};
-        r = createMesh(oci, _oitPipeline, 8, &oitSpec);
+        r = createMesh(oci, _oitPipeline, 16, 1);
     }
     // Subsurface pass (Subsurface): the subsurface lobe's light and the
     // radii (locations 0 and 1), nothing else written.
@@ -614,10 +633,7 @@ void Renderer::_CreatePipelines()
         VkGraphicsPipelineCreateInfo sci = ci;
         sci.pNext = &sssRendering;
         sci.pColorBlendState = &sssBlend;
-        const VkSpecializationMapEntry passEntry{12, 0, sizeof(uint32_t)};
-        const uint32_t sssPass = 2;
-        const VkSpecializationInfo sssSpec{1, &passEntry, sizeof(sssPass), &sssPass};
-        r = createMesh(sci, _subsurfacePipeline, 8, &sssSpec);
+        r = createMesh(sci, _subsurfacePipeline, 16, 2);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -819,7 +835,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
 {
     std::vector<VkDescriptorImageInfo> images(gpu.textures.size());
     for (size_t i = 0; i < images.size(); ++i) {
-        images[i] = {_sampler, gpu.textures[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        images[i] = {_samplers[gpu.textureWraps[i]], gpu.textures[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
     const VkDescriptorBufferInfo materials{gpu.materials, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lights{gpu.lights, 0, VK_WHOLE_SIZE};
@@ -1501,8 +1517,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     const float anisotropy = float(std::clamp(frame.anisotropy, 1u, 16u));
     if (anisotropy != _anisotropy) {
-        vkDestroySampler(_dev.device, _sampler, nullptr);
-        _sampler = CreateMaterialSampler(_dev.device, anisotropy);
+        for (uint32_t wrap = 0; wrap < kWrapModes * kWrapModes; ++wrap) {
+            vkDestroySampler(_dev.device, _samplers[wrap], nullptr);
+            _samplers[wrap] = CreateMaterialSampler(_dev.device, anisotropy, wrap);
+        }
         _anisotropy = anisotropy;
     }
 
@@ -1510,6 +1528,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd = FrameData{};
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
                      (frame.clusteredLights ? kFeatureClusters : 0);
+    fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
@@ -1925,7 +1944,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 7);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 15);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky) {

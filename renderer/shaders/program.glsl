@@ -1,10 +1,12 @@
 // MaterialProgram interpreter (scene.h): the material inputs a shading
 // graph computes per pixel. Included by mesh.frag's GRAPH variant after
-// material.glsl and scene.glsl; reads its inUv, inColor, inSlot and
-// inPrimvars.
+// material.glsl and scene.glsl; reads its inUv, inColor, inSlot,
+// inPrimvars, inWorldPos and inNormal.
 // ponytail: implicit texture derivatives inside the op loop are only
 // defined where a pixel quad runs the same program (not at the edge
 // between two materials).
+
+#include "noise.glsl"
 
 layout(std430, set = 0, binding = 28) readonly buffer ProgramCode { uvec4 programCode[]; };
 layout(std430, set = 0, binding = 29) readonly buffer ProgramConstants { vec4 programConstants[]; };
@@ -22,7 +24,13 @@ const uint kOpOutput = 0u, kOpTexcoord = 1u, kOpDisplayColor = 2u, kOpPrimvar = 
            kOpCombine = 28u, kOpDot = 29u, kOpNormalize = 30u, kOpLuminance = 31u, kOpIfGreater = 32u,
            kOpIfGreaterEq = 33u, kOpIfEqual = 34u, kOpHsvAdjust = 35u, kOpRgbToHsv = 36u, kOpHsvToRgb = 37u,
            kOpAffine = 38u, kOpNormalMap = 39u, kOpInvLinear = 40u, kOpUniformRamp = 41u;
+const uint kOpNoise = 42u, kOpFractal = 43u, kOpCellNoise = 44u, kOpWorleyNoise = 45u, kOpPosition = 46u,
+           kOpGeomNormal = 47u;
 const uint kProgramRegisters = 8u;
+const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
+// Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
+// others the noise code compiles away and costs nothing.
+layout(constant_id = 8) const bool kProcedurals = false;
 
 vec4 programRegisters[kProgramRegisters];
 
@@ -70,6 +78,47 @@ vec3 HsvToRgb(vec3 hsv)
 {
     vec3 k = clamp(abs(mod(6.0 * fract(hsv.x) + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
     return hsv.z * mix(vec3(1.0), k, clamp(hsv.y, 0.0, 1.0));
+}
+
+// The surface point (or its interpolated normal), in object space (space
+// 0) or world space: object space is the instance's (a skinned mesh's
+// posed points, as Storm's points primvar).
+// ponytail: meshes without normals use the facet's normal, facing the
+// camera.
+vec3 Geometry(bool normal, uint space)
+{
+    vec3 n = dot(inNormal, inNormal) > 1e-12 ? inNormal : cross(dFdx(inWorldPos), dFdy(inWorldPos));
+    n = dot(inNormal, inNormal) > 1e-12 || dot(n, frame.cameraPos.xyz - inWorldPos) >= 0.0 ? n : -n;
+    if (space != 0u) {
+        return normal ? normalize(n) : inWorldPos;
+    }
+    mat4 m = InstanceTransform(instances[inSlot]);
+    return normal ? normalize(transpose(mat3(m)) * n) : inverse(mat3(m)) * (inWorldPos - m[3].xyz);
+}
+
+// v as a value of `components` (1: x splat; vector2 and vector3 zero the rest).
+vec4 Components(vec4 v, uint components)
+{
+    return components == 1u ? v.xxxx : components == 2u ? vec4(v.xy, 0.0, 0.0) : components == 3u ? vec4(v.xyz, 0.0) : v;
+}
+
+// kOpNoise .. kOpGeomNormal (scene.h has their operands), only in the
+// kProcedurals pipelines.
+vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x)
+{
+    if (code >= kOpPosition) {
+        return vec4(Geometry(code == kOpGeomNormal, imm0), 0.0);
+    }
+    // Procedural Textures off: the noise reads 0.
+    vec4 v = vec4(0.0);
+    if ((frame.features.x & kFeatureProcedurals) == 0u) {
+    } else if (code == kOpNoise || code == kOpFractal) {
+        bool fractal = code == kOpFractal;
+        v = MxLayered(a.xyz, imm0, imm1, fractal, fractal ? int(x.x) : 1, x.y, x.z);
+    } else {
+        v = code == kOpCellNoise ? vec4(MxCellNoise(a.xyz, imm0)) : MxWorley(a.xyz, imm0, imm1, b.x, int(x.x));
+    }
+    return Components(code == kOpNoise ? v * b + x.x : code == kOpFractal ? v * b : v, imm1);
 }
 
 // Element i of a float array packed four to a vec4.
@@ -197,6 +246,11 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             r = mix(programConstants[base + k0], programConstants[base + k1], f - k);
             break;
         }
+        default:
+            if (kProcedurals) {
+                r = ProceduralOp(code, imm0, imm1, a, b, x);
+            }
+            break;
         }
         programRegisters[dst] = r;
     }
