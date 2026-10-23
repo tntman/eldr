@@ -1210,6 +1210,39 @@ int main()
             Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
                    "equidistant fisheye");
         }
+
+        {
+            // Blend shape motion: a skinned quad (one joint at rest) whose
+            // blend shape lifts its top corners by 0.4. At row 40 (y = 0.27)
+            // the surface rose 0.22 between weight 0 and 1 (motion vector
+            // -0.11 uv); back at weight 0 it sank 0.31 (+0.15).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+            quad->jointCount = 1;
+            quad->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            quad->blendOffsets = {0, 0.4f, 0, 0};
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                quad->jointIndices.insert(quad->jointIndices.end(), {0, 0, 0, 0});
+                quad->jointWeights.insert(quad->jointWeights.end(), {1, 0, 0, 0});
+                quad->blendRanges.insert(quad->blendRanges.end(), {0u, quad->points[c * 3 + 1] > 0 ? 1u : 0u});
+            }
+            quad->blendShapeCount = 1;
+            quad->blendWeights = {0.0f};
+            scene.Commit();
+            Render(renderer, scene);
+            auto weight = [&](float w, bool motion) {
+                quad->blendWeights = {w};
+                quad->jointsDirty = true;
+                scene.Commit();
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.blendShapeMotion = motion;
+                return Render(renderer, scene, frame).Vel(32, 40, 1);
+            };
+            Expect(std::abs(weight(1.0f, true) + 0.11f) < 0.005f, "blend shape motion: rising");
+            Expect(std::abs(weight(0.0f, true) - 0.153f) < 0.005f, "blend shape motion: sinking");
+            Expect(std::abs(weight(1.0f, false)) < 1e-4f, "Frame::blendShapeMotion off: no blend shape motion");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

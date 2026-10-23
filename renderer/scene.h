@@ -467,6 +467,8 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+        // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
+        VkDeviceSize blendWeightsBytes = 0;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

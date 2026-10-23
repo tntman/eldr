@@ -129,6 +129,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
+        {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
         {"TAA Samples (still camera)", t.taaSamples, VtValue(int(frame.taaSamples))},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},

@@ -72,6 +72,9 @@ public:
         // the view distortion.overscan times wider.
         bool lensDistortion = true;
         LensDistortion::Params distortion;
+        // Blend shape motion: skinned meshes' motion vectors (TAA, motion
+        // blur) include their blend shapes' change since the last frame.
+        bool blendShapeMotion = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -205,6 +208,14 @@ private:
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
     LensDistortion _distortion{_dev};
+    // Blend shape motion: last frame's blend shape weights, copied after
+    // each frame's draws from the scene's pool (_prevBlendSource), which
+    // the next frame's motion vectors read while it is the same buffer.
+    // ponytail: a mesh whose weights moved within the pool (its shape count
+    // changed) reads another mesh's for one frame.
+    Buffer _prevBlendWeights;
+    VkBuffer _prevBlendSource = VK_NULL_HANDLE;
+    bool _prevBlendValid = false;
 };
 
 } // namespace vkr
