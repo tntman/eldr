@@ -13,6 +13,12 @@ namespace vkr {
 
 class Scene;
 
+// How a texture reads outside st [0, 1] (UsdUVTexture wrapS/wrapT, MaterialX
+// uaddressmode/vaddressmode): Black is a transparent black border. Each s, t
+// pair is its own sampler, so the shaders don't wrap.
+enum class Wrap : uint8_t { Repeat, Mirror, Clamp, Black };
+constexpr uint32_t kWrapModes = 4;
+
 // Decoded image, rows bottom-up (so USD st (0,0) is the first texel),
 // 4 channels, tightly packed. Its GPU copy is made by Scene::Commit and
 // freed with the texture; drop the last reference only while the GPU is idle.
@@ -25,6 +31,9 @@ struct Texture {
     uint32_t height = 0;
     Format format = Format::RGBA8;
     std::vector<uint8_t> pixels;
+    // The file's own wrap modes (s, t) from its metadata, what UsdUVTexture's
+    // "useMetadata" reads; Black where it has none, as in Storm.
+    Wrap fileWrap[2] = {Wrap::Black, Wrap::Black};
 
     Texture() = default;
     Texture(const Texture &) = delete;
@@ -56,6 +65,8 @@ struct TextureRef {
     float bias[4] = {0, 0, 0, 0};
     // Texture coordinates: (u', v') = ((a b c) (d e f)) (u v 1), row-major.
     float uvTransform[6] = {1, 0, 0, 0, 1, 0};
+    // Wrap modes: s, t. UDIM tiles always repeat inside their tile.
+    Wrap wrap[2] = {Wrap::Repeat, Wrap::Repeat};
 };
 
 // Material inputs a shading graph computes per pixel (MaterialX math,
@@ -94,6 +105,14 @@ struct MaterialProgram {
         kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
         kInvLinear,    // Houdini hinvlinear: a among ten keys (constants from imm0, 4 per vec4), b.x = num
         kUniformRamp,  // Houdini huniformramp: ten values (constants from imm0) at a, b.x = num
+        // MaterialX procedurals (shaders/noise.glsl) at a, in imm0 = 2 or 3
+        // dimensions, imm1 = 1..4 components out (1: splat).
+        kNoise,        // noise2d/3d: value * b + c.x
+        kFractal,      // fractal2d/3d: value * b, c = (octaves, lacunarity, diminish)
+        kCellNoise,    // cellnoise2d/3d (float)
+        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
+        kPosition,     // the surface point, imm0: 0 object space, 1 world
+        kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them.
     enum Input : uint32_t { kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity };
@@ -112,6 +131,18 @@ struct MaterialProgram {
         return uint8_t(kRegisters + constants.size() / 4 - 1);
     }
     bool Valid() const { return kRegisters + constants.size() / 4 <= 256; }
+    // Whether it runs kNoise .. kGeomNormal: such programs get pipelines of
+    // their own, so that code costs the others nothing.
+    bool Procedural() const
+    {
+        for (size_t i = 0; i < code.size(); i += 4) {
+            const uint32_t op = code[i] & 0xFFu;
+            if (op >= kNoise && op <= kGeomNormal) {
+                return true;
+            }
+        }
+        return false;
+    }
     bool Outputs(Input input) const
     {
         for (size_t i = 0; i < code.size(); i += 4) {
@@ -426,9 +457,10 @@ public:
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
-        // kProgram (a material program, shading pass only): kind >> 2 picks
-        // the renderer's pipeline variant. Chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16 };
+        // kProgram (a material program, shading pass only) with kProcedural
+        // (it runs noise, MaterialProgram::Procedural): kind >> 2 picks the
+        // renderer's pipeline variant. Chunks also end where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32 };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
@@ -439,6 +471,8 @@ public:
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
+        // Per texture its sampler's wrap modes: s + kWrapModes * t (Wrap).
+        std::vector<uint8_t> textureWraps;
 
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
@@ -496,7 +530,7 @@ private:
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
     void _Upload(Texture &texture);
-    int32_t _TextureIndex(Texture *t);
+    int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);
     void _DestroyEnvironment();
     template <typename T>
@@ -517,7 +551,8 @@ private:
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;
-    std::unordered_map<const Texture *, int32_t> _textureSlots;  // rebuilt per Commit
+    // (texture, wrap modes) -> bindless index, rebuilt per Commit.
+    std::map<std::pair<const Texture *, uint32_t>, int32_t> _textureSlots;
 
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
