@@ -1,0 +1,151 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Local lights at night: render with usdrecord --disableCameraLight to see
+# only these. A faint dome keeps the shadowed sides from being pitch black.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 4, 12)
+    float xformOp:rotateX = -16
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DomeLight "night"
+{
+    color3f inputs:color = (0.2, 0.3, 0.6)
+    float inputs:intensity = 0.02
+}
+
+# Warm bulb, 1 W-ish: normalized so the size doesn't change its power.
+def SphereLight "bulb"
+{
+    color3f inputs:color = (1, 0.75, 0.45)
+    float inputs:intensity = 40
+    bool inputs:normalize = 1
+    float inputs:radius = 0.15
+    double3 xformOp:translate = (-3.5, 1.2, 0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# Spot straight down with a soft 25 degree cone, via colorTemperature.
+def SphereLight "spot" (
+    prepend apiSchemas = ["ShapingAPI"]
+)
+{
+    float inputs:intensity = 400
+    float inputs:radius = 0.05
+    bool inputs:enableColorTemperature = 1
+    float inputs:colorTemperature = 4000
+    float inputs:shaping:cone:angle = 25
+    float inputs:shaping:cone:softness = 0.3
+    double3 xformOp:translate = (0, 4, 0)
+    float xformOp:rotateX = -90
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+# Cool panel facing the scene from the right.
+def RectLight "panel"
+{
+    color3f inputs:color = (0.6, 0.8, 1)
+    float inputs:intensity = 6
+    float inputs:width = 2
+    float inputs:height = 1
+    double3 xformOp:translate = (4.5, 1.2, 0)
+    float xformOp:rotateY = 90
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+# Small disk facing down at the back wall.
+def DiskLight "disk"
+{
+    color3f inputs:color = (0.4, 1, 0.5)
+    float inputs:intensity = 30
+    float inputs:radius = 0.25
+    double3 xformOp:translate = (2, 3, -3)
+    float xformOp:rotateX = -90
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "matte"
+    {
+        token outputs:surface.connect = </mtl/matte/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.6, 0.6, 0.6)
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+    }
+    def Material "glossy"
+    {
+        token outputs:surface.connect = </mtl/glossy/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.05)
+            float inputs:roughness = 0.15
+            token outputs:surface
+        }
+    }
+}
+
+def Mesh "floor" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0, -4), (-6, 0, 4), (6, 0, 4), (6, 0, -4)]
+    rel material:binding = </mtl/glossy>
+}
+
+def Mesh "wall" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0, -4), (6, 0, -4), (6, 5, -4), (-6, 5, -4)]
+    rel material:binding = </mtl/matte>
+}
+
+def Sphere "ball" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.8
+    double3 xformOp:translate = (0, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/matte>
+}
+
+def Cube "box" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double size = 1.2
+    double3 xformOp:translate = (2.5, 0.6, -1)
+    float xformOp:rotateY = 30
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+    rel material:binding = </mtl/matte>
+}
+
+def Cylinder "post" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.25
+    double height = 2.5
+    token axis = "Y"
+    double3 xformOp:translate = (-2.5, 1.25, -1.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/matte>
+}

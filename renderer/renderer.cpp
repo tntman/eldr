@@ -3,7 +3,9 @@
 #include "ibl.h"
 #include "vkmath.h"
 
+#include <algorithm>
 #include <cstring>
+#include <tuple>
 #include <vector>
 
 namespace vkr {
@@ -24,6 +26,8 @@ struct FrameData {
     float envRadiance[4];
     float prevViewProj[16];
     float ssr[4];  // enabled, noise index
+    float clusters[4];       // near, far, log2(far / near), light cutoff radiance
+    uint32_t localLights[4]; // sphere/rect light count
 };
 
 namespace {
@@ -43,6 +47,13 @@ const uint32_t kSkyFrag[] =
 const uint32_t kCullComp[] =
 #include "cull.comp.inc"
 ;
+const uint32_t kLightsComp[] =
+#include "lights.comp.inc"
+;
+
+// Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and 63
+// indices each.
+constexpr VkDeviceSize kClusterBytes = 16 * 9 * 24 * 64 * sizeof(uint32_t);
 
 // Push constants of cull.comp; the vertex stages read only the first 64 bytes
 // (mat4 viewProj) of the same range.
@@ -132,6 +143,7 @@ Renderer::Renderer(Device &device)
     Check(vkCreateFence(_dev.device, &fci, nullptr, &_fence), "vkCreateFence");
 
     _dev.Reserve(_frameData, sizeof(FrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
     _CreatePipelines();
     _CreateConstantImages();
@@ -149,7 +161,9 @@ Renderer::~Renderer()
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
-    for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline}) {
+    _dev.Destroy(_clusters);
+    for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
+                         _lightsPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -194,12 +208,14 @@ void Renderer::_CreateDescriptors()
     // Binding 0 is the bindless array, partially bound and indexed by material
     // data. 7..10 are the GPU-driven scene: instances, draw infos, visible
     // lists and the culled indirect commands; 11 is the GTAO result, 12
-    // and 13 last frame's color and this frame's depth for reflections.
-    const VkDescriptorSetLayoutBinding bindings[14] = {
+    // and 13 last frame's color and this frame's depth for reflections, 14
+    // the light clusters (written by lights.comp, which also reads 2 and 3).
+    constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
+    const VkDescriptorSetLayoutBinding bindings[15] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kFragment},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -210,20 +226,21 @@ void Renderer::_CreateDescriptors()
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
     };
-    const VkDescriptorBindingFlags bindingFlags[14] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[15] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 14;
+    flags.bindingCount = 15;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 14;
+    slci.bindingCount = 15;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 6},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -252,14 +269,15 @@ void Renderer::_CreatePipelines()
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
     const VkDevice device = _dev.device;
-    {
-        VkShaderModule cull = CreateShaderModule(device, kCullComp, sizeof(kCullComp));
+    for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
+                                         std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline}}) {
+        VkShaderModule module = CreateShaderModule(device, code, bytes);
         VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-                     VK_SHADER_STAGE_COMPUTE_BIT, cull, "main"};
+                     VK_SHADER_STAGE_COMPUTE_BIT, module, "main"};
         cci.layout = _layout;
-        const VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_cullPipeline);
-        vkDestroyShaderModule(device, cull, nullptr);
+        const VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        vkDestroyShaderModule(device, module, nullptr);
         Check(r, "vkCreateComputePipelines");
     }
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
@@ -485,6 +503,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorImageInfo ao{_clampSampler, _gtao.Output(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo previous{_clampSampler, _taa.History(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo depth{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    const VkDescriptorBufferInfo clusters{_clusters.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -511,6 +530,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &ao);
     write(12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &previous);
     write(13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &depth);
+    write(14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &clusters, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -601,6 +621,41 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
     return true;
 }
 
+// Depth range of the light clusters (near plane to the scene's far end,
+// along the view axis) and the cutoff that bounds each light's range: 1% of
+// the radiance the current exposure maps to middle gray.
+void Renderer::_FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const
+{
+    const Mat4 invViewProj = ToMat4(frame.invViewProj);
+    const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+    const Vec3 nearCenter = TransformPoint(invViewProj, {0, 0, -1});
+    const Vec3 forward = Normalize(TransformPoint(invViewProj, {0, 0, 0}) - nearCenter);
+    float n = Dot(nearCenter - eye, forward);
+    float f = Dot(TransformPoint(invViewProj, {0, 0, 1}) - eye, forward);
+    if (!(f < 1e30f)) {
+        f = 1e30f;  // infinite far plane
+    }
+    if (gpu.hasBounds) {
+        float sceneFar = n;
+        for (int k = 0; k < 8; ++k) {
+            const Vec3 c{(k & 1) ? gpu.boundsMax[0] : gpu.boundsMin[0], (k & 2) ? gpu.boundsMax[1] : gpu.boundsMin[1],
+                         (k & 4) ? gpu.boundsMax[2] : gpu.boundsMin[2]};
+            sceneFar = std::max(sceneFar, Dot(c - eye, forward));
+        }
+        f = std::min(f, sceneFar);
+    }
+    n = std::max(n, 1e-5f * std::max(f, 1e-3f));  // log slices need near > 0
+    f = std::max(f, n * 1.01f);
+    const float exposure = frame.postProcess ? _post.Exposure() : 1.0f;
+    data->clusters[0] = n;
+    data->clusters[1] = f;
+    data->clusters[2] = std::log2(f / n);
+    data->clusters[3] = 0.01f * 0.18f / exposure;
+    data->cameraForward[0] = forward.x;
+    data->cameraForward[1] = forward.y;
+    data->cameraForward[2] = forward.z;
+}
+
 bool Renderer::IsConverged() const
 {
     return (!_adapting || _post.ExposureConverged()) && _taaConverged;
@@ -669,6 +724,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.viewport[1] = float(_height);
     const bool shadows = gpu.drawCount > 0 && gpu.instanceCapacity > 0 && _FitCascades(gpu, frame, &fd);
     fd.counts[0] = gpu.lightCount;
+    fd.localLights[0] = gpu.localLightCount;
+    if (gpu.localLightCount > 0) {
+        _FitClusters(gpu, frame, &fd);
+    }
     fd.counts[1] = shadows ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
     fd.counts[3] = gpu.environmentLatlong;
@@ -727,6 +786,21 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         toDraw.dstAccessMask = VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
                                VK_ACCESS_2_HOST_READ_BIT;
         dep.pMemoryBarriers = &toDraw;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+    }
+    if (gpu.localLightCount > 0) {
+        // Light clusters, read by the shading pass.
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _lightsPipeline);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+        vkCmdDispatch(_cmd, (16 * 9 * 24 + 63) / 64, 1, 1);
+        VkMemoryBarrier2 toShading{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        toShading.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        toShading.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        toShading.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        toShading.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &toShading;
         vkCmdPipelineBarrier2(_cmd, &dep);
     }
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);

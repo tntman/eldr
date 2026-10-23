@@ -102,6 +102,26 @@ static vkr::Mesh *AddQuad(vkr::Scene &scene, float x0, float y0, float x1, float
     return quad;
 }
 
+// Sphere light of surface radiance L, emitting along +z (towards the
+// quads the tests put behind it).
+static vkr::Light *AddSphereLight(vkr::Scene &scene, float x, float y, float z, float radius, float L)
+{
+    vkr::Light *light = scene.AddLight();
+    light->type = vkr::Light::Type::Sphere;
+    light->position[0] = x;
+    light->position[1] = y;
+    light->position[2] = z;
+    light->radius = radius;
+    std::fill(light->radiance, light->radiance + 3, L);
+    return light;
+}
+
+// World x (or y) of a pixel center under IdentityFrame.
+static float PixelNdc(int p)
+{
+    return (float(p) + 0.5f) / 32.0f - 1.0f;
+}
+
 // Black, unlit quad that only emits `radiance`.
 static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, float y1, float z,
                              float radiance)
@@ -316,6 +336,83 @@ int main()
             Expect(ratio(34) < 0.9f, "GTAO darkens the wall next to the ledge");
             Expect(ratio(60) > 0.98f, "GTAO leaves the open wall alone");
             Expect(ratio(16) > 0.98f, "GTAO leaves the flat ledge alone");
+        }
+
+        {
+            // Local lights 0.5 in front of a white, fully rough wall (z = 0.5);
+            // no dome, no post. Specular adds ~1% at roughness 1.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+
+            // Sphere: reflected radiance L R^2 / d^2 * cos.
+            vkr::Light *sphere = AddSphereLight(scene, 0, 0, 0, 0.1f, 10.0f);
+            scene.Commit();
+            Image img = Render(renderer, scene);
+            const float x = PixelNdc(48), d2 = 0.25f + x * x;
+            const float offAxis = 10.0f * 0.01f / d2 * (0.5f / std::sqrt(d2));
+            Expect(std::abs(img.At(32, 32, 0) - 0.4f) < 0.01f, "sphere light: L R^2 / d^2 head-on");
+            Expect(std::abs(img.At(48, 32, 0) / offAxis - 1.0f) < 0.03f, "sphere light: inverse square and cosine");
+
+            // Spot: 30 degree cone, hard edge, pointing at the wall.
+            sphere->coneAngle = 30;
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(img.At(38, 32, 0) > 0.2f, "spot: lit inside the cone (22 degrees)");
+            Expect(img.At(48, 32, 0) == 0.0f, "spot: dark outside the cone (46 degrees)");
+            scene.RemoveLight(sphere);
+
+            // Rect: 0.5 x 0.5 square facing the wall. Form factor of a square
+            // of half-size a at distance h: 4 * 1/(2 pi) * 2 x/sqrt(1+x^2) atan(x/sqrt(1+x^2)).
+            vkr::Light *rect = scene.AddLight();
+            rect->type = vkr::Light::Type::Rect;
+            rect->halfWidth[0] = 0.25f;
+            rect->halfHeight[1] = 0.25f;
+            std::fill(rect->radiance, rect->radiance + 3, 2.0f);
+            scene.Commit();
+            const float t = 0.5f / std::sqrt(1.25f);
+            const float formFactor = 4.0f / (2.0f * 3.14159265f) * 2.0f * t * std::atan(t);
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * formFactor) - 1.0f) < 0.03f,
+                   "rect light: exact form factor head-on");
+            rect->direction[2] = -1;  // now faces away from the wall
+            scene.Commit();
+            Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "rect light: dark behind its back");
+
+            // Disk of radius r head-on: reflected radiance L r^2 / (r^2 + h^2).
+            rect->type = vkr::Light::Type::Disk;
+            rect->direction[2] = 1;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * 0.0625f / 0.3125f) - 1.0f) < 0.03f,
+                   "disk light: exact illuminance head-on");
+            scene.RemoveLight(rect);
+
+            // 256 small lights 0.1 in front of the wall, each reaching ~0.2:
+            // every pixel must get the sum over all lights, so clustering
+            // dropped none. Range as in lights.glsl (cutoff 0.0018 without post).
+            const float R = 0.01f, L = 0.72f, range = R * std::sqrt(L / 0.0018f);
+            for (int i = 0; i < 256; ++i) {
+                AddSphereLight(scene, -0.9375f + 0.125f * float(i % 16), -0.9375f + 0.125f * float(i / 16),
+                               0.4f, R, L);
+            }
+            scene.Commit();
+            img = Render(renderer, scene);
+            float worst = 0.0f;
+            for (int py : {5, 20, 33, 47, 60}) {
+                for (int px : {3, 18, 31, 44, 62}) {
+                    float expected = 0.0f;
+                    for (int i = 0; i < 256; ++i) {
+                        const float dx = PixelNdc(px) - (-0.9375f + 0.125f * float(i % 16));
+                        const float dy = PixelNdc(py) - (-0.9375f + 0.125f * float(i / 16));
+                        const float dd = dx * dx + dy * dy + 0.01f, dist = std::sqrt(dd);
+                        const float window = std::max(1.0f - std::pow(dist / range, 4.0f), 0.0f);
+                        expected += L * R * R / dd * (0.1f / dist) * window * window;
+                    }
+                    worst = std::max(worst, std::abs(img.At(px, py, 0) / expected - 1.0f));
+                }
+            }
+            Expect(worst < 0.03f, "clustered lights: every pixel gets all lights in range");
         }
 
         {

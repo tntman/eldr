@@ -36,6 +36,8 @@ public:
 
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;
+    // Multiplier the last frame's tonemap applied to scene radiance.
+    float Exposure() const;
 
 private:
     VkDescriptorSet _CreateSet(VkImageView src);

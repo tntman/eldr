@@ -86,11 +86,28 @@ private:
 };
 
 // Distant light. Same threading rules as Mesh.
+// Lights in world space. The Hydra layer resolves the UsdLux inputs
+// (intensity, exposure, color, temperature, normalize) into irradiance for
+// distant lights and the emitting surface's radiance for sphere/rect lights.
 struct Light {
-    float direction[3] = {0, 0, 1};      // world space, pointing at the light
-    float irradiance[3] = {1, 1, 1};     // linear RGB, all scaling applied
+    enum class Type { Distant, Sphere, Rect, Disk };
+    Type type = Type::Distant;
+    float direction[3] = {0, 0, 1};      // distant: towards the light; sphere/rect: emission axis (light -Z)
+    float irradiance[3] = {1, 1, 1};     // distant, linear RGB
+    float radiance[3] = {1, 1, 1};       // sphere/rect, linear RGB
+    float position[3] = {0, 0, 0};       // sphere/rect center
+    float halfWidth[3] = {0.5f, 0, 0};   // rect: center to the +X edge; disk: radius along X
+    float halfHeight[3] = {0, 0.5f, 0};  // rect: center to the +Y edge; disk: radius along Y
+    float radius = 0.5f;                 // sphere
+    bool point = false;                  // sphere: shade as a point (treatAsPoint), same power
+    float coneAngle = 180.0f;            // UsdLuxShapingAPI around the emission axis, degrees
+    float coneSoftness = 0.0f;
+    float focus = 0.0f;
+    float focusTint[3] = {0, 0, 0};
+    float diffuse = 1.0f;                // UsdLux diffuse/specular multipliers
+    float specular = 1.0f;
     bool visible = true;
-    bool castShadows = false;            // the first visible caster gets the CSM
+    bool castShadows = false;            // distant only: the first visible caster gets the CSM
 
 private:
     friend class Scene;
@@ -178,10 +195,11 @@ public:
         VkBuffer commandTemplate = VK_NULL_HANDLE; // per slot, instanceCount 0
         VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances
         VkBuffer materials = VK_NULL_HANDLE;
-        VkBuffer lights = VK_NULL_HANDLE;
+        VkBuffer lights = VK_NULL_HANDLE;      // distant lights, then sphere/rect lights
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
         uint32_t instanceCapacity = 0;
-        uint32_t lightCount = 0;
+        uint32_t lightCount = 0;        // distant
+        uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
 
         uint32_t shadowLight = kNone;       // index into lights

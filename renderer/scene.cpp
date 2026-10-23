@@ -24,9 +24,14 @@ struct GpuMaterial {
     float params[4];  // metallic, roughness, occlusion, unused
     GpuTexRef tex[6]; // baseColor, emissive, metallic, roughness, occlusion, normal
 };
-struct GpuLight {
-    float direction[4];
-    float irradiance[4];
+struct GpuLight {        // mirror of Light in shaders/lights.glsl
+    float position[4];   // distant: direction to the light; else center. w: type
+    float color[4];      // distant: irradiance; else surface radiance
+    float axis[4];       // emission axis; w: sphere radius
+    float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
+    float halfHeight[4]; // rect; w: diffuse multiplier
+    float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
+    float focusTint[4];
 };
 
 constexpr VkBufferUsageFlags kPoolUsage =
@@ -711,20 +716,43 @@ void Scene::Commit()
     _device->Reserve(_lightBuffer, _lights.size() * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
-    uint32_t lightCount = 0;
+    uint32_t lightCount = 0, localLightCount = 0;
     _gpu.shadowLight = kNone;
-    for (const auto &l : _lights) {
-        if (!l->visible) {
-            continue;
+    for (const bool distant : {true, false}) {  // distant lights first
+        for (const auto &l : _lights) {
+            if (!l->visible || (l->type == Light::Type::Distant) != distant) {
+                continue;
+            }
+            GpuLight &g = lights[lightCount + localLightCount];
+            g = GpuLight{};
+            g.halfHeight[3] = l->diffuse;
+            g.shaping[3] = l->specular;
+            if (distant) {
+                if (l->castShadows && _gpu.shadowLight == kNone) {
+                    _gpu.shadowLight = lightCount;
+                    std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
+                }
+                std::copy(l->direction, l->direction + 3, g.position);
+                std::copy(l->irradiance, l->irradiance + 3, g.color);
+                ++lightCount;
+                continue;
+            }
+            const bool sphere = l->type == Light::Type::Sphere;
+            std::copy(l->position, l->position + 3, g.position);
+            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : 3.0f;
+            std::copy(l->radiance, l->radiance + 3, g.color);
+            std::copy(l->direction, l->direction + 3, g.axis);
+            g.axis[3] = sphere ? l->radius : 0.0f;
+            std::copy(l->halfWidth, l->halfWidth + 3, g.halfWidth);
+            g.halfWidth[3] = sphere && !l->point ? l->radius : 0.0f;
+            std::copy(l->halfHeight, l->halfHeight + 3, g.halfHeight);
+            const float cone = l->coneAngle * 0.0174532925f;
+            g.shaping[0] = cone * (1.0f - std::clamp(l->coneSoftness, 0.0f, 1.0f));
+            g.shaping[1] = cone;
+            g.shaping[2] = l->focus;
+            std::copy(l->focusTint, l->focusTint + 3, g.focusTint);
+            ++localLightCount;
         }
-        if (l->castShadows && _gpu.shadowLight == kNone) {
-            _gpu.shadowLight = lightCount;
-            std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
-        }
-        GpuLight &g = lights[lightCount++];
-        std::copy(l->direction, l->direction + 3, g.direction);
-        std::copy(l->irradiance, l->irradiance + 3, g.irradiance);
-        g.direction[3] = g.irradiance[3] = 0;
     }
 
     const auto dome = std::find_if(_domes.begin(), _domes.end(),
@@ -754,6 +782,7 @@ void Scene::Commit()
     _gpu.drawCount = uint32_t(slots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
+    _gpu.localLightCount = localLightCount;
 }
 
 } // namespace vkr

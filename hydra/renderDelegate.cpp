@@ -21,8 +21,10 @@ TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 namespace {
 
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh};
-const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera, HdPrimTypeTokens->material,
-                                   HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight};
+const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
+                                   HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
+                                   HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
+                                   HdPrimTypeTokens->diskLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
 
 } // namespace
@@ -124,7 +126,9 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
     if (typeId == HdPrimTypeTokens->material) {
         return new HdVkMaterial(sprimId, _textures.get());
     }
-    if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight) {
+    if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight ||
+        typeId == HdPrimTypeTokens->sphereLight || typeId == HdPrimTypeTokens->rectLight ||
+        typeId == HdPrimTypeTokens->diskLight) {
         return new HdVkLight(sprimId, typeId, _scene.get(), _textures.get());
     }
     return nullptr;

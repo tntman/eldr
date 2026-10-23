@@ -1,0 +1,59 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define LIGHTS_WRITABLE
+#include "frame.glsl"
+#include "lights.glsl"
+
+// Clustered light assignment, one invocation per cluster: the cluster's
+// world-space bounds (its frustum slice) against every sphere/rect light's
+// range sphere.
+// ponytail: every cluster loops over every light, fine for hundreds of
+// lights; thousands want a coarser pre-pass or a light BVH.
+
+layout(local_size_x = 64) in;
+
+vec3 Unproject(vec3 ndc)
+{
+    vec4 p = frame.invViewProj * vec4(ndc, 1.0);
+    return p.xyz / p.w;
+}
+
+void main()
+{
+    uint c = gl_GlobalInvocationID.x;
+    if (c >= kClustersX * kClustersY * kClustersZ) {
+        return;
+    }
+    uint x = c % kClustersX, y = (c / kClustersX) % kClustersY, z = c / (kClustersX * kClustersY);
+    float d0 = frame.clusters.x * exp2(frame.clusters.z * float(z) / float(kClustersZ));
+    float d1 = frame.clusters.x * exp2(frame.clusters.z * float(z + 1u) / float(kClustersZ));
+
+    // Each corner ray of the tile, cut at the slice's two depths. Works for
+    // perspective and orthographic cameras alike.
+    vec3 lo = vec3(1e30), hi = vec3(-1e30);
+    for (uint k = 0u; k < 4u; ++k) {
+        vec2 ndc = vec2(float(x + (k & 1u)) / float(kClustersX),
+                        float(y + (k >> 1u)) / float(kClustersY)) * 2.0 - 1.0;
+        vec3 a = Unproject(vec3(ndc, -1.0)), b = Unproject(vec3(ndc, 0.0));
+        float fa = dot(a - frame.cameraPos.xyz, frame.cameraForward.xyz);
+        float fb = dot(b - frame.cameraPos.xyz, frame.cameraForward.xyz);
+        vec3 p0 = a + (b - a) * ((d0 - fa) / (fb - fa));
+        vec3 p1 = a + (b - a) * ((d1 - fa) / (fb - fa));
+        lo = min(lo, min(p0, p1));
+        hi = max(hi, max(p0, p1));
+    }
+
+    uint base = c * (kMaxClusterLights + 1u);
+    uint count = 0u;
+    for (uint i = 0u; i < frame.localLights.x && count < kMaxClusterLights; ++i) {
+        uint index = frame.counts.x + i;
+        Light light = lights[index];
+        vec3 q = clamp(light.position.xyz, lo, hi) - light.position.xyz;
+        float range = LightRange(light);
+        if (dot(q, q) <= range * range) {
+            clusterLights[base + 1u + count] = index;
+            ++count;
+        }
+    }
+    clusterLights[base] = count;
+}

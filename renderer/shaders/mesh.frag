@@ -3,10 +3,11 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "frame.glsl"
+#include "lights.glsl"
 
 const uint kNoMaterial = 0xFFFFFFFFu;
 
-// std430 mirrors of GpuTexRef/GpuMaterial/GpuLight in scene.cpp.
+// std430 mirrors of GpuTexRef/GpuMaterial in scene.cpp.
 struct TexRef {
     int index;     // -1: none
     int channel;   // 0..3, or -1 for all
@@ -20,13 +21,7 @@ struct Material {
     vec4 params;     // metallic, roughness, occlusion
     TexRef tex[6];   // baseColor, emissive, metallic, roughness, occlusion, normal
 };
-struct Light {
-    vec4 direction;  // towards the light
-    vec4 irradiance;
-};
-
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
-layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(set = 0, binding = 6) uniform sampler2D brdfLut;
@@ -86,6 +81,114 @@ float V_SmithGGXCorrelated(float NoV, float NoL, float a)
 vec3 F_Schlick(vec3 f0, float VoH)
 {
     return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
+}
+
+// GGX specular times cos for light from direction l.
+vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
+{
+    float NoL = clamp(dot(n, l), 0.0, 1.0);
+    vec3 h = normalize(v + l);
+    float NoH = max(dot(n, h), 0.0);
+    float LoH = max(dot(l, h), 0.0);
+    return D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F_Schlick(f0, LoH) * NoL;
+}
+
+// Illuminance of a sphere of unit radiance with sin^2 of its angular radius
+// sinSigmaSqr, centered at cosTheta from the normal, clipped to the horizon
+// (Lagarde & de Rousiers 2014, Frostbite).
+float SphereIlluminance(float cosTheta, float sinSigmaSqr)
+{
+    if (cosTheta * cosTheta > sinSigmaSqr) {
+        return PI * sinSigmaSqr * clamp(cosTheta, 0.0, 1.0);
+    }
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 1e-8));
+    float x = sqrt(max(1.0 / sinSigmaSqr - 1.0, 0.0));
+    float y = -x * (cosTheta / sinTheta);
+    float sinThetaSqrtY = sinTheta * sqrt(max(1.0 - y * y, 0.0));
+    return max((cosTheta * acos(clamp(y, -1.0, 1.0)) - x * sinThetaSqrtY) * sinSigmaSqr +
+               atan(sinThetaSqrtY / max(x, 1e-8)), 0.0);
+}
+
+// Sphere, rect or disk light (UsdLux semantics as in hdEmbree: cone and
+// focus shaping around the emission axis; rects and disks emit from their
+// -Z side). Diffuse: Frostbite's horizon-clipped sphere/disk illuminance;
+// for rects the exact polygon form factor vector with Heitz's horizon
+// approximation.
+// Specular: Karis' representative point with (a / a')^2 normalization.
+vec3 LocalLight(Light light, vec3 p, vec3 n, vec3 v, vec3 diffuseColor, vec3 f0, float a,
+                float NoV, vec3 energyCompensation)
+{
+    vec3 toLight = light.position.xyz - p;
+    float d = length(toLight);
+    float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
+    if (window <= 0.0 || d <= 0.0) {
+        return vec3(0.0);
+    }
+    vec3 radiance = light.color.rgb * window * window;
+    float cosOff = dot(-toLight / d, light.axis.xyz);
+    if (light.shaping.z > 0.0) {
+        radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
+    }
+    float theta = acos(clamp(cosOff, -1.0, 1.0));
+    radiance *= light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
+                                                   : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
+
+    vec3 r = reflect(-v, n);
+    float diffuseE, specularE, sourceRadius;
+    vec3 l;
+    if (uint(light.position.w) == kLightSphere) {
+        float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
+        diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
+        specularE = PI * sinSigmaSqr;
+        sourceRadius = light.halfWidth.w;
+        vec3 centerToRay = dot(toLight, r) * r - toLight;
+        l = normalize(toLight + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+    } else {
+        if (dot(toLight, light.axis.xyz) >= 0.0) {
+            return vec3(0.0);  // behind the emitting side
+        }
+        vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
+        bool rect = uint(light.position.w) == kLightRect;
+        if (rect) {
+            vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
+            vec3 formFactor = vec3(0.0);
+            for (int i = 0; i < 4; ++i) {
+                vec3 v0 = normalize(corners[i]), v1 = normalize(corners[(i + 1) % 4]);
+                vec3 c = cross(v0, v1);
+                float len = length(c);
+                if (len > 1e-8) {
+                    formFactor += acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len;
+                }
+            }
+            formFactor /= 2.0 * PI;
+            if (dot(formFactor, toLight) < 0.0) {
+                formFactor = -formFactor;  // winding-independent: points at the light
+            }
+            float f = length(formFactor);
+            diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
+            specularE = PI * f;
+            sourceRadius = sqrt(4.0 * length(cross(hw, hh)) / PI);
+        } else {
+            float r2 = length(cross(hw, hh));  // radius^2 of the equal-area circle
+            float cosLight = clamp(dot(light.axis.xyz, -toLight / d), 0.0, 1.0);
+            float sinSigmaSqr = r2 / (r2 + d * d);
+            diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr) * cosLight;
+            specularE = PI * sinSigmaSqr * cosLight;
+            sourceRadius = sqrt(r2);
+        }
+        // Where the reflection ray meets the light's plane, clamped to the
+        // rectangle or disk (in units of its half extents).
+        float rDotAxis = dot(r, light.axis.xyz);
+        vec3 q = rDotAxis < -1e-4 ? r * (dot(toLight, light.axis.xyz) / rDotAxis) - toLight : vec3(0.0);
+        vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
+        uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
+        l = normalize(toLight + hw * uv.x + hh * uv.y);
+    }
+    float aWide = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
+    vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
+                    (a * a) / (aWide * aWide) * light.shaping.w;
+    return radiance * (diffuse + specular);
 }
 
 // Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
@@ -285,20 +388,31 @@ void main()
 
     vec3 color = emissive;
     for (uint i = 0; i < frame.counts.x; ++i) {
-        vec3 l = lights[i].direction.xyz;
+        Light light = lights[i];
+        vec3 l = light.position.xyz;
         float NoL = dot(n, l);
         if (NoL <= 0.0) {
             continue;
         }
-        vec3 h = normalize(v + l);
-        float NoH = max(dot(n, h), 0.0);
-        float LoH = max(dot(l, h), 0.0);
-        vec3 specular = D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, NoL, a) * F_Schlick(f0, LoH);
-        vec3 radiance = (diffuseColor / PI + specular * energyCompensation) * lights[i].irradiance.rgb * NoL;
+        vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
+                         Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
+                        light.color.rgb;
         if (i == frame.counts.y) {
             radiance *= Shadow(inWorldPos, ng, l);
         }
         color += radiance;
+    }
+
+    // Sphere and rect lights from this pixel's cluster.
+    // ponytail: unshadowed; spot/point shadows (atlas) come later.
+    if (frame.localLights.x > 0u) {
+        float viewDepth = dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz);
+        uint base = ClusterIndex(gl_FragCoord.xy, viewDepth) * (kMaxClusterLights + 1u);
+        uint count = clusterLights[base];
+        for (uint k = 0u; k < count; ++k) {
+            color += LocalLight(lights[clusterLights[base + 1u + k]], inWorldPos, n, v, diffuseColor, f0,
+                                a, NoV, energyCompensation);
+        }
     }
 
     // Image-based lighting from the dome, if any.

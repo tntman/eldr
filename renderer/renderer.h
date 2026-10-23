@@ -68,6 +68,7 @@ private:
     void _Resize(uint32_t width, uint32_t height);
     void _UpdateDescriptors(const Scene::Gpu &gpu);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
+    void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
 
     Device &_dev;
     Gtao _gtao;
@@ -96,6 +97,8 @@ private:
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
+    VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
+    Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;

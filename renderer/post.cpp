@@ -314,6 +314,11 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool 
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 }
 
+float PostProcess::Exposure() const
+{
+    return std::exp2(static_cast<const ExposureState *>(_exposureBuffer.mapped)->ev);
+}
+
 bool PostProcess::ExposureConverged() const
 {
     const auto *state = static_cast<const ExposureState *>(_exposureBuffer.mapped);

@@ -17,6 +17,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
     mat4 prevViewProj;   // unjittered camera of the frame in previousColor
     vec4 ssr;            // x = 1: trace reflections, y = noise index
+    vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
+    uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones
 } frame;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];

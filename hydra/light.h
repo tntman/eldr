@@ -13,8 +13,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 class HdVkTextureCache;
 
-// UsdLuxDistantLight (also usdview's camera light, which Hydra hands
-// non-Storm renderers as a distantLight) and UsdLuxDomeLight.
+// UsdLux distant (also usdview's camera light, which Hydra hands non-Storm
+// renderers as a distantLight), dome, sphere, rect and disk lights.
 class HdVkLight final : public HdLight
 {
 public:
@@ -27,9 +27,10 @@ public:
               HdDirtyBits *dirtyBits) override;
 
 private:
+    TfToken _type;
     vkr::Scene *_scene;
     HdVkTextureCache *_textures;
-    vkr::Light *_light = nullptr;  // distant
+    vkr::Light *_light = nullptr;  // all but dome
     vkr::Dome *_dome = nullptr;    // dome
 };
 
