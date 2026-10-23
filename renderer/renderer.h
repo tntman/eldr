@@ -83,6 +83,9 @@ public:
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;
+        // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
+        // and depth go to the app's OpenGL on the GPU instead of Targets.
+        bool shareFrame = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -135,6 +138,17 @@ public:
         double exposure = 1;      // the tonemap's multiplier of scene radiance
     };
     const Stats &GetStats() const { return _stats; }
+
+    // GPU sharing (interop.h): the last frame's images, in
+    // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
+    // has it (RGBA16F) and depth (D32); null before a frame.
+    VkImage ColorImage() const { return _frameColor; }
+    VkImage DepthImage() const { return _frameColor ? _depth.image : VK_NULL_HANDLE; }
+    uint32_t Width() const { return _width; }
+    uint32_t Height() const { return _height; }
+    // Copies the last frame's outputs (as Render's, extra AOVs aside) to
+    // host memory, for consumers that ask after Render.
+    void Read(const Targets &out);
 
 private:
     void _CreateDescriptors();
@@ -227,6 +241,7 @@ private:
     VkBuffer _prevBlendSource = VK_NULL_HANDLE;
     bool _prevBlendValid = false;
     Aovs _aovs{_dev};  // extra AOVs
+    VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
 };
 
 } // namespace vkr

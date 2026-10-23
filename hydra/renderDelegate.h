@@ -46,7 +46,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((softShadowSamples, "hdvk:softShadowSamples"))          \
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
-    ((anisotropy, "hdvk:anisotropy"))                            ((tonemapper, "hdvk:tonemapper"))                            ((lensDistortion, "hdvk:lensDistortion"))                    ((blendShapeMotion, "hdvk:blendShapeMotion"))                ((extraAovs, "hdvk:extraAovs"))
+    ((anisotropy, "hdvk:anisotropy"))                            ((tonemapper, "hdvk:tonemapper"))                            ((lensDistortion, "hdvk:lensDistortion"))                    ((blendShapeMotion, "hdvk:blendShapeMotion"))                ((extraAovs, "hdvk:extraAovs"))                              ((shareFrame, "hdvk:shareFrame"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
@@ -61,6 +61,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 uint32_t HdVkRenderTagBit(TfToken const &tag);
 
 class HdVkTextureCache;
+class HdVkGLInterop;
+class Hgi;
 
 class HdVkRenderDelegate final : public HdRenderDelegate
 {
@@ -104,6 +106,16 @@ public:
     // to hex id), reported in GetRenderStats()["cryptomatte"].
     void SetCryptomatteManifests(std::string object, std::string material);
 
+    // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
+    void SetDrivers(HdDriverVector const &drivers) override;
+    // Hands frames to the app's OpenGL on the GPU (made on first use, with
+    // its context current); null when that can't work.
+    HdVkGLInterop *GLInterop();
+    // After it failed: read back from then on.
+    void DisableGLInterop();
+    // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
+    void SetFrameShared(bool shared) { _frameShared = shared; }
+
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
@@ -114,6 +126,10 @@ private:
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
     std::string _cryptomatteObject, _cryptomatteMaterial;
+    // GPU sharing; declared last: released before the renderer and device.
+    Hgi *_hgi = nullptr;
+    bool _interopTried = false, _frameShared = false;
+    std::unique_ptr<HdVkGLInterop> _interop;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

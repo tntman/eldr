@@ -2,13 +2,18 @@
 
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/renderBuffer.h"
+#include "pxr/imaging/hgi/texture.h"
 
 #include <atomic>
+#include <functional>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
 // CPU-side AOV storage the render pass fills via readback. Always converged.
+// With GPU sharing (HdVkGLInterop) colour and depth are also a texture of
+// the app's Hgi (GetResource), and the CPU copy is fetched only when
+// someone maps it (selection highlighting, picking).
 class HdVkRenderBuffer final : public HdRenderBuffer
 {
 public:
@@ -24,6 +29,8 @@ public:
         _width = unsigned(dimensions[0]);
         _height = unsigned(dimensions[1]);
         _format = format;
+        _texture = HgiTextureHandle();
+        _fetch = nullptr;
         _data.resize(size_t(_width) * _height * HdDataSizeOfFormat(format));
         return true;
     }
@@ -34,12 +41,27 @@ public:
     HdFormat GetFormat() const override { return _format; }
     bool IsMultiSampled() const override { return false; }
 
-    void *Map() override { ++_mappers; return _data.data(); }
+    void *Map() override
+    {
+        if (_fetch) {
+            std::function<void(void *)> fetch = std::move(_fetch);
+            _fetch = nullptr;
+            fetch(_data.data());
+        }
+        ++_mappers;
+        return _data.data();
+    }
     void Unmap() override { --_mappers; }
     bool IsMapped() const override { return _mappers > 0; }
 
     void Resolve() override {}
     bool IsConverged() const override { return true; }
+
+    // GPU sharing: this frame's texture (empty: the CPU data is the frame).
+    VtValue GetResource(bool) const override { return _texture ? VtValue(_texture) : VtValue(); }
+    void SetTexture(HgiTextureHandle texture) { _texture = texture; }
+    // Fills the CPU copy on the next Map (null: it is current).
+    void SetFetch(std::function<void(void *)> fetch) { _fetch = std::move(fetch); }
 
 protected:
     void _Deallocate() override
@@ -54,6 +76,8 @@ private:
     HdFormat _format = HdFormatInvalid;
     std::vector<uint8_t> _data;
     std::atomic<int> _mappers{0};
+    HgiTextureHandle _texture;
+    std::function<void(void *)> _fetch;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

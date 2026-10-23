@@ -1,5 +1,7 @@
 #include "renderPass.h"
 
+#include "glInterop.h"
+#include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
 
@@ -132,7 +134,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.translucency, &frame.translucency},
                                 {t.lensDistortion, &frame.lensDistortion},
                                 {t.blendShapeMotion, &frame.blendShapeMotion},
-                                {t.extraAovs, &frame.extraAovs}}) {
+                                {t.extraAovs, &frame.extraAovs}, {t.shareFrame, &frame.shareFrame}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -239,23 +241,58 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                                                             "{" + materials + "}");
     }
 
+    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
+    // none of the four is read back unless someone maps it.
+    auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
+    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
+    const bool lazy = interop != nullptr;
+    HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
+                                          static_cast<HdVkRenderBuffer *>(primId),
+                                          static_cast<HdVkRenderBuffer *>(instanceId)};
     vkr::Renderer::Targets out;
-    out.color = color ? color->Map() : nullptr;
-    out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
-    out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
-    out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
+    if (!lazy) {
+        out.color = color ? color->Map() : nullptr;
+        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
+        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
+        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
+    }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
     }
+    bool shared = false;
     try {
         _renderer->Render(_scene, frame, out);
+        shared = interop && interop->Present(*_renderer);
+        if (interop && !shared) {
+            vkDelegate->DisableGLInterop();
+        }
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
-    for (HdRenderBuffer *b : {color, depth, primId, instanceId}) {
-        if (b) {
-            b->Unmap();
+    vkDelegate->SetFrameShared(shared);
+    for (int i = 0; i < 4; ++i) {
+        if (!buffers[i]) {
+            continue;
         }
+        buffers[i]->SetTexture(shared && i == 0 ? interop->Color() : shared && i == 1 ? interop->Depth()
+                                                                                    : HgiTextureHandle());
+        if (!lazy) {
+            buffers[i]->Unmap();
+            buffers[i]->SetFetch(nullptr);
+            continue;
+        }
+        buffers[i]->SetFetch([renderer = _renderer, i](void *data) {
+            vkr::Renderer::Targets t;
+            t.color = i == 0 ? data : nullptr;
+            t.depth = i == 1 ? static_cast<float *>(data) : nullptr;
+            t.primId = i == 2 ? static_cast<int32_t *>(data) : nullptr;
+            t.instanceId = i == 3 ? static_cast<int32_t *>(data) : nullptr;
+            try {
+                renderer->Read(t);
+            } catch (const std::exception &e) {
+                TF_RUNTIME_ERROR("HdVk readback failed: %s", e.what());
+            }
+        });
     }
     for (HdRenderBuffer *b : extra) {
         if (b) {

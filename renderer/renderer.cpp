@@ -1173,14 +1173,15 @@ uint32_t Renderer::VisibleInstances() const
     return total;
 }
 
-// ponytail: synchronous, one frame in flight, CPU readback every frame.
-// GL interop (step 7) removes the readback; frames in flight come with it.
+// ponytail: synchronous, one frame in flight. The Hydra layer's GPU sharing
+// (interop.h) skips the readback; frames in flight would come next.
 void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
 {
     if (frame.width == 0 || frame.height == 0) {
         return;
     }
     const auto cpuStart = std::chrono::steady_clock::now();
+    _frameColor = VK_NULL_HANDLE;
     if (frame.width != _width || frame.height != _height) {
         _Resize(frame.width, frame.height);
     }
@@ -1784,13 +1785,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
 
     // Lens distortion warps everything read back.
-    if (frame.lensDistortion && frame.distortion.Active() && (out.color || out.depth || out.primId || out.instanceId)) {
+    if (frame.lensDistortion && frame.distortion.Active()) {
         const bool post = frame.postProcess;
         _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
                            post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
                            _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth);
         pass("lensDistortion");
     }
+
+    _frameColor = frame.postProcess ? _post.Output() : _color.image;
 
     // Copy only what the caller asked for, packed one after another.
     struct Output {
@@ -1884,6 +1887,60 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+}
+
+// As Render's readback, from the images it left in TRANSFER_SRC_OPTIMAL.
+void Renderer::Read(const Targets &out)
+{
+    if (!_frameColor) {
+        return;
+    }
+    const std::pair<VkImage, void *> outputs[5] = {{_frameColor, out.color}, {_depth.image, out.depth},
+                                                   {_primId.image, out.primId}, {_instanceId.image, out.instanceId},
+                                                   {_velocity.image, out.velocity}};
+    const VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
+    Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
+    VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
+    VkDeviceSize offsets[5] = {}, offset = 0;
+    for (int i = 0; i < 5; ++i) {
+        if (outputs[i].second) {
+            offsets[i] = offset;
+            VkBufferImageCopy copy{};
+            copy.bufferOffset = offset;
+            copy.imageSubresource = {i == 1 ? VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT)
+                                            : VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT), 0, 0, 1};
+            copy.imageExtent = {_width, _height, 1};
+            vkCmdCopyImageToBuffer(_cmd, outputs[i].first, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _readback.buffer, 1,
+                                   &copy);
+            offset += bytesPerPixel[i] * _width * _height;
+        }
+    }
+    VkMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    toHost.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+    toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &toHost;
+    vkCmdPipelineBarrier2(_cmd, &dep);
+    Check(vkEndCommandBuffer(_cmd), "vkEndCommandBuffer");
+    VkCommandBufferSubmitInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+    cbi.commandBuffer = _cmd;
+    VkSubmitInfo2 si{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;
+    Check(vkQueueSubmit2(_dev.queue, 1, &si, _fence), "vkQueueSubmit2");
+    Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+    Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
+    const auto *src = static_cast<const uint8_t *>(_readback.mapped);
+    for (int i = 0; i < 5; ++i) {
+        if (outputs[i].second) {
+            std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _width * _height);
+        }
+    }
 }
 
 } // namespace vkr

@@ -1,6 +1,7 @@
 #include "renderDelegate.h"
 
 #include "curves.h"
+#include "glInterop.h"
 #include "instancer.h"
 #include "light.h"
 #include "material.h"
@@ -12,8 +13,11 @@
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/camera.h"
+#include "pxr/imaging/hd/driver.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "pxr/imaging/hgi/hgi.h"
+#include "pxr/imaging/hgi/tokens.h"
 
 #include <algorithm>
 #include <chrono>
@@ -153,6 +157,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
+        {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
@@ -277,6 +282,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["taaTarget"] = size_t(frame.taaTarget);
     stats["percentDone"] = converged ? 100.0 : 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
     stats["rendererStage"] = std::string(converged ? "converged" : "accumulating");
+    stats["frameSharing"] = std::string(_frameShared ? "OpenGL" : "readback");
     if (!_cryptomatteObject.empty()) {
         VtDictionary manifests;
         manifests["CryptoObject"] = _cryptomatteObject;
@@ -284,6 +290,33 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
         stats["cryptomatte"] = manifests;
     }
     return stats;
+}
+
+void HdVkRenderDelegate::SetDrivers(HdDriverVector const &drivers)
+{
+    for (const HdDriver *driver : drivers) {
+        if (driver->name == HgiTokens->renderDriver && driver->driver.IsHolding<Hgi *>()) {
+            _hgi = driver->driver.UncheckedGet<Hgi *>();
+        }
+    }
+}
+
+HdVkGLInterop *HdVkRenderDelegate::GLInterop()
+{
+    if (!_interopTried && _device) {
+        _interopTried = true;
+        try {
+            _interop = HdVkGLInterop::Create(_hgi, *_device);
+        } catch (const std::exception &e) {
+            TF_WARN("HdVk: no GPU sharing with OpenGL: %s", e.what());
+        }
+    }
+    return _interop.get();
+}
+
+void HdVkRenderDelegate::DisableGLInterop()
+{
+    _interop.reset();
 }
 
 void HdVkRenderDelegate::SetCryptomatteManifests(std::string object, std::string material)

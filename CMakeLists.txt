@@ -11,6 +11,8 @@ if(MSVC)
 endif()
 
 find_package(Vulkan REQUIRED)
+# garch (GPU sharing with usdview's OpenGL) links OpenGL::GL.
+find_package(OpenGL REQUIRED)
 # -DCMAKE_PREFIX_PATH=<USD install root>; pxr_DIR alone misses its TBB/OpenSubdiv configs.
 find_package(pxr CONFIG REQUIRED)
 
@@ -53,7 +55,7 @@ list(APPEND shader_incs ${spv})
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
-    renderer/distortion.cpp renderer/aov.cpp
+    renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
@@ -65,8 +67,8 @@ target_link_libraries(vkrtest PRIVATE vkrenderer)
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
-    hydra/sceneIndexPlugin.cpp)
-target_link_libraries(hdVk PRIVATE ar hd hdsi hio sdr vkrenderer)
+    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp)
+target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
@@ -103,6 +105,8 @@ if(WIN32)
     set_tests_properties(distortion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME aovs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aovs.py)
     set_tests_properties(aovs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME interop COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_interop.py)
+    set_tests_properties(interop PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")
