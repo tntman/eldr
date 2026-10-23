@@ -1167,6 +1167,46 @@ int main()
             Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
                    "Frame::specularWorkflow off: F0 0.04");
         }
+
+        {
+            // Clearcoat: a coat as rough as the base (0.5, F0 0.04) over a
+            // black dielectric adds the base's own 0.16 under the head-on
+            // light, minus the few percent it takes from the base; a red
+            // coat colour tints the white diffuse beneath. Under a uniform
+            // dome (white furnace) the coated white surface still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->coat = 1;
+            material->coatRoughness = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float coated = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.clearcoat = false;
+            const float bare = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(std::abs(bare - 0.16f) < 0.02f && coated > 1.8f * bare && coated < 2.0f * bare,
+                   "clearcoat adds a second specular lobe");
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->coatColor[1] = material->coatColor[2] = 0.0f;
+            scene.Commit();
+            frame.clearcoat = true;
+            const Image red = Render(renderer, scene, frame);
+            Expect(red.At(32, 32, 0) > 1.0f && red.At(32, 32, 1) < 0.4f, "coat colour tints the base beneath");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->coat = 1;
+            white->coatRoughness = 0.1f;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: coated white dielectric returns 1");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

@@ -69,6 +69,7 @@ public:
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
+        bool clearcoat = true;         // a second GGX lobe on top (coat)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -159,12 +160,12 @@ private:
     // Mesh pipelines in variants (Scene::Gpu::chunkKind >> 2): bit 0 eight
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
-    // program (the GRAPH shaders).
+    // program (the GRAPH shaders), and bit 3, lobes (the LAYERS shaders).
     VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[8] = {};  // shading, blended over the opaque
+    VkPipeline _translucentPipeline[16] = {};  // shading, blended over the opaque
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[8] = {};             // shading, depth read-only
+    VkPipeline _pipeline[16] = {};            // shading, depth read-only
     VkPipeline _shadowPipeline[4] = {};
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;

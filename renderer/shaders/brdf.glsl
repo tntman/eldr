@@ -1,23 +1,111 @@
 // Shading beyond mesh.frag's metallic-roughness base (Lambert diffuse, GGX
 // specular), from the material's constants (material.glsl): the specular
-// workflow. mesh.frag includes it after its inputs and calls PrepareLayers
-// once per pixel, before the lights. Each costs a branch unless a material
-// uses it and its FrameData.features.x flag is on.
+// workflow and a clearcoat. mesh.frag includes it after its inputs and
+// calls PrepareLayers once per pixel (before the lights), LayerLight per
+// light and LayerAmbient for the dome. Only materials with lobes
+// (vkr::Material::Layered) shade with the LAYERS build of mesh.frag; the
+// plain build gets the empty versions at the end, so plain materials pay
+// nothing. Within LAYERS each lobe costs a branch unless the material uses
+// it and its FrameData.features.x flag is on.
 
 // frame.features.x bits (renderer.cpp's Frame switches).
-const uint kFeatureSpecularWorkflow = 8u;
+const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u;
 
-// Before the lights: the base's F0 and colours as the material's lobes
-// change them.
-void PrepareLayers(inout vec3 f0)
+#ifdef LAYERS
+
+// mesh.frag's GGX pieces, shared by the lobes.
+float D_GGX(float NoH, float a);
+float V_SmithGGXCorrelated(float NoV, float NoL, float a);
+vec3 F_Schlick(vec3 f0, float VoH);
+
+// The pixel's lobes on top of the base (PrepareLayers).
+struct Layers {
+    float coat;            // weight; 0: no coat
+    float coatPerceptual;  // roughness, clamped as the base's
+    float coatF0;
+    float coatAlbedo;      // what the coat reflects towards the viewer (split-sum DFG)
+};
+Layers layers;
+
+// Before the lights: the pixel's lobes, and the base's F0 and colours as
+// they change them.
+void PrepareLayers(float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
 {
+    layers = Layers(0.0, 1.0, 0.0, 0.0);
     if (inMaterial == kNoMaterial) {
         return;
     }
+    Material m = materials[inMaterial];
     // UsdPreviewSurface's specular workflow: F0 is specularColor (F90
     // white); hydra/material.cpp already dropped metallic.
-    vec4 specularColor = materials[inMaterial].specularColor;
-    if (specularColor.w > 0.0 && (frame.features.x & kFeatureSpecularWorkflow) != 0u) {
-        f0 = specularColor.rgb;
+    if (m.specularColor.w > 0.0 && (frame.features.x & kFeatureSpecularWorkflow) != 0u) {
+        f0 = m.specularColor.rgb;
+    }
+    // Clearcoat (standard_surface's coat layer): the base beneath is tinted
+    // by the coat colour and loses the coat's directional albedo, emission
+    // included.
+    if (m.coat.x > 0.0 && (frame.features.x & kFeatureClearcoat) != 0u) {
+        layers.coat = m.coat.x;
+        layers.coatPerceptual = clamp(m.coat.y, 0.045, 1.0);
+        layers.coatF0 = m.coat.z;
+        vec2 ab = texture(brdfLut, vec2(NoV, layers.coatPerceptual)).rg;
+        layers.coatAlbedo = layers.coatF0 * ab.x + ab.y;
+        vec3 base = mix(vec3(1.0), m.coatColor.rgb, layers.coat) * (1.0 - layers.coat * layers.coatAlbedo);
+        diffuseColor *= base;
+        tint *= base;
+        emissive *= base;
     }
 }
+
+// The lobes' reflection of light from direction l, times cos, per unit of
+// the light's specular radiance. `widen`: what a local light's size adds
+// to roughness (Karis' representative point, normalized as the base).
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float widen)
+{
+    vec3 c = vec3(0.0);
+    if (layers.coat > 0.0) {
+        float NoL = clamp(dot(n, l), 0.0, 1.0);
+        vec3 h = normalize(v + l);
+        float a = layers.coatPerceptual * layers.coatPerceptual, aWide = clamp(a + widen, 0.0, 1.0);
+        float F = F_Schlick(vec3(layers.coatF0), max(dot(l, h), 0.0)).x;
+        c += layers.coat * D_GGX(max(dot(n, h), 0.0), a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F * NoL *
+             (a * a) / (aWide * aWide);
+    }
+    return c;
+}
+
+// The lobes' share of the dome's light (mesh.frag's IBL): the coat
+// reflects the prefiltered environment at its own roughness.
+// ponytail: no screen-space reflections in the coat (only the base traces
+// them); a second trace for smooth coats over rough bases would add them.
+vec3 LayerAmbient(vec3 n, vec3 v, float specularAO)
+{
+    vec3 c = vec3(0.0);
+    if (frame.envRadiance.w <= 0.0) {
+        return c;
+    }
+    if (layers.coat > 0.0) {
+        vec3 r = normalize(mat3(frame.envWorldToLocal) * reflect(-v, n));
+        float lod = layers.coatPerceptual * float(frame.counts.z - 1u);
+        c += layers.coat * layers.coatAlbedo * textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb * specularAO;
+    }
+    return c;
+}
+
+#else
+
+void PrepareLayers(float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
+{
+}
+
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float widen)
+{
+    return vec3(0.0);
+}
+
+vec3 LayerAmbient(vec3 n, vec3 v, float specularAO)
+{
+    return vec3(0.0);
+}
+
+#endif

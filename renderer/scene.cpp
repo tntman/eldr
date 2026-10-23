@@ -33,6 +33,8 @@ struct GpuMaterial {
     float specular[4];  // Material::specular
     // Lobes (shaders/brdf.glsl).
     float specularColor[4];  // specular workflow F0, w = 1 when used
+    float coat[4];           // weight, roughness, F0
+    float coatColor[4];
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1081,6 +1083,10 @@ void Scene::Commit()
             std::copy(m.specular, m.specular + 3, g.specular);
             std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
             g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.coat[0] = m.coat;
+            g.coat[1] = m.coatRoughness;
+            g.coat[2] = m.coatF0;
+            std::copy(m.coatColor, m.coatColor + 3, g.coatColor);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);
@@ -1135,7 +1141,8 @@ void Scene::Commit()
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
-                                (program ? Gpu::kProgram : 0);
+                                (program ? Gpu::kProgram : 0) |
+                                (drawable && m.material && m.material->Layered() ? Gpu::kLayers : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;

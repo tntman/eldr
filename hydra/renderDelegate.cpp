@@ -127,6 +127,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
          VtValue(frame.specularWorkflow)},
+        {"Clearcoat (coat layer)", t.clearcoat, VtValue(frame.clearcoat)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},

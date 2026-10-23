@@ -23,6 +23,8 @@ struct Material {
     vec4 specular;   // dielectric specular weight times colour
     // Lobes (brdf.glsl).
     vec4 specularColor;  // specular workflow F0, w = 1 when used
+    vec4 coat;           // weight (0: none), roughness, F0
+    vec4 coatColor;      // tints the base beneath
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

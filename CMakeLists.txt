@@ -42,6 +42,22 @@ foreach(shader mesh.vert mesh.frag)
                 renderer/shaders/brdf.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
+# with variants of their own, so plain materials don't pay for them.
+foreach(variant layers graph_layers)
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_${variant}.frag.inc)
+    set(defines -DLAYERS)
+    if(variant STREQUAL "graph_layers")
+        list(APPEND defines -DGRAPH)
+    endif()
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
+        DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+                renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
+                renderer/shaders/brdf.glsl)
+    list(APPEND shader_incs ${spv})
+endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}

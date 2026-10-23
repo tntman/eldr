@@ -6,7 +6,9 @@
 
 # The lobes beyond the metallic base (renderer/shaders/brdf.glsl), one
 # sphere each, under a sun and the dome. Top row, left to right:
-# UsdPreviewSurface specular workflow (orange specularColor over dark blue).
+# UsdPreviewSurface specular workflow (orange specularColor over dark blue),
+# UsdPreviewSurface clearcoat (sharp coat over rough red), standard_surface
+# car paint (blue metallic flake base, coat), OpenPBR amber coat over white.
 
 def Camera "cam"
 {
@@ -44,11 +46,76 @@ def Scope "mtl"
             token outputs:surface
         }
     }
+
+    def Material "clearcoat"
+    {
+        token outputs:surface.connect = </mtl/clearcoat/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.03, 0.02)
+            float inputs:roughness = 0.6
+            float inputs:clearcoat = 1
+            float inputs:clearcoatRoughness = 0.02
+            token outputs:surface
+        }
+    }
+
+    def Material "carPaint"
+    {
+        token outputs:mtlx:surface.connect = </mtl/carPaint/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.05, 0.12, 0.45)
+            float inputs:metalness = 0.5
+            float inputs:specular_roughness = 0.45
+            float inputs:coat = 1
+            float inputs:coat_roughness = 0.03
+            token outputs:out
+        }
+    }
+
+    def Material "amberCoat"
+    {
+        token outputs:mtlx:surface.connect = </mtl/amberCoat/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.9, 0.9)
+            float inputs:specular_roughness = 0.5
+            float inputs:coat_weight = 1
+            color3f inputs:coat_color = (1, 0.6, 0.2)
+            float inputs:coat_roughness = 0.05
+            token outputs:out
+        }
+    }
 }
 
 def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
 {
     rel material:binding = </mtl/specularWorkflow>
     double3 xformOp:translate = (-6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "clearcoat" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/clearcoat>
+    double3 xformOp:translate = (-3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "carPaint" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/carPaint>
+    double3 xformOp:translate = (-1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "amberCoat" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/amberCoat>
+    double3 xformOp:translate = (1.2, 1.2, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }

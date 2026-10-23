@@ -7,7 +7,7 @@ import sys
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
-from PySide6.QtOpenGL import QOpenGLFramebufferObject
+from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from PySide6.QtWidgets import QApplication
 from pxr import CameraUtil, Gf, Usd, UsdGeom, UsdImagingGL
 
@@ -19,7 +19,9 @@ surface.create()
 glContext = QOpenGLContext()  # must stay referenced while rendering
 glContext.create()
 glContext.makeCurrent(surface)
-fbo = QOpenGLFramebufferObject(QSize(SIZE, SIZE))
+fboFormat = QOpenGLFramebufferObjectFormat()
+fboFormat.setInternalTextureFormat(0x881A)  # GL_RGBA16F: highlights stay above 1
+fbo = QOpenGLFramebufferObject(QSize(SIZE, SIZE), fboFormat)
 fbo.bind()
 
 stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "lobes.usda"))
@@ -45,18 +47,24 @@ def render(settings):
     return fbo.toImage()
 
 
-def mean(image, prim):
-    """Mean linear colour over the middle of a sphere (radius 1)."""
+def pixels(image, prim):
+    """Linear colours over the middle of a sphere (radius 1)."""
     centre = stage.GetPrimAtPath(prim).GetAttribute("xformOp:translate").Get()
-    total, count = [0.0, 0.0, 0.0], 0
-    for dy in range(-6, 7):
-        for dx in range(-6, 7):
-            p = viewProj.Transform(Gf.Vec3d(centre[0] + dx * 0.1, centre[1] + dy * 0.1, centre[2]))
+    for dy in range(-16, 17):
+        for dx in range(-16, 17):
+            p = viewProj.Transform(Gf.Vec3d(centre[0] + dx * 0.05, centre[1] + dy * 0.05, centre[2]))
             c = image.pixelColor(int((p[0] * 0.5 + 0.5) * SIZE), int((0.5 - p[1] * 0.5) * SIZE))
-            for i, v in enumerate((c.redF(), c.greenF(), c.blueF())):
-                total[i] += v
-            count += 1
-    return [v / count for v in total]
+            yield c.redF(), c.greenF(), c.blueF()
+
+
+def mean(image, prim):
+    colours = list(pixels(image, prim))
+    return [sum(c[i] for c in colours) / len(colours) for i in range(3)]
+
+
+def peak(image, prim):
+    """The brightest colour (by its sum) over the middle of a sphere."""
+    return list(max(pixels(image, prim), key=sum))
 
 
 failures = []
@@ -68,16 +76,21 @@ def expect(ok, what, *values):
         failures.append(what)
 
 
-def compare(setting, prim):
-    """The sphere's mean colour with `setting` on and off."""
-    on = mean(render({setting: True}), prim)
-    off = mean(render({setting: False}), prim)
+def compare(setting, prim, measure=mean):
+    """The sphere's mean (or peak) colour with `setting` on and off."""
+    on = measure(render({setting: True}), prim)
+    off = measure(render({setting: False}), prim)
     engine.SetRendererSetting(setting, True)
     return on, off
 
 
 on, off = compare("hdvk:specularWorkflow", "/specularWorkflow")
 expect(on[0] - on[2] > off[0] - off[2] + 0.02, "specular workflow: orange specularColor highlights", on, off)
+for prim in ("/clearcoat", "/carPaint", "/amberCoat"):
+    on, off = compare("hdvk:clearcoat", prim, peak)
+    expect(sum(on) > 1.5 * sum(off), prim[1:] + ": the coat's sharp highlight", on, off)
+on, off = compare("hdvk:clearcoat", "/amberCoat")
+expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "amberCoat: the coat colour tints the base", on, off)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

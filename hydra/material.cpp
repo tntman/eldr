@@ -89,6 +89,15 @@ TF_DEFINE_PRIVATE_TOKENS(
     (r)(g)(b)(a)
     (useSpecularWorkflow)
     (specularColor)
+    (clearcoat)
+    (clearcoatRoughness)
+    (ior)
+    (coat)
+    (coat_color)
+    (coat_roughness)
+    (coat_IOR)
+    (coat_weight)
+    (coat_ior)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1074,20 +1083,45 @@ GfVec3f ReadColor(std::map<TfToken, VtValue> const &params, TfToken const &name,
     return color;
 }
 
+// F0 of a dielectric of index `ior` in air.
+float IorToF0(float ior)
+{
+    const float r = (ior - 1.0f) / (ior + 1.0f);
+    return r * r;
+}
+
 // The lobes beyond the metallic base (shaders/brdf.glsl), as constants:
 // unauthored inputs take the surface's defaults, connected ones too.
 void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
 {
     auto const &p = surface.parameters;
     const TfToken &id = surface.nodeTypeId;
+    auto color = [&](TfToken const &name, float *out) {
+        const GfVec3f c = ReadColor(p, name, GfVec3f(out[0], out[1], out[2]));
+        std::copy(c.data(), c.data() + 3, out);
+    };
     if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
         if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
             m->specularWorkflow = true;
-            const GfVec3f f0 = ReadColor(p, _tokens->specularColor, GfVec3f(0.0f));
-            std::copy(f0.data(), f0.data() + 3, m->specularColor);
+            color(_tokens->specularColor, m->specularColor);
             m->metallic = 0.0f;  // the workflow ignores it
             m->metallicTex = vkr::TextureRef();
         }
+        // The coat's F0 from the surface's ior, as Storm.
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+    } else if (id == _tokens->ND_standard_surface_surfaceshader) {
+        m->coat = ReadOr(p, _tokens->coat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
+        color(_tokens->coat_color, m->coatColor);
+    } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
+        // ponytail: coat_darkening isn't modelled (the coat's albedo only).
+        m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
+        color(_tokens->coat_color, m->coatColor);
     }
 }
 

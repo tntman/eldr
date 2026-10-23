@@ -291,6 +291,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
+    specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
 }
 
@@ -507,7 +508,7 @@ void main()
     // standard_surface's specular weight and colour scale the dielectric
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
-    PrepareLayers(f0);
+    PrepareLayers(NoV, f0, diffuseColor, tint, emissive);
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
@@ -520,7 +521,8 @@ void main()
             continue;
         }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
+                         (Specular(n, v, l, a, f0, NoV) * energyCompensation + LayerLight(n, v, l, NoV, 0.0)) *
+                             light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
             radiance *= Shadow(inWorldPos, ng, l);
@@ -571,6 +573,7 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    color += LayerAmbient(n, v, specularAO);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;

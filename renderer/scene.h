@@ -161,6 +161,16 @@ struct Material {
     // metallic is ignored.
     bool specularWorkflow = false;
     float specularColor[3] = {0, 0, 0};
+    // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
+    // coatColor and loses what the coat reflects. Weight 0: none.
+    float coat = 0;
+    float coatRoughness = 0.01f;
+    float coatF0 = 0.04f;  // from the coat's IOR
+    float coatColor[3] = {1, 1, 1};
+
+    // Whether any lobe beyond the metallic base is on: such materials shade
+    // with the renderer's LAYERS pipelines, the others never pay for them.
+    bool Layered() const { return specularWorkflow || coat > 0; }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -433,9 +443,11 @@ public:
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
-        // kProgram (a material program, shading pass only): kind >> 2 picks
-        // the renderer's pipeline variant. Chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16 };
+        // kProgram (a material program, shading pass only), kLayers (lobes
+        // beyond the metallic base, Material::Layered; shading pass only):
+        // kind >> 2 picks the renderer's pipeline variant. Chunks also end
+        // where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kLayers = 32 };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
