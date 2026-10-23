@@ -132,6 +132,28 @@ on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(i
 change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
 expect(change > 0.1, "hair: strand highlights (%.2f of the image changes)" % change)
 
+
+def quadrants(image, prim):
+    """Mean colours of a quad's bottom-left, bottom-right, top-left and
+    top-right quarters."""
+    colours = list(pixels(image, prim))  # rows bottom-up, 33 per row
+    def quarter(rows, columns):
+        picked = [colours[r * 33 + c] for r in rows for c in columns]
+        return [sum(p[i] for p in picked) / len(picked) for i in range(3)]
+    low, high = range(4, 14), range(19, 29)
+    return [quarter(low, low), quarter(low, high), quarter(high, low), quarter(high, high)]
+
+
+# A textured specularColor: each quarter reflects in its texel's colour,
+# and with material programs off in the 0.04 grey stand-in, never black.
+red, green, blue, white = quadrants(render({}), "/texturedSpecular")
+expect(red[0] > 2 * red[1] and green[1] > 2 * green[0] and blue[2] > 2 * blue[0] and min(white) > 0.0,
+       "textured specularColor: each quarter reflects in its colour", red, green, blue, white)
+grey = quadrants(render({"hdvk:materialGraphs": False}), "/texturedSpecular")
+engine.SetRendererSetting("hdvk:materialGraphs", True)
+expect(all(min(q) > 0.2 * max(white) / 25 and max(q) < 1.5 * min(q) for q in grey),
+       "textured specularColor without programs: 0.04 grey, not black", *grey)
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
