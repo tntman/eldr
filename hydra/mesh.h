@@ -30,11 +30,17 @@ protected:
 
 private:
     void _Flatten();
+    void _SplitSubsets();
+    void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();
     bool _Skinned() const;
 
     vkr::Scene *_scene;
-    vkr::Mesh *_mesh;
+    vkr::Mesh *_mesh;  // the faces outside material subsets
+    // GeomSubsets with a material, each drawn as its own vkr::Mesh (as
+    // Storm's draw items): their triangles and _mesh's shared state.
+    std::vector<vkr::Mesh *> _subsetMeshes;
+    std::vector<SdfPath> _subsetMaterials;
 
     // Hydra-side data kept to rebuild the per-corner arrays when any part changes.
     HdMeshTopology _topology;

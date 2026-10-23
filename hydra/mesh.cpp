@@ -128,6 +128,9 @@ HdVkMesh::HdVkMesh(SdfPath const &id, vkr::Scene *scene)
 HdVkMesh::~HdVkMesh()
 {
     _scene->RemoveMesh(_mesh);
+    for (vkr::Mesh *subset : _subsetMeshes) {
+        _scene->RemoveMesh(subset);
+    }
 }
 
 HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
@@ -143,6 +146,9 @@ void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderP
 {
     HdMesh::UpdateRenderTag(delegate, renderParam);
     _mesh->tag = HdVkRenderTagBit(GetRenderTag());
+    for (vkr::Mesh *subset : _subsetMeshes) {
+        subset->tag = _mesh->tag;
+    }
 }
 
 // ponytail: renders the subdivision cage, reads only the "st" primvar for
@@ -236,6 +242,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     }
     if (geometryDirty) {
         _Flatten();
+        _SplitSubsets();
     }
 
     // Instancers are synced by the rprims that use them (as in hdEmbree);
@@ -280,8 +287,119 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                 HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
         m.material = material ? material->Get() : nullptr;
     }
+    _SyncSubsets(sceneDelegate);
 
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
+}
+
+// Moves the triangles of each GeomSubset with a material from _mesh into
+// its own vkr::Mesh (a face in several subsets goes to the first).
+void HdVkMesh::_SplitSubsets()
+{
+    std::vector<int> subsetOf;  // per HdGeomSubset: index into _subsetMeshes, or -1
+    std::vector<SdfPath> materials;
+    for (const HdGeomSubset &s : _topology.GetGeomSubsets()) {
+        const bool used = s.type == HdGeomSubset::TypeFaceSet && !s.materialId.IsEmpty();
+        subsetOf.push_back(used ? int(materials.size()) : -1);
+        if (used) {
+            materials.push_back(s.materialId);
+        }
+    }
+    while (_subsetMeshes.size() > materials.size()) {
+        _scene->RemoveMesh(_subsetMeshes.back());
+        _subsetMeshes.pop_back();
+    }
+    while (_subsetMeshes.size() < materials.size()) {
+        _subsetMeshes.push_back(_scene->AddMesh());
+    }
+    _subsetMaterials = std::move(materials);
+    if (_subsetMeshes.empty()) {
+        return;
+    }
+
+    // Triangles per part: 0 is _mesh, 1 + i is _subsetMeshes[i].
+    const int faces = _topology.GetNumFaces();
+    std::vector<int> faceSubset(size_t(std::max(faces, 0)), -1);
+    const HdGeomSubsets &subsets = _topology.GetGeomSubsets();
+    for (size_t s = 0; s < subsets.size(); ++s) {
+        for (const int f : subsets[s].indices) {
+            if (subsetOf[s] >= 0 && f >= 0 && f < faces && faceSubset[f] < 0) {
+                faceSubset[f] = subsetOf[s];
+            }
+        }
+    }
+    std::vector<std::vector<size_t>> parts(_subsetMeshes.size() + 1);
+    for (size_t t = 0; t < _primitiveParams.size(); ++t) {
+        const int face = HdMeshUtil::DecodeFaceIndexFromCoarseFaceParam(_primitiveParams[t]);
+        parts[face >= 0 && face < faces ? size_t(faceSubset[face] + 1) : 0].push_back(t);
+    }
+
+    vkr::Mesh &m = *_mesh;
+    const size_t triangles = _primitiveParams.size();
+    // The triangles `tris` of a per-corner array (n values per corner);
+    // arrays that aren't per corner (empty ones) stay empty.
+    auto pick = [&](auto const &src, size_t n, std::vector<size_t> const &tris, auto *dst) {
+        dst->clear();
+        if (src.size() != triangles * 3 * n) {
+            return;
+        }
+        dst->reserve(tris.size() * 3 * n);
+        for (const size_t t : tris) {
+            dst->insert(dst->end(), src.begin() + t * 3 * n, src.begin() + (t + 1) * 3 * n);
+        }
+    };
+    auto split = [&](std::vector<size_t> const &tris, vkr::Mesh *d) {
+        pick(m.points, 3, tris, &d->points);
+        pick(m.normals, 3, tris, &d->normals);
+        pick(m.uvs, 2, tris, &d->uvs);
+        pick(m.colors, 3, tris, &d->colors);
+        pick(m.jointIndices, 4, tris, &d->jointIndices);
+        pick(m.jointWeights, 4, tris, &d->jointWeights);
+        pick(m.blendRanges, 2, tris, &d->blendRanges);
+        d->blendOffsets = m.blendOffsets;
+        d->jointCount = m.jointCount;
+        d->geometryDirty = true;
+    };
+    for (size_t i = 0; i < _subsetMeshes.size(); ++i) {
+        split(parts[i + 1], _subsetMeshes[i]);
+    }
+    vkr::Mesh rest;
+    split(parts[0], &rest);
+    m.points = std::move(rest.points);
+    m.normals = std::move(rest.normals);
+    m.uvs = std::move(rest.uvs);
+    m.colors = std::move(rest.colors);
+    m.jointIndices = std::move(rest.jointIndices);
+    m.jointWeights = std::move(rest.jointWeights);
+    m.blendRanges = std::move(rest.blendRanges);
+}
+
+// Subset meshes share everything but their triangles and material.
+void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
+{
+    const vkr::Mesh &m = *_mesh;
+    for (size_t i = 0; i < _subsetMeshes.size(); ++i) {
+        vkr::Mesh &d = *_subsetMeshes[i];
+        // Compared, not flagged: a new subset mesh needs them even when
+        // _mesh's were uploaded long ago.
+        if (d.transforms != m.transforms) {
+            d.transforms = m.transforms;
+            d.transformsDirty = true;
+        }
+        if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights) {
+            d.skinningTransforms = m.skinningTransforms;
+            d.blendWeights = m.blendWeights;
+            d.blendShapeCount = m.blendShapeCount;
+            d.jointsDirty = true;
+        }
+        std::copy(m.color, m.color + 3, d.color);
+        d.primId = m.primId;
+        d.visible = m.visible;
+        d.tag = m.tag;
+        const auto *material = static_cast<const HdVkMaterial *>(
+            sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
+        d.material = material ? material->Get() : nullptr;
+    }
 }
 
 bool HdVkMesh::_Skinned() const
