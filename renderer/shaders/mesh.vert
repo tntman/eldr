@@ -36,6 +36,12 @@ layout(location = 4) flat out uint outSlot;  // instance slot; mesh.frag reads t
 layout(location = 4) flat out uint outMaterial;
 #endif
 layout(location = 2) out vec2 outUv;
+#if defined(GRAPH) && !defined(DEPTH_ONLY)
+// Material programs (built with GRAPH): vertex-rate primvars, packed in one
+// vec4 per vertex.
+layout(std430, set = 0, binding = 32) readonly buffer PrimvarVertices { vec4 primvarVertices[]; };
+layout(location = 5) out vec4 outPrimvars;
+#endif
 
 mat4 Joint(uint i, bool previous)
 {
@@ -197,6 +203,10 @@ void main()
     outNormal = vec4(normalMatrix * inNormal, prevWorld.y);
     outColor = vec4(d.vertexColors != 0u ? inVertexColor.rgb : d.color.rgb, prevWorld.z);
     outSlot = slot;
+#ifdef GRAPH
+    outPrimvars = d.primvarVertices == kFreeSlot ? vec4(0.0)
+                                                 : primvarVertices[d.primvarVertices + uint(gl_VertexIndex) - d.vertexBase];
+#endif
 #else
     outMaterial = d.material;
 #endif

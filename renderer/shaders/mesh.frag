@@ -52,6 +52,11 @@ layout(location = 4) flat in uint inSlot;  // instance slot: draw (material, pri
 #define inMaterial (draws[instances[inSlot].draw].material)
 #define inPrimId (draws[instances[inSlot].draw].primId)
 #define inInstanceId (instances[inSlot].index)
+#ifdef GRAPH
+// Material programs: vertex-rate primvars (mesh.vert) and the interpreter.
+layout(location = 5) in vec4 inPrimvars;
+#include "program.glsl"
+#endif
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out int outPrimId;      // Hydra picking / selection
@@ -459,6 +464,12 @@ void main()
         occlusion = clamp(Fetch(m.tex[4], m.params.zzzz).r, 0.0, 1.0);
         hasNormalMap = m.tex[5].index >= 0;
         tangentNormal = Fetch(m.tex[5], vec4(0.0, 0.0, 1.0, 0.0)).xyz;
+#ifdef GRAPH
+        if (m.program.y > 0u) {
+            RunProgram(m.program, baseColor, emissive, metallic, roughness, occlusion, tangentNormal, hasNormalMap,
+                       alpha);
+        }
+#endif
     }
 
     vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);

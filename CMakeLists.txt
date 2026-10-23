@@ -26,7 +26,19 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
-                renderer/shaders/lens.glsl)
+                renderer/shaders/lens.glsl renderer/shaders/program.glsl)
+    list(APPEND shader_incs ${spv})
+endforeach()
+# Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
+# primvars, mesh.frag with the interpreter; other materials never run it.
+foreach(shader mesh.vert mesh.frag)
+    string(REPLACE "mesh." "mesh_graph." graph ${shader})
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DGRAPH -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+                renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.

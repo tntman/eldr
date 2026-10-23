@@ -41,6 +41,12 @@ const uint32_t kMeshDepthVert[] =
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
 ;
+const uint32_t kMeshGraphVert[] =
+#include "mesh_graph.vert.inc"
+;
+const uint32_t kMeshGraphFrag[] =
+#include "mesh_graph.frag.inc"
+;
 const uint32_t kMaskFrag[] =
 #include "mask.frag.inc"
 ;
@@ -100,10 +106,11 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 // The opaque and cutout draws of one command list (commands[first] at
 // offset), one indirect call per chunk (Scene::Gpu::drawChunks), each with
 // its pipeline: `cutout` for chunks of cutout materials, in the chunk's
-// variant (skinning). Translucent chunks are left to the translucent pass
-// (and cast no shadows).
+// variant (chunkKind >> 2, within `variants`: depth passes have no program
+// variants). Translucent chunks are left to the translucent pass (and cast
+// no shadows).
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
-                const VkPipeline opaque[4], const VkPipeline cutout[4])
+                const VkPipeline *opaque, const VkPipeline *cutout, uint8_t variants)
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
@@ -112,7 +119,7 @@ void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, V
         if (kind == Scene::Gpu::kTranslucent) {
             continue;
         }
-        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[gpu.chunkKind[i] >> 2];
+        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[(gpu.chunkKind[i] >> 2) & variants];
         if (pipeline != bound) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             bound = pipeline;
@@ -247,10 +254,14 @@ Renderer::~Renderer()
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     for (int v = 0; v < 4; ++v) {
-        for (VkPipeline p : {_prepassPipeline[v], _pipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
-                             _shadowCutoutPipeline[v], _translucentPipeline[v]}) {
+        for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
+                             _shadowCutoutPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
+    }
+    for (int v = 0; v < 8; ++v) {
+        vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
+        vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
@@ -302,9 +313,11 @@ void Renderer::_CreateDescriptors()
     // blend shape offsets and weights, 25 the UDIM tile table, 26 and 27
     // last frame's joints and moved rigid transforms (motion vectors), 17..19
     // the local lights' shadow atlas, first tile per light and the tiles, 20
-    // the atlas again without depth compare (soft shadows' blocker search).
+    // the atlas again without depth compare (soft shadows' blocker search),
+    // 28..32 material programs: ops, constants, primvar table, primvar values
+    // and vertex-rate primvars.
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[28] = {
+    const VkDescriptorSetLayoutBinding bindings[33] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -333,20 +346,25 @@ void Renderer::_CreateDescriptors()
         {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[28] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[33] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 28;
+    flags.bindingCount = 33;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 28;
+    slci.bindingCount = 33;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 18},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -390,6 +408,8 @@ void Renderer::_CreatePipelines()
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
     VkShaderModule depthVert = CreateShaderModule(device, kMeshDepthVert, sizeof(kMeshDepthVert));
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
+    VkShaderModule graphVert = CreateShaderModule(device, kMeshGraphVert, sizeof(kMeshGraphVert));
+    VkShaderModule graphFrag = CreateShaderModule(device, kMeshGraphFrag, sizeof(kMeshGraphFrag));
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
@@ -471,23 +491,28 @@ void Renderer::_CreatePipelines()
     ci.layout = _layout;
     // Every mesh pipeline four times, its vertex stage specialized with
     // kWideSkin (variant bit 0: eight skinning influences) and
-    // kDualQuaternion (bit 1), see mesh.vert.
+    // kDualQuaternion (bit 1), see mesh.vert; the shading ones four more
+    // with the GRAPH shaders (bit 2: material programs).
     const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
                                                      {1, sizeof(VkBool32), sizeof(VkBool32)}};
     const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline out[4]) {
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, int variants) {
         VkPipelineShaderStageCreateInfo stages[2] = {};
         std::copy(info.pStages, info.pStages + info.stageCount, stages);
         info.pStages = stages;
         VkResult res = VK_SUCCESS;
-        for (int v = 0; v < 4 && res == VK_SUCCESS; ++v) {
-            const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v]), skinFlags[v]};
+        for (int v = 0; v < variants && res == VK_SUCCESS; ++v) {
+            const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
             stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
+            if (v >= 4) {  // shading pipelines only
+                stages[0].module = graphVert;
+                stages[1].module = graphFrag;
+            }
             res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline);
+    VkResult r = createMesh(ci, _pipeline, 8);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -504,7 +529,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline);
+        r = createMesh(tci, _translucentPipeline, 8);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -520,7 +545,7 @@ void Renderer::_CreatePipelines()
         pci.pStages = depthStages;
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
-        r = createMesh(pci, _prepassPipeline);
+        r = createMesh(pci, _prepassPipeline, 4);
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
@@ -530,7 +555,7 @@ void Renderer::_CreatePipelines()
         sci.pRasterizationState = &shadowRaster;
         sci.pDynamicState = &shadowDynamic;
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowPipeline);
+            r = createMesh(sci, _shadowPipeline, 4);
         }
 
         // Cutouts: the same two with the alpha test.
@@ -539,10 +564,10 @@ void Renderer::_CreatePipelines()
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
         if (r == VK_SUCCESS) {
-            r = createMesh(pci, _prepassCutoutPipeline);
+            r = createMesh(pci, _prepassCutoutPipeline, 4);
         }
         if (r == VK_SUCCESS) {
-            r = createMesh(sci, _shadowCutoutPipeline);
+            r = createMesh(sci, _shadowCutoutPipeline, 4);
         }
     }
 
@@ -556,7 +581,7 @@ void Renderer::_CreatePipelines()
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, depthVert, meshFrag, maskFrag, skyVert, skyFrag}) {
+    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, maskFrag, skyVert, skyFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -687,6 +712,11 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     // (unused) motion rows instead.
     const VkDescriptorBufferInfo prevJoints{_prevJoints.buffer ? _prevJoints.buffer : gpu.motion, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo motion{gpu.motion, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo programCode{gpu.programCode, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo programConstants{gpu.programConstants, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -731,6 +761,11 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &udimTiles, nullptr);
     write(26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevJoints, nullptr);
     write(27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &motion, nullptr);
+    write(28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &programCode, nullptr);
+    write(29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &programConstants, nullptr);
+    write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
+    write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
+    write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1065,7 +1100,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         PushDraw(_cmd, _layout, t.viewProj, tileList);
-        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, 3);
         vkCmdEndRendering(_cmd);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -1334,7 +1369,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
                        VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
-                       _shadowPipeline, _shadowCutoutPipeline);
+                       _shadowPipeline, _shadowCutoutPipeline, 3);
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -1378,7 +1413,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, 3);
     }
     vkCmdEndRendering(_cmd);
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -1448,7 +1483,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 7);
     }
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);

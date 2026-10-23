@@ -851,6 +851,105 @@ int main()
         }
 
         {
+            // Material programs (MaterialX graphs): emission-only quads and no
+            // lights or dome, so each pixel is exactly what its program outputs.
+            vkr::Scene scene(&device);
+            using P = vkr::MaterialProgram;
+            auto programmed = [&](float x0, float y0, float x1, float y1) {
+                vkr::Mesh *q = AddQuad(scene, x0, y0, x1, y1, 0);
+                auto m = std::make_shared<vkr::Material>();
+                std::fill(m->baseColor, m->baseColor + 3, 0.0f);
+                m->roughness = 1;
+                q->material = m;
+                return std::make_pair(q, m);
+            };
+            // Per instance: the primvar "tint", two instances 0.4 apart.
+            auto [inst, instM] = programmed(-0.9f, 0.5f, -0.6f, 0.9f);
+            instM->program.primvars = {"tint"};
+            instM->program.Emit(P::kPrimvar, 0, {instM->program.Constant(1, 1, 1, 1)}, 0);
+            instM->program.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            const std::vector<float> shifted = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.4f, 0, 0, 1};
+            inst->transforms.insert(inst->transforms.end(), shifted.begin(), shifted.end());
+            inst->primvars = {{"tint", vkr::Primvar::Rate::Instance, 3, {1, 0, 0, 0, 1, 0}}};
+            // Per triangle: AddQuad's first triangle is the lower right one.
+            auto [uni, uniM] = programmed(0.1f, 0.5f, 0.9f, 0.9f);
+            uniM->program.primvars = {"face"};
+            uniM->program.Emit(P::kPrimvar, 0, {uniM->program.Constant(0, 0, 0, 0)}, 0);
+            uniM->program.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            uni->primvars = {{"face", vkr::Primvar::Rate::Uniform, 3, {1, 0, 0, 0, 0, 1}}};
+            // Per vertex: 0 on the left corners, 1 on the right, interpolated.
+            auto [vtx, vtxM] = programmed(-0.9f, -0.3f, -0.1f, 0.3f);
+            vtxM->program.primvars = {"w"};
+            vtxM->program.Emit(P::kPrimvar, 0, {vtxM->program.Constant(0, 0, 0, 0)}, 0);
+            vtxM->program.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            std::vector<float> w;
+            for (size_t c = 0; c < vtx->points.size() / 3; ++c) {
+                w.push_back(vtx->points[c * 3] > -0.5f ? 1.0f : 0.0f);
+            }
+            vtx->primvars = {{"w", vkr::Primvar::Rate::Vertex, 1, w}};
+            // Houdini ramp: 0.5 among keys 0, 0.25, 1 is 1/3 through the
+            // second segment, i.e. position 2/3 between red, green and blue.
+            auto [ramp, rampM] = programmed(0.1f, -0.3f, 0.4f, 0.3f);
+            {
+                P &p = rampM->program;
+                const uint8_t half = p.Constant(0.5f, 0.5f, 0.5f, 0.5f);
+                const uint32_t keys = uint32_t(p.constants.size() / 4);
+                p.Constant(0.0f, 0.25f, 1.0f, 0.0f);
+                const uint32_t values = uint32_t(p.constants.size() / 4);
+                p.Constant(1, 0, 0, 1);
+                p.Constant(0, 1, 0, 1);
+                p.Constant(0, 0, 1, 1);
+                p.Emit(P::kInvLinear, 0, {half}, keys, 3);
+                p.Emit(P::kUniformRamp, 1, {0}, values, 3);
+                p.Emit(P::kOutput, 0, {1}, P::kEmissive);
+            }
+            // Overlay of 0.25 over 0.75: 1 - 2 (1 - 0.25)(1 - 0.75).
+            auto [over, overM] = programmed(0.5f, -0.3f, 0.9f, 0.3f);
+            {
+                P &p = overM->program;
+                p.Emit(P::kOverlay, 0,
+                       {p.Constant(0.25f, 0.25f, 0.25f, 1), p.Constant(0.75f, 0.75f, 0.75f, 1), p.Constant(1, 1, 1, 1)});
+                p.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            }
+            // Hue of red turned a third: green.
+            auto [hsv, hsvM] = programmed(-0.9f, -0.9f, -0.5f, -0.5f);
+            {
+                P &p = hsvM->program;
+                p.Emit(P::kHsvAdjust, 0, {p.Constant(1, 0, 0, 1), p.Constant(1.0f / 3.0f, 1, 1, 0)});
+                p.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            }
+            // A texture (left texel red, right blue) times 2.
+            auto [image, imageM] = programmed(-0.4f, -0.9f, 0.0f, -0.5f);
+            {
+                auto tex = std::make_shared<vkr::Texture>();
+                tex->width = 2;
+                tex->height = 1;
+                tex->pixels = {255, 0, 0, 255, 0, 0, 255, 255};
+                P &p = imageM->program;
+                p.images.emplace_back();
+                p.images.back().texture = tex;
+                p.Emit(P::kTexcoord, 0);
+                p.Emit(P::kImage, 1, {0, p.Constant(0, 0, 0, 0)}, 0);
+                p.Emit(P::kMultiply, 2, {1, p.Constant(2, 2, 2, 1)});
+                p.Emit(P::kOutput, 0, {2}, P::kEmissive);
+            }
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            auto near = [&](int x, int y, float r, float g, float b) {
+                return std::abs(img.At(x, y, 0) - r) < 0.03f && std::abs(img.At(x, y, 1) - g) < 0.03f &&
+                       std::abs(img.At(x, y, 2) - b) < 0.03f;
+            };
+            Expect(near(8, 54, 1, 0, 0) && near(20, 54, 0, 1, 0), "program reads instance primvars");
+            Expect(near(57, 49, 1, 0, 0) && near(38, 59, 0, 0, 1), "program reads uniform primvars");
+            const float wl = (PixelNdc(6) + 0.9f) / 0.8f, wr = (PixelNdc(25) + 0.9f) / 0.8f;
+            Expect(near(6, 32, wl, wl, wl) && near(25, 32, wr, wr, wr), "program reads vertex primvars");
+            Expect(near(40, 32, 0, 2.0f / 3.0f, 1.0f / 3.0f), "Houdini ramp (invlinear, uniformramp)");
+            Expect(near(54, 32, 0.625f, 0.625f, 0.625f), "MaterialX overlay");
+            Expect(near(9, 9, 0, 1, 0), "MaterialX hsvadjust");
+            Expect(img.At(22, 9, 0) > 1.8f && img.At(22, 9, 2) < 0.2f, "program samples a texture");
+        }
+
+        {
             // Depth of field: an emissive quad over the left half, 4 units
             // away, through PerspectiveFrame's 90 degree lens (f 0.5 on a
             // 1-unit sensor). At f/1 focused at 1 its edge spreads right (a

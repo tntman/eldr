@@ -19,6 +19,7 @@ struct Material {
     vec4 emissive;   // w: opacity threshold; > 0 makes the material a cutout
     vec4 params;     // metallic, roughness, occlusion, opacity
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
+    uvec4 program;   // first op, ops, first constant, first image (program.glsl)
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

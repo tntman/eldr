@@ -5,6 +5,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -57,8 +58,84 @@ struct TextureRef {
     float uvTransform[6] = {1, 0, 0, 0, 1, 0};
 };
 
+// Material inputs a shading graph computes per pixel (MaterialX math,
+// several textures, primvars), run by mesh.frag's interpreter
+// (shaders/program.glsl). Each op is four words: opcode | result register
+// << 8 | imm1 << 16; four operand bytes (a register below kRegisters, else
+// constant byte - kRegisters); imm0. Values are vec4s: floats splat to all
+// four components, vector2 is (x, y, 0, 0).
+struct MaterialProgram {
+    static constexpr uint32_t kRegisters = 8;
+    enum Op : uint8_t {
+        kOutput,       // material input imm0 (Program::Input) = a
+        kTexcoord,     // the mesh's uv set
+        kDisplayColor, // the mesh's displayColor (rgb, 1)
+        kPrimvar,      // primvar slot imm0 (`primvars`), else a
+        kImage,        // images[imm0] at uv a, else b (missing tile, no texture)
+        kAdd, kSubtract, kMultiply, kDivide, kMin, kMax, kPower, kModulo,
+        kAbs, kFloor, kCeil, kSin, kCos, kSqrt, kExp, kLog,
+        kInvert,       // b - a
+        kMix,          // mix(a = bg, b = fg, c)
+        kOverlay,      // MaterialX overlay: a = fg over b = bg, mixed by c
+        kClamp,        // clamp(a, b, c)
+        kSmoothstep,   // smoothstep(b, c, a)
+        kRemap,        // a from [b, c] to [d, constants[imm0]]
+        kExtract,      // channel imm1 of a, splat
+        kCombine,      // (a.x, b.x, c.x, d.x)
+        kDot,          // dot(a.xyz, b.xyz), splat
+        kNormalize,
+        kLuminance,    // dot(a.rgb, b.rgb), splat
+        kIfGreater,    // a.x > b.x ? c : d
+        kIfGreaterEq,  // a.x >= b.x ? c : d
+        kIfEqual,      // a.x == b.x ? c : d
+        kHsvAdjust,    // a in HSV, hue + b.x, saturation * b.y, value * b.z
+        kRgbToHsv, kHsvToRgb,
+        kAffine,       // (dot(b.xyz, (a.xy, 1)), dot(c.xyz, (a.xy, 1)), 0, 0)
+        kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
+        kInvLinear,    // Houdini ramp position: a among imm1 keys (constants from imm0, 4 per vec4)
+        kUniformRamp,  // Houdini ramp: imm1 values (constants from imm0) at uniform positions, at a
+    };  // as shaders/program.glsl numbers them
+    // Material inputs kOutput writes, as GpuMaterial::tex orders them.
+    enum Input : uint32_t { kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity };
+
+    std::vector<uint32_t> code;      // 4 words per op
+    std::vector<float> constants;    // 4 per vec4
+    std::vector<TextureRef> images;  // kImage's textures
+    std::vector<std::string> primvars;  // kPrimvar's slots, by primvar name
+
+    bool Empty() const { return code.empty(); }
+    // An operand byte for a constant (only the first 256 - kRegisters are
+    // reachable that way; see Valid).
+    uint8_t Constant(float x, float y, float z, float w)
+    {
+        constants.insert(constants.end(), {x, y, z, w});
+        return uint8_t(kRegisters + constants.size() / 4 - 1);
+    }
+    bool Valid() const { return kRegisters + constants.size() / 4 <= 256; }
+    bool Outputs(Input input) const
+    {
+        for (size_t i = 0; i < code.size(); i += 4) {
+            if ((code[i] & 0xFFu) == kOutput && code[i + 2] == input) {
+                return true;
+            }
+        }
+        return false;
+    }
+    void Emit(Op op, uint32_t result, std::initializer_list<uint8_t> args = {}, uint32_t imm0 = 0,
+              uint32_t imm1 = 0)
+    {
+        uint32_t operands = 0, shift = 0;
+        for (const uint8_t a : args) {
+            operands |= uint32_t(a) << shift;
+            shift += 8;
+        }
+        code.insert(code.end(), {uint32_t(op) | (result << 8) | (imm1 << 16), operands, imm0, 0u});
+    }
+};
+
 // UsdPreviewSurface metallic workflow subset. Constants are used where the
-// matching TextureRef has no texture.
+// matching TextureRef has no texture, and `program` overrides both for the
+// inputs it outputs.
 struct Material {
     float baseColor[3] = {0.18f, 0.18f, 0.18f};
     float emissive[3] = {0, 0, 0};
@@ -71,6 +148,22 @@ struct Material {
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
         normalTex,  // tangent space, after scale/bias
         opacityTex;
+    // ponytail: only the shading pass runs it; cutouts and the depth passes
+    // use the constants and textures.
+    MaterialProgram program;
+};
+
+// A primvar a material program reads, from the mesh or its instancer: one
+// value per mesh (constant), triangle (uniform), instance or corner (vertex;
+// per vertex with Mesh::indices). One to four components.
+// ponytail: vertex-rate primvars share four components per vertex (the
+// first ones that fit); the rest read their fallback.
+struct Primvar {
+    enum class Rate : uint32_t { Constant = 1, Uniform, Instance, Vertex };
+    std::string name;
+    Rate rate = Rate::Constant;
+    uint32_t components = 1;
+    std::vector<float> values;
 };
 
 // CPU mirror of one mesh: a triangle list stored per corner (3 vertices per
@@ -97,6 +190,9 @@ struct Mesh {
     uint32_t tag = 1;            // caller's render tag bit: drawn when in the scene's tag mask
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
+    // Primvars the material's program reads, by name; vertex-rate ones are
+    // geometry (geometryDirty), the others are read again every Commit.
+    std::vector<Primvar> primvars;
 
     // UsdSkel skinning, on the GPU: linear blend, or dual quaternions with
     // `dualQuaternion`. 4 or 8 joints per corner (`influences`), strongest
@@ -136,6 +232,10 @@ private:
     uint32_t _boundsBase = 0, _boundsSlots = 0;  // JointBounds pool, one per joint
     uint32_t _blendBase = 0, _blendSlots = 0;    // blend shape offsets
     uint32_t _weightBase = 0, _weightSlots = 0;  // blend shape weights
+    // Vertex-rate primvars packed in one vec4 per vertex (_vertexCount),
+    // and per entry of `primvars` its first component there (kNone: not packed).
+    uint32_t _primvarVertexOffset = 0, _primvarVertexCount = 0;
+    std::vector<uint32_t> _primvarComponents;
     bool _blendPerInstance = false;
     bool _skinPerInstance = false;
     std::vector<float> _jointBounds;             // per joint: rest bounds of the vertices it moves
@@ -217,7 +317,8 @@ struct DrawInfo {
     uint32_t blendShapes;      // weights per pose; 0: no blend shapes
     uint32_t blendPerInstance; // 1: blendShapes weights per instance
     uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
-    uint32_t pad[2];
+    uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
+    uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -304,6 +405,16 @@ public:
         VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)
         VkBuffer blendWeights = VK_NULL_HANDLE; // blend shape weights (float)
         VkBuffer udimTiles = VK_NULL_HANDLE;    // per UDIM texture kUdimTiles bindless indices, -1: missing
+        // Material programs: their ops (uvec4) and constants (vec4, images'
+        // GpuTexRefs after each program's own constants).
+        VkBuffer programCode = VK_NULL_HANDLE;
+        VkBuffer programConstants = VK_NULL_HANDLE;
+        // Per draw with a program, per primvar slot (uvec4): Primvar::Rate
+        // (0: missing), components, first value in primvarData, first
+        // component in its vertex's primvarVertices vec4.
+        VkBuffer primvarTable = VK_NULL_HANDLE;
+        VkBuffer primvarData = VK_NULL_HANDLE;      // float
+        VkBuffer primvarVertices = VK_NULL_HANDLE;  // vec4 per vertex of meshes with vertex-rate primvars
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
         // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
@@ -311,10 +422,10 @@ public:
         std::vector<uint32_t> drawChunks;
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
-        // opaque), plus kWide (eight skinning influences) and kDualQuat:
-        // kind >> 2 picks the renderer's pipeline variant. Chunks also end
-        // where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8 };
+        // opaque), plus kWide (eight skinning influences), kDualQuat and
+        // kProgram (a material program, shading pass only): kind >> 2 picks
+        // the renderer's pipeline variant. Chunks also end where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16 };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
@@ -393,11 +504,12 @@ private:
     std::vector<std::unique_ptr<Dome>> _domes;
     // Device-local pools and their allocators.
     Buffer _vertices, _indices, _instances, _visible, _skin, _joints, _skinXforms, _jointBoundsPool,
-        _blendOffsets, _blendWeights;
+        _blendOffsets, _blendWeights, _primvarVertices;
     RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
-        _boundsAlloc, _blendAlloc, _weightAlloc;
+        _boundsAlloc, _blendAlloc, _weightAlloc, _primvarVertexAlloc;
     // Host-visible per-commit tables.
-    Buffer _draws, _commandTemplate, _materials, _udimTiles, _motion, _lightBuffer, _staging;
+    Buffer _draws, _commandTemplate, _materials, _udimTiles, _motion, _lightBuffer, _staging, _programCode,
+        _programConstants, _primvarTable, _primvarData;
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;

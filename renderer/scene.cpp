@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <iterator>
+#include <type_traits>
 #include <limits>
 
 namespace vkr {
@@ -26,7 +27,11 @@ struct GpuMaterial {
     float emissive[4];
     float params[4];  // metallic, roughness, occlusion, opacity
     GpuTexRef tex[7]; // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
+    // MaterialProgram: first op (uvec4) in programCode, ops, first constant
+    // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
+    uint32_t program[4];
 };
+static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
@@ -81,6 +86,7 @@ void MemoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccess
 struct VertexKey {
     Vertex v;
     SkinVertex skin, skin2;  // skin2: influences 4..7, zero with four
+    float primvars[4];       // vertex-rate primvars, zero without
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
@@ -212,7 +218,8 @@ Scene::~Scene()
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
-                          &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging}) {
+                          &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices,
+                          &_programCode, &_programConstants, &_primvarTable, &_primvarData}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -258,6 +265,7 @@ void Scene::RemoveMesh(Mesh *mesh)
         _boundsAlloc.Free(mesh->_boundsBase, mesh->_boundsSlots);
         _blendAlloc.Free(mesh->_blendBase, mesh->_blendSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
+        _primvarVertexAlloc.Free(mesh->_primvarVertexOffset, mesh->_primvarVertexCount);
         _FreeInstances(*mesh);
     }
     const size_t slot = mesh->_slot;
@@ -371,7 +379,8 @@ void Scene::_UploadGeometry(Mesh &m)
     _indexAlloc.Free(m._firstIndex, m._indexCount);
     _skinAlloc.Free(m._skinOffset, m._skinCount);
     _blendAlloc.Free(m._blendBase, m._blendSlots);
-    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = 0;
+    _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
+    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = 0;
     m._jointBounds.clear();
     m.geometryDirty = false;
 
@@ -392,6 +401,17 @@ void Scene::_UploadGeometry(Mesh &m)
                        std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
+    }
+    // Vertex-rate primvars: the first that fit in four components.
+    m._primvarComponents.assign(m.primvars.size(), kNone);
+    uint32_t packed = 0;
+    for (size_t p = 0; p < m.primvars.size(); ++p) {
+        const Primvar &pv = m.primvars[p];
+        if (pv.rate == Primvar::Rate::Vertex && pv.components >= 1 && packed + pv.components <= 4 &&
+            pv.values.size() == elements * pv.components) {
+            m._primvarComponents[p] = packed;
+            packed += pv.components;
+        }
     }
     // Blend shapes (skinned meshes only): offset ranges must stay inside the
     // offsets, otherwise they are dropped.
@@ -422,6 +442,7 @@ void Scene::_UploadGeometry(Mesh &m)
     // (indexed meshes keep theirs).
     std::vector<Vertex> vertices;
     std::vector<SkinVertex> skin;
+    std::vector<float> primvarVertices;  // 4 per vertex, with vertex-rate primvars
     std::vector<uint32_t> indices = indexed ? m.indices : std::vector<uint32_t>(corners);
     std::unordered_map<VertexKey, uint32_t, VertexKeyHash> unique;
     unique.reserve(indexed ? 0 : corners);
@@ -439,6 +460,12 @@ void Scene::_UploadGeometry(Mesh &m)
         if (!m.colors.empty()) {
             for (int c = 0; c < 3; ++c) {
                 key.v.color[c] = ToHalf(m.colors[i * 3 + c]);
+            }
+        }
+        for (size_t p = 0; packed > 0 && p < m.primvars.size(); ++p) {
+            const Primvar &pv = m.primvars[p];
+            if (m._primvarComponents[p] != kNone) {
+                std::copy_n(&pv.values[i * pv.components], pv.components, key.primvars + m._primvarComponents[p]);
             }
         }
         if (skinned) {
@@ -479,6 +506,9 @@ void Scene::_UploadGeometry(Mesh &m)
         }
         if (inserted) {
             vertices.push_back(key.v);
+            if (packed > 0) {
+                primvarVertices.insert(primvarVertices.end(), key.primvars, key.primvars + 4);
+            }
             if (skinned) {
                 skin.push_back(key.skin);
                 if (m.influences == 8) {
@@ -512,6 +542,16 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = vertexCount;
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
+    if (packed > 0) {
+        while (!_primvarVertexAlloc.Allocate(vertexCount, &m._primvarVertexOffset)) {
+            _EnsureCapacity(_primvarVertices, _primvarVertexAlloc, vertexCount, 4 * sizeof(float),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        }
+        m._primvarVertexCount = vertexCount;
+        _copies.push_back({_primvarVertices.buffer, VkDeviceSize(m._primvarVertexOffset) * 4 * sizeof(float),
+                           _Stage(primvarVertices.data(), primvarVertices.size() * sizeof(float)),
+                           primvarVertices.size() * sizeof(float)});
+    }
     if (skinned) {
         const uint32_t skinCount = uint32_t(skin.size());
         uint32_t skinOffset;
@@ -998,6 +1038,26 @@ void Scene::Commit()
     std::unordered_map<const Material *, uint32_t> materialSlots;
     std::vector<GpuMaterial> materials;
     std::vector<int32_t> udimTiles;
+    std::vector<uint32_t> programCode;
+    std::vector<float> programConstants;
+    auto texRef = [&](const TextureRef &r) {
+        GpuTexRef g{};
+        if (r.udim.empty()) {
+            g.index = _TextureIndex(r.texture.get());
+        } else {
+            g.index = int32_t(udimTiles.size());
+            g.udim = 1;
+            for (size_t t = 0; t < kUdimTiles; ++t) {
+                udimTiles.push_back(t < r.udim.size() ? _TextureIndex(r.udim[t].get()) : -1);
+            }
+        }
+        g.channel = r.channel;
+        std::copy(r.scale, r.scale + 4, g.scale);
+        std::copy(r.bias, r.bias + 4, g.bias);
+        std::copy(r.uvTransform, r.uvTransform + 3, g.uvRows[0]);
+        std::copy(r.uvTransform + 3, r.uvTransform + 6, g.uvRows[1]);
+        return g;
+    };
     auto materialIndex = [&](const Material &m) {
         const auto [it, inserted] = materialSlots.emplace(&m, uint32_t(materials.size()));
         if (inserted) {
@@ -1013,20 +1073,22 @@ void Scene::Commit()
             const TextureRef *refs[7] = {&m.baseColorTex, &m.emissiveTex, &m.metallicTex, &m.roughnessTex,
                                          &m.occlusionTex,  &m.normalTex,   &m.opacityTex};
             for (int i = 0; i < 7; ++i) {
-                if (refs[i]->udim.empty()) {
-                    g.tex[i].index = _TextureIndex(refs[i]->texture.get());
-                } else {
-                    g.tex[i].index = int32_t(udimTiles.size());
-                    g.tex[i].udim = 1;
-                    for (size_t t = 0; t < kUdimTiles; ++t) {
-                        udimTiles.push_back(t < refs[i]->udim.size() ? _TextureIndex(refs[i]->udim[t].get()) : -1);
-                    }
+                g.tex[i] = texRef(*refs[i]);
+            }
+            const MaterialProgram &p = m.program;
+            if (!p.Empty() && p.Valid()) {
+                g.program[0] = uint32_t(programCode.size() / 4);
+                g.program[1] = uint32_t(p.code.size() / 4);
+                g.program[2] = uint32_t(programConstants.size() / 4);
+                g.program[3] = uint32_t((programConstants.size() + p.constants.size()) / 4);
+                programCode.insert(programCode.end(), p.code.begin(), p.code.end());
+                programConstants.insert(programConstants.end(), p.constants.begin(), p.constants.end());
+                for (const TextureRef &image : p.images) {
+                    const GpuTexRef r = texRef(image);
+                    const size_t at = programConstants.size();
+                    programConstants.resize(at + sizeof(GpuTexRef) / sizeof(float));
+                    std::memcpy(&programConstants[at], &r, sizeof(r));
                 }
-                g.tex[i].channel = refs[i]->channel;
-                std::copy(refs[i]->scale, refs[i]->scale + 4, g.tex[i].scale);
-                std::copy(refs[i]->bias, refs[i]->bias + 4, g.tex[i].bias);
-                std::copy(refs[i]->uvTransform, refs[i]->uvTransform + 3, g.tex[i].uvRows[0]);
-                std::copy(refs[i]->uvTransform + 3, refs[i]->uvTransform + 6, g.tex[i].uvRows[1]);
             }
             materials.push_back(g);
         }
@@ -1041,6 +1103,8 @@ void Scene::Commit()
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
+    std::vector<uint32_t> primvarTable;  // uvec4 per program primvar slot
+    std::vector<float> primvarData;
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
     _gpu.translucent.clear();
     _gpu.translucentVariant.clear();
@@ -1062,11 +1126,48 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
-                                (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0);
+                                (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
+                                (program ? Gpu::kProgram : 0);
+        // Where each of the program's primvars is; a missing one reads the
+        // program's fallback.
+        d.primvars = kNone;
+        d.primvarVertices = m._primvarVertexCount > 0 ? m._primvarVertexOffset : kNone;
+        if (program && !m.material->program.primvars.empty()) {
+            d.primvars = uint32_t(primvarTable.size() / 4);
+            for (const std::string &name : m.material->program.primvars) {
+                uint32_t e[4] = {0, 0, 0, 0};
+                for (size_t p = 0; p < m.primvars.size(); ++p) {
+                    const Primvar &pv = m.primvars[p];
+                    if (pv.name != name) {
+                        continue;
+                    }
+                    const size_t count = pv.rate == Primvar::Rate::Uniform    ? m._indexCount / 3
+                                         : pv.rate == Primvar::Rate::Instance ? m._instanceCount
+                                                                              : 1;
+                    if (pv.rate == Primvar::Rate::Vertex) {
+                        if (m._primvarVertexCount > 0 && p < m._primvarComponents.size() &&
+                            m._primvarComponents[p] != kNone) {
+                            const uint32_t v[4] = {uint32_t(pv.rate), pv.components, 0, m._primvarComponents[p]};
+                            std::copy(v, v + 4, e);
+                        }
+                    } else if (pv.values.size() >= count * pv.components) {
+                        const uint32_t v[4] = {uint32_t(pv.rate), pv.components, uint32_t(primvarData.size()), 0};
+                        std::copy(v, v + 4, e);
+                        primvarData.insert(primvarData.end(), pv.values.begin(),
+                                           pv.values.begin() + count * pv.components);
+                    }
+                    break;
+                }
+                primvarTable.insert(primvarTable.end(), e, e + 4);
+            }
+        }
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
-        } else if (drawable && m.material && (m.material->opacity < 1 || m.material->opacityTex.texture)) {
+        } else if (drawable && m.material &&
+                   (m.material->opacity < 1 || m.material->opacityTex.texture ||
+                    (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
@@ -1142,6 +1243,21 @@ void Scene::Commit()
     std::copy(udimTiles.begin(), udimTiles.end(), static_cast<int32_t *>(_udimTiles.mapped));
     _device->Reserve(_motion, std::max<size_t>(motion.size(), 4) * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(motion.begin(), motion.end(), static_cast<float *>(_motion.mapped));
+    // ponytail: program primvars are gathered every commit (O(their
+    // instances)); keep them per mesh if huge instanced programs show up.
+    auto upload = [&](Buffer &b, const auto &v) {
+        using T = typename std::decay_t<decltype(v)>::value_type;
+        _device->Reserve(b, std::max<size_t>(v.size(), 4) * sizeof(T), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::copy(v.begin(), v.end(), static_cast<T *>(b.mapped));
+    };
+    upload(_programCode, programCode);
+    upload(_programConstants, programConstants);
+    upload(_primvarTable, primvarTable);
+    upload(_primvarData, primvarData);
+    if (!_primvarVertices.buffer) {  // bound even when no mesh has vertex-rate primvars
+        _EnsureCapacity(_primvarVertices, _primvarVertexAlloc, 1, 4 * sizeof(float),
+                        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+    }
 
     _device->Reserve(_lightBuffer, _lights.size() * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1233,6 +1349,11 @@ void Scene::Commit()
     _gpu.draws = _draws.buffer;
     _gpu.commandTemplate = _commandTemplate.buffer;
     _gpu.materials = _materials.buffer;
+    _gpu.programCode = _programCode.buffer;
+    _gpu.programConstants = _programConstants.buffer;
+    _gpu.primvarTable = _primvarTable.buffer;
+    _gpu.primvarData = _primvarData.buffer;
+    _gpu.primvarVertices = _primvarVertices.buffer;
     _gpu.udimTiles = _udimTiles.buffer;
     _gpu.lights = _lightBuffer.buffer;
     _gpu.skin = _skin.buffer;
