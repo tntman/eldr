@@ -90,6 +90,32 @@ TF_DEFINE_PRIVATE_TOKENS(
     (varname)
     (displayColor)
     (r)(g)(b)(a)
+    (useSpecularWorkflow)
+    (specularColor)
+    (clearcoat)
+    (clearcoatRoughness)
+    (ior)
+    (coat)
+    (coat_color)
+    (coat_roughness)
+    (coat_IOR)
+    (coat_weight)
+    (coat_ior)
+    (sheen)
+    (sheen_color)
+    (sheen_roughness)
+    (fuzz_weight)
+    (fuzz_color)
+    (fuzz_roughness)
+    (thin_film_thickness)
+    (thin_film_IOR)
+    (thin_film_weight)
+    (thin_film_ior)
+    (specular_anisotropy)
+    (specular_rotation)
+    (specular_roughness_anisotropy)
+    ((toonBands, "eldr:toonBands"))
+    ((toonSoftness, "eldr:toonSoftness"))
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1165,8 +1191,89 @@ private:
     std::string _failed;
 };
 
-// ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, transmission, subsurface, ior and displacement.
+// A colour input in linear Rec.709 (converted from the colour space it was
+// authored in), else `color`.
+GfVec3f ReadColor(std::map<TfToken, VtValue> const &params, TfToken const &name, GfVec3f color)
+{
+    if (Read(params, name, &color)) {
+        const TfToken colorSpace = ParameterColorSpace(params, name);
+        if (NeedsConversion(colorSpace)) {
+            color = GfColor(GfColor(color, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+        }
+    }
+    return color;
+}
+
+// F0 of a dielectric of index `ior` in air.
+float IorToF0(float ior)
+{
+    const float r = (ior - 1.0f) / (ior + 1.0f);
+    return r * r;
+}
+
+// The lobes beyond the metallic base (shaders/brdf.glsl), as constants:
+// unauthored inputs take the surface's defaults, connected ones too.
+void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
+{
+    auto const &p = surface.parameters;
+    const TfToken &id = surface.nodeTypeId;
+    auto color = [&](TfToken const &name, float *out) {
+        const GfVec3f c = ReadColor(p, name, GfVec3f(out[0], out[1], out[2]));
+        std::copy(c.data(), c.data() + 3, out);
+    };
+    if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
+            m->specularWorkflow = true;
+            color(_tokens->specularColor, m->specularColor);
+            m->metallic = 0.0f;  // the workflow ignores it
+            m->metallicTex = vkr::TextureRef();
+        }
+        // The coat's F0 from the surface's ior, as Storm.
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+    } else if (id == _tokens->ND_standard_surface_surfaceshader) {
+        m->coat = ReadOr(p, _tokens->coat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->sheen_roughness, 0.3f);
+        color(_tokens->sheen_color, m->sheenColor);
+        // Its thin film is on whenever it has a thickness (nm).
+        m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
+        m->thinFilm = m->thinFilmThickness > 0.0f ? 1.0f : 0.0f;
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
+        m->anisotropy = ReadOr(p, _tokens->specular_anisotropy, 0.0f);
+        m->anisotropyRotation = ReadOr(p, _tokens->specular_rotation, 0.0f);
+    } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
+        // ponytail: coat_darkening isn't modelled (the coat's albedo only);
+        // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
+        // under the coat rather than over it.
+        m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->fuzz_weight, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->fuzz_roughness, 0.5f);
+        color(_tokens->fuzz_color, m->sheenColor);
+        m->thinFilm = ReadOr(p, _tokens->thin_film_weight, 0.0f);
+        m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
+        m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
+        m->openPbrAnisotropy = true;
+    }
+    // NPR toon has no USD standard: Eldr's own inputs on any surface it
+    // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
+    // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
+    // width, in bands).
+    m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
+    m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
+}
+
+// ponytail: metallic and specular workflows; the lobes ReadLobes reads.
+// Ignored for now: transmission, subsurface, ior and displacement.
 // *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
 // reads; textures on other sets are read by the program, through primvars.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
@@ -1290,6 +1397,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
     }
+    ReadLobes(surface, m);
 }
 
 } // namespace

@@ -1397,6 +1397,224 @@ int main()
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
         }
+
+        {
+            // Specular workflow: F0 is specularColor. A black quad with F0
+            // (0.5, 0, 0) under the head-on light reflects 12.5 times the
+            // default material's 0.16 (plus multiple scattering) in red and
+            // nothing in green; the setting off falls back to F0 0.04.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->specularWorkflow = true;
+            material->specularColor[0] = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.specularWorkflow = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(on.At(32, 32, 0) > 2.0f && on.At(32, 32, 0) < 2.2f && on.At(32, 32, 1) < 0.001f,
+                   "specular workflow: specularColor is F0");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
+                   "Frame::specularWorkflow off: F0 0.04");
+        }
+
+        {
+            // Clearcoat: a coat as rough as the base (0.5, F0 0.04) over a
+            // black dielectric adds the base's own 0.16 under the head-on
+            // light, minus the few percent it takes from the base; a red
+            // coat colour tints the white diffuse beneath. Under a uniform
+            // dome (white furnace) the coated white surface still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->coat = 1;
+            material->coatRoughness = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float coated = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.clearcoat = false;
+            const float bare = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(std::abs(bare - 0.16f) < 0.02f && coated > 1.8f * bare && coated < 2.0f * bare,
+                   "clearcoat adds a second specular lobe");
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->coatColor[1] = material->coatColor[2] = 0.0f;
+            scene.Commit();
+            frame.clearcoat = true;
+            const Image red = Render(renderer, scene, frame);
+            Expect(red.At(32, 32, 0) > 1.0f && red.At(32, 32, 1) < 0.4f, "coat colour tints the base beneath");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->coat = 1;
+            white->coatRoughness = 0.1f;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: coated white dielectric returns 1");
+        }
+
+        {
+            // Sheen: microfibers shine at grazing angles. A strip tilted 80
+            // degrees away from the view, lit from the camera: the Imageworks
+            // lobe (roughness 0.3) adds D * V * cos * pi = 0.81 * 0.8 * 0.17
+            // * pi = 0.35. Under a uniform dome (white furnace) white sheen
+            // over a white diffuse still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            const float c = std::cos(80.0f * 3.14159265f / 180.0f), s = std::sin(80.0f * 3.14159265f / 180.0f);
+            vkr::Mesh *strip = AddQuad(scene, 0, 0, 0, 0, 0);
+            strip->points = {-1, -c, -s, 1, -c, -s, 1, c, s, -1, -c, -s, 1, c, s, -1, c, s};
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->sheen = 1;
+            strip->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float on = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.sheen = false;
+            const float off = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(on - off > 0.3f && on - off < 0.4f, "sheen brightens grazing angles");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->sheen = 1;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white sheen over white returns 1");
+        }
+
+        {
+            // Thin film: 300 nm of index 1.8 on a black dielectric reflects
+            // (0.095, 0.043, 0.122) head-on (Belcour & Barla's model, worked
+            // out on the CPU), purple instead of the bare 0.04 grey: times
+            // 4 under the head-on light (the default material's 0.16 / 0.04).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->thinFilm = 1;
+            material->thinFilmThickness = 300;
+            material->thinFilmIor = 1.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.thinFilm = false;
+            const Image off = Render(renderer, scene, frame);
+            const float expected[3] = {0.095f * 4, 0.043f * 4, 0.122f * 4};
+            bool close = true;
+            for (int c = 0; c < 3; ++c) {
+                close = close && std::abs(on.At(32, 32, c) / expected[c] - 1.0f) < 0.15f;
+            }
+            Expect(close, "thin film reflects its interference colour");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 2) - 0.16f) < 0.02f,
+                   "Frame::thinFilm off: the bare base");
+        }
+
+        {
+            // Anisotropy: on a black quad whose u runs along x, a light
+            // tilted towards x shines on the centre far more than one tilted
+            // as much towards y (the highlight stretches along u); a quarter
+            // turn of rotation swaps them. Nearly isotropic, the anisotropic
+            // GGX is the isotropic one.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->roughness = 0.3f;
+            material->anisotropy = 0.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene).At(32, 32, 1);
+            };
+            Expect(specular(0.4f, 0) > 3 * specular(0, 0.4f), "anisotropic highlight stretches along u");
+            material->anisotropyRotation = 0.25f;
+            Expect(specular(0, 0.4f) > 3 * specular(0.4f, 0), "rotated a quarter turn it stretches along v");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.anisotropicSpecular = false;
+            const float across = specular(0.4f, 0);
+            Expect(Render(renderer, scene, frame).At(32, 32, 1) > 2 * across, "Frame::anisotropicSpecular off: isotropic");
+            material->anisotropy = 1e-3f;
+            const float nearly = specular(0.4f, 0);
+            Expect(std::abs(nearly - Render(renderer, scene, frame).At(32, 32, 1)) < 0.01f * nearly,
+                   "nearly isotropic anisotropic GGX is GGX");
+        }
+
+        {
+            // Toon: with two bands per unit a white quad lit at cos 0.6 and
+            // 0.7 shows the same flat band (both in [0.5, 1), shown at 0.75),
+            // at cos 0.4 the band below (0.25), a third as bright.
+            // Frame::toonBands bands a plain material the same way; toon off
+            // is smooth again.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 1;
+            material->toonBands = 2;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto lit = [&](float cosine) {
+                light->direction[0] = std::sqrt(1 - cosine * cosine);
+                light->direction[2] = -cosine;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 0);
+            };
+            auto banded = [&](const char *what) {
+                const float a = lit(0.6f), b = lit(0.7f), c = lit(0.4f);
+                Expect(std::abs(a - b) < 0.01f * a && std::abs(c / a - 1.0f / 3.0f) < 0.05f, what);
+            };
+            banded("toon: flat bands");
+            frame.toon = false;
+            Expect(lit(0.7f) > 1.1f * lit(0.6f), "Frame::toon off: smooth");
+            material->toonBands = 0;
+            frame.toon = true;
+            frame.toonBands = 2;
+            banded("Frame::toonBands: every material in bands");
+        }
+
+        {
+            // Hair: strands along u (x here) light up where the half vector
+            // is across them. A red strip without a material: in green (the
+            // white primary lobe; the diffuse is red) a light tilted 45
+            // degrees towards y shines on the centre far more than one tilted
+            // as much towards x. Without hair shading it is isotropic GGX.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            vkr::Mesh *strip = AddQuad(scene, -1, -0.2f, 1, 0.2f, 0);
+            strip->color[0] = 1;
+            strip->color[1] = strip->color[2] = 0;
+            strip->hair = true;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 1);
+            };
+            Expect(specular(0, 1) > 2 * specular(1, 0), "hair: highlights across the strands");
+            frame.hairShading = false;
+            Expect(std::abs(specular(0, 1) / specular(1, 0) - 1) < 0.05f, "Frame::hairShading off: isotropic");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

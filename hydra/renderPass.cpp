@@ -135,7 +135,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.proceduralTextures, &frame.proceduralTextures},
                                 {t.lensDistortion, &frame.lensDistortion},
                                 {t.blendShapeMotion, &frame.blendShapeMotion},
-                                {t.extraAovs, &frame.extraAovs}, {t.shareFrame, &frame.shareFrame}}) {
+                                {t.extraAovs, &frame.extraAovs}, {t.shareFrame, &frame.shareFrame},
+                                {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
+                                {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
+                                {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
+                                {t.hairShading, &frame.hairShading}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -188,6 +192,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
+    frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // The scene camera's lens; usdview's free camera has none.
     if (camera) {
         frame.shutter = float(camera->GetShutterClose() - camera->GetShutterOpen());

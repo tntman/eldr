@@ -52,7 +52,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lensDistortion, "hdvk:lensDistortion"))                \
     ((blendShapeMotion, "hdvk:blendShapeMotion"))            \
     ((extraAovs, "hdvk:extraAovs"))                          \
-    ((shareFrame, "hdvk:shareFrame"))
+    ((shareFrame, "hdvk:shareFrame"))                        \
+    ((specularWorkflow, "hdvk:specularWorkflow"))            \
+    ((clearcoat, "hdvk:clearcoat"))                          \
+    ((sheen, "hdvk:sheen"))                                  \
+    ((thinFilm, "hdvk:thinFilm"))                            \
+    ((anisotropicSpecular, "hdvk:anisotropicSpecular"))      \
+    ((toon, "hdvk:toon"))                                    \
+    ((toonBands, "hdvk:toonBands"))                          \
+    ((hairShading, "hdvk:hairShading"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

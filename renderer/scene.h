@@ -185,6 +185,44 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
+    // Lobes beyond the metallic base (shaders/brdf.glsl), constants only.
+    // ponytail: no textures or programs for them; add a TextureRef (or a
+    // MaterialProgram::Input) per input when assets need it.
+    // UsdPreviewSurface useSpecularWorkflow: F0 is specularColor (F90 white),
+    // metallic is ignored.
+    bool specularWorkflow = false;
+    float specularColor[3] = {0, 0, 0};
+    // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
+    // coatColor and loses what the coat reflects. Weight 0: none.
+    float coat = 0;
+    float coatRoughness = 0.01f;
+    float coatF0 = 0.04f;  // from the coat's IOR
+    float coatColor[3] = {1, 1, 1};
+    // Sheen (fabric, fuzz): a microfiber lobe over the diffuse. Weight 0: none.
+    float sheen = 0;
+    float sheenColor[3] = {1, 1, 1};
+    float sheenRoughness = 0.3f;
+    // Thin-film iridescence on the base's specular. Weight 0: none.
+    float thinFilm = 0;
+    float thinFilmThickness = 0;  // nanometres
+    float thinFilmIor = 1.5f;
+    // Anisotropic specular, stretched along the uv set's u direction turned
+    // by the rotation (in turns). 0: isotropic.
+    float anisotropy = 0;
+    float anisotropyRotation = 0;
+    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    // NPR toon: the lit result's intensity quantized into this many flat
+    // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
+    // `toonSoftness` of a band wide.
+    float toonBands = 0;
+    float toonSoftness = 0.05f;
+
+    // Whether any lobe beyond the metallic base is on: such materials shade
+    // with the renderer's LAYERS pipelines, the others never pay for them.
+    bool Layered() const
+    {
+        return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0;
+    }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -227,6 +265,9 @@ struct Mesh {
     // Primvars the material's program reads, by name; vertex-rate ones are
     // geometry (geometryDirty), the others are read again every Commit.
     std::vector<Primvar> primvars;
+    // Shade as hair (BasisCurves): strand highlights along the uv set's u,
+    // which runs along each curve (shaders/brdf.glsl).
+    bool hair = false;
 
     // UsdSkel skinning, on the GPU: linear blend, or dual quaternions with
     // `dualQuaternion`. 4 or 8 joints per corner (`influences`), strongest
@@ -353,6 +394,8 @@ struct DrawInfo {
     uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
     uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
+    uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
+    uint32_t pad[3];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -458,9 +501,13 @@ public:
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
         // kProgram (a material program, shading pass only) with kProcedural
-        // (it runs noise, MaterialProgram::Procedural): kind >> 2 picks the
-        // renderer's pipeline variant. Chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32 };
+        // (it runs noise, MaterialProgram::Procedural), kLayers (lobes
+        // beyond the metallic base, Material::Layered, or Mesh::hair; shading
+        // pass only): kind >> 2 picks the renderer's pipeline variant. Chunks
+        // also end where it changes.
+        enum : uint8_t {
+            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64
+        };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).

@@ -28,7 +28,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
-                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl)
+                renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
+                renderer/shaders/brdf.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
@@ -42,7 +43,23 @@ foreach(shader mesh.vert mesh.frag aov.frag)
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/noise.glsl)
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl)
+    list(APPEND shader_incs ${spv})
+endforeach()
+# Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
+# with variants of their own, so plain materials don't pay for them.
+foreach(variant layers graph_layers)
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_${variant}.frag.inc)
+    set(defines -DLAYERS)
+    if(variant STREQUAL "graph_layers")
+        list(APPEND defines -DGRAPH)
+    endif()
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
+        DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+                renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -102,6 +119,8 @@ if(WIN32)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lobes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lobes.py)
+    set_tests_properties(lobes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME textures COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_textures.py)
     set_tests_properties(textures PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME procedural COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_procedural.py)

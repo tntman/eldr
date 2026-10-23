@@ -88,6 +88,16 @@ public:
         // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
         // and depth go to the app's OpenGL on the GPU instead of Targets.
         bool shareFrame = true;
+        // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
+        // materials render without them.
+        bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
+        bool clearcoat = true;         // a second GGX lobe on top (coat)
+        bool sheen = true;             // microfiber lobe (fabric, fuzz)
+        bool thinFilm = true;          // thin-film iridescence on the specular
+        bool anisotropicSpecular = true;  // highlights stretched along a tangent (brushed metal)
+        bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
+        uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
+        bool hairShading = true;       // curves (Mesh::hair) with strand highlights
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -192,12 +202,12 @@ private:
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
     // program (the GRAPH shaders), and bit 3 with it, one with noise
-    // (program.glsl's kProcedurals).
+    // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders).
     VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[16] = {};  // shading, blended over the opaque
+    VkPipeline _translucentPipeline[32] = {};  // shading, blended over the opaque
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[16] = {};             // shading, depth read-only
+    VkPipeline _pipeline[32] = {};             // shading, depth read-only
     VkPipeline _shadowPipeline[4] = {};
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;

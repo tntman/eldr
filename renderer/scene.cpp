@@ -31,6 +31,15 @@ struct GpuMaterial {
     // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
     uint32_t program[4];
     float specular[4];  // Material::specular
+    // Lobes (shaders/brdf.glsl).
+    float specularColor[4];  // specular workflow F0, w = 1 when used
+    float coat[4];           // weight, roughness, F0
+    float coatColor[4];
+    float sheen[4];          // weight, roughness
+    float sheenColor[4];
+    float thinFilm[4];       // weight, thickness (nm), ior
+    float anisotropy[4];     // amount, rotation (turns), 1: OpenPBR's mapping
+    float toon[4];           // bands, softness
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -1081,6 +1090,23 @@ void Scene::Commit()
                 g.tex[i] = texRef(*refs[i]);
             }
             std::copy(m.specular, m.specular + 3, g.specular);
+            std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
+            g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.coat[0] = m.coat;
+            g.coat[1] = m.coatRoughness;
+            g.coat[2] = m.coatF0;
+            std::copy(m.coatColor, m.coatColor + 3, g.coatColor);
+            g.sheen[0] = m.sheen;
+            g.sheen[1] = m.sheenRoughness;
+            std::copy(m.sheenColor, m.sheenColor + 3, g.sheenColor);
+            g.thinFilm[0] = m.thinFilm;
+            g.thinFilm[1] = m.thinFilmThickness;
+            g.thinFilm[2] = m.thinFilmIor;
+            g.anisotropy[0] = m.anisotropy;
+            g.anisotropy[1] = m.anisotropyRotation;
+            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
+            g.toon[0] = m.toonBands;
+            g.toon[1] = m.toonSoftness;
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);
@@ -1132,11 +1158,13 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        d.hair = m.hair ? 1 : 0;
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
-                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0);
+                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
+                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;

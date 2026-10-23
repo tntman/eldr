@@ -30,6 +30,7 @@ struct FrameData {
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
+    uint32_t styles[4];      // kStyle* flags, toon bands for every material
 };
 
 namespace {
@@ -48,6 +49,12 @@ const uint32_t kMeshGraphVert[] =
 ;
 const uint32_t kMeshGraphFrag[] =
 #include "mesh_graph.frag.inc"
+;
+const uint32_t kMeshLayersFrag[] =
+#include "mesh_layers.frag.inc"
+;
+const uint32_t kMeshGraphLayersFrag[] =
+#include "mesh_graph_layers.frag.inc"
 ;
 const uint32_t kMaskFrag[] =
 #include "mask.frag.inc"
@@ -71,6 +78,11 @@ const uint32_t kSkinComp[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 constexpr uint32_t kFeatureProcedurals = 256;
+// Material lobes, as shaders/brdf.glsl numbers them.
+constexpr uint32_t kFeatureSpecularWorkflow = 8, kFeatureClearcoat = 16, kFeatureSheen = 32, kFeatureThinFilm = 64,
+                   kFeatureAnisotropy = 128;
+// FrameData::styles[0], as brdf.glsl.
+constexpr uint32_t kStyleToon = 1, kStyleHair = 2;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -288,7 +300,7 @@ Renderer::~Renderer()
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
-    for (int v = 0; v < 16; ++v) {
+    for (int v = 0; v < 32; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
     }
@@ -437,6 +449,8 @@ void Renderer::_CreatePipelines()
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
     VkShaderModule graphVert = CreateShaderModule(device, kMeshGraphVert, sizeof(kMeshGraphVert));
     VkShaderModule graphFrag = CreateShaderModule(device, kMeshGraphFrag, sizeof(kMeshGraphFrag));
+    VkShaderModule layersFrag = CreateShaderModule(device, kMeshLayersFrag, sizeof(kMeshLayersFrag));
+    VkShaderModule graphLayersFrag = CreateShaderModule(device, kMeshGraphLayersFrag, sizeof(kMeshGraphLayersFrag));
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
@@ -526,7 +540,8 @@ void Renderer::_CreatePipelines()
     // kWideSkin (variant bit 0: eight skinning influences) and
     // kDualQuaternion (bit 1), see mesh.vert; the shading ones four more
     // with the GRAPH shaders (bit 2: material programs) and four more of
-    // those with noise (bit 3: program.glsl's kProcedurals).
+    // those with noise (bit 3: program.glsl's kProcedurals); all of those
+    // again with the LAYERS fragment shaders (bit 4: lobes, brdf.glsl).
     const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
                                                      {1, sizeof(VkBool32), sizeof(VkBool32)}};
     const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
@@ -545,15 +560,17 @@ void Renderer::_CreatePipelines()
             const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v & 3]), skinFlags[v & 3]};
             stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
             if (v >= 4) {  // shading pipelines only
-                stages[0].module = graphVert;
-                stages[1].module = graphFrag;
-                stages[1].pSpecializationInfo = v >= 8 ? &proceduralSpec : nullptr;
+                const bool program = v & 4;
+                const VkShaderModule frags[4] = {meshFrag, graphFrag, layersFrag, graphLayersFrag};
+                stages[0].module = program ? graphVert : meshVert;
+                stages[1].module = frags[(program ? 1 : 0) + (v & 16 ? 2 : 0)];
+                stages[1].pSpecializationInfo = v & 8 ? &proceduralSpec : nullptr;
             }
             res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline, 16);
+    VkResult r = createMesh(ci, _pipeline, 32);
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
@@ -570,7 +587,7 @@ void Renderer::_CreatePipelines()
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline, 16);
+        r = createMesh(tci, _translucentPipeline, 32);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -623,7 +640,8 @@ void Renderer::_CreatePipelines()
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, maskFrag, skyVert, skyFrag}) {
+    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
+                             maskFrag, skyVert, skyFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -1222,6 +1240,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
                      (frame.clusteredLights ? kFeatureClusters : 0);
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
+    fd.features[0] |= (frame.specularWorkflow ? kFeatureSpecularWorkflow : 0) | (frame.clearcoat ? kFeatureClearcoat : 0) |
+                      (frame.sheen ? kFeatureSheen : 0) | (frame.thinFilm ? kFeatureThinFilm : 0) |
+                      (frame.anisotropicSpecular ? kFeatureAnisotropy : 0);
+    fd.styles[0] = (frame.toon ? kStyleToon : 0) | (frame.hairShading ? kStyleHair : 0);
+    fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
@@ -1595,7 +1618,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 15);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 31);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky) {
