@@ -66,6 +66,21 @@ add_library(hdVk SHARED
     hydra/sceneIndexPlugin.cpp)
 target_link_libraries(hdVk PRIVATE ar hd hdsi hio sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
+# OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
+# which installs OpenVDB and its NanoVDB headers beside USD); without,
+# HdVk builds as before.
+find_path(HDVK_NANOVDB_INCLUDE nanovdb/util/OpenToNanoVDB.h)
+if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
+    message(STATUS "HdVk: volumes (OpenVDB) on")
+    # Writes tests/scenes/volume.vdb.
+    add_executable(make_volume tests/make_volume.cpp)
+    # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
+    target_compile_definitions(make_volume PRIVATE _USE_MATH_DEFINES)
+    target_link_libraries(make_volume PRIVATE hioOpenVDB)
+    set(HDVK_VOLUMES ON)
+else()
+    message(STATUS "HdVk: volumes off (USD without OpenVDB)")
+endif()
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in
@@ -100,3 +115,8 @@ if(WIN32)
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")
+
+# The Python tests run usdenv.cmd against the USD this build uses.
+file(TO_NATIVE_PATH ${pxr_DIR} usdRoot)
+get_property(allTests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "USD_ROOT=${usdRoot}")
