@@ -78,6 +78,8 @@ constexpr uint32_t kFeatureProcedurals = 256;
 constexpr uint32_t kFeatureRefraction = 4096, kFeatureTranslucentShadows = 8192;
 // Subsurface scattering (subsurface.glsl).
 constexpr uint32_t kFeatureSubsurface = 16384;
+// Holdouts (transparency.glsl).
+constexpr uint32_t kFeatureHoldouts = 32768;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -1625,6 +1627,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     if (translucentShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
+    }
+    if (frame.holdouts) {
+        fd.features[0] |= kFeatureHoldouts;
     }
     // Subsurface scattering blurs by the prepass depth.
     if (draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty()) {

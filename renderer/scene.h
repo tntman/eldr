@@ -269,6 +269,9 @@ struct Mesh {
     std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
     uint32_t blendShapeCount = 0;
     std::vector<float> blendWeights;
+    // Holdout (matte): drawn black with zero alpha, cut out of the image
+    // but still hiding what's behind it and casting shadows.
+    bool holdout = false;
 
 private:
     friend class Scene;
@@ -371,6 +374,8 @@ struct DrawInfo {
     uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
     uint32_t primvars;         // the material program's primvar slots in Gpu::primvarTable, kNone: none
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
+    uint32_t holdout;          // 1: Mesh::holdout
+    uint32_t pad[3];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).

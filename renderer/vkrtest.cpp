@@ -1459,6 +1459,44 @@ int main()
             Expect(std::abs(lit.At(32, 32, 1) - 0.5f) < 0.05f && dark.At(32, 32, 1) < 0.01f,
                    "thin-walled subsurface: light from behind shows through");
         }
+
+        {
+            // Holdouts: a holdout quad over the left half of a red wall is
+            // black with zero alpha and still hides the wall (its depth);
+            // post composites the clear colour there exactly. A translucent
+            // holdout leaves the wall alone.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto red = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 1;
+            red->baseColor[1] = red->baseColor[2] = 0;
+            red->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = red;
+            vkr::Mesh *matte = AddQuad(scene, -1, -1, 0, 1, 0);
+            scene.Commit();
+            Expect(Render(renderer, scene).At(16, 32, 3) == 1.0f, "not yet a holdout");
+            matte->holdout = true;  // changes after a frame: only the DrawInfo table
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(img.At(16, 32, 0) == 0 && img.At(16, 32, 1) == 0 && img.At(16, 32, 3) == 0 &&
+                       img.depth[32 * 64 + 16] < img.depth[32 * 64 + 48],
+                   "holdout: black, zero alpha, still in front");
+            Expect(img.At(48, 32, 0) > 0.9f && img.At(48, 32, 3) == 1.0f, "beside the holdout the wall as usual");
+            const Image post = RenderPost(device, scene, 0.0f, false);
+            Expect(post.At(16, 32, 2) == 1.0f && post.At(16, 32, 0) == 0.0f && post.At(16, 32, 3) == 1.0f,
+                   "holdout after post: exactly the clear colour (opaque blue)");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.holdouts = false;
+            Expect(Render(renderer, scene, frame).At(16, 32, 1) > 0.1f, "Frame::holdouts off: drawn as usual");
+            auto glass = std::make_shared<vkr::Material>();
+            glass->opacity = 0.5f;
+            matte->material = glass;
+            scene.Commit();
+            const Image translucent = Render(renderer, scene);
+            Expect(std::abs(translucent.At(16, 32, 0) - translucent.At(48, 32, 0)) < 1e-3f &&
+                       translucent.At(16, 32, 3) == 1.0f,
+                   "translucent holdout: what's behind it unchanged");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

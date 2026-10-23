@@ -7,8 +7,9 @@
 // pass (subsurface.glsl).
 layout(constant_id = 12) const uint kShadingPass = 0u;
 
-// frame.features.x: refraction samples the opaque colour behind (bound below).
-const uint kFeatureRefraction = 4096u;
+// frame.features.x: refraction samples the opaque colour behind (bound
+// below); holdouts are cut out (PassOutput).
+const uint kFeatureRefraction = 4096u, kFeatureHoldouts = 32768u;
 
 // The opaque colour (premultiplied) with mips, copied after the opaque
 // pass (Transparency::RecordBackground).
@@ -200,8 +201,20 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 // coverage so they still count. Subsurface: the light in location 0, its
 // alpha the largest radius, location 1 the radii's proportions (10 bits
 // each) and bit 30, so the blur keeps materials apart.
+// Holdouts (frame.features.x & kFeatureHoldouts) write nothing but their
+// depth and ids: black with zero alpha in the opaque pass, no light in the
+// subsurface pass, and translucent ones leave what's behind them alone.
 void PassOutput(vec3 color, float alpha)
 {
+    if ((frame.features.x & kFeatureHoldouts) != 0u && draws[instances[inSlot].draw].holdout != 0u) {
+        outColor = vec4(0.0);
+        if (kShadingPass == 1u) {
+            outVelocity = vec2(0.0);  // revealage unchanged
+        } else if (kShadingPass == 2u) {
+            outPrimId = 0;  // not a subsurface material
+        }
+        return;
+    }
     if (kShadingPass == 2u) {
         vec3 radius = inMaterial != kNoMaterial ? max(materials[inMaterial].subsurfaceRadius.xyz, vec3(1e-6))
                                                 : vec3(1.0);

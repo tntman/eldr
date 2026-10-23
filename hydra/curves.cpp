@@ -2,6 +2,7 @@
 
 #include "instancer.h"
 #include "material.h"
+#include "mesh.h"
 #include "renderDelegate.h"
 #include "scene.h"
 
@@ -359,6 +360,9 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         this->_UpdateVisibility(sceneDelegate, dirtyBits);
         m.visible = this->IsVisible();
+    }
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        m.holdout = HdVkHoldout(sceneDelegate, id);
     }
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
         const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(

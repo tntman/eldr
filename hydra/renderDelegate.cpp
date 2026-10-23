@@ -134,6 +134,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
+        {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},

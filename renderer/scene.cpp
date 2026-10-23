@@ -1205,6 +1205,7 @@ void Scene::Commit()
         }
         kind[slot] |= variant;
         d.primId = m.primId;
+        d.holdout = m.holdout ? 1u : 0u;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;

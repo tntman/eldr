@@ -54,7 +54,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((translucentShadows, "hdvk:translucentShadows"))        \
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
-    ((subsurfaceSamples, "hdvk:subsurfaceSamples"))
+    ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
+    ((holdouts, "hdvk:holdouts"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
