@@ -1,0 +1,50 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "scene.glsl"
+
+// The TLAS's instances (VkAccelerationStructureInstanceKHR), one per
+// instance slot: its transform, its mesh slot as custom index, and that
+// mesh's BLAS. Free slots, hidden meshes and meshes without a BLAS
+// (skinned, translucent) are inactive (no BLAS, mask 0).
+
+struct RtSlot {  // rt.glsl
+    uvec2 blas;
+    uint firstIndex;
+    uint flags;
+};
+layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]; };
+const uint kRtSlotCutout = 2u;  // alpha-tested: any-hit shaders run, else forced opaque
+
+struct TlasInstance {
+    vec4 rows[3];
+    uint indexMask;  // custom index (24 bits), mask (8)
+    uint sbtFlags;   // hit group offset (24 bits), VkGeometryInstanceFlagsKHR (8)
+    uvec2 blas;
+};
+layout(std430, set = 1, binding = 0) writeonly buffer TlasInstances { TlasInstance tlasInstances[]; };
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= tlasInstances.length()) {
+        return;
+    }
+    TlasInstance t;
+    Instance inst = instances[min(i, instances.length() - 1u)];
+    t.rows = inst.rows;
+    t.indexMask = 0u;
+    t.sbtFlags = 0u;
+    t.blas = uvec2(0u);
+    if (i < instances.length() && inst.draw != kFreeSlot && draws[inst.draw].visible != 0u &&
+        rtSlots[inst.draw].blas != uvec2(0u)) {
+        RtSlot s = rtSlots[inst.draw];
+        t.indexMask = inst.draw | (0xFFu << 24);
+        // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR, and
+        // FORCE_NO_OPAQUE or FORCE_OPAQUE.
+        t.sbtFlags = (1u | ((s.flags & kRtSlotCutout) != 0u ? 8u : 4u)) << 24;
+        t.blas = s.blas;
+    }
+    tlasInstances[i] = t;
+}

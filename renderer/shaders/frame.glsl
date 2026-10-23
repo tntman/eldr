@@ -21,6 +21,9 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
     uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
+    // Shading styles (brdf.glsl): x: kStyle* flags, y: toon bands for every
+    // material (0: only materials with their own).
+    uvec4 styles;
     // Volumetric fog (fog.glsl).
     vec4 fogMedium;      // extinction per unit at the base height, height falloff, base height, phase g
     vec4 fogAlbedo;      // rgb: scattering colour; w: view depth the froxels reach
@@ -37,6 +40,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
+// 256: kFeatureProcedurals (program.glsl)
 // Soft sun shadows (PCSS from the distant light's angle), volumetric fog,
 // the reflection probe, planar reflections.
 const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 262144u, kFeaturePlanar = 524288u;

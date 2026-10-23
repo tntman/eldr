@@ -1,0 +1,93 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+#define RAY_TRACING
+#include "frame.glsl"
+#include "lights.glsl"
+#include "scene.glsl"
+#include "material.glsl"
+#include "rt.glsl"
+#include "gi.glsl"
+#include "rt_shade.glsl"
+
+// Per pixel, for mesh.frag: a ray through the pixel finds the surface the
+// rasterizer shades there (same jittered camera), then shadow rays towards
+// the lights of rt.shadowLights (one channel each) and reflection rays
+// (GGX samples, so rough reflections are noisy per frame and TAA averages
+// them). Without a hit both images get neutral values.
+layout(set = 0, binding = 53, rgba8) uniform writeonly image2D rtShadowImage;
+layout(set = 0, binding = 54, rgba16f) uniform writeonly image2D rtReflectionImage;
+
+// Reflections are traced up to this perceptual roughness, fading out from
+// kFadeRoughness; rougher surfaces keep the dome's prefiltered light.
+const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
+
+// GGX visible normal (Heitz 2018), in the frame where n is +z.
+vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
+{
+    vec3 vh = normalize(vec3(a * ve.x, a * ve.y, ve.z));
+    float lensq = vh.x * vh.x + vh.y * vh.y;
+    vec3 t1 = lensq > 0.0 ? vec3(-vh.y, vh.x, 0.0) * inversesqrt(lensq) : vec3(1.0, 0.0, 0.0);
+    vec3 t2 = cross(vh, t1);
+    float r = sqrt(u.x), phi = 2.0 * PI * u.y;
+    float p1 = r * cos(phi), p2 = r * sin(phi);
+    float s = 0.5 * (1.0 + vh.z);
+    p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2;
+    vec3 nh = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * vh;
+    return normalize(vec3(a * nh.x, a * nh.y, max(nh.z, 0.0)));
+}
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    vec2 ndc = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
+    vec4 nearPoint = frame.invViewProj * vec4(ndc, -1.0, 1.0), farPoint = frame.invViewProj * vec4(ndc, 1.0, 1.0);
+    vec3 origin = nearPoint.xyz / nearPoint.w;
+    vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
+    Trace(origin, dir, 1.0 / frame.viewport.y);
+    if (hit.t < 0.0) {
+        imageStore(rtShadowImage, pixel, vec4(1.0));
+        imageStore(rtReflectionImage, pixel, vec4(0.0));
+        return;
+    }
+    vec3 p = hit.position, n = hit.normal, ng = hit.geometric;
+    float perceptual = hit.roughness, metallic = hit.metallic;
+    uvec3 seed = uvec3(pixel, rt.params.x);
+
+    if ((frame.features.x & kFeatureRtShadows) != 0u) {
+        vec4 shadows = vec4(1.0);
+        for (int k = 0; k < 4; ++k) {
+            if (rt.shadowLights[k] != kNone) {
+                shadows[k] = LightVisibility(rt.shadowLights[k], p, ng, seed, rt.params.y);
+            }
+        }
+        imageStore(rtShadowImage, pixel, shadows);
+    }
+
+    if ((frame.features.x & kFeatureRtReflections) != 0u) {
+        vec4 reflection = vec4(0.0);
+        if (perceptual < kMaxRoughness) {
+            float a = perceptual * perceptual;
+            vec3 t, b;
+            Basis(n, t, b);
+            vec3 v = -dir;
+            vec3 ve = vec3(dot(v, t), dot(v, b), max(dot(v, n), 1e-4));
+            vec3 reflectOrigin = OffsetRay(p, ng);
+            uint samples = rt.params.z;
+            for (uint s = 0u; s < samples; ++s) {
+                vec3 h = SampleGgxVndf(ve, a, Random2(seed + uvec3(0u, 0u, 7919u), s));
+                vec3 l = reflect(-v, t * h.x + b * h.y + n * h.z);
+                if (dot(l, ng) <= 0.0) {
+                    l = reflect(-v, n);  // below the surface: the mirror direction
+                }
+                Trace(reflectOrigin, l, a);
+                reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
+                                              : ShadeHit(l, seed, true);
+            }
+            reflection.rgb /= float(samples);
+            reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual);
+        }
+        imageStore(rtReflectionImage, pixel, reflection);
+    }
+}

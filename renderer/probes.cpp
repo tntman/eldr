@@ -113,6 +113,10 @@ Renderer::Frame Nested(const Renderer::Frame &frame, uint32_t width, uint32_t he
     f.cameraPos[2] = eye.z;
     f.postProcess = f.taa = f.ssr = f.ambientOcclusion = f.depthOfField = f.motionBlur = false;
     f.reflectionProbe = f.planarReflections = false;
+    f.lensDistortion = f.extraAovs = false;
+    // ponytail: reflections are shaded with shadow maps and the dome's
+    // light; ray tracing and GI there would need their own TLAS and probes.
+    f.rtShadows = f.rtReflections = f.gi = false;
     f.skinning = false;
     f.showEnvironment = true;  // reflections see the dome even where the camera doesn't
     std::fill(f.clearColor, f.clearColor + 4, 0.0f);
@@ -135,12 +139,12 @@ Reflections::~Reflections()
 
 VkImage Reflections::PlanarImage() const
 {
-    return _planar ? _renderer->ColorImage() : VK_NULL_HANDLE;
+    return _planar ? _renderer->HdrColorImage() : VK_NULL_HANDLE;
 }
 
 VkImageView Reflections::PlanarView() const
 {
-    return _planar ? _renderer->ColorView() : VK_NULL_HANDLE;
+    return _planar ? _renderer->HdrColorView() : VK_NULL_HANDLE;
 }
 
 void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)

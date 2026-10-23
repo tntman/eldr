@@ -114,12 +114,12 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         // normalized.
         light.type = vkr::Light::Type::Distant;
         Copy(xf.TransformDir(GfVec3d(0, 0, 1)).GetNormalized(), light.direction);
-        const float halfAngle = float(GfDegreesToRadians(param(HdLightTokens->angle, 0.53f))) * 0.5f;
+        light.angle = param(HdLightTokens->angle, 0.53f);
+        const float halfAngle = float(GfDegreesToRadians(light.angle)) * 0.5f;
         if (halfAngle > 0.0f && !normalize) {
             color *= 2.0f * kPi * (1.0f - std::cos(halfAngle));
         }
         std::copy(color.data(), color.data() + 3, light.irradiance);
-        light.angle = 2.0f * halfAngle;
         light.castShadows = param(HdLightTokens->shadowEnable, true);
         *dirtyBits = Clean;
         return;

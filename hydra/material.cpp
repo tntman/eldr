@@ -40,6 +40,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     (UsdPrimvarReader_float3)
     (fallback)
     (wrapS)
+    (wrapT)
+    (uaddressmode)
+    (vaddressmode)
     (specular)
     (specular_color)
     (specular_weight)
@@ -87,6 +90,32 @@ TF_DEFINE_PRIVATE_TOKENS(
     (varname)
     (displayColor)
     (r)(g)(b)(a)
+    (useSpecularWorkflow)
+    (specularColor)
+    (clearcoat)
+    (clearcoatRoughness)
+    (ior)
+    (coat)
+    (coat_color)
+    (coat_roughness)
+    (coat_IOR)
+    (coat_weight)
+    (coat_ior)
+    (sheen)
+    (sheen_color)
+    (sheen_roughness)
+    (fuzz_weight)
+    (fuzz_color)
+    (fuzz_roughness)
+    (thin_film_thickness)
+    (thin_film_IOR)
+    (thin_film_weight)
+    (thin_film_ior)
+    (specular_anisotropy)
+    (specular_rotation)
+    (specular_roughness_anisotropy)
+    ((toonBands, "eldr:toonBands"))
+    ((toonSoftness, "eldr:toonSoftness"))
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -257,6 +286,17 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
     auto tex = std::make_shared<vkr::Texture>();
     tex->width = uint32_t(w);
     tex->height = uint32_t(h);
+    // Wrap modes in the file (e.g. a .tx's wrapmodes), mapped as Storm's
+    // assetUvTextureCpuData.cpp maps them.
+    for (int axis = 0; axis < 2; ++axis) {
+        HioAddressMode mode;
+        if (image->GetSamplerMetadata(axis ? HioAddressDimensionV : HioAddressDimensionU, &mode)) {
+            tex->fileWrap[axis] = mode == HioAddressModeClampToEdge    ? vkr::Wrap::Clamp
+                                  : mode == HioAddressModeMirrorRepeat ? vkr::Wrap::Mirror
+                                  : mode == HioAddressModeClampToBorderColor ? vkr::Wrap::Black
+                                                                            : vkr::Wrap::Repeat;
+        }
+    }
     const size_t texels = size_t(w) * h;
     auto byChannels = [&](F one, F two, F four) { return channels == 1 ? one : channels == 2 ? two : four; };
     std::vector<uint16_t> halves;
@@ -423,10 +463,37 @@ void TiledImageMatrix(std::map<TfToken, VtValue> const &p, float m[6])
     std::copy(out, out + 6, m);
 }
 
-// A texture node's file into ref (UDIMs as tiles). A MaterialX file without
-// a colour space is in the document's working space, linear (as MaterialX
-// and Storm's MaterialX path read it); a UsdUVTexture's is "auto".
-// False without a file.
+// A texture node's wrap modes, as Storm reads them (hd/material.cpp,
+// hdSt/materialXFilter.cpp): UsdUVTexture wrapS/wrapT, where "useMetadata"
+// (also unauthored or unknown) is the file's own, else black; MaterialX
+// u/vaddressmode, "periodic" by default.
+// ponytail: MaterialX "constant" reads black outside [0, 1] as in Storm, not
+// the image's `default`; test uv against [0, 1] in Fetch if one is authored.
+void ReadWrap(HdMaterialNode2 const &node, bool preview, vkr::TextureRef *ref)
+{
+    for (int axis = 0; axis < 2; ++axis) {
+        const TfToken &name = preview ? (axis ? _tokens->wrapT : _tokens->wrapS)
+                                      : (axis ? _tokens->vaddressmode : _tokens->uaddressmode);
+        TfToken token;
+        std::string mode;
+        if (Read(node.parameters, name, &token)) {
+            mode = token.GetString();
+        } else {
+            Read(node.parameters, name, &mode);
+        }
+        ref->wrap[axis] = mode == "mirror"                        ? vkr::Wrap::Mirror
+                          : mode == "clamp"                       ? vkr::Wrap::Clamp
+                          : mode == "black" || mode == "constant" ? vkr::Wrap::Black
+                          : !preview || mode == "repeat"          ? vkr::Wrap::Repeat
+                          : ref->texture                          ? ref->texture->fileWrap[axis]
+                                                                  : vkr::Wrap::Black;
+    }
+}
+
+// A texture node's file into ref (UDIMs as tiles) with its wrap modes. A
+// MaterialX file without a colour space is in the document's working space,
+// linear (as MaterialX and Storm's MaterialX path read it); a UsdUVTexture's
+// is "auto". False without a file.
 bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textures, vkr::TextureRef *ref)
 {
     const auto file = node.parameters.find(_tokens->file);
@@ -445,6 +512,7 @@ bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textu
     } else {
         ref->texture = textures->Get(path, colorSpace);
     }
+    ReadWrap(node, preview, ref);
     return true;
 }
 
@@ -508,7 +576,7 @@ void ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, Tf
 // Follows the connection of `name` to a texture, through MaterialX nodes
 // that only convert, extract a channel or decode a normal map. A primvar
 // reader of displayColor on the base colour makes the mesh's colour the base.
-// ponytail: MaterialX image defaults and address modes are ignored.
+// ponytail: MaterialX image defaults are ignored.
 void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken name,
                  HdVkTextureCache *textures, vkr::Material *m, vkr::TextureRef *ref, TfToken *primvar)
 {
@@ -633,12 +701,13 @@ bool ToVec4(VtValue const &v, GfVec4f *out)
 }
 
 // Compiles the shading graphs behind material inputs that the texture and
-// constant path can't express (MaterialX math, several textures, primvars)
+// constant path can't express (MaterialX math, several textures, primvars,
+// noise)
 // into m->program, mesh.frag's per-pixel interpreter (scene.h). Values are
 // an op's result or a constant; ops collect with one virtual register each
 // and get the program's kRegisters in Finish.
 // ponytail: an input's graph is either compiled whole or not at all (a
-// node HdVk lacks, e.g. noise, leaves the input at its constant).
+// node HdVk lacks, e.g. hextiledimage, leaves the input at its constant).
 class GraphCompiler
 {
 public:
@@ -662,8 +731,12 @@ public:
         const TfToken uv = *_uvPrimvar;
         _failed.clear();
         std::optional<Value> v = _Input(node, name, 0);
-        // A normal is a tangent-space one only out of a normalmap.
-        if (v && target == P::kNormal && !(v->op && _ops[v->index].op == P::kNormalMap)) {
+        // A normal is a tangent-space one only out of a normalmap or a
+        // texture (UsdPreviewSurface's, decoded by its scale and bias).
+        // ponytail: the tangent frame follows the mesh's uv set, whichever
+        // set the normal map reads.
+        if (v && target == P::kNormal &&
+            !(v->op && (_ops[v->index].op == P::kNormalMap || _ops[v->index].op == P::kImage))) {
             v.reset();
         }
         if (v && weight != 1.0f) {
@@ -817,18 +890,33 @@ private:
         return _Const(_Parameter(node, input));
     }
 
-    // Texture coordinates: a connected input, else the mesh's uv set.
+    // Texture coordinates: a connected input, else "st".
     std::optional<Value> _Uv(HdMaterialNode2 const &node, TfToken const &input, int depth)
     {
         return _Connected(node, input) ? _Input(node, input, depth) : std::optional<Value>(_Texcoord(_tokens->st));
     }
 
-    Value _Texcoord(TfToken const &primvar)
+    // A uv set: the mesh's (kTexcoord) if it is the material's, the first
+    // one read, else a primvar like any other (the mesh packs it per
+    // vertex), (0, 0) or `fallback` where missing.
+    Value _Texcoord(TfToken const &primvar, std::optional<Value> fallback = std::nullopt)
     {
         if (_uvPrimvar->IsEmpty()) {
             *_uvPrimvar = primvar;
         }
-        return _Emit(P::kTexcoord, {});
+        if (primvar == *_uvPrimvar) {
+            return _Emit(P::kTexcoord, {});
+        }
+        return _Primvar(primvar, fallback ? *fallback : _Const(GfVec4f(0.0f)));
+    }
+
+    Value _Primvar(TfToken const &name, Value fallback)
+    {
+        auto slot = std::find(_p.primvars.begin(), _p.primvars.end(), name.GetString());
+        if (slot == _p.primvars.end()) {
+            slot = _p.primvars.insert(slot, name.GetString());
+        }
+        return _Emit(P::kPrimvar, {fallback}, uint32_t(slot - _p.primvars.begin()));
     }
 
     std::optional<Value> _Node(SdfPath const &path, TfToken const &output, int depth)
@@ -961,18 +1049,11 @@ private:
             if (name == _tokens->displayColor) {
                 return _Emit(P::kDisplayColor, {});
             }
-            if (Components(k.type) == 2 && (name == _tokens->st || name == *_uvPrimvar)) {
-                return _Texcoord(name);
-            }
             const std::optional<Value> fallback = in(k.name == "geompropvalue" ? "default" : "fallback");
             if (!fallback) {
                 return std::nullopt;
             }
-            auto slot = std::find(_p.primvars.begin(), _p.primvars.end(), name.GetString());
-            if (slot == _p.primvars.end()) {
-                slot = _p.primvars.insert(slot, name.GetString());
-            }
-            return _Emit(P::kPrimvar, {*fallback}, uint32_t(slot - _p.primvars.begin()));
+            return Components(k.type) == 2 ? _Texcoord(name, fallback) : _Primvar(name, *fallback);
         }
         if (k.name == "image" || k.name == "tiledimage" || k.name == "UsdUVTexture") {
             const bool preview = k.name == "UsdUVTexture";
@@ -1003,6 +1084,58 @@ private:
             }
             _p.images.push_back(std::move(ref));
             return _Emit(P::kImage, {*uv, *fallback}, uint32_t(_p.images.size() - 1));
+        }
+        // MaterialX procedurals (shaders/noise.glsl): the 2d ones at texture
+        // coordinates, the 3d ones at a position, the surface point in
+        // object space unless connected (their nodedefs' defaultgeomprops).
+        static const std::set<std::string> noises = {"noise2d",     "noise3d",     "fractal2d",     "fractal3d",
+                                                     "cellnoise2d", "cellnoise3d", "worleynoise2d", "worleynoise3d"};
+        if (noises.count(k.name)) {
+            const uint32_t dims = k.name.back() == 'd' && k.name[k.name.size() - 2] == '2' ? 2 : 3;
+            const uint32_t components = k.name.rfind("cellnoise", 0) == 0 ? 1 : Components(k.type);
+            const TfToken position("position");
+            const std::optional<Value> p = dims == 2              ? _Uv(n, _tokens->texcoord, depth)
+                                           : _Connected(n, position) ? _Input(n, position, depth)
+                                                                     : std::optional<Value>(_Emit(P::kPosition, {}, 0));
+            if (!p) {
+                return std::nullopt;
+            }
+            std::vector<const char *> inputs;
+            P::Op op = P::kCellNoise;
+            if (k.name.rfind("noise", 0) == 0) {
+                op = P::kNoise;
+                inputs = {"amplitude", "pivot"};
+            } else if (k.name.rfind("fractal", 0) == 0) {
+                op = P::kFractal;
+                inputs = {"amplitude", "octaves", "lacunarity", "diminish"};
+            } else if (k.name.rfind("worley", 0) == 0) {
+                op = P::kWorleyNoise;
+                inputs = {"jitter", "style"};
+            }
+            std::vector<Value> args = {*p};
+            for (const char *name : inputs) {
+                const std::optional<Value> v = in(name);
+                if (!v) {
+                    return std::nullopt;
+                }
+                args.push_back(*v);
+            }
+            if (op == P::kFractal) {  // (octaves, lacunarity, diminish) in one operand
+                const Value params = _Emit(P::kCombine, {args[2], args[3], args[4]});
+                args.resize(2);
+                args.push_back(params);
+            }
+            return _Emit(op, std::move(args), dims, components);
+        }
+        if (k.name == "position" || k.name == "normal") {
+            TfToken token;
+            std::string space;
+            if (Read(n.parameters, TfToken("space"), &token)) {
+                space = token.GetString();
+            } else {
+                Read(n.parameters, TfToken("space"), &space);
+            }
+            return _Emit(k.name == "position" ? P::kPosition : P::kGeomNormal, {}, space == "world" ? 1 : 0);
         }
         if (k.name == "place2d" || k.name == "UsdTransform2d") {
             for (const char *p : {"pivot", "scale", "rotate", "offset", "rotation", "translation"}) {
@@ -1058,10 +1191,91 @@ private:
     std::string _failed;
 };
 
-// ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, transmission, subsurface, ior and displacement.
-// *uvPrimvar: the primvar the textures' coordinates come from.
-// ponytail: one per material (meshes carry one uv set); a second warns.
+// A colour input in linear Rec.709 (converted from the colour space it was
+// authored in), else `color`.
+GfVec3f ReadColor(std::map<TfToken, VtValue> const &params, TfToken const &name, GfVec3f color)
+{
+    if (Read(params, name, &color)) {
+        const TfToken colorSpace = ParameterColorSpace(params, name);
+        if (NeedsConversion(colorSpace)) {
+            color = GfColor(GfColor(color, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+        }
+    }
+    return color;
+}
+
+// F0 of a dielectric of index `ior` in air.
+float IorToF0(float ior)
+{
+    const float r = (ior - 1.0f) / (ior + 1.0f);
+    return r * r;
+}
+
+// The lobes beyond the metallic base (shaders/brdf.glsl), as constants:
+// unauthored inputs take the surface's defaults, connected ones too.
+void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
+{
+    auto const &p = surface.parameters;
+    const TfToken &id = surface.nodeTypeId;
+    auto color = [&](TfToken const &name, float *out) {
+        const GfVec3f c = ReadColor(p, name, GfVec3f(out[0], out[1], out[2]));
+        std::copy(c.data(), c.data() + 3, out);
+    };
+    if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
+            m->specularWorkflow = true;
+            color(_tokens->specularColor, m->specularColor);
+            m->metallic = 0.0f;  // the workflow ignores it
+            m->metallicTex = vkr::TextureRef();
+        }
+        // The coat's F0 from the surface's ior, as Storm.
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+    } else if (id == _tokens->ND_standard_surface_surfaceshader) {
+        m->coat = ReadOr(p, _tokens->coat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->sheen_roughness, 0.3f);
+        color(_tokens->sheen_color, m->sheenColor);
+        // Its thin film is on whenever it has a thickness (nm).
+        m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
+        m->thinFilm = m->thinFilmThickness > 0.0f ? 1.0f : 0.0f;
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
+        m->anisotropy = ReadOr(p, _tokens->specular_anisotropy, 0.0f);
+        m->anisotropyRotation = ReadOr(p, _tokens->specular_rotation, 0.0f);
+    } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
+        // ponytail: coat_darkening isn't modelled (the coat's albedo only);
+        // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
+        // under the coat rather than over it.
+        m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->fuzz_weight, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->fuzz_roughness, 0.5f);
+        color(_tokens->fuzz_color, m->sheenColor);
+        m->thinFilm = ReadOr(p, _tokens->thin_film_weight, 0.0f);
+        m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
+        m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
+        m->openPbrAnisotropy = true;
+    }
+    // NPR toon has no USD standard: Eldr's own inputs on any surface it
+    // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
+    // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
+    // width, in bands).
+    m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
+    m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
+}
+
+// ponytail: metallic and specular workflows; the lobes ReadLobes reads.
+// Ignored for now: transmission, subsurface, ior and displacement.
+// *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
+// reads; textures on other sets are read by the program, through primvars.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
@@ -1115,13 +1329,12 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         ReadTexture(net, &surface, name, textures, m, ref, &primvar);
         if (ref->texture && uvPrimvar->IsEmpty()) {
             *uvPrimvar = primvar;
-        } else if (ref->texture && primvar != *uvPrimvar) {
-            TF_WARN("HdVk: a material reads uv sets '%s' and '%s'; all textures use '%s'", uvPrimvar->GetText(),
-                    primvar.GetText(), uvPrimvar->GetText());
         }
-        for (int i = 0; ref->texture && i < 3; ++i) {
-            ref->scale[i] *= weight;
-            ref->bias[i] *= weight;
+        // A texture on another uv set than the material's goes to the
+        // program, which reads that set as a primvar.
+        vkr::TextureRef otherUvSet;
+        if (ref->texture && primvar != *uvPrimvar) {
+            std::swap(otherUvSet, *ref);
         }
         const auto c = surface.inputConnections.find(name);
         if (!ref->texture && c != surface.inputConnections.end() && !c->second.empty() &&
@@ -1130,10 +1343,19 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
             static std::mutex mutex;
             static std::set<std::string> warned;
             std::lock_guard<std::mutex> lock(mutex);
-            if (warned.insert(graph.Failed()).second) {
+            if (otherUvSet.texture) {
+                std::swap(otherUvSet, *ref);
+                TF_WARN("HdVk: a material reads uv sets '%s' and '%s' but can't run a graph for '%s'; its "
+                        "textures read '%s'", uvPrimvar->GetText(), primvar.GetText(), name.GetText(),
+                        uvPrimvar->GetText());
+            } else if (warned.insert(graph.Failed()).second) {
                 TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
                         graph.Failed().c_str());
             }
+        }
+        for (int i = 0; ref->texture && i < 3; ++i) {
+            ref->scale[i] *= weight;
+            ref->bias[i] *= weight;
         }
     };
 
@@ -1175,6 +1397,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
     }
+    ReadLobes(surface, m);
 }
 
 } // namespace
