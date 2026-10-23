@@ -10,12 +10,15 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 
 # GPU passes in the order HdVk runs them (renderer.cpp's pass names).
 PASSES = [
+    ("probeCapture", "Reflection probe capture"),
+    ("planarReflection", "Planar reflection"),
     ("culling", "Culling, skinning"),
     ("lightClusters", "Light clusters"),
     ("sunShadows", "Sun shadows"),
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
+    ("fog", "Volumetric fog"),
     ("accelerationStructures", "Acceleration structures (TLAS)"),
     ("giProbes", "Global illumination probes"),
     ("rayTracing", "Ray-traced shadows, reflections"),

@@ -26,7 +26,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (st)
     ((riMatte, "ri:attributes:Ri:Matte"))
-    ((karmaHoldout, "karma:object:holdoutmode")));
+    ((karmaHoldout, "karma:object:holdoutmode"))
+    ((planarReflection, "hdvk:planarReflection")));
 
 // Finds a primvar's interpolation; false if the prim doesn't have it. An
 // empty name finds the first texture coordinate (float2) primvar.
@@ -313,6 +314,14 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             geometryDirty = true;
         }
         _programPrimvarNames = programNames;
+    }
+    // Planar reflections: primvars:hdvk:planarReflection (bool or int)
+    // makes this mesh the mirror.
+    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->planarReflection)) {
+        const VtValue flag = sceneDelegate->Get(id, _tokens->planarReflection);
+        m.planarReflection = flag.IsHolding<bool>() ? flag.UncheckedGet<bool>()
+                           : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
+                                                    : false;
     }
     if (geometryDirty) {
         _Flatten();

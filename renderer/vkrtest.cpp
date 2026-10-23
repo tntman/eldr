@@ -2079,6 +2079,238 @@ int main()
                        translucent.At(16, 32, 3) == 1.0f,
                    "translucent holdout: what's behind it unchanged");
         }
+
+        {
+            // Cylinder light along x (half length 0.3, radius 0.05) 0.5 in
+            // front of a white, fully rough wall: its diffuse light against
+            // the integral over its side (the caps don't emit), in front of
+            // it, beside it and past its end.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Light *tube = AddSphereLight(scene, 0, 0, 0, 0.05f, 4.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.3f;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            auto expected = [](int px, int py) {
+                const float px3[3] = {PixelNdc(px), PixelNdc(py), 0.5f};
+                const int nx = 300, nphi = 128;
+                const float r = 0.05f, h = 0.3f, dx = 2 * h / nx, dphi = 2 * 3.14159265f / nphi;
+                double sum = 0;
+                for (int i = 0; i < nx; ++i) {
+                    for (int j = 0; j < nphi; ++j) {
+                        const float phi = (j + 0.5f) * dphi, c = std::cos(phi), s = std::sin(phi);
+                        const float w[3] = {-h + (i + 0.5f) * dx - px3[0], r * c - px3[1], r * s - px3[2]};
+                        const float dist = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+                        const float cosWall = -w[2] / dist, cosLight = -(c * w[1] + s * w[2]) / dist;
+                        if (cosWall > 0 && cosLight > 0) {
+                            sum += 4.0 * cosWall * cosLight / (dist * dist) * r * dphi * dx;
+                        }
+                    }
+                }
+                return float(sum / 3.14159265);
+            };
+            // (Specular at roughness 1 adds a few percent at grazing angles.)
+            for (auto [px, py, tolerance] : {std::tuple{32, 32, 0.03f}, {32, 50, 0.03f}, {60, 32, 0.07f}}) {
+                Expect(std::abs(img.At(px, py, 0) / expected(px, py) - 1.0f) < tolerance,
+                       "cylinder light: diffuse matches the integral over its side");
+            }
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.clusteredLights = false;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) < 1e-3f,
+                   "cylinder light: clusters reach as far as the light does");
+            tube->point = true;  // treatAsLine: a thinner highlight, the same diffuse
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / img.At(32, 32, 0) - 1.0f) < 0.02f,
+                   "cylinder light: treatAsLine keeps its power");
+            scene.RemoveLight(tube);
+
+            // Shadow from the atlas (cube faces): the setup of the local light
+            // shadow test, with a short tube along y.
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            tube = AddSphereLight(scene, -0.6f, 0, 0, 0.01f, 80.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0;
+            tube->halfWidth[1] = 0.05f;
+            tube->castShadows = true;
+            scene.Commit();
+            const Image shadowed = Render(renderer, scene);
+            Expect(shadowed.At(32, 32, 0) < 0.3f * shadowed.At(41, 32, 0) && shadowed.At(41, 32, 0) > 0.01f,
+                   "cylinder light shadow (atlas cube faces)");
+        }
+
+        {
+            // Soft sun shadows: the sun shadow test's occluder (one unit above
+            // the ground along z, light at 45 degrees). A 10 degree sun spreads
+            // the shadow's right edge (around x = -0.75, pixel 8) over a
+            // penumbra of about 1.4 * tan(5 degrees) each side, ~4 pixels; a
+            // point sun or the settings off keep it hard. The tilted ground
+            // stays lit beside it (the taps follow the receiver's plane).
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);
+            auto penumbra = [&](float angle, bool soft, bool softSun, float *lit) {
+                sun->angle = angle;
+                scene.Commit();
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.softShadows = soft;
+                frame.softSunShadows = softSun;
+                const Image img = Render(renderer, scene, frame);
+                *lit = img.At(51, 32, 0);
+                int partial = 0;
+                for (int x = 0; x < 24; ++x) {
+                    const float v = img.At(x, 32, 0) / *lit;
+                    partial += v > 0.1f && v < 0.9f;
+                }
+                return partial;
+            };
+            float lit = 0, hardLit = 0, unused = 0;
+            const int hard = penumbra(0.0f, true, true, &hardLit), soft = penumbra(10.0f, true, true, &lit);
+            Expect(soft >= hard + 4, "soft sun shadows: a 10 degree sun has a penumbra");
+            Expect(std::abs(lit / hardLit - 1.0f) < 0.02f, "soft sun shadows: no self-shadowing on a tilted receiver");
+            Expect(penumbra(10.0f, true, false, &unused) <= hard + 1, "Frame::softSunShadows off: hard sun shadows");
+            Expect(penumbra(10.0f, false, true, &unused) <= hard + 1, "Frame::softShadows off: hard sun shadows");
+        }
+
+        {
+            // Volumetric fog, through PerspectiveFrame (camera at the origin
+            // looking down -z): an emitter 4 away behind uniform fog of
+            // density 0.2 keeps exp(-0.8) of its light; a black backdrop
+            // shows the light the fog scatters from a sun behind the camera
+            // (isotropic phase, so E / 4 pi (1 - exp(-0.8)) along the axis);
+            // half of the view lies in the shadow of a horizontal plane
+            // above it, where the fog stays dark.
+            vkr::Scene scene(&device);
+            vkr::Mesh *backdrop = AddEmitter(scene, -10, -10, 10, 10, -4, 1.0f);
+            std::fill(backdrop->material->specular, backdrop->material->specular + 3, 0.0f);  // no highlight
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            frame.fog = true;
+            frame.fogDensity = 0.2f;
+            frame.fogAnisotropy = 0.0f;
+            scene.Commit();
+            const float transmitted = Render(renderer, scene, frame).At(32, 32, 0);
+            Expect(std::abs(transmitted - std::exp(-0.8f)) < 0.01f, "fog: transmittance exp(-density * distance)");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::any_of(renderer.GetStats().passMs.begin(), renderer.GetStats().passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "fog") == 0; }),
+                   "fog: its own pass");
+            frame.fog = false;
+            Expect(Render(renderer, scene, frame).At(32, 32, 0) == 1.0f &&
+                       std::none_of(renderer.GetStats().passMs.begin(), renderer.GetStats().passMs.end(),
+                                    [](const auto &p) { return std::strcmp(p.first, "fog") == 0; }),
+                   "Frame::fog off: no fog, no pass");
+            frame.fog = true;
+
+            backdrop->material->emissive[0] = backdrop->material->emissive[1] = backdrop->material->emissive[2] = 0;
+            vkr::Light *sun = AddLight(scene, 0, 0, 1);
+            std::fill(sun->irradiance, sun->irradiance + 3, 4.0f * 3.14159265f);  // E / 4 pi = 1
+            scene.Commit();
+            const float scattered = Render(renderer, scene, frame).At(32, 32, 0);
+            Expect(std::abs(scattered - (1.0f - std::exp(-0.8f))) < 0.02f, "fog: in-scattered sunlight");
+
+            // Light from above (+y), a plane at y = 0.5 over x < 0.
+            sun->direction[1] = 1;
+            sun->direction[2] = 0;
+            sun->castShadows = true;
+            vkr::Mesh *roof = scene.AddMesh();
+            roof->points = {-10, 0.5f, -0.05f, 0, 0.5f, -0.05f, 0, 0.5f, -10, -10, 0.5f, -0.05f, 0, 0.5f, -10, -10, 0.5f, -10};
+            roof->material = backdrop->material;
+            scene.Commit();
+            Image img = Render(renderer, scene, frame);
+            Expect(img.At(12, 32, 0) < 0.3f * img.At(52, 32, 0) && img.At(52, 32, 0) > 0.2f,
+                   "fog: the sun's shadow volumes stay dark");
+
+            // Height fog: thinner upwards (y), so less light scatters at the
+            // top of the view than at the bottom.
+            roof->visible = false;
+            frame.fogHeightFalloff = 2.0f;
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            Expect(img.At(32, 60, 0) < 0.7f * img.At(32, 4, 0), "fog: height falloff");
+        }
+
+        {
+            // Reflection probe: a mirror facing the camera (IdentityFrame,
+            // shaded as seen from z = -2) reflects an emitter behind the
+            // camera, out of view, at x -1..-0.2. The probe at the bounds'
+            // centre sees it. The mirror's ray at x reaches it at 2.4 x, so
+            // it shows at x = -0.27 (pixel 23) but not at -0.61 (pixel 12),
+            // where the probe's own ray in that direction would meet it:
+            // parallax correction.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            AddEmitter(scene, -1, -1, -0.2f, 1, -3, 2.0f);
+            vkr::Dome *dome = scene.AddDome();  // black, but image-based lighting is on
+            std::fill(dome->radiance, dome->radiance + 3, 0.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image off = Render(renderer, scene, frame);
+            frame.reflectionProbe = true;
+            const Image on = Render(renderer, scene, frame);
+            Expect(off.At(23, 32, 0) < 0.01f, "no probe: the mirror shows the black dome");
+            Expect(on.At(23, 32, 0) > 1.6f && on.At(48, 32, 0) < 0.1f && renderer.IsConverged(),
+                   "reflection probe: the emitter behind the camera");
+            Expect(on.At(12, 32, 0) < 0.1f, "reflection probe: parallax corrected");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::strcmp(renderer.GetStats().passMs.front().first, "probeCapture") == 0,
+                   "reflection probe: its capture is a pass");
+            const Image again = Render(renderer, scene, frame);
+            Expect(MaxDifference(again, on) < 1e-3f && (renderer.GetStats().passMs.empty() ||
+                                                        std::strcmp(renderer.GetStats().passMs.front().first,
+                                                                    "probeCapture") != 0),
+                   "reflection probe: captured once for a still scene");
+            frame.imageBasedLighting = false;
+            Expect(Render(renderer, scene, frame).At(23, 32, 0) < 0.01f,
+                   "Frame::imageBasedLighting off: no probe either");
+        }
+
+        {
+            // Planar reflections through PerspectiveFrame: a chrome floor at
+            // y = -0.5 reflects an emitter standing behind it (y 0.6..2,
+            // z = -4), not a black panel hidden under it (clipped at the
+            // mirror). The view ray at pixel row 16 meets the floor at depth
+            // 1 and, reflected, the emitter at y = 1.
+            vkr::Scene scene(&device);
+            vkr::Mesh *floor = scene.AddMesh();
+            floor->points = {-3, -0.5f, -0.1f, 3, -0.5f, -0.1f, 3, -0.5f, -10, -3, -0.5f, -0.1f, 3, -0.5f, -10,
+                             -3, -0.5f, -10};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0.1f;
+            floor->material = chrome;
+            AddEmitter(scene, -2, 0.6f, 2, 2, -4, 1.0f);
+            // Black, just under the floor: mirrored, it would stand in front
+            // of the floor where row 16 looks.
+            AddEmitter(scene, -2, -1.2f, 2, -0.55f, -0.8f, 0.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            const float off = Render(renderer, scene, frame).At(32, 16, 0);
+            frame.planarReflections = true;
+            const Image on = Render(renderer, scene, frame);
+            Expect(off < 0.01f && on.At(32, 16, 0) > 0.8f, "planar reflection of what stands on the mirror");
+            Expect(on.At(32, 26, 0) < 0.05f, "planar reflection: the floor's far part reflects the empty sky");
+            Expect(renderer.GetStats().passMs.size() > 0 &&
+                       std::strcmp(renderer.GetStats().passMs.front().first, "planarReflection") == 0,
+                   "planar reflection: its render is a pass");
+            chrome->roughness = 0.5f;  // no longer glossy: no mirror
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflection: only glossy floors");
+            floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) > 0.1f, "planar reflection: a flagged mirror");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

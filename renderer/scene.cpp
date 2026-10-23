@@ -1,5 +1,7 @@
 ﻿#include "scene.h"
 
+#include "vkmath.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -49,7 +51,7 @@ static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
-    float axis[4];       // emission axis; w: sphere radius
+    float axis[4];       // emission axis; w: sphere/cylinder radius, distant: tan of the sun's angular radius
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
@@ -549,6 +551,39 @@ void Scene::_UploadGeometry(Mesh &m)
                        std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
+    }
+    // Planar reflections: is the mesh flat? Its first proper triangle,
+    // and every point within a thousandth of its size of that plane.
+    m._flat = false;
+    if (!skinned && m.blendRanges.empty()) {
+        auto point = [&](size_t corner) {
+            const size_t e = indexed ? m.indices[corner] : corner;
+            return Vec3{m.points[e * 3], m.points[e * 3 + 1], m.points[e * 3 + 2]};
+        };
+        float lo[3] = {m.points[0], m.points[1], m.points[2]}, hi[3] = {lo[0], lo[1], lo[2]};
+        for (size_t i = 0; i < m.points.size(); ++i) {
+            lo[i % 3] = std::min(lo[i % 3], m.points[i]);
+            hi[i % 3] = std::max(hi[i % 3], m.points[i]);
+        }
+        const float size = Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+        for (size_t t = 0; t < corners && !m._flat; t += 3) {
+            const Vec3 a = point(t), b = point(t + 1), c = point(t + 2);
+            const Vec3 n = Cross(b - a, c - a);
+            if (Length(n) > 1e-6f * size * size) {
+                const Vec3 u = Normalize(n);
+                m._flat = true;
+                for (size_t k = 0; k < m.points.size() && m._flat; k += 3) {
+                    m._flat = std::abs(Dot(Vec3{m.points[k], m.points[k + 1], m.points[k + 2]} - a, u)) <= 1e-3f * size;
+                }
+                const Vec3 tri[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) {
+                    m._flatTriangle[k * 3] = tri[k].x;
+                    m._flatTriangle[k * 3 + 1] = tri[k].y;
+                    m._flatTriangle[k * 3 + 2] = tri[k].z;
+                }
+                break;
+            }
+        }
     }
     // Vertex-rate primvars: the first that fit in four components.
     m._primvarComponents.assign(m.primvars.size(), kNone);
@@ -1433,6 +1468,46 @@ void Scene::Commit()
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
 
+    // Planar reflections' mirror: a flagged flat mesh, else the largest
+    // glossy one (its world bounds' diagonal) spanning a third of the scene.
+    // ponytail: one mirror, from its first instance.
+    _gpu.mirrorSlot = kNone;
+    const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
+    float mirrorScore = 0.0f;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
+            m.transforms.size() < 16) {
+            continue;
+        }
+        const Material *mat = m.material.get();
+        const bool glossy = mat && mat->roughness <= 0.3f && !mat->roughnessTex.texture &&
+                            !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
+        const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
+                                       m._worldMax[2] - m._worldMin[2]});
+        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
+        if (score <= mirrorScore) {
+            continue;
+        }
+        const float *x = m.transforms.data();  // row-vector order
+        Vec3 p[3];
+        for (int k = 0; k < 3; ++k) {
+            const float *t = &m._flatTriangle[k * 3];
+            p[k] = {t[0] * x[0] + t[1] * x[4] + t[2] * x[8] + x[12], t[0] * x[1] + t[1] * x[5] + t[2] * x[9] + x[13],
+                    t[0] * x[2] + t[1] * x[6] + t[2] * x[10] + x[14]};
+        }
+        const Vec3 n = Normalize(Cross(p[1] - p[0], p[2] - p[0]));
+        if (Dot(n, n) < 0.5f) {
+            continue;
+        }
+        mirrorScore = score;
+        _gpu.mirrorSlot = uint32_t(slot);
+        const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
+        std::copy(plane, plane + 4, _gpu.mirrorPlane);
+        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
+        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+    }
+
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(materials.begin(), materials.end(), static_cast<GpuMaterial *>(_materials.mapped));
@@ -1485,13 +1560,14 @@ void Scene::Commit()
                 continue;
             }
             const bool sphere = l->type == Light::Type::Sphere;
+            const bool cylinder = l->type == Light::Type::Cylinder;
             std::copy(l->position, l->position + 3, g.position);
-            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : 3.0f;
+            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : cylinder ? 4.0f : 3.0f;
             std::copy(l->radiance, l->radiance + 3, g.color);
             std::copy(l->direction, l->direction + 3, g.axis);
-            g.axis[3] = sphere ? l->radius : 0.0f;
+            g.axis[3] = sphere || cylinder ? l->radius : 0.0f;
             std::copy(l->halfWidth, l->halfWidth + 3, g.halfWidth);
-            g.halfWidth[3] = sphere && !l->point ? l->radius : 0.0f;
+            g.halfWidth[3] = (sphere || cylinder) && !l->point ? l->radius : 0.0f;
             std::copy(l->halfHeight, l->halfHeight + 3, g.halfHeight);
             const float cone = l->coneAngle * 0.0174532925f;
             g.shaping[0] = cone * (1.0f - std::clamp(l->coneSoftness, 0.0f, 1.0f));
@@ -1511,6 +1587,14 @@ void Scene::Commit()
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;
                     c.size = l->point ? 0.0f : l->radius;
+                } else if (cylinder) {
+                    // Seen from the side it is a 2r x length rect; casters
+                    // can come within r / sqrt 2 of the center (radius 0).
+                    const float h = std::sqrt(l->halfWidth[0] * l->halfWidth[0] + l->halfWidth[1] * l->halfWidth[1] +
+                                              l->halfWidth[2] * l->halfWidth[2]);
+                    c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
+                    c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
+                    c.extent = h;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];
@@ -1598,6 +1682,23 @@ void Scene::Commit()
         const int32_t index = _TextureIndex((*dome)->texture.get());
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
+
+    // What lighting depends on besides geometry (FNV-1a, a word at a time).
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t bytes) {
+        const auto *b = static_cast<const uint8_t *>(data);
+        for (size_t i = 0; i < bytes; i += 8) {
+            uint64_t word = 0;
+            std::memcpy(&word, b + i, std::min<size_t>(8, bytes - i));
+            hash = (hash ^ word) * 1099511628211ull;
+        }
+    };
+    mix(lights, (lightCount + localLightCount) * sizeof(GpuLight));
+    mix(materials.data(), materials.size() * sizeof(GpuMaterial));
+    mix(&_gpu.environment, sizeof(_gpu.environment));
+    mix(_gpu.environmentRadiance, sizeof(_gpu.environmentRadiance));
+    mix(_gpu.environmentWorldToLocal, sizeof(_gpu.environmentWorldToLocal));
+    _gpu.lightingHash = hash;
 
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;

@@ -100,10 +100,12 @@ vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
         dist = along - sqrt(max(along * along - d * d + r * r, 0.0));
         return dir;
     }
-    vec3 q = type == kLightRect ? light.position.xyz + (2.0 * u.x - 1.0) * light.halfWidth.xyz +
-                                      (2.0 * u.y - 1.0) * light.halfHeight.xyz
-                                : light.position.xyz + sqrt(u.x) * (cos(2.0 * PI * u.y) * light.halfWidth.xyz +
-                                                                    sin(2.0 * PI * u.y) * light.halfHeight.xyz);
+    // Cylinders: a point of the axis (their radius is small beside it).
+    vec3 q = type == kLightCylinder ? light.position.xyz + (2.0 * u.x - 1.0) * light.halfWidth.xyz
+           : type == kLightRect     ? light.position.xyz + (2.0 * u.x - 1.0) * light.halfWidth.xyz +
+                                          (2.0 * u.y - 1.0) * light.halfHeight.xyz
+                                    : light.position.xyz + sqrt(u.x) * (cos(2.0 * PI * u.y) * light.halfWidth.xyz +
+                                                                        sin(2.0 * PI * u.y) * light.halfHeight.xyz);
     vec3 toPoint = q - p;
     dist = length(toPoint);
     return toPoint / max(dist, 1e-20);
@@ -176,13 +178,16 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
         float NoL = dot(n, l);
         float cosLight = -dot(l, light.axis.xyz);
         uint type = uint(light.position.w);
-        if (NoL <= 0.0 || (type != kLightSphere && cosLight <= 0.0)) {
+        if (NoL <= 0.0 || (type != kLightSphere && type != kLightCylinder && cosLight <= 0.0)) {
             continue;
         }
-        // Intensity towards p: radiance times projected area.
-        float area = type == kLightSphere ? PI * light.axis.w * light.axis.w
-                                          : (type == kLightRect ? 4.0 : PI) *
-                                                length(cross(light.halfWidth.xyz, light.halfHeight.xyz)) * cosLight;
+        // Intensity towards p: radiance times projected area (a cylinder's
+        // side: 2r x length, foreshortened along its axis).
+        float h = length(light.halfWidth.xyz);
+        float area = type == kLightSphere   ? PI * light.axis.w * light.axis.w
+                   : type == kLightCylinder ? 4.0 * light.axis.w * h * length(cross(light.halfWidth.xyz / max(h, 1e-8), l))
+                                            : (type == kLightRect ? 4.0 : PI) *
+                                                  length(cross(light.halfWidth.xyz, light.halfHeight.xyz)) * cosLight;
         float window = clamp(1.0 - pow(sqrt(d2) / LightRange(light), 4.0), 0.0, 1.0);
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)

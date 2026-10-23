@@ -79,7 +79,22 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
     ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
-    ((holdouts, "hdvk:holdouts"))
+    ((holdouts, "hdvk:holdouts")) \
+    ((softSunShadows, "hdvk:softSunShadows"))                \
+    ((fog, "hdvk:fog"))                                      \
+    ((fogDensity, "hdvk:fogDensity"))                        \
+    ((fogHeight, "hdvk:fogHeight"))                          \
+    ((fogHeightFalloff, "hdvk:fogHeightFalloff"))            \
+    ((fogAnisotropy, "hdvk:fogAnisotropy"))                  \
+    ((fogColor, "hdvk:fogColor"))                            \
+    ((fogMaxDistance, "hdvk:fogMaxDistance"))                \
+    ((fogGridSize, "hdvk:fogGridSize"))                      \
+    ((fogZUp, "hdvk:fogZUp"))                                \
+    ((reflectionProbe, "hdvk:reflectionProbe"))              \
+    ((probeResolution, "hdvk:probeResolution"))              \
+    ((probePosition, "hdvk:probePosition"))                  \
+    ((planarReflections, "hdvk:planarReflections"))          \
+    ((planarScale, "hdvk:planarScale"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

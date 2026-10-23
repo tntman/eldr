@@ -24,6 +24,10 @@ struct EnvironmentMaps {
 // Null means a uniform environment of radiance 1.
 EnvironmentMaps BuildEnvironment(const Texture *latlong);
 
+// The same from a cube: `faces` is RGBA floats (alpha ignored) in the
+// layout of `data`'s level 0, `size` a power of two (reflection probes).
+EnvironmentMaps BuildEnvironment(const float *faces, uint32_t size);
+
 // Split-sum DFG terms (A, B) with f0 * A + B = directional albedo, indexed by
 // (NoV, perceptual roughness). RG32F, size x size.
 std::vector<float> BuildBrdfLut(uint32_t size);

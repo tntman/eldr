@@ -313,10 +313,17 @@ struct Mesh {
     // Holdout (matte): drawn black with zero alpha, cut out of the image
     // but still hiding what's behind it and casting shadows.
     bool holdout = false;
+    // Planar reflections: make this (flat) mesh the mirror
+    // (primvars:hdvk:planarReflection), whatever its size and roughness.
+    bool planarReflection = false;
 
 private:
     friend class Scene;
     size_t _slot = 0;
+    // Planar reflections: all points on one plane, through this triangle
+    // (object space, three points).
+    bool _flat = false;
+    float _flatTriangle[9] = {};
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -349,16 +356,20 @@ private:
 // (intensity, exposure, color, temperature, normalize) into irradiance for
 // distant lights and the emitting surface's radiance for sphere/rect lights.
 struct Light {
-    enum class Type { Distant, Sphere, Rect, Disk };
+    enum class Type { Distant, Sphere, Rect, Disk, Cylinder };
     Type type = Type::Distant;
     float direction[3] = {0, 0, 1};      // distant: towards the light; sphere/rect: emission axis (light -Z)
     float irradiance[3] = {1, 1, 1};     // distant, linear RGB
     float radiance[3] = {1, 1, 1};       // sphere/rect, linear RGB
     float position[3] = {0, 0, 0};       // sphere/rect center
-    float halfWidth[3] = {0.5f, 0, 0};   // rect: center to the +X edge; disk: radius along X
+    // Rect: center to the +X edge; disk: radius along X; cylinder: center to
+    // the +X end of its axis (half its length).
+    float halfWidth[3] = {0.5f, 0, 0};
     float halfHeight[3] = {0, 0.5f, 0};  // rect: center to the +Y edge; disk: radius along Y
-    float radius = 0.5f;                 // sphere
-    bool point = false;                  // sphere: shade as a point (treatAsPoint), same power
+    float radius = 0.5f;                 // sphere, cylinder
+    // Sphere: shade as a point (treatAsPoint); cylinder: as a line
+    // (treatAsLine). Same power, only the highlight loses the radius.
+    bool point = false;
     float coneAngle = 180.0f;            // UsdLuxShapingAPI around the emission axis, degrees
     float coneSoftness = 0.0f;
     float focus = 0.0f;
@@ -367,7 +378,7 @@ struct Light {
     float specular = 1.0f;
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
-    float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced shadows)
+    float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
 
 private:
     friend class Scene;
@@ -604,6 +615,19 @@ public:
         // their pipeline variants), shaded again by the subsurface pass.
         std::vector<uint32_t> subsurface;
         std::vector<uint8_t> subsurfaceVariant;
+
+        // Volumetric fog, reflection probes: changes with what lighting
+        // depends on besides geometry (the light and material tables, the
+        // dome), so their histories and captures know when to start over.
+        uint64_t lightingHash = 0;
+        // Planar reflections: the mirror, the flat mesh flagged by
+        // Mesh::planarReflection or else the largest flat, glossy (roughness
+        // up to 0.3), opaque one at least a third of the scene's size; kNone:
+        // none. Its first instance's plane (unit normal n, n . x + d = 0) and
+        // world bounds.
+        uint32_t mirrorSlot = kNone;
+        float mirrorPlane[4] = {};
+        float mirrorMin[3] = {}, mirrorMax[3] = {};
     };
     const Gpu &GetGpu() const { return _gpu; }
 

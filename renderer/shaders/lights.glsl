@@ -7,13 +7,14 @@
 #define CLUSTER_ACCESS readonly
 #endif
 
-const uint kLightSphere = 1u, kLightRect = 2u, kLightDisk = 3u;
+const uint kLightSphere = 1u, kLightRect = 2u, kLightDisk = 3u, kLightCylinder = 4u;
 
 struct Light {
     vec4 position;    // distant: direction to the light; else center. w: type
     vec4 color;       // distant: irradiance; else radiance of the emitting surface
-    vec4 axis;        // emission axis (light -Z); w: sphere radius, distant: half its angle (radians)
-    vec4 halfWidth;   // rect: center to the +X edge, disk: radius along X; w: sphere shading radius (0 = point)
+    vec4 axis;        // emission axis (light -Z); w: sphere/cylinder radius, distant: half its angle (radians)
+    vec4 halfWidth;   // rect: center to the +X edge, disk: radius along X, cylinder: center to the +X end;
+                      // w: sphere/cylinder shading radius (0 = point/line)
     vec4 halfHeight;  // rect: center to the +Y edge, disk: radius along Y; w: diffuse multiplier
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier
     vec4 focusTint;
@@ -38,6 +39,11 @@ float LightRange(Light light)
     if (uint(light.position.w) == kLightSphere) {
         // Reflected radiance L R^2 / d^2.
         return light.axis.w * sqrt(radiance / frame.clusters.w);
+    }
+    if (uint(light.position.w) == kLightCylinder) {
+        // Seen from the side: a 2r x 2h rect.
+        float h = length(light.halfWidth.xyz);
+        return sqrt(radiance * 4.0 * light.axis.w * h / (PI * frame.clusters.w)) + h;
     }
     // On-axis intensity of a Lambertian rect or disk is L * area.
     float area = (uint(light.position.w) == kLightRect ? 4.0 : PI) *

@@ -1,0 +1,40 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
+#include "fog.glsl"
+
+// Volumetric fog, one invocation per froxel column: accumulates the
+// injected slices front to back (Hillaire 2015's energy-conserving
+// integral over each slice), writing per slice the in-scattered light and
+// transmittance from the camera to its far side.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 47, rgba16f) uniform image3D fogImages[3];  // this frame's, last frame's, integrated
+
+vec3 Unproject(vec3 ndc)
+{
+    vec4 p = frame.invViewProj * vec4(ndc, 1.0);
+    return p.xyz / p.w;
+}
+
+void main()
+{
+    uvec2 id = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(id, frame.fogGrid.xy))) {
+        return;
+    }
+    vec2 ndc = (vec2(id) + 0.5) / vec2(frame.fogGrid.xy) * 2.0 - 1.0;
+    vec3 ray = Unproject(vec3(ndc, 0.0)) - Unproject(vec3(ndc, -1.0));
+    float stretch = length(ray) / max(dot(ray, frame.cameraForward.xyz), 1e-6);  // ray length per view depth
+    float slices = float(frame.fogGrid.z);
+    vec3 inscattered = vec3(0.0);
+    float transmittance = 1.0;
+    for (uint k = 0u; k < frame.fogGrid.z; ++k) {
+        vec4 s = imageLoad(fogImages[0], ivec3(id, k));
+        float thickness = (FogSliceDepth(float(k + 1u) / slices) - FogSliceDepth(float(k) / slices)) * stretch;
+        float sliceT = exp(-s.a * thickness);
+        inscattered += transmittance * (s.a > 1e-7 ? s.rgb * ((1.0 - sliceT) / s.a) : s.rgb * thickness);
+        transmittance *= sliceT;
+        imageStore(fogImages[2], ivec3(id, k), vec4(inscattered, transmittance));
+    }
+}

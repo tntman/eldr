@@ -14,7 +14,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdVkTextureCache;
 
 // UsdLux distant (also usdview's camera light, which Hydra hands non-Storm
-// renderers as a distantLight), dome, sphere, rect and disk lights.
+// renderers as a distantLight), dome, sphere, rect, disk and cylinder lights.
 class HdVkLight final : public HdLight
 {
 public:
