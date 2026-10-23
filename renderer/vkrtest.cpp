@@ -1184,6 +1184,66 @@ int main()
             Expect(std::abs(oit.At(48, 32, 0) - sorted.At(48, 32, 0)) < 1e-3f && oit.At(48, 32, 1) < 0.05f,
                    "OIT leaves pixels without translucency alone");
         }
+
+        {
+            // Refraction: a glass quad (transmission 1) turned 50 degrees
+            // about y, in front of a red (x < 0) and green (x > 0) wall seen
+            // through a perspective camera. An ior moves the colour edge,
+            // roughness blurs it, the transmission colour tints, and with
+            // Frame::refraction off the wall shows straight and untinted.
+            vkr::Scene scene(&device);
+            vkr::Mesh *left = AddEmitter(scene, -6, -6, 0, 6, -5, 1.0f);
+            left->material->emissive[1] = left->material->emissive[2] = 0;
+            vkr::Mesh *right = AddEmitter(scene, 0, -6, 6, 6, -5, 1.0f);
+            right->material->emissive[0] = right->material->emissive[2] = 0;
+            vkr::Mesh *glassQuad = AddQuad(scene, -1, -1, 1, 1, 0);
+            const float t = std::tan(50.0f * 3.14159265f / 180.0f);
+            for (size_t i = 0; i < glassQuad->points.size(); i += 3) {
+                glassQuad->points[i + 2] = -2.5f + glassQuad->points[i] * t;
+            }
+            auto glass = std::make_shared<vkr::Material>();
+            std::fill(glass->baseColor, glass->baseColor + 3, 1.0f);
+            glass->roughness = 0;
+            glass->transmission = 1;
+            glassQuad->material = glass;
+            auto edge = [&](const Image &img) {  // first pixel of row 32 more green than red
+                int x = 0;
+                while (x < 63 && img.At(x, 32, 1) <= img.At(x, 32, 0)) {
+                    ++x;
+                }
+                return x;
+            };
+            auto blurred = [&](const Image &img) {  // pixels of row 32 mixing both
+                int n = 0;
+                for (int x = 0; x < 64; ++x) {
+                    n += img.At(x, 32, 0) > 0.1f && img.At(x, 32, 1) > 0.1f;
+                }
+                return n;
+            };
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            glass->ior = 1.0f;
+            scene.Commit();
+            const Image straight = Render(renderer, scene, frame);
+            glass->ior = 1.5f;
+            scene.Commit();
+            const Image bent = Render(renderer, scene, frame);
+            Expect(std::abs(edge(bent) - edge(straight)) >= 2, "refraction: an ior moves the edge seen through glass");
+            Expect(straight.At(44, 32, 1) > 0.8f && straight.At(44, 32, 0) < 0.05f,
+                   "refraction: smooth clear glass transmits almost all");
+            glass->roughness = 0.5f;
+            scene.Commit();
+            Expect(blurred(Render(renderer, scene, frame)) > blurred(bent) + 2, "refraction: roughness blurs");
+            glass->roughness = 0;
+            std::copy_n(std::array<float, 3>{1, 0.2f, 0.2f}.data(), 3, glass->transmissionColor);
+            scene.Commit();
+            const Image tinted = Render(renderer, scene, frame);
+            Expect(tinted.At(44, 32, 1) < 0.25f * bent.At(44, 32, 1) && tinted.At(44, 32, 1) > 0.05f,
+                   "refraction: the transmission colour tints");
+            frame.refraction = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(off.At(44, 32, 1) > 0.8f && edge(off) == edge(straight),
+                   "Frame::refraction off: straight through, untinted");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

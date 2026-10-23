@@ -37,6 +37,17 @@ public:
     const Image &Accum() const { return _accum; }
     const Image &Revealage() const { return _revealage; }
 
+    // Refraction: a copy of the opaque colour with a mip chain that
+    // translucent surfaces sample through themselves, blurrier the
+    // rougher they are. Made on first use at the current size (the GPU is
+    // idle there), then waiting in SHADER_READ_ONLY_OPTIMAL.
+    VkImageView EnsureBackground();
+    uint32_t BackgroundLevels() const { return _backgroundLevels; }
+    // `color` (premultiplied, in COLOR_ATTACHMENT_OPTIMAL after the opaque
+    // pass) into the background and its mips; `color` stays a colour
+    // attachment.
+    void RecordBackground(VkCommandBuffer cmd, VkImage color);
+
 private:
     void _Destroy();
 
@@ -48,6 +59,8 @@ private:
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _accum, _revealage;
+    Image _background;
+    uint32_t _backgroundLevels = 0;
     uint32_t _width = 0, _height = 0;
 };
 

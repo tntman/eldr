@@ -154,6 +154,18 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
+    // Transmission (refraction, transparency.glsl): of the surface opacity
+    // leaves, `transmission` lets light through, tinted by
+    // transmissionColor (Beer-Lambert at transmissionDepth along the path
+    // inside; 0: at the surface) and bent by ior unless thinWalled. With
+    // opacityRefracts what opacity lets through is refracted too
+    // (UsdPreviewSurface with an ior). Constants only.
+    float transmission = 0;
+    float transmissionColor[3] = {1, 1, 1};
+    float transmissionDepth = 0;
+    float ior = 1.5f;
+    bool thinWalled = false;
+    bool opacityRefracts = false;
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -467,6 +479,10 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+        // A drawn translucent material refracts or tints what's behind it
+        // (Material::transmission, opacityRefracts): the renderer copies
+        // the opaque colour for it.
+        bool refraction = false;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

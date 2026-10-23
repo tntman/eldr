@@ -476,6 +476,7 @@ void main()
         }
 #endif
     }
+    TransmissionBegin(alpha);
 
     vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
@@ -570,6 +571,7 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    alpha = TransmissionEnd(color, n, v, perceptual);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;

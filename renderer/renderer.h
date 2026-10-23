@@ -72,6 +72,11 @@ public:
         // sorted per mesh, blended over.
         bool oit = true;
         float oitDepthWeight = 4.0f;
+        // Refraction (needs depthPrepass): translucent materials with a
+        // transmission or an ior bend and tint the opaque colour behind
+        // them, rough ones blurred over this many taps (1..16).
+        bool refraction = true;
+        uint32_t refractionSamples = 8;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -129,7 +134,7 @@ private:
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
-    void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass);
+    void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     struct ShadowTile;

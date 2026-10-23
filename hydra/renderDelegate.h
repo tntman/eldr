@@ -47,7 +47,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
     ((oit, "hdvk:oit"))                                      \
-    ((oitDepthWeight, "hdvk:oitDepthWeight"))
+    ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
+    ((refraction, "hdvk:refraction"))                        \
+    ((refractionSamples, "hdvk:refractionSamples"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

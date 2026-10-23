@@ -21,6 +21,8 @@ struct Material {
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
     vec4 specular;   // dielectric specular weight times colour
+    vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
+    vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

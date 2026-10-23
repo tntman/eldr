@@ -87,6 +87,15 @@ TF_DEFINE_PRIVATE_TOKENS(
     (varname)
     (displayColor)
     (r)(g)(b)(a)
+    (ior)
+    (transmission)
+    (transmission_weight)
+    (transmission_color)
+    (transmission_depth)
+    (specular_IOR)
+    (specular_ior)
+    (thin_walled)
+    (geometry_thin_walled)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1059,7 +1068,7 @@ private:
 };
 
 // ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, transmission, subsurface, ior and displacement.
+// coat, sheen, subsurface and displacement.
 // *uvPrimvar: the primvar the textures' coordinates come from.
 // ponytail: one per material (meshes carry one uv set); a second warns.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
@@ -1150,6 +1159,31 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         for (int i = 0; i < 3; ++i) {
             m->specular[i] = weight * color[i];
         }
+    }
+    // Transmission: standard_surface and OpenPBR transmit and refract by
+    // their own inputs; UsdPreviewSurface refracts what its opacity lets
+    // through once it has an ior ("for translucent objects"; Hydra hands
+    // over authored inputs only).
+    // ponytail: constants only; textured or graph-driven transmission keeps
+    // its constant.
+    const bool openPbr = surface.nodeTypeId == _tokens->ND_open_pbr_surface_surfaceshader;
+    if (openPbr || surface.nodeTypeId == _tokens->ND_standard_surface_surfaceshader) {
+        Read(surface.parameters, openPbr ? _tokens->transmission_weight : _tokens->transmission, &m->transmission);
+        GfVec3f tint;
+        if (Read(surface.parameters, _tokens->transmission_color, &tint)) {
+            const TfToken colorSpace = ParameterColorSpace(surface.parameters, _tokens->transmission_color);
+            if (NeedsConversion(colorSpace)) {
+                tint = GfColor(GfColor(tint, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                           .GetRGB();
+            }
+            std::copy(tint.data(), tint.data() + 3, m->transmissionColor);
+        }
+        Read(surface.parameters, _tokens->transmission_depth, &m->transmissionDepth);
+        Read(surface.parameters, openPbr ? _tokens->specular_ior : _tokens->specular_IOR, &m->ior);
+        Read(surface.parameters, openPbr ? _tokens->geometry_thin_walled : _tokens->thin_walled, &m->thinWalled);
+        m->transmission = std::clamp(m->transmission, 0.0f, 1.0f);
+    } else if (Read(surface.parameters, _tokens->ior, &m->ior)) {
+        m->opacityRefracts = m->ior != 1.0f;
     }
     using P = vkr::MaterialProgram;
     input(kind->baseColor, kind->baseWeight, kind->baseWeightDefault, kind->baseColorDefault, m->baseColor, 3,

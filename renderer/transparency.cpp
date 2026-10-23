@@ -2,6 +2,8 @@
 
 #include "fullscreen.h"
 
+#include <algorithm>
+
 namespace vkr {
 
 namespace {
@@ -65,6 +67,8 @@ void Transparency::_Destroy()
     _pool = VK_NULL_HANDLE;
     _dev.Destroy(_accum);
     _dev.Destroy(_revealage);
+    _dev.Destroy(_background);
+    _backgroundLevels = 0;
 }
 
 void Transparency::Resize(uint32_t width, uint32_t height)
@@ -102,6 +106,74 @@ void Transparency::Resize(uint32_t width, uint32_t height)
         writes[i].pImageInfo = &images[i];
     }
     vkUpdateDescriptorSets(_dev.device, 2, writes, 0, nullptr);
+}
+
+VkImageView Transparency::EnsureBackground()
+{
+    if (!_background.image) {
+        uint32_t levels = 1;
+        while ((std::max(_width, _height) >> levels) > 0) {
+            ++levels;
+        }
+        _background = _dev.CreateImage(kColorFormat, _width, _height, 1, levels,
+                                       VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                           VK_IMAGE_USAGE_SAMPLED_BIT,
+                                       VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        _backgroundLevels = levels;
+        _dev.Submit([&](VkCommandBuffer cmd) {
+            ImageBarrier(cmd, _background.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1},
+                         VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                         VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        });
+    }
+    return _background.view;
+}
+
+void Transparency::RecordBackground(VkCommandBuffer cmd, VkImage color)
+{
+    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, _backgroundLevels, 0, 1};
+    ImageBarrier(cmd, color, Color(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    ImageBarrier(cmd, _background.image, all, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    VkImageCopy copy{};
+    copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.extent = {_width, _height, 1};
+    vkCmdCopyImage(cmd, color, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _background.image,
+                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+    ImageBarrier(cmd, color, Color(), VK_PIPELINE_STAGE_2_COPY_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    // Each mip a linear 2x2 average of the one above (premultiplied, so
+    // coverage averages with the colour).
+    for (uint32_t level = 1; level < _backgroundLevels; ++level) {
+        ImageBarrier(cmd, _background.image, {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 1, 0, 1},
+                     VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1};
+        blit.srcOffsets[1] = {int32_t(std::max(_width >> (level - 1), 1u)),
+                              int32_t(std::max(_height >> (level - 1), 1u)), 1};
+        blit.dstOffsets[1] = {int32_t(std::max(_width >> level, 1u)), int32_t(std::max(_height >> level, 1u)), 1};
+        vkCmdBlitImage(cmd, _background.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _background.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    }
+    // All but the last level are TRANSFER_SRC now, the last TRANSFER_DST.
+    if (_backgroundLevels > 1) {
+        ImageBarrier(cmd, _background.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, _backgroundLevels - 1, 0, 1},
+                     VK_PIPELINE_STAGE_2_BLIT_BIT, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    ImageBarrier(cmd, _background.image, {VK_IMAGE_ASPECT_COLOR_BIT, _backgroundLevels - 1, 1, 0, 1},
+                 VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 void Transparency::BeginAccumulation(VkCommandBuffer cmd)
