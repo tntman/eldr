@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 
+#include "curves.h"
 #include "instancer.h"
 #include "light.h"
 #include "material.h"
@@ -20,7 +21,8 @@ TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
 namespace {
 
-const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh};
+const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->basisCurves,
+                                   HdPrimTypeTokens->points};
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
@@ -134,6 +136,12 @@ HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &r
 {
     if (typeId == HdPrimTypeTokens->mesh) {
         return new HdVkMesh(rprimId, _scene.get());
+    }
+    if (typeId == HdPrimTypeTokens->basisCurves) {
+        return new HdVkBasisCurves(rprimId, _scene.get());
+    }
+    if (typeId == HdPrimTypeTokens->points) {
+        return new HdVkPoints(rprimId, _scene.get());
     }
     return nullptr;
 }

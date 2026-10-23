@@ -5,6 +5,7 @@
 #include "pxr/imaging/hd/instancer.h"
 
 #include <map>
+#include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -26,5 +27,10 @@ private:
     std::map<TfToken, VtValue> _primvars;
     bool _visible = true;
 };
+
+// World transforms of an rprim's instances (16 floats each, USD row-vector
+// order): its own transform, then each instance's.
+std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const &id,
+                                       SdfPath const &instancerId);
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -1,6 +1,7 @@
 #include "instancer.h"
 
 #include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/quatd.h"
 #include "pxr/base/gf/quatf.h"
 #include "pxr/base/gf/quath.h"
@@ -144,6 +145,22 @@ VtMatrix4dArray HdVkInstancer::ComputeInstanceTransforms(SdfPath const &prototyp
         }
     }
     return result;
+}
+
+std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId)
+{
+    const GfMatrix4d xf = delegate->GetTransform(id);
+    VtMatrix4dArray instances(1, GfMatrix4d(1));
+    if (!instancerId.IsEmpty()) {
+        auto *instancer = static_cast<HdVkInstancer *>(delegate->GetRenderIndex().GetInstancer(instancerId));
+        instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
+    }
+    std::vector<float> transforms(instances.size() * 16);
+    for (size_t i = 0; i < instances.size(); ++i) {
+        const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
+        std::copy(world.data(), world.data() + 16, transforms.data() + i * 16);
+    }
+    return transforms;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

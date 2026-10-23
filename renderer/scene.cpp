@@ -365,25 +365,29 @@ void Scene::_UploadGeometry(Mesh &m)
     m._jointBounds.clear();
     m.geometryDirty = false;
 
-    const size_t corners = m.points.size() / 3;
+    // Elements of the per-corner arrays: corners, or vertices with indices.
+    const bool indexed = !m.indices.empty();
+    const size_t elements = m.points.size() / 3;
+    const size_t corners = indexed ? m.indices.size() : elements;
     const bool skinned = !m.jointIndices.empty();
     // Sizes come from scene data: skip a mesh whose arrays disagree rather
     // than read past them.
-    const bool valid = m.points.size() % 9 == 0 &&
+    const bool valid = m.points.size() % 3 == 0 && corners % 3 == 0 &&
                        (m.normals.empty() || m.normals.size() == m.points.size()) &&
-                       (m.uvs.empty() || m.uvs.size() == corners * 2) &&
+                       (m.uvs.empty() || m.uvs.size() == elements * 2) &&
                        (m.colors.empty() || m.colors.size() == m.points.size()) &&
                        (!skinned || ((m.influences == 4 || m.influences == 8) &&
-                                     m.jointIndices.size() == corners * m.influences &&
-                                     m.jointWeights.size() == corners * m.influences && m.jointCount > 0));
+                                     m.jointIndices.size() == elements * m.influences &&
+                                     m.jointWeights.size() == elements * m.influences && m.jointCount > 0)) &&
+                       std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
     }
     // Blend shapes (skinned meshes only): offset ranges must stay inside the
     // offsets, otherwise they are dropped.
     const uint32_t offsets = uint32_t(m.blendOffsets.size() / 4);
-    bool blend = skinned && m.blendRanges.size() == corners * 2 && offsets > 0;
-    for (size_t i = 0; blend && i < corners; ++i) {
+    bool blend = skinned && m.blendRanges.size() == elements * 2 && offsets > 0;
+    for (size_t i = 0; blend && i < elements; ++i) {
         blend = uint64_t(m.blendRanges[i * 2]) + m.blendRanges[i * 2 + 1] <= offsets;
     }
     if (blend) {
@@ -404,15 +408,16 @@ void Scene::_UploadGeometry(Mesh &m)
         }
     }
 
-    // Corners sharing position, normal and uv become one indexed vertex.
+    // Corners sharing position, normal and uv become one indexed vertex
+    // (indexed meshes keep theirs).
     std::vector<Vertex> vertices;
     std::vector<SkinVertex> skin;
-    std::vector<uint32_t> indices(corners);
+    std::vector<uint32_t> indices = indexed ? m.indices : std::vector<uint32_t>(corners);
     std::unordered_map<VertexKey, uint32_t, VertexKeyHash> unique;
-    unique.reserve(corners);
+    unique.reserve(indexed ? 0 : corners);
     std::fill(m._boundsMin, m._boundsMin + 3, std::numeric_limits<float>::max());
     std::fill(m._boundsMax, m._boundsMax + 3, std::numeric_limits<float>::lowest());
-    for (size_t i = 0; i < corners; ++i) {
+    for (size_t i = 0; i < elements; ++i) {
         VertexKey key{};
         std::memcpy(key.v.position, &m.points[i * 3], sizeof(key.v.position));
         if (!m.normals.empty()) {
@@ -456,7 +461,12 @@ void Scene::_UploadGeometry(Mesh &m)
                 }
             }
         }
-        const auto [it, inserted] = unique.emplace(key, uint32_t(vertices.size()));
+        bool inserted = true;
+        if (!indexed) {
+            const auto it = unique.emplace(key, uint32_t(vertices.size()));
+            inserted = it.second;
+            indices[i] = it.first->second;
+        }
         if (inserted) {
             vertices.push_back(key.v);
             if (skinned) {
@@ -470,7 +480,6 @@ void Scene::_UploadGeometry(Mesh &m)
                 m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k]);
             }
         }
-        indices[i] = it->second;
     }
 
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
@@ -919,7 +928,9 @@ void Scene::Commit()
     uint64_t instancesNeeded = 0, indicesNeeded = 0;
     for (const auto &m : _meshes) {
         instancesNeeded += m->transforms.size() / 16;
-        indicesNeeded += m->geometryDirty ? m->points.size() / 3 : m->_indexCount;
+        indicesNeeded += !m->geometryDirty     ? m->_indexCount
+                         : m->indices.empty() ? m->points.size() / 3
+                                              : m->indices.size();
     }
     if (instancesNeeded > _instanceAlloc.Capacity()) {
         _EnsureCapacity(_instances, _instanceAlloc,

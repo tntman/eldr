@@ -75,13 +75,16 @@ struct Material {
 
 // CPU mirror of one mesh: a triangle list stored per corner (3 vertices per
 // triangle), so any primvar interpolation maps 1:1; Commit deduplicates the
-// corners into indexed vertices. Different meshes may be written
+// corners into indexed vertices. Geometry built already indexed (curves,
+// points) sets `indices` instead: then the per-corner arrays below hold one
+// value per vertex and nothing is merged. Different meshes may be written
 // concurrently (Hydra syncs rprims in parallel); nothing here touches Vulkan.
 struct Mesh {
     std::vector<float> points;   // xyz per corner
     std::vector<float> normals;  // xyz per corner, or empty (flat shading)
     std::vector<float> uvs;      // st per corner, or empty
     std::vector<float> colors;   // displayColor rgb per corner, or empty (constant `color`)
+    std::vector<uint32_t> indices;  // 3 per triangle, or empty (the arrays are per corner)
     // One world transform per instance, 16 floats each, USD row-vector order.
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     // The transforms they replace, when they change (motion vectors of

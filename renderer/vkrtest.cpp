@@ -253,6 +253,26 @@ int main()
         }
 
         {
+            // Indexed meshes (curves, points): per-vertex arrays and triangles.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = scene.AddMesh();
+            quad->points = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0.5f, 0.5f, 0, -0.5f, 0.5f, 0};
+            quad->colors = {1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0};
+            quad->indices = {0, 1, 2, 0, 2, 3};
+            quad->primId = 7;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(img.Prim(20, 20) == 7 && img.Prim(44, 44) == 7 && img.Prim(10, 32) == -1 &&
+                       img.At(32, 32, 0) > 2 * img.At(32, 32, 1),
+                   "indexed quad");
+            quad->indices = {0, 1, 4};  // past the vertices
+            quad->geometryDirty = true;
+            scene.Commit();
+            Expect(Render(renderer, scene).Prim(32, 20) == -1, "indexed mesh with a bad index draws nothing");
+        }
+
+        {
             // GPU skinning: a quad whose top corners follow joint 1 and bottom
             // corners are split 50/50 between joints 0 and 1. Joint 0 stays,
             // joint 1 lifts by 0.4: the top edge rises 0.4, the bottom 0.2.

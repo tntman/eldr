@@ -276,18 +276,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
-        const GfMatrix4d xf = sceneDelegate->GetTransform(id);
-        VtMatrix4dArray instances(1, GfMatrix4d(1));
-        if (!GetInstancerId().IsEmpty()) {
-            auto *instancer = static_cast<HdVkInstancer *>(
-                sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()));
-            instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
-        }
-        std::vector<float> transforms(instances.size() * 16);
-        for (size_t i = 0; i < instances.size(); ++i) {
-            const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
-            std::copy(world.data(), world.data() + 16, transforms.data() + i * 16);
-        }
+        std::vector<float> transforms = HdVkWorldTransforms(sceneDelegate, id, GetInstancerId());
         // Animated skinned prototypes arrive with their instancer dirty every
         // frame; re-upload thousands of instances only when they moved.
         if (transforms != m.transforms) {

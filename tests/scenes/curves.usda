@@ -1,0 +1,112 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# BasisCurves and Points. Top row: a linear polyline with vertex widths
+# and colours; a periodic linear square; a ribbon (normals toward the
+# camera). Middle row, the same four control points through each cubic
+# basis: bspline, catmullRom, pinned bspline, bezier (with uniform colour).
+# Bottom: a periodic bspline loop and points with vertex widths and colours.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 0, 14)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-30, 25, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def BasisCurves "polyline"
+{
+    uniform token type = "linear"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(-6, 2.5, 0), (-5, 3.5, 0), (-4, 2.5, 0), (-3, 3.5, 0)]
+    float[] widths = [0.1, 0.2, 0.3, 0.4] (interpolation = "vertex")
+    color3f[] primvars:displayColor = [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)] (interpolation = "vertex")
+}
+
+def BasisCurves "square"
+{
+    uniform token type = "linear"
+    uniform token wrap = "periodic"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(-1, 2.5, 0), (1, 2.5, 0), (1, 4, 0), (-1, 4, 0)]
+    float[] widths = [0.15] (interpolation = "constant")
+    color3f[] primvars:displayColor = [(0.2, 0.6, 1)]
+}
+
+def BasisCurves "ribbon"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bezier"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(3, 2.5, 0), (4, 4.5, 0), (5, 1.5, 0), (6, 3.5, 0)]
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+    float[] widths = [0.6] (interpolation = "constant")
+    color3f[] primvars:displayColor = [(1, 0.5, 0.1)]
+}
+
+def BasisCurves "bspline"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bspline"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(-7, -1, 0), (-6, 1, 0), (-5, -1, 0), (-4, 1, 0)]
+    float[] widths = [0.3] (interpolation = "constant")
+}
+
+def BasisCurves "catmullRom"
+{
+    uniform token type = "cubic"
+    uniform token basis = "catmullRom"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(-3, -1, 0), (-2, 1, 0), (-1, -1, 0), (0, 1, 0)]
+    float[] widths = [0.3] (interpolation = "constant")
+}
+
+def BasisCurves "pinned"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bspline"
+    uniform token wrap = "pinned"
+    int[] curveVertexCounts = [4]
+    point3f[] points = [(1, -1, 0), (2, 1, 0), (3, -1, 0), (4, 1, 0)]
+    float[] widths = [0.3] (interpolation = "constant")
+}
+
+def BasisCurves "bezier"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bezier"
+    int[] curveVertexCounts = [4, 4]
+    point3f[] points = [(5, -1, 0), (5, 1, 0), (7, 1, 0), (7, -1, 0), (5, -1.5, 0), (5, 0.5, 0), (7, 0.5, 0), (7, -1.5, 0)]
+    float[] widths = [0.2] (interpolation = "constant")
+    color3f[] primvars:displayColor = [(0.9, 0.2, 0.9), (0.2, 0.9, 0.3)] (interpolation = "uniform")
+}
+
+def BasisCurves "loop"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bspline"
+    uniform token wrap = "periodic"
+    int[] curveVertexCounts = [6]
+    point3f[] points = [(-4, -3, 0), (-2, -2.5, 0), (-1, -4, 0), (-2, -5.5, 0), (-4, -5, 0), (-5, -4, 0)]
+    float[] widths = [0.25] (interpolation = "constant")
+    color3f[] primvars:displayColor = [(0.3, 0.9, 0.9)]
+}
+
+def Points "points"
+{
+    point3f[] points = [(1, -4, 0), (2.5, -4, 0), (4, -4, 0), (5.5, -4, 0)]
+    float[] widths = [0.4, 0.7, 1.0, 1.3] (interpolation = "vertex")
+    color3f[] primvars:displayColor = [(1, 0.2, 0.2), (0.2, 1, 0.2), (0.2, 0.2, 1), (1, 1, 1)] (interpolation = "vertex")
+}
