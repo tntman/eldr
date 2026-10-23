@@ -13,6 +13,9 @@
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <exception>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -191,25 +194,61 @@ void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim) { delete bprim; }
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
     VtDictionary stats;
-    if (!_device) {
+    stats["rendererName"] = std::string("HdVk");
+    if (!_device || !_renderer) {
         return stats;
     }
-    // "GPU mem" is graphics memory: render targets, shadow maps, the
-    // environment, textures and the scene's pools. hostMemoryUsed is the
-    // system memory the GPU reads (per-frame tables, staging).
+    // Memory in bytes. gpuMemoryUsed (usdview's "GPU mem") is the graphics
+    // memory HdVk holds: render targets, shadow maps, the environment,
+    // textures and the scene's pools; hostMemoryUsed the system memory the
+    // GPU reads (per-frame tables, staging). vram*: the driver's view of the
+    // card, all of this process's use included (0 without VK_EXT_memory_budget).
     const vkr::Device::MemoryStats memory = _device->Memory();
     stats[HdPerfTokens->gpuMemoryUsed.GetString()] = size_t(memory.deviceLocal);
     stats[HdPerfTokens->textureMemory.GetString()] = size_t(memory.textures);
     stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
     stats["hostMemoryUsed"] = size_t(memory.host);
+    stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
+    stats["peakMemory"] = size_t(memory.peakDeviceLocal);
+    stats["vramSize"] = size_t(memory.heapSize);
+    stats["vramUsage"] = size_t(memory.heapUsage);
+    stats["vramBudget"] = size_t(memory.heapBudget);
+
+    // The last frame, times in milliseconds.
+    const vkr::Renderer::Stats &frame = _renderer->GetStats();
+    const vkr::Scene::Gpu &gpu = _scene->GetGpu();
+    stats["gpuTimeMs"] = frame.gpuMs;
+    stats["renderTimeMs"] = frame.cpuMs;
+    stats["commitTimeMs"] = _commitMs;
+    VtDictionary passes;
+    for (const auto &[name, ms] : frame.passMs) {
+        passes[name] = ms;
+    }
+    stats["gpuPassMs"] = passes;
+    stats["trianglesDrawn"] = size_t(frame.triangles);
+    stats["trianglesTotal"] = size_t(gpu.triangleCount);
+    stats["instancesDrawn"] = size_t(frame.instances);
+    stats["instancesTotal"] = size_t(gpu.instanceCount);
+    stats["meshes"] = size_t(gpu.drawCount);
+    stats["drawCalls"] = size_t(frame.drawCalls);
+    stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;
+
+    // Convergence: TAA's average of still frames (usdview's "Samples done").
+    const bool converged = _renderer->IsConverged();
+    stats["numCompletedSamples"] = size_t(frame.taaSamples);
+    stats["taaTarget"] = size_t(frame.taaTarget);
+    stats["percentDone"] = converged ? 100.0 : 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
+    stats["rendererStage"] = std::string(converged ? "converged" : "accumulating");
     return stats;
 }
 
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
+    const auto start = std::chrono::steady_clock::now();
     try {
         _scene->Commit();
+        _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk upload failed: %s", e.what());
     }

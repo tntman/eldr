@@ -298,6 +298,7 @@ public:
         // meshes that moved since: their motion vectors.
         VkBuffer motion = VK_NULL_HANDLE;
         bool moved = false;  // the last commit moved meshes or joints (motion blur)
+        uint64_t instanceCount = 0, triangleCount = 0;  // drawable, before culling
         VkBuffer skinXforms = VK_NULL_HANDLE;  // skinning transforms (mat4)
         VkBuffer jointBounds = VK_NULL_HANDLE; // JointBounds pool
         VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)

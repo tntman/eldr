@@ -56,6 +56,11 @@ target_link_libraries(hdVk PRIVATE ar hd hdsi hio vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
+# usdview's HdVk menu (render statistics), in <that dir>/usdview: usdenv.cmd
+# adds it to the plugin and Python paths.
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/plugInfo.json INPUT usdview/plugInfo.json)
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/__init__.py
+     INPUT usdview/hdvkUsdview/__init__.py)
 
 add_executable(testPlugin tests/testPlugin.cpp)
 target_link_libraries(testPlugin PRIVATE hd)
@@ -73,6 +78,8 @@ if(WIN32)
     set_tests_properties(purpose PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME curves COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_curves.py)
     set_tests_properties(curves PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME stats COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_stats.py)
+    set_tests_properties(stats PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

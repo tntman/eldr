@@ -205,6 +205,20 @@ Renderer::Renderer(Device &device)
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     Check(vkCreateFence(_dev.device, &fci, nullptr, &_fence), "vkCreateFence");
 
+    uint32_t families = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(_dev.physical, &families, nullptr);
+    std::vector<VkQueueFamilyProperties> family(families);
+    vkGetPhysicalDeviceQueueFamilyProperties(_dev.physical, &families, family.data());
+    if (family[_dev.queueFamily].timestampValidBits > 0) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(_dev.physical, &props);
+        _timestampMs = double(props.limits.timestampPeriod) * 1e-6;
+        VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qci.queryCount = kMaxTimestamps;
+        Check(vkCreateQueryPool(_dev.device, &qci, nullptr, &_timestamps), "vkCreateQueryPool");
+    }
+
     _dev.Reserve(_frameData, sizeof(FrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
@@ -245,6 +259,7 @@ Renderer::~Renderer()
         vkDestroySampler(_dev.device, s, nullptr);
     }
     vkDestroyFence(_dev.device, _fence, nullptr);
+    vkDestroyQueryPool(_dev.device, _timestamps, nullptr);
     vkDestroyCommandPool(_dev.device, _pool, nullptr);
 }
 
@@ -1080,6 +1095,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.width == 0 || frame.height == 0) {
         return;
     }
+    const auto cpuStart = std::chrono::steady_clock::now();
     if (frame.width != _width || frame.height != _height) {
         _Resize(frame.width, frame.height);
     }
@@ -1172,6 +1188,19 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
+    // Timestamps when everything recorded before them finished: the time
+    // between two is the pass in between (`name`).
+    _passes.clear();
+    if (_timestamps) {
+        vkCmdResetQueryPool(_cmd, _timestamps, 0, kMaxTimestamps);
+        vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, 0);
+    }
+    auto pass = [&](const char *name) {
+        if (_timestamps && _passes.size() + 1 < kMaxTimestamps) {
+            _passes.push_back(name);
+            vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
+        }
+    };
 
     const VkDeviceSize vertexOffset = 0;
     if (draw) {
@@ -1254,6 +1283,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                VK_ACCESS_2_HOST_READ_BIT;
         dep.pMemoryBarriers = &toDraw;
         vkCmdPipelineBarrier2(_cmd, &dep);
+        pass("culling");
     }
     if (gpu.localLightCount > 0) {
         // Light clusters, read by the shading pass.
@@ -1269,6 +1299,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         dep.memoryBarrierCount = 1;
         dep.pMemoryBarriers = &toShading;
         vkCmdPipelineBarrier2(_cmd, &dep);
+        pass("lightClusters");
     }
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
 
@@ -1310,6 +1341,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        pass("sunShadows");
     } else {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1354,15 +1386,20 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                  kDepthTests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+    pass("depthPrepass");
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
     if (frame.ambientOcclusion && draw && gpu.environment) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample);
+        pass("ambientOcclusion");
     } else {
         _gtao.Clear(_cmd);
     }
 
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>());
+    if (!shadowTiles.empty()) {
+        pass("localShadows");
+    }
 
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
@@ -1443,6 +1480,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
     }
     vkCmdEndRendering(_cmd);
+    pass("shading");
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -1481,6 +1519,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     if (dof) {
         _lens.RecordDepthOfField(_cmd, lens);
+        pass("depthOfField");
     }
     if (frame.postProcess) {
         // HDR color feeds TAA and post (TAA also reads the read-only depth).
@@ -1531,17 +1570,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
 
         _taa.Record(_cmd, &reprojection.m[0][0], alpha);
+        pass("taa");
         if (motionBlur) {
             _lens.RecordMotionBlur(_cmd, lens);
             _taaConverged = true;
+            pass("motionBlur");
         }
         _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
+        pass("post");
+        _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
+        _stats.taaTarget = taa ? taaSamples : 1;
         std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
         _historyValid = true;
     } else {
         _taaValid = false;
         _taaConverged = true;
         _historyValid = false;
+        _stats.taaSamples = _stats.taaTarget = 1;
     }
 
     // Everything that may be read back goes to TRANSFER_SRC (with post on,
@@ -1607,6 +1652,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     dep.bufferMemoryBarrierCount = 1;
     dep.pBufferMemoryBarriers = &toHost;
     vkCmdPipelineBarrier2(_cmd, &dep);
+    pass("readback");
 
     Check(vkEndCommandBuffer(_cmd), "vkEndCommandBuffer");
 
@@ -1625,6 +1671,34 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _width * _height);
         }
     }
+
+    // What the camera drew: the culled commands' instances and triangles.
+    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
+    _stats.instances = 0;
+    _stats.triangles = 0;
+    for (uint32_t i = 0; i < _lastDrawCount; ++i) {
+        _stats.instances += commands[i].instanceCount;
+        _stats.triangles += uint64_t(commands[i].instanceCount) * (commands[i].indexCount / 3);
+    }
+    _stats.drawCalls = 0;
+    for (size_t i = 0; draw && i + 1 < gpu.drawChunks.size(); ++i) {
+        _stats.drawCalls += (gpu.chunkKind[i] & (Scene::Gpu::kWide - 1)) != Scene::Gpu::kTranslucent;
+    }
+    _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
+    _stats.exposure = frame.postProcess ? _post.Exposure() : 1.0;
+    _stats.passMs.clear();
+    _stats.gpuMs = 0;
+    if (_timestamps && !_passes.empty()) {
+        std::vector<uint64_t> ticks(_passes.size() + 1);
+        if (vkGetQueryPoolResults(_dev.device, _timestamps, 0, uint32_t(ticks.size()), ticks.size() * sizeof(uint64_t),
+                                  ticks.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS) {
+            for (size_t i = 0; i < _passes.size(); ++i) {
+                _stats.passMs.push_back({_passes[i], double(ticks[i + 1] - ticks[i]) * _timestampMs});
+            }
+            _stats.gpuMs = double(ticks.back() - ticks.front()) * _timestampMs;
+        }
+    }
+    _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
 }
 
 } // namespace vkr

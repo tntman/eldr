@@ -1,0 +1,16 @@
+{
+    "Plugins": [
+        {
+            "Type": "python",
+            "Name": "hdvkUsdview",
+            "Info": {
+                "Types": {
+                    "hdvkUsdview.HdVkContainer": {
+                        "bases": ["pxr.Usdviewq.plugin.PluginContainer"],
+                        "displayName": "HdVk render statistics"
+                    }
+                }
+            }
+        }
+    ]
+}

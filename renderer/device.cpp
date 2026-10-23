@@ -1,6 +1,7 @@
 #include "device.h"
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <vector>
 
@@ -187,9 +188,21 @@ Device::Device()
         f.features.samplerAnisotropy = VK_TRUE;
         f.features.independentBlend = VK_TRUE;
 
+        // Optional: the driver's memory budget (usdview's and Houdini's stats).
+        uint32_t extensionCount = 0;
+        vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, nullptr);
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, extensions.data());
+        const char *budget = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
+        memoryBudget = std::any_of(extensions.begin(), extensions.end(), [&](const VkExtensionProperties &e) {
+            return std::strcmp(e.extensionName, budget) == 0;
+        });
+
         VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f};
         dci.queueCreateInfoCount = 1;
         dci.pQueueCreateInfos = &qci;
+        dci.enabledExtensionCount = memoryBudget ? 1 : 0;
+        dci.ppEnabledExtensionNames = &budget;
         Check(vkCreateDevice(physical, &dci, nullptr, &device), "vkCreateDevice");
         vkGetDeviceQueue(device, queueFamily, 0, &queue);
 
@@ -243,6 +256,7 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                 _allocations[memory] = {req.size, local, texture};
                 (local ? _memory.deviceLocal : _memory.host) += req.size;
                 _memory.textures += texture ? req.size : 0;
+                _memory.peakDeviceLocal = std::max(_memory.peakDeviceLocal, _memory.deviceLocal);
                 return memory;
             }
         }
@@ -371,8 +385,25 @@ void Device::Free(VkDeviceMemory memory)
 
 Device::MemoryStats Device::Memory() const
 {
-    std::lock_guard<std::mutex> lock(_memoryMutex);
-    return _memory;
+    MemoryStats stats;
+    {
+        std::lock_guard<std::mutex> lock(_memoryMutex);
+        stats = _memory;
+    }
+    if (memoryBudget) {
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 mp{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget};
+        vkGetPhysicalDeviceMemoryProperties2(physical, &mp);
+        for (uint32_t h = 0; h < mp.memoryProperties.memoryHeapCount; ++h) {
+            if (mp.memoryProperties.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+                stats.heapSize += mp.memoryProperties.memoryHeaps[h].size;
+                stats.heapUsage += budget.heapUsage[h];
+                stats.heapBudget += budget.heapBudget[h];
+            }
+        }
+    }
+    return stats;
 }
 
 void Device::Destroy(Image &img)

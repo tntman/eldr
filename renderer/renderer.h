@@ -83,6 +83,21 @@ public:
     // Instances that survived culling in the last frame (main view).
     uint32_t VisibleInstances() const;
 
+    // What the last Render measured.
+    struct Stats {
+        double cpuMs = 0;  // Render's wall time: recording, the GPU's work, readback
+        double gpuMs = 0;  // the frame on the GPU; 0 without timestamps
+        // GPU milliseconds per pass, in the order they ran (see Render).
+        std::vector<std::pair<const char *, double>> passMs;
+        uint64_t triangles = 0;   // the camera drew, after culling
+        uint32_t instances = 0;   // the camera drew, after culling
+        uint32_t drawCalls = 0;   // the camera's indirect calls (each covers many meshes)
+        uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
+        uint32_t taaTarget = 0;
+        double exposure = 1;      // the tonemap's multiplier of scene radiance
+    };
+    const Stats &GetStats() const { return _stats; }
+
 private:
     void _CreateDescriptors();
     void _CreatePipelines();
@@ -141,6 +156,12 @@ private:
     VkCommandPool _pool = VK_NULL_HANDLE;
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
+    // GPU timestamps: one at the start, then one closing each pass.
+    static constexpr uint32_t kMaxTimestamps = 16;
+    VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
+    double _timestampMs = 0;                   // milliseconds per tick
+    std::vector<const char *> _passes;         // the pass each timestamp after the first closes
+    Stats _stats;
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view

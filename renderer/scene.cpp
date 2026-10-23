@@ -1105,9 +1105,12 @@ void Scene::Commit()
     constexpr double kChunkTriangles = 5e8;
     _gpu.drawChunks.assign(1, 0);
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
+    _gpu.instanceCount = _gpu.triangleCount = 0;
     double triangles = 0;
     for (size_t slot = 0; slot < slots; ++slot) {
         const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
+        _gpu.instanceCount += drawn[slot];
+        _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }

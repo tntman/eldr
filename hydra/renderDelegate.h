@@ -72,7 +72,9 @@ public:
     void DestroyBprim(HdBprim *bprim) override;
 
     void CommitResources(HdChangeTracker *tracker) override;
-    // GPU memory, shown by usdview's GPU Stats HUD.
+    // Memory, timings and what the last frame drew: usdview's GPU Stats HUD
+    // and HdVk's stats window (usdview/hdvkUsdview) read it, and Houdini's
+    // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
 
 private:
@@ -83,6 +85,7 @@ private:
     std::unique_ptr<vkr::Scene> _scene;       // always present (CPU mirror)
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
+    double _commitMs = 0;  // the last CommitResources (scene upload)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -63,9 +63,12 @@ public:
 
     // Bytes of all memory from Allocate: device-local (graphics memory) and
     // the rest (system memory the GPU reads); textures are part of the
-    // device-local bytes.
+    // device-local bytes; the most device-local bytes held at once. With
+    // VK_EXT_memory_budget, the driver's view of the device-local heaps:
+    // their size, what this process uses and what it may use (0 without).
     struct MemoryStats {
-        VkDeviceSize deviceLocal = 0, host = 0, textures = 0;
+        VkDeviceSize deviceLocal = 0, host = 0, textures = 0, peakDeviceLocal = 0;
+        VkDeviceSize heapSize = 0, heapUsage = 0, heapBudget = 0;
     };
     MemoryStats Memory() const;
     // Grows `b` to hold at least `bytes`, discarding its contents. GPU must be idle.
@@ -90,6 +93,7 @@ public:
     VkDevice device = VK_NULL_HANDLE;
     uint32_t queueFamily = 0;
     VkQueue queue = VK_NULL_HANDLE;
+    bool memoryBudget = false;  // VK_EXT_memory_budget is enabled
 
 private:
     void _Release();
