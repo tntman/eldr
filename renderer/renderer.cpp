@@ -38,6 +38,9 @@ const uint32_t kMeshVert[] =
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
 ;
+const uint32_t kMaskFrag[] =
+#include "mask.frag.inc"
+;
 const uint32_t kFullscreenVert[] =
 #include "fullscreen.vert.inc"
 ;
@@ -89,11 +92,19 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 }
 
 // The draws of one command list (commands[first] at offset), one indirect
-// call per chunk (Scene::Gpu::drawChunks).
-void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset)
+// call per chunk (Scene::Gpu::drawChunks), each with its pipeline: `cutout`
+// for chunks of cutout materials.
+void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
+                VkPipeline opaque, VkPipeline cutout)
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
+    VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
+        const VkPipeline pipeline = gpu.chunkCutout[i] ? cutout : opaque;
+        if (pipeline != bound) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            bound = pipeline;
+        }
         const uint32_t first = gpu.drawChunks[i];
         vkCmdDrawIndexedIndirect(cmd, commands, offset + first * stride, gpu.drawChunks[i + 1] - first,
                                  uint32_t(stride));
@@ -205,7 +216,7 @@ Renderer::~Renderer()
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
     for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
-                         _lightsPipeline, _skinPipeline}) {
+                         _lightsPipeline, _skinPipeline, _prepassCutoutPipeline, _shadowCutoutPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -341,6 +352,7 @@ void Renderer::_CreatePipelines()
     }
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
+    VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
     auto stage = [](VkShaderStageFlagBits s, VkShaderModule m) {
@@ -442,6 +454,18 @@ void Renderer::_CreatePipelines()
         if (r == VK_SUCCESS) {
             r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowPipeline);
         }
+
+        // Cutouts: the same two with the alpha test.
+        const VkPipelineShaderStageCreateInfo maskStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, meshVert),
+                                                               stage(VK_SHADER_STAGE_FRAGMENT_BIT, maskFrag)};
+        pci.stageCount = sci.stageCount = 2;
+        pci.pStages = sci.pStages = maskStages;
+        if (r == VK_SUCCESS) {
+            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &_prepassCutoutPipeline);
+        }
+        if (r == VK_SUCCESS) {
+            r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &sci, nullptr, &_shadowCutoutPipeline);
+        }
     }
 
     // Sky: full-screen triangle at depth 1, drawn after geometry.
@@ -454,7 +478,7 @@ void Renderer::_CreatePipelines()
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, meshFrag, skyVert, skyFrag}) {
+    for (VkShaderModule m : {meshVert, meshFrag, maskFrag, skyVert, skyFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -951,7 +975,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         PushDraw(_cmd, _layout, t.viewProj, tileList);
-        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline);
         vkCmdEndRendering(_cmd);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
@@ -1186,7 +1210,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
-                       VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                       VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
+                       _shadowPipeline, _shadowCutoutPipeline);
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -1229,7 +1254,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline);
     }
     vkCmdEndRendering(_cmd);
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -1285,7 +1310,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline);
     }
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);

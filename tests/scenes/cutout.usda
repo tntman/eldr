@@ -1,0 +1,140 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Cutouts: two standing quads textured with a green ring (alpha 0 inside and
+# outside it). Left: UsdPreviewSurface opacity <- texture alpha with
+# opacityThreshold 0.5. Right: MaterialX standard_surface opacity <- the
+# image's alpha (a MaterialX opacity texture is a cutout). Both show the
+# ground through the holes and cast ring-shaped shadows.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 1.6, 7)
+    float xformOp:rotateX = -8
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 25, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "ground"
+    {
+        token outputs:surface.connect = </mtl/ground/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.6, 0.6, 0.6)
+            float inputs:roughness = 0.9
+            token outputs:surface
+        }
+    }
+
+    def Material "previewRing"
+    {
+        token outputs:surface.connect = </mtl/previewRing/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/previewRing/tex.outputs:rgb>
+            float inputs:opacity.connect = </mtl/previewRing/tex.outputs:a>
+            float inputs:opacityThreshold = 0.5
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/cutout.png@
+            float2 inputs:st.connect = </mtl/previewRing/st.outputs:result>
+            float3 outputs:rgb
+            float outputs:a
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "mtlxRing"
+    {
+        token outputs:mtlx:surface.connect = </mtl/mtlxRing/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color.connect = </mtl/mtlxRing/rgb.outputs:out>
+            color3f inputs:opacity.connect = </mtl/mtlxRing/alpha.outputs:out>
+            float inputs:specular_roughness = 0.6
+            token outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color4"
+            asset inputs:file = @./textures/cutout.png@ (colorSpace = "srgb_texture")
+            color4f outputs:out
+        }
+        def Shader "rgb"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </mtl/mtlxRing/image.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "extractA"
+        {
+            uniform token info:id = "ND_extract_color4"
+            color4f inputs:in.connect = </mtl/mtlxRing/image.outputs:out>
+            int inputs:index = 3
+            float outputs:out
+        }
+        def Shader "alpha"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/mtlxRing/extractA.outputs:out>
+            color3f outputs:out
+        }
+    }
+}
+
+def Mesh "ground" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0, -6), (6, 0, -6), (6, 0, 6), (-6, 0, 6)]
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/ground>
+}
+
+class Mesh "_ringQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, 0, 0), (1, 0, 0), (1, 2, 0), (-1, 2, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "previewQuad" (inherits = </_ringQuad>)
+{
+    rel material:binding = </mtl/previewRing>
+    double3 xformOp:translate = (-1.4, 0.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "mtlxQuad" (inherits = </_ringQuad>)
+{
+    rel material:binding = </mtl/mtlxRing>
+    double3 xformOp:translate = (1.4, 0.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

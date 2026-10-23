@@ -23,8 +23,8 @@ struct GpuTexRef {
 struct GpuMaterial {
     float baseColor[4]; // rgb, w = 1: use the mesh's displayColor instead
     float emissive[4];
-    float params[4];  // metallic, roughness, occlusion, unused
-    GpuTexRef tex[6]; // baseColor, emissive, metallic, roughness, occlusion, normal
+    float params[4];  // metallic, roughness, occlusion, opacity
+    GpuTexRef tex[7]; // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
 };
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
@@ -927,12 +927,14 @@ void Scene::Commit()
             std::copy(m.baseColor, m.baseColor + 3, g.baseColor);
             g.baseColor[3] = m.baseColorFromDisplayColor ? 1.0f : 0.0f;
             std::copy(m.emissive, m.emissive + 3, g.emissive);
+            g.emissive[3] = m.opacityThreshold;
+            g.params[3] = m.opacity;
             g.params[0] = m.metallic;
             g.params[1] = m.roughness;
             g.params[2] = m.occlusion;
-            const TextureRef *refs[6] = {&m.baseColorTex, &m.emissiveTex, &m.metallicTex,
-                                         &m.roughnessTex, &m.occlusionTex, &m.normalTex};
-            for (int i = 0; i < 6; ++i) {
+            const TextureRef *refs[7] = {&m.baseColorTex, &m.emissiveTex, &m.metallicTex, &m.roughnessTex,
+                                         &m.occlusionTex,  &m.normalTex,   &m.opacityTex};
+            for (int i = 0; i < 7; ++i) {
                 if (refs[i]->udim.empty()) {
                     g.tex[i].index = _TextureIndex(refs[i]->texture.get());
                 } else {
@@ -959,6 +961,7 @@ void Scene::Commit()
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
+    std::vector<uint8_t> cutout(slots);
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -975,6 +978,7 @@ void Scene::Commit()
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
+        cutout[slot] = drawable && m.material && m.material->opacityThreshold > 0;
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
@@ -1004,13 +1008,19 @@ void Scene::Commit()
     // needs instance ranges.
     constexpr double kChunkTriangles = 5e8;
     _gpu.drawChunks.assign(1, 0);
+    _gpu.chunkCutout.assign(1, 0);
     double triangles = 0;
     for (size_t slot = 0; slot < slots; ++slot) {
         const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
-        if (triangles > 0 && triangles + t > kChunkTriangles) {
+        if (t == 0) {
+            continue;  // draws nothing: fits any chunk
+        }
+        if (triangles > 0 && (triangles + t > kChunkTriangles || cutout[slot] != _gpu.chunkCutout.back())) {
             _gpu.drawChunks.push_back(uint32_t(slot));
+            _gpu.chunkCutout.push_back(cutout[slot]);
             triangles = 0;
         }
+        _gpu.chunkCutout.back() = cutout[slot];
         triangles += t;
     }
     _gpu.drawChunks.push_back(uint32_t(slots));

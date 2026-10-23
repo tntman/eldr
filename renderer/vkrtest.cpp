@@ -376,6 +376,21 @@ int main()
             // Rows 16 and 48 sample texel centers exactly (v = 0.25, 0.75).
             Expect(img.At(32, 16, 0) > 0.95f && img.At(32, 16, 1) < 0.05f, "bottom of quad is red");
             Expect(img.At(32, 48, 1) > 0.95f && img.At(32, 48, 0) < 0.05f, "top of quad is green");
+
+            // Cutout: the same quad with an opacity texture clear on the
+            // left half, threshold 0.5: no surface there (not even in the
+            // id targets), the right half stays.
+            auto alpha = std::make_shared<vkr::Texture>();
+            alpha->width = 2;
+            alpha->height = 1;
+            alpha->pixels = {255, 255, 255, 0, 255, 255, 255, 255};
+            material->opacityTex.texture = alpha;
+            material->opacityTex.channel = 3;
+            material->opacityThreshold = 0.5f;
+            quad->primId = 7;
+            scene.Commit();
+            const Image cut = Render(renderer, scene);
+            Expect(cut.Prim(8, 32) == -1 && cut.Prim(56, 32) == quad->primId, "cutout: no surface below the threshold");
         }
 
         {

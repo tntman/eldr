@@ -103,6 +103,8 @@ private:
     VkDescriptorSet _set = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _prepassPipeline = VK_NULL_HANDLE;  // depth only
+    // Cutout materials: prepass and shadows with mask.frag's alpha test.
+    VkPipeline _prepassCutoutPipeline = VK_NULL_HANDLE, _shadowCutoutPipeline = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;         // shading, depth read-only
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;

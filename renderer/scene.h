@@ -58,9 +58,12 @@ struct Material {
     float metallic = 0;
     float roughness = 0.5f;
     float occlusion = 1;
+    float opacity = 1;
+    float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
     bool baseColorFromDisplayColor = false;  // diffuseColor <- primvar reader "displayColor"
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
-        normalTex;  // tangent space, after scale/bias
+        normalTex,  // tangent space, after scale/bias
+        opacityTex;
 };
 
 // CPU mirror of one mesh: a triangle list stored per corner (3 vertices per
@@ -280,6 +283,9 @@ public:
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
         // even with every instance visible.
         std::vector<uint32_t> drawChunks;
+        // Per chunk: cutout materials, drawn with the alpha-tested depth
+        // passes. Chunks also end where this changes.
+        std::vector<uint8_t> chunkCutout;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones

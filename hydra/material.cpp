@@ -37,6 +37,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     (metalness)
     (specular_roughness)
     (geometry_normal)
+    (geometry_opacity)
+    (opacity)
+    (opacityThreshold)
     (geomprop)
     (in)
     (index)
@@ -183,7 +186,7 @@ std::string AssetPath(VtValue const &v)
 // and emission are colour times weight.
 struct SurfaceInputs {
     TfToken id;
-    TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal;
+    TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal, opacity;
     float baseColorDefault, baseWeightDefault, emissionDefault, emissionWeightDefault, roughnessDefault;
 };
 
@@ -192,7 +195,8 @@ const std::vector<SurfaceInputs> &Surfaces()
     static const std::vector<SurfaceInputs> surfaces = [] {
         const SurfaceInputs preview{_tokens->UsdPreviewSurface, _tokens->diffuseColor, TfToken(),
                                     _tokens->emissiveColor, TfToken(), _tokens->metallic, _tokens->roughness,
-                                    _tokens->occlusion, _tokens->normal, 0.18f, 1.0f, 0.0f, 1.0f, 0.5f};
+                                    _tokens->occlusion, _tokens->normal, _tokens->opacity, 0.18f, 1.0f, 0.0f,
+                                    1.0f, 0.5f};
         SurfaceInputs mtlxPreview = preview;
         mtlxPreview.id = _tokens->ND_UsdPreviewSurface_surfaceshader;
         return std::vector<SurfaceInputs>{
@@ -200,11 +204,12 @@ const std::vector<SurfaceInputs> &Surfaces()
             mtlxPreview,
             {_tokens->ND_standard_surface_surfaceshader, _tokens->base_color, _tokens->base,
              _tokens->emission_color, _tokens->emission, _tokens->metalness, _tokens->specular_roughness,
-             TfToken(), _tokens->normal, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f},
+             TfToken(), _tokens->normal, _tokens->opacity, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f},
             // emission_luminance is in nits, the radiance unit UsdLux uses too.
             {_tokens->ND_open_pbr_surface_surfaceshader, _tokens->base_color, _tokens->base_weight,
              _tokens->emission_color, _tokens->emission_luminance, _tokens->base_metalness,
-             _tokens->specular_roughness, TfToken(), _tokens->geometry_normal, 0.8f, 1.0f, 1.0f, 0.0f, 0.3f},
+             _tokens->specular_roughness, TfToken(), _tokens->geometry_normal, _tokens->geometry_opacity, 0.8f,
+             1.0f, 1.0f, 0.0f, 0.3f},
         };
     }();
     return surfaces;
@@ -317,9 +322,8 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
     }
 }
 
-// ponytail: metallic workflow only. Ignored for now: opacity/opacityThreshold,
-// specular workflow, coat, sheen, transmission, subsurface, ior and
-// displacement.
+// ponytail: metallic workflow only. Ignored for now: specular workflow,
+// coat, sheen, transmission, subsurface, ior and displacement.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
@@ -374,6 +378,15 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     input(kind->occlusion, TfToken(), 1.0f, 1.0f, &m->occlusion, 1, &m->occlusionTex);
     float unusedNormal[3];
     input(kind->normal, TfToken(), 1.0f, 0.0f, unusedNormal, 3, &m->normalTex);
+    // standard_surface's opacity is a colour: its constant stays 1, a
+    // texture is read through its first channel.
+    input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex);
+    if (!Read(surface.parameters, _tokens->opacityThreshold, &m->opacityThreshold) && m->opacityTex.texture &&
+        StartsWith(surface.nodeTypeId, "ND_")) {
+        // MaterialX has no threshold: an opacity texture is a cutout, as
+        // realtime engines draw foliage; constant opacity stays translucent.
+        m->opacityThreshold = 0.5f;
+    }
 }
 
 } // namespace

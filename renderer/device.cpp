@@ -70,6 +70,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f12.separateDepthStencilLayouts, "separateDepthStencilLayouts");
     need(f13.dynamicRendering, "dynamicRendering");
     need(f13.synchronization2, "synchronization2");
+    need(f13.shaderDemoteToHelperInvocation, "shaderDemoteToHelperInvocation");  // discard (cutouts)
     return missing;
 }
 
@@ -172,6 +173,7 @@ Device::Device()
         VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
         f13.dynamicRendering = VK_TRUE;
         f13.synchronization2 = VK_TRUE;
+        f13.shaderDemoteToHelperInvocation = VK_TRUE;
         VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &f13};
         f12.drawIndirectCount = VK_TRUE;
         f12.runtimeDescriptorArray = VK_TRUE;

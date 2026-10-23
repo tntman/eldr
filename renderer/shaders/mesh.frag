@@ -4,26 +4,11 @@
 
 #include "frame.glsl"
 #include "lights.glsl"
+#include "material.glsl"
 
-const uint kNoMaterial = 0xFFFFFFFFu;
-
-// std430 mirrors of GpuTexRef/GpuMaterial in scene.cpp.
-struct TexRef {
-    int index;     // -1: none; with udim the first of its 100 entries in udimTiles
-    int channel;   // 0..3, or -1 for all
-    int udim;
-    int pad;
-    vec4 scale;
-    vec4 bias;
-};
-struct Material {
-    vec4 baseColor;  // w = 1: use the mesh's displayColor
-    vec4 emissive;
-    vec4 params;     // metallic, roughness, occlusion
-    TexRef tex[6];   // baseColor, emissive, metallic, roughness, occlusion, normal
-};
-layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
-layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile
+// Depth is read-only here (the prepass wrote it), so the depth test can run
+// before the shader even though cutouts discard.
+layout(early_fragment_tests) in;
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(set = 0, binding = 6) uniform sampler2D brdfLut;
@@ -67,27 +52,7 @@ layout(location = 2) out int outInstanceId;
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
-    if (r.index < 0) {
-        return constant;
-    }
-    int index = r.index;
-    vec2 uv = inUv;
-    if (r.udim != 0) {
-        // UDIM: tile 1001 + u + 10 v, sampled with the unwrapped uv's
-        // gradients so mips don't jump at tile borders. Missing tiles and uv
-        // outside 10 x 10 tiles show the constant.
-        vec2 tile = floor(inUv);
-        if (any(lessThan(tile, vec2(0.0))) || any(greaterThan(tile, vec2(9.0)))) {
-            return constant;
-        }
-        index = udimTiles[r.index + int(tile.x) + 10 * int(tile.y)];
-        if (index < 0) {
-            return constant;
-        }
-        uv -= tile;
-    }
-    vec4 t = textureGrad(textures[nonuniformEXT(index)], uv, dFdx(inUv), dFdy(inUv)) * r.scale + r.bias;
-    return r.channel < 0 ? t : vec4(t[r.channel]);
+    return Fetch(r, constant, inUv);
 }
 
 // Tangent frame from screen-space derivatives (Mikkelsen 2010), so meshes
@@ -465,8 +430,10 @@ void main()
     float metallic = 0.0, roughness = 0.5, occlusion = 1.0;
     vec3 tangentNormal = vec3(0.0, 0.0, 1.0);
     bool hasNormalMap = false;
+    bool present = true;
     if (inMaterial != kNoMaterial) {
         Material m = materials[inMaterial];
+        present = Present(m, inUv);
         baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor, 1.0) : m.baseColor).rgb;
         emissive = Fetch(m.tex[1], m.emissive).rgb;
         metallic = Fetch(m.tex[2], m.params.xxxx).r;
@@ -560,6 +527,10 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    // Cutouts: last, so every derivative above saw the whole quad.
+    if (!present) {
+        discard;
+    }
     outColor = vec4(color, 1.0);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
