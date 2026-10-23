@@ -220,7 +220,8 @@ Scene::~Scene()
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
                           &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices,
-                          &_programCode, &_programConstants, &_primvarTable, &_primvarData}) {
+                          &_programCode, &_programConstants, &_primvarTable, &_primvarData, &_volumeTable,
+                          &_volumeGrids}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -298,6 +299,18 @@ Dome *Scene::AddDome()
 void Scene::RemoveDome(Dome *dome)
 {
     _RemoveSlot(_domes, dome);
+}
+
+Volume *Scene::AddVolume()
+{
+    _volumes.push_back(std::make_unique<Volume>());
+    _volumes.back()->_slot = _volumes.size() - 1;
+    return _volumes.back().get();
+}
+
+void Scene::RemoveVolume(Volume *volume)
+{
+    _RemoveSlot(_volumes, volume);
 }
 
 VkDeviceSize Scene::_Stage(const void *data, VkDeviceSize size)
@@ -1344,6 +1357,7 @@ void Scene::Commit()
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
 
+    _CommitVolumes();
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;
     _gpu.instances = _instances.buffer;

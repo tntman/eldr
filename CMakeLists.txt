@@ -16,6 +16,8 @@ find_package(pxr CONFIG REQUIRED)
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
+# third_party/nanovdb: PNanoVDB.h of OpenVDB 10.1.0 (MPL-2.0, unmodified),
+# NanoVDB's GPU reader, for the CPU side of the volumes.
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
@@ -52,8 +54,8 @@ list(APPEND shader_incs ${spv})
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
-    ${shader_incs})
-target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    renderer/volume.cpp ${shader_incs})
+target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
 add_executable(vkrtest renderer/vkrtest.cpp)
@@ -67,14 +69,19 @@ add_library(hdVk SHARED
 target_link_libraries(hdVk PRIVATE ar hd hdsi hio sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
-# which installs OpenVDB and its NanoVDB headers beside USD); without,
-# HdVk builds as before.
+# which installs OpenVDB and its NanoVDB headers beside USD): the volume
+# rprim and openvdbAsset fields, grids converted to NanoVDB on load.
+# Without, HdVk has no volume prims.
 find_path(HDVK_NANOVDB_INCLUDE nanovdb/util/OpenToNanoVDB.h)
 if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
     message(STATUS "HdVk: volumes (OpenVDB) on")
+    target_sources(hdVk PRIVATE hydra/volume.cpp hydra/field.cpp)
+    # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
+    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES _USE_MATH_DEFINES)
+    target_include_directories(hdVk PRIVATE ${HDVK_NANOVDB_INCLUDE})
+    target_link_libraries(hdVk PRIVATE hioOpenVDB)
     # Writes tests/scenes/volume.vdb.
     add_executable(make_volume tests/make_volume.cpp)
-    # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
     target_compile_definitions(make_volume PRIVATE _USE_MATH_DEFINES)
     target_link_libraries(make_volume PRIVATE hioOpenVDB)
     set(HDVK_VOLUMES ON)
@@ -112,6 +119,10 @@ if(WIN32)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    if(HDVK_VOLUMES)
+        add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
+        set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    endif()
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

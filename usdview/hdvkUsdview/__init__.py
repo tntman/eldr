@@ -53,6 +53,7 @@ def Rows(stats):
              ("  textures", ReportMetricSize(get("textureMemory"))),
              ("  vertices, instances", ReportMetricSize(get("primvar"))),
              ("  indices", ReportMetricSize(get("topology"))),
+             ("  volumes", ReportMetricSize(get("volumeMemory"))),
              ("  peak", ReportMetricSize(get("peakMemory"))),
              ("System memory the GPU reads", ReportMetricSize(get("hostMemoryUsed")))]
     if get("vramSize"):
