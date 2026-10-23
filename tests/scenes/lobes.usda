@@ -10,6 +10,8 @@
 # UsdPreviewSurface clearcoat (sharp coat over rough red), standard_surface
 # car paint (blue metallic flake base, coat), OpenPBR amber coat over white,
 # standard_surface velvet (pink sheen over dark red), OpenPBR fuzz.
+# Bottom row: standard_surface thin film over black (oil slick), OpenPBR
+# anodized metal (thin film over grey metal).
 
 def Camera "cam"
 {
@@ -122,6 +124,36 @@ def Scope "mtl"
             token outputs:out
         }
     }
+
+    def Material "oilSlick"
+    {
+        token outputs:mtlx:surface.connect = </mtl/oilSlick/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.01, 0.01, 0.01)
+            float inputs:specular_roughness = 0.15
+            float inputs:thin_film_thickness = 400
+            float inputs:thin_film_IOR = 1.4
+            token outputs:out
+        }
+    }
+
+    def Material "anodized"
+    {
+        token outputs:mtlx:surface.connect = </mtl/anodized/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.62)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.25
+            float inputs:thin_film_weight = 1
+            float inputs:thin_film_thickness = 0.35
+            float inputs:thin_film_ior = 2
+            token outputs:out
+        }
+    }
 }
 
 def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
@@ -163,5 +195,19 @@ def Sphere "fuzz" (prepend apiSchemas = ["MaterialBindingAPI"])
 {
     rel material:binding = </mtl/fuzz>
     double3 xformOp:translate = (6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "oilSlick" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/oilSlick>
+    double3 xformOp:translate = (-6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "anodized" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/anodized>
+    double3 xformOp:translate = (-3.6, -1.2, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }

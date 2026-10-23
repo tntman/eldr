@@ -95,6 +95,15 @@ for prim in ("/velvet", "/fuzz"):
     on, off = compare("hdvk:sheen", prim)
     expect(sum(on) > 1.15 * sum(off), prim[1:] + ": sheen brightens the sphere", on, off)
 
+
+def hue(rgb):
+    return [c / sum(rgb) for c in rgb]
+
+
+for prim in ("/oilSlick", "/anodized"):
+    on, off = compare("hdvk:thinFilm", prim)
+    expect(max(abs(a - b) for a, b in zip(hue(on), hue(off))) > 0.05, prim[1:] + ": the film colours it", on, off)
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

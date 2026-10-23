@@ -27,6 +27,7 @@ struct Material {
     vec4 coatColor;      // tints the base beneath
     vec4 sheen;          // weight (0: none), roughness
     vec4 sheenColor;
+    vec4 thinFilm;       // weight (0: none), thickness (nm), ior
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

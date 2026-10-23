@@ -1241,6 +1241,34 @@ int main()
             const float v = Render(renderer, furnace).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white sheen over white returns 1");
         }
+
+        {
+            // Thin film: 300 nm of index 1.8 on a black dielectric reflects
+            // (0.095, 0.043, 0.122) head-on (Belcour & Barla's model, worked
+            // out on the CPU), purple instead of the bare 0.04 grey: times
+            // 4 under the head-on light (the default material's 0.16 / 0.04).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->thinFilm = 1;
+            material->thinFilmThickness = 300;
+            material->thinFilmIor = 1.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.thinFilm = false;
+            const Image off = Render(renderer, scene, frame);
+            const float expected[3] = {0.095f * 4, 0.043f * 4, 0.122f * 4};
+            bool close = true;
+            for (int c = 0; c < 3; ++c) {
+                close = close && std::abs(on.At(32, 32, c) / expected[c] - 1.0f) < 0.15f;
+            }
+            Expect(close, "thin film reflects its interference colour");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 2) - 0.16f) < 0.02f,
+                   "Frame::thinFilm off: the bare base");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

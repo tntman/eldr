@@ -104,6 +104,10 @@ TF_DEFINE_PRIVATE_TOKENS(
     (fuzz_weight)
     (fuzz_color)
     (fuzz_roughness)
+    (thin_film_thickness)
+    (thin_film_IOR)
+    (thin_film_weight)
+    (thin_film_ior)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1125,6 +1129,10 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
         m->sheenRoughness = ReadOr(p, _tokens->sheen_roughness, 0.3f);
         color(_tokens->sheen_color, m->sheenColor);
+        // Its thin film is on whenever it has a thickness (nm).
+        m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
+        m->thinFilm = m->thinFilmThickness > 0.0f ? 1.0f : 0.0f;
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1136,6 +1144,9 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->sheen = ReadOr(p, _tokens->fuzz_weight, 0.0f);
         m->sheenRoughness = ReadOr(p, _tokens->fuzz_roughness, 0.5f);
         color(_tokens->fuzz_color, m->sheenColor);
+        m->thinFilm = ReadOr(p, _tokens->thin_film_weight, 0.0f);
+        m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
     }
 }
 

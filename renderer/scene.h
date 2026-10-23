@@ -171,10 +171,14 @@ struct Material {
     float sheen = 0;
     float sheenColor[3] = {1, 1, 1};
     float sheenRoughness = 0.3f;
+    // Thin-film iridescence on the base's specular. Weight 0: none.
+    float thinFilm = 0;
+    float thinFilmThickness = 0;  // nanometres
+    float thinFilmIor = 1.5f;
 
     // Whether any lobe beyond the metallic base is on: such materials shade
     // with the renderer's LAYERS pipelines, the others never pay for them.
-    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0; }
+    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0; }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
