@@ -307,6 +307,38 @@ int main()
                 scene.Commit();
             }
 
+            // Dual quaternions: a strip weighted half to joint 0 (rest) and
+            // half to joint 1 (turned 180 degrees about z), with four and
+            // eight influences. Linear blending collapses it; dual
+            // quaternions turn it 90 degrees at full size.
+            for (const uint32_t influences : {4u, 8u}) {
+                vkr::Mesh *dq = AddQuad(scene, -0.5f, -0.2f, 0.5f, 0.2f, 0);
+                dq->primId = 5;
+                dq->jointCount = 2;
+                dq->influences = influences;
+                dq->dualQuaternion = true;
+                for (size_t c = 0; c < dq->points.size() / 3 * influences; ++c) {
+                    dq->jointIndices.push_back(uint16_t(c % 2));
+                    dq->jointWeights.push_back(1.0f / float(influences));
+                }
+                dq->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+                                          -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+                quad->visible = false;
+                scene.Commit();
+                const Image turned = Render(renderer, scene);
+                Expect(turned.Prim(32, 44) == 5 && turned.Prim(32, 19) == 5 && turned.Prim(44, 32) == -1,
+                       influences == 4 ? "dual quaternions turn the strip (4 influences)"
+                                       : "dual quaternions turn the strip (8 influences)");
+                dq->dualQuaternion = false;
+                scene.Commit();
+                const Image collapsed = Render(renderer, scene);
+                Expect(collapsed.Prim(32, 44) == -1 && collapsed.Prim(44, 32) == -1 && collapsed.Prim(32, 32) == -1,
+                       "linear blending collapses the same strip");
+                scene.RemoveMesh(dq);
+                quad->visible = true;
+                scene.Commit();
+            }
+
             // Two agents sharing the pose, one far off screen: culled by the
             // bounds its joints imply.
             quad->transforms = at(-0.5f);

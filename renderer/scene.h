@@ -95,8 +95,9 @@ struct Mesh {
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
 
-    // Linear blend skinning (UsdSkel), on the GPU. Up to 4 joints per corner
-    // with weights summing to 1, and jointCount skinning transforms (USD
+    // UsdSkel skinning, on the GPU: linear blend, or dual quaternions with
+    // `dualQuaternion`. 4 or 8 joints per corner (`influences`), strongest
+    // first, with weights summing to 1, and jointCount skinning transforms (USD
     // row-vector order) that take `points` to the posed mesh in its own
     // space; `transforms` then place each instance as usual. One set is
     // shared by all instances, or there is one per instance
@@ -106,6 +107,7 @@ struct Mesh {
     std::vector<uint16_t> jointIndices;  // `influences` per corner; empty: rigid mesh
     std::vector<float> jointWeights;     // `influences` per corner
     uint32_t influences = 4;             // 4 or 8
+    bool dualQuaternion = false;
     uint32_t jointCount = 0;
     std::vector<float> skinningTransforms;
     bool jointsDirty = false;
@@ -304,14 +306,15 @@ public:
         std::vector<uint32_t> drawChunks;
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
-        // opaque), plus kWide for eight skinning influences (other
-        // pipelines); chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4 };
+        // opaque), plus kWide (eight skinning influences) and kDualQuat:
+        // kind >> 2 picks the renderer's pipeline variant. Chunks also end
+        // where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8 };
         std::vector<uint8_t> chunkKind;
-        // The translucent slots (with kWide when wide) and their world
-        // bounds' centres (xyz).
+        // The translucent slots (with their pipeline variants) and their
+        // world bounds' centres (xyz).
         std::vector<uint32_t> translucent;
-        std::vector<uint8_t> translucentWide;
+        std::vector<uint8_t> translucentVariant;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant

@@ -1,0 +1,95 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Skinning methods: two bars twisted 150 degrees about their length by the
+# tip joint. Top: linear blend skinning (the middle collapses, "candy
+# wrapper"); bottom: primvars:skel:skinningMethod = "dualQuaternion" (keeps
+# its thickness).
+
+def Camera "cam"
+{
+    float focalLength = 30
+    double3 xformOp:translate = (0, 1.2, 5)
+    float xformOp:rotateX = -12
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def SkelRoot "linear" (prepend apiSchemas = ["SkelBindingAPI"])
+{
+    rel skel:skeleton = </linear/skel>
+    double3 xformOp:translate = (0, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Skeleton "skel" (prepend apiSchemas = ["SkelBindingAPI"])
+    {
+        uniform token[] joints = ["root", "root/tip"]
+        uniform matrix4d[] bindTransforms = [((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-1, 0, 0, 1)), ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))]
+        uniform matrix4d[] restTransforms = [((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-1, 0, 0, 1)), ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1))]
+        rel skel:animationSource = </linear/skel/twist>
+
+        def SkelAnimation "twist"
+        {
+            uniform token[] joints = ["root", "root/tip"]
+            float3[] translations = [(-1, 0, 0), (1, 0, 0)]
+            quatf[] rotations = [(1, 0, 0, 0), (0.258819, 0.965926, 0, 0)]
+            half3[] scales = [(1, 1, 1), (1, 1, 1)]
+        }
+    }
+
+    def Mesh "bar" (prepend apiSchemas = ["SkelBindingAPI"])
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7, 4, 5, 9, 8, 5, 6, 10, 9, 6, 7, 11, 10, 7, 4, 8, 11, 8, 9, 13, 12, 9, 10, 14, 13, 10, 11, 15, 14, 11, 8, 12, 15, 12, 13, 17, 16, 13, 14, 18, 17, 14, 15, 19, 18, 15, 12, 16, 19, 16, 17, 21, 20, 17, 18, 22, 21, 18, 19, 23, 22, 19, 16, 20, 23, 20, 21, 25, 24, 21, 22, 26, 25, 22, 23, 27, 26, 23, 20, 24, 27, 24, 25, 29, 28, 25, 26, 30, 29, 26, 27, 31, 30, 27, 24, 28, 31, 28, 29, 33, 32, 29, 30, 34, 33, 30, 31, 35, 34, 31, 28, 32, 35, 3, 2, 1, 0, 32, 33, 34, 35]
+        point3f[] points = [(-1, 0.2, 0.2), (-1, -0.2, 0.2), (-1, -0.2, -0.2), (-1, 0.2, -0.2), (-0.75, 0.2, 0.2), (-0.75, -0.2, 0.2), (-0.75, -0.2, -0.2), (-0.75, 0.2, -0.2), (-0.5, 0.2, 0.2), (-0.5, -0.2, 0.2), (-0.5, -0.2, -0.2), (-0.5, 0.2, -0.2), (-0.25, 0.2, 0.2), (-0.25, -0.2, 0.2), (-0.25, -0.2, -0.2), (-0.25, 0.2, -0.2), (0, 0.2, 0.2), (0, -0.2, 0.2), (0, -0.2, -0.2), (0, 0.2, -0.2), (0.25, 0.2, 0.2), (0.25, -0.2, 0.2), (0.25, -0.2, -0.2), (0.25, 0.2, -0.2), (0.5, 0.2, 0.2), (0.5, -0.2, 0.2), (0.5, -0.2, -0.2), (0.5, 0.2, -0.2), (0.75, 0.2, 0.2), (0.75, -0.2, 0.2), (0.75, -0.2, -0.2), (0.75, 0.2, -0.2), (1, 0.2, 0.2), (1, -0.2, 0.2), (1, -0.2, -0.2), (1, 0.2, -0.2)]
+        int[] primvars:skel:jointIndices = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] (elementSize = 2; interpolation = "vertex")
+        float[] primvars:skel:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] (elementSize = 2; interpolation = "vertex")
+        color3f[] primvars:displayColor = [(0.8, 0.5, 0.2)]
+        uniform token subdivisionScheme = "none"
+    }
+}
+
+def SkelRoot "dualQuaternion" (prepend apiSchemas = ["SkelBindingAPI"])
+{
+    rel skel:skeleton = </dualQuaternion/skel>
+    double3 xformOp:translate = (0, -0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Skeleton "skel" (prepend apiSchemas = ["SkelBindingAPI"])
+    {
+        uniform token[] joints = ["root", "root/tip"]
+        uniform matrix4d[] bindTransforms = [((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-1, 0, 0, 1)), ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1))]
+        uniform matrix4d[] restTransforms = [((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (-1, 0, 0, 1)), ((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (1, 0, 0, 1))]
+        rel skel:animationSource = </dualQuaternion/skel/twist>
+
+        def SkelAnimation "twist"
+        {
+            uniform token[] joints = ["root", "root/tip"]
+            float3[] translations = [(-1, 0, 0), (1, 0, 0)]
+            quatf[] rotations = [(1, 0, 0, 0), (0.258819, 0.965926, 0, 0)]
+            half3[] scales = [(1, 1, 1), (1, 1, 1)]
+        }
+    }
+
+    def Mesh "bar" (prepend apiSchemas = ["SkelBindingAPI"])
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7, 4, 5, 9, 8, 5, 6, 10, 9, 6, 7, 11, 10, 7, 4, 8, 11, 8, 9, 13, 12, 9, 10, 14, 13, 10, 11, 15, 14, 11, 8, 12, 15, 12, 13, 17, 16, 13, 14, 18, 17, 14, 15, 19, 18, 15, 12, 16, 19, 16, 17, 21, 20, 17, 18, 22, 21, 18, 19, 23, 22, 19, 16, 20, 23, 20, 21, 25, 24, 21, 22, 26, 25, 22, 23, 27, 26, 23, 20, 24, 27, 24, 25, 29, 28, 25, 26, 30, 29, 26, 27, 31, 30, 27, 24, 28, 31, 28, 29, 33, 32, 29, 30, 34, 33, 30, 31, 35, 34, 31, 28, 32, 35, 3, 2, 1, 0, 32, 33, 34, 35]
+        point3f[] points = [(-1, 0.2, 0.2), (-1, -0.2, 0.2), (-1, -0.2, -0.2), (-1, 0.2, -0.2), (-0.75, 0.2, 0.2), (-0.75, -0.2, 0.2), (-0.75, -0.2, -0.2), (-0.75, 0.2, -0.2), (-0.5, 0.2, 0.2), (-0.5, -0.2, 0.2), (-0.5, -0.2, -0.2), (-0.5, 0.2, -0.2), (-0.25, 0.2, 0.2), (-0.25, -0.2, 0.2), (-0.25, -0.2, -0.2), (-0.25, 0.2, -0.2), (0, 0.2, 0.2), (0, -0.2, 0.2), (0, -0.2, -0.2), (0, 0.2, -0.2), (0.25, 0.2, 0.2), (0.25, -0.2, 0.2), (0.25, -0.2, -0.2), (0.25, 0.2, -0.2), (0.5, 0.2, 0.2), (0.5, -0.2, 0.2), (0.5, -0.2, -0.2), (0.5, 0.2, -0.2), (0.75, 0.2, 0.2), (0.75, -0.2, 0.2), (0.75, -0.2, -0.2), (0.75, 0.2, -0.2), (1, 0.2, 0.2), (1, -0.2, 0.2), (1, -0.2, -0.2), (1, 0.2, -0.2)]
+        int[] primvars:skel:jointIndices = [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] (elementSize = 2; interpolation = "vertex")
+        float[] primvars:skel:jointWeights = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0.25, 0.75, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1] (elementSize = 2; interpolation = "vertex")
+        uniform token primvars:skel:skinningMethod = "dualQuaternion"
+        color3f[] primvars:displayColor = [(0.8, 0.5, 0.2)]
+        uniform token subdivisionScheme = "none"
+    }
+}

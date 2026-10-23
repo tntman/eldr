@@ -99,21 +99,20 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 
 // The opaque and cutout draws of one command list (commands[first] at
 // offset), one indirect call per chunk (Scene::Gpu::drawChunks), each with
-// its pipeline: `cutout` for chunks of cutout materials, [1] for eight
-// skinning influences. Translucent chunks are left to the translucent pass
+// its pipeline: `cutout` for chunks of cutout materials, in the chunk's
+// variant (skinning). Translucent chunks are left to the translucent pass
 // (and cast no shadows).
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
-                const VkPipeline opaque[2], const VkPipeline cutout[2])
+                const VkPipeline opaque[4], const VkPipeline cutout[4])
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
-        const uint8_t kind = gpu.chunkKind[i] & ~Scene::Gpu::kWide;
+        const uint8_t kind = gpu.chunkKind[i] & (Scene::Gpu::kWide - 1);
         if (kind == Scene::Gpu::kTranslucent) {
             continue;
         }
-        const int wide = (gpu.chunkKind[i] & Scene::Gpu::kWide) ? 1 : 0;
-        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[wide];
+        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[gpu.chunkKind[i] >> 2];
         if (pipeline != bound) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             bound = pipeline;
@@ -232,9 +231,9 @@ Renderer::~Renderer()
     for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
-    for (int wide = 0; wide < 2; ++wide) {
-        for (VkPipeline p : {_prepassPipeline[wide], _pipeline[wide], _shadowPipeline[wide], _prepassCutoutPipeline[wide],
-                             _shadowCutoutPipeline[wide], _translucentPipeline[wide]}) {
+    for (int v = 0; v < 4; ++v) {
+        for (VkPipeline p : {_prepassPipeline[v], _pipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
+                             _shadowCutoutPipeline[v], _translucentPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
@@ -454,19 +453,21 @@ void Renderer::_CreatePipelines()
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dynamic;
     ci.layout = _layout;
-    // Every mesh pipeline twice: [1] with kWideSkin set in its vertex stage
-    // (eight skinning influences, see mesh.vert).
-    const VkBool32 wideSkin = VK_TRUE;
-    const VkSpecializationMapEntry wideEntry{0, 0, sizeof(VkBool32)};
-    const VkSpecializationInfo wideSpec{1, &wideEntry, sizeof(VkBool32), &wideSkin};
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline out[2]) {
-        VkResult res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[0]);
-        VkPipelineShaderStageCreateInfo wideStages[2] = {};
-        std::copy(info.pStages, info.pStages + info.stageCount, wideStages);
-        wideStages[0].pSpecializationInfo = &wideSpec;  // the vertex stage comes first
-        info.pStages = wideStages;
-        if (res == VK_SUCCESS) {
-            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[1]);
+    // Every mesh pipeline four times, its vertex stage specialized with
+    // kWideSkin (variant bit 0: eight skinning influences) and
+    // kDualQuaternion (bit 1), see mesh.vert.
+    const VkSpecializationMapEntry skinEntries[2] = {{0, 0, sizeof(VkBool32)},
+                                                     {1, sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkBool32 skinFlags[4][2] = {{VK_FALSE, VK_FALSE}, {VK_TRUE, VK_FALSE}, {VK_FALSE, VK_TRUE}, {VK_TRUE, VK_TRUE}};
+    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline out[4]) {
+        VkPipelineShaderStageCreateInfo stages[2] = {};
+        std::copy(info.pStages, info.pStages + info.stageCount, stages);
+        info.pStages = stages;
+        VkResult res = VK_SUCCESS;
+        for (int v = 0; v < 4 && res == VK_SUCCESS; ++v) {
+            const VkSpecializationInfo spec{2, skinEntries, sizeof(skinFlags[v]), skinFlags[v]};
+            stages[0].pSpecializationInfo = &spec;  // the vertex stage comes first
+            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &out[v]);
         }
         return res;
     };
@@ -1430,8 +1431,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         VkPipeline bound = VK_NULL_HANDLE;
         for (const auto &[distance, i] : order) {
             const uint32_t slot = gpu.translucent[i];
-            if (_translucentPipeline[gpu.translucentWide[i]] != bound) {
-                bound = _translucentPipeline[gpu.translucentWide[i]];
+            if (_translucentPipeline[gpu.translucentVariant[i]] != bound) {
+                bound = _translucentPipeline[gpu.translucentVariant[i]];
                 vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
             }
             vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(slot) * sizeof(VkDrawIndexedIndirectCommand),

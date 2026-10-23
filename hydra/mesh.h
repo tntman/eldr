@@ -66,6 +66,7 @@ private:
     int _blendRangeCount = 0;        // points with a range
     VtFloatArray _blendWeights;      // per shape, or per instance and shape
     int _numBlendShapeWeights = 0;   // > 0: _blendWeights holds every instance
+    bool _dualQuaternion = false;    // hydra:numSkinningMethod 1
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

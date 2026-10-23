@@ -239,14 +239,17 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         const VtVec2iArray blendRanges =
             get(HdSkinningInputTokens->blendShapeOffsetRanges).GetWithDefault(VtVec2iArray());
         const int blendRangeCount = get(HdSkinningInputTokens->numBlendShapeOffsetRanges).GetWithDefault(0);
+        const bool dualQuaternion = get(HdSkinningInputTokens->numSkinningMethod).GetWithDefault(0) == 1;
         if (influences != _influences || perPoint != _influencesPerPoint || constant != _constantInfluences ||
-            blendOffsets != _blendOffsets || blendRanges != _blendRanges || blendRangeCount != _blendRangeCount) {
+            blendOffsets != _blendOffsets || blendRanges != _blendRanges || blendRangeCount != _blendRangeCount ||
+            dualQuaternion != _dualQuaternion) {
             _influences = influences;
             _influencesPerPoint = perPoint;
             _constantInfluences = constant;
             _blendOffsets = blendOffsets;
             _blendRanges = blendRanges;
             _blendRangeCount = blendRangeCount;
+            _dualQuaternion = dualQuaternion;
             geometryDirty = true;
         }
         _blendWeights = get(HdSkinningInputTokens->blendShapeWeights).GetWithDefault(VtFloatArray());
@@ -378,6 +381,7 @@ void HdVkMesh::_SplitSubsets()
         pick(m.jointIndices, m.influences, tris, &d->jointIndices);
         pick(m.jointWeights, m.influences, tris, &d->jointWeights);
         d->influences = m.influences;
+        d->dualQuaternion = m.dualQuaternion;
         pick(m.blendRanges, 2, tris, &d->blendRanges);
         d->blendOffsets = m.blendOffsets;
         d->jointCount = m.jointCount;
@@ -494,6 +498,7 @@ void HdVkMesh::_Flatten()
         }
         const size_t kept = perPoint > 4 ? 8 : 4;
         m.influences = uint32_t(kept);
+        m.dualQuaternion = _dualQuaternion;
         for (const GfVec3i &tri : _triangles) {
             for (int k = 0; k < 3; ++k) {
                 const size_t base = _constantInfluences ? 0 : size_t(std::max(tri[k], 0)) * perPoint;

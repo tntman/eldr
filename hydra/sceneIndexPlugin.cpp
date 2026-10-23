@@ -40,6 +40,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (numInfluencesPerComponent)
     (hasConstantInfluences)
     (skinningXforms)
+    (skinningDualQuats)
     (skelLocalToWorld)
     (primWorldToLocal)
     (blendShapeOffsets)
@@ -129,7 +130,13 @@ public:
                                          : HdPrimvarSchemaTokens->vertex,
                                      HdPrimvarRoleTokens->normal));
         }
-        // ponytail: dual-quaternion skinning is treated as linear blend.
+        // The skinning method, as UsdSkelImaging's deferred skinning
+        // announces it: its pose inputs have dual quaternions only for
+        // "dualQuaternion" (HdVk takes them from the joint matrices).
+        names.push_back(HdSkinningInputTokens->numSkinningMethod);
+        values.push_back(primvar(HdRetainedTypedSampledDataSource<int>::New(
+                                     pose.Get(_tokens->skinningDualQuats) ? 1 : 0),
+                                 constant, TfToken()));
         prim.dataSource = HdOverlayContainerDataSource::New(
             HdRetainedContainerDataSource::New(
                 HdPrimvarsSchema::GetSchemaToken(),

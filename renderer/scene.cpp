@@ -1019,7 +1019,7 @@ void Scene::Commit()
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
     _gpu.translucent.clear();
-    _gpu.translucentWide.clear();
+    _gpu.translucentVariant.clear();
     _gpu.translucentCenters.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
@@ -1038,19 +1038,19 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
+                                (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0);
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material && (m.material->opacity < 1 || m.material->opacityTex.texture)) {
             kind[slot] = Gpu::kTranslucent;
             _gpu.translucent.push_back(uint32_t(slot));
-            _gpu.translucentWide.push_back(m._skinStride == 2);
+            _gpu.translucentVariant.push_back(variant >> 2);
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
-        if (m._skinStride == 2) {
-            kind[slot] |= Gpu::kWide;
-        }
+        kind[slot] |= variant;
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
