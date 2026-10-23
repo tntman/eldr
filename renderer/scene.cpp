@@ -1,6 +1,7 @@
 ﻿#include "scene.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <iterator>
@@ -206,7 +207,7 @@ Scene::~Scene()
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
-                          &_shadowCommands, &_materials, &_lightBuffer, &_staging}) {
+                          &_materials, &_lightBuffer, &_staging}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -215,6 +216,7 @@ Scene::~Scene()
 
 Mesh *Scene::AddMesh()
 {
+    _changed = true;
     _meshes.push_back(std::make_unique<Mesh>());
     _meshes.back()->_slot = _meshes.size() - 1;
     return _meshes.back().get();
@@ -222,6 +224,7 @@ Mesh *Scene::AddMesh()
 
 void Scene::RemoveMesh(Mesh *mesh)
 {
+    _changed = true;
     // Only bookkeeping here; the freed instance slots are invalidated on the
     // GPU at the next Commit.
     if (_device) {
@@ -305,23 +308,26 @@ void Scene::_Flush()
     _fills.clear();
 }
 
-// Makes room for a further `needed` elements: doubles the pool, copies the
-// old contents over on the GPU and, for the instance pool, marks the new
-// slots free and rebuilds the visible buffer's identity half.
+// Makes room for a further `needed` elements: grows the pool (doubling,
+// or by a quarter once it is over 256 MB, since old and new coexist while
+// copying), copies the old contents over on the GPU and, for the instance
+// pool, marks the new slots free and resizes the visible lists.
 void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t needed,
                             VkDeviceSize elementSize, VkBufferUsageFlags usage, bool instances)
 {
     _Flush();  // pending copies/fills target the old buffer
     const uint32_t old = alloc.Capacity();
-    const uint32_t capacity = std::max({old * 2, old + needed, 1024u});
+    const uint32_t step = VkDeviceSize(old) * elementSize > (VkDeviceSize(256) << 20) ? old / 4 : old;
+    const uint32_t capacity = std::max({old + step, old + needed, 1024u});
     Buffer grown = _device->CreateDeviceBuffer(capacity * elementSize, usage | kPoolUsage);
     _device->Submit([&](VkCommandBuffer cmd) {
         if (old > 0) {
-            const VkBufferCopy region{0, 0, old * elementSize};
+            const VkBufferCopy region{0, 0, VkDeviceSize(old) * elementSize};
             vkCmdCopyBuffer(cmd, buffer.buffer, grown.buffer, 1, &region);
         }
         if (instances) {
-            vkCmdFillBuffer(cmd, grown.buffer, old * elementSize, (capacity - old) * elementSize, 0xFFFFFFFFu);
+            vkCmdFillBuffer(cmd, grown.buffer, VkDeviceSize(old) * elementSize,
+                            VkDeviceSize(capacity - old) * elementSize, 0xFFFFFFFFu);
         }
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
@@ -334,13 +340,6 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
         _device->Destroy(_visible);
         _visible = _device->CreateDeviceBuffer(VkDeviceSize(capacity) * kVisibleLists * sizeof(uint32_t),
                                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | kPoolUsage);
-        std::vector<uint32_t> identity(capacity);
-        for (uint32_t i = 0; i < capacity; ++i) {
-            identity[i] = i;
-        }
-        _copies.push_back({_visible.buffer, VkDeviceSize(capacity) * sizeof(uint32_t),
-                           _Stage(identity.data(), identity.size() * sizeof(uint32_t)),
-                           identity.size() * sizeof(uint32_t)});
     }
 }
 
@@ -552,7 +551,13 @@ void Scene::_UploadInstances(Mesh &m)
     std::vector<Instance> instances(count);
     for (uint32_t i = 0; i < count; ++i) {
         Instance &inst = instances[i];
-        std::memcpy(inst.transform, &m.transforms[size_t(i) * 16], sizeof(inst.transform));
+        const float *x = &m.transforms[size_t(i) * 16];  // USD row-vector order
+        for (int r = 0; r < 3; ++r) {
+            inst.rows[r][0] = x[r];
+            inst.rows[r][1] = x[4 + r];
+            inst.rows[r][2] = x[8 + r];
+            inst.rows[r][3] = x[12 + r];
+        }
         inst.draw = uint32_t(m._slot);
         inst.index = int32_t(i);
         inst.joints = skinned ? m._jointBase + i * m.jointCount : kNone;
@@ -860,7 +865,28 @@ void Scene::Commit()
         _EnsureCapacity(_blendWeights, _weightAlloc, 0, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     }
 
+    // Size the instance and index pools once for everything about to be
+    // uploaded rather than growing them step by step: a huge instanced scene
+    // (tens of millions of instances) cannot afford old and doubled pools
+    // side by side.
+    uint64_t instancesNeeded = 0, indicesNeeded = 0;
+    for (const auto &m : _meshes) {
+        instancesNeeded += m->transforms.size() / 16;
+        indicesNeeded += m->geometryDirty ? m->points.size() / 3 : m->_indexCount;
+    }
+    if (instancesNeeded > _instanceAlloc.Capacity()) {
+        _EnsureCapacity(_instances, _instanceAlloc,
+                        uint32_t(instancesNeeded + instancesNeeded / 16 - _instanceAlloc.Capacity()),
+                        sizeof(Instance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+    }
+    if (indicesNeeded > _indexAlloc.Capacity()) {
+        _EnsureCapacity(_indices, _indexAlloc, uint32_t(indicesNeeded + indicesNeeded / 16 - _indexAlloc.Capacity()),
+                        sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, false);
+    }
+
     // Upload only what changed.
+    bool changed = _changed;
+    _changed = false;
     for (const auto &m : _meshes) {
         const bool geometry = m->geometryDirty, transforms = m->transformsDirty || geometry;
         const bool joints = !m->jointIndices.empty() && (m->jointsDirty || transforms);
@@ -876,6 +902,7 @@ void Scene::Commit()
         if (transforms || joints) {
             _UpdateWorldBounds(*m);
         }
+        changed = changed || geometry || transforms || joints;
     }
     _Flush();
 
@@ -913,11 +940,9 @@ void Scene::Commit()
     _device->Reserve(_draws, slots * sizeof(DrawInfo), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _device->Reserve(_commandTemplate, slots * sizeof(VkDrawIndexedIndirectCommand),
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    _device->Reserve(_shadowCommands, slots * sizeof(VkDrawIndexedIndirectCommand),
-                     VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT);
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
-    auto *shadows = static_cast<VkDrawIndexedIndirectCommand *>(_shadowCommands.mapped);
+    std::vector<uint32_t> drawn(slots);  // instances per slot before culling
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -946,11 +971,9 @@ void Scene::Commit()
         d.blendWeights = m._weightBase;
         d.blendShapes = m._weightSlots > 0 ? m.blendShapeCount : 0;
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
-        // Culling fills in instanceCount; shadows draw every instance through
-        // the identity half of the visible buffer.
+        // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
-        shadows[slot] = {m._indexCount, drawable ? m._instanceCount : 0, m._firstIndex,
-                         int32_t(m._vertexOffset), m._instanceBase};
+        drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;
             for (int k = 0; k < 3; ++k) {
@@ -958,6 +981,29 @@ void Scene::Commit()
                 hi[k] = std::max(hi[k], m._worldMax[k]);
             }
         }
+    }
+    // A call of 500 M triangles takes ~0.1 s on a GTX 1080 Ti; Moana's view
+    // draws 11 G, which as one call ran ~2.2 s and reset the driver.
+    // ponytail: a single slot over the budget stays one call; splitting it
+    // needs instance ranges.
+    constexpr double kChunkTriangles = 5e8;
+    _gpu.drawChunks.assign(1, 0);
+    double triangles = 0;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
+        if (triangles > 0 && triangles + t > kChunkTriangles) {
+            _gpu.drawChunks.push_back(uint32_t(slot));
+            triangles = 0;
+        }
+        triangles += t;
+    }
+    _gpu.drawChunks.push_back(uint32_t(slots));
+
+    // Visibility edits change what shadows draw without any upload.
+    if (changed || drawn != _lastDrawn) {
+        static std::atomic<uint64_t> versions{0};
+        _gpu.version = ++versions;
+        _lastDrawn = std::move(drawn);
     }
     _gpu.hasBounds = anyDrawable;
     std::copy(lo, lo + 3, _gpu.boundsMin);
@@ -1058,7 +1104,6 @@ void Scene::Commit()
     _gpu.visible = _visible.buffer;
     _gpu.draws = _draws.buffer;
     _gpu.commandTemplate = _commandTemplate.buffer;
-    _gpu.shadowCommands = _shadowCommands.buffer;
     _gpu.materials = _materials.buffer;
     _gpu.lights = _lightBuffer.buffer;
     _gpu.skin = _skin.buffer;

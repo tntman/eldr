@@ -14,12 +14,17 @@
 const uint kFreeSlot = 0xFFFFFFFFu;
 
 struct Instance {
-    mat4 transform;  // USD row-major memory read column-major: model * p works
+    vec4 rows[3];    // affine transform, rows of the column-vector form
     uint draw;       // mesh slot, kFreeSlot if unused
     int index;       // index into the mesh's instances (instanceId AOV)
     uint joints;     // skinned: first of the instance's joint matrices
     uint pad;
 };
+
+mat4 InstanceTransform(Instance inst)
+{
+    return transpose(mat4(inst.rows[0], inst.rows[1], inst.rows[2], vec4(0.0, 0.0, 0.0, 1.0)));
+}
 
 struct DrawInfo {
     vec4 boundsMin;  // object space
@@ -48,7 +53,7 @@ struct SkinVertex {
 
 layout(std430, set = 0, binding = 7) readonly buffer Instances { Instance instances[]; };
 layout(std430, set = 0, binding = 8) readonly buffer Draws { DrawInfo draws[]; };
-// [0, cap): visible instances per mesh (culling output), [cap, 2*cap): identity.
+// kVisibleLists lists of instance indices, instanceCapacity each (culling output).
 layout(std430, set = 0, binding = 9) SCENE_ACCESS buffer Visible { uint visible[]; };
 // Skinning: per vertex its joint influences and blend shape range; joint
 // matrices take rest points to world space (built by skin.comp from the

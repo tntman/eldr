@@ -14,7 +14,7 @@ layout(location = 3) in vec4 inVertexColor;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
-    uint listBase;  // which list of instance indices (kVisibleLists) this pass draws
+    uint listBase;  // which list of instance indices (kVisibleLists); kFreeSlot: all instances
 } pc;
 
 layout(location = 0) out vec3 outWorldPos;
@@ -30,9 +30,10 @@ invariant gl_Position;
 
 void main()
 {
-    Instance inst = instances[visible[pc.listBase + gl_InstanceIndex]];
+    uint slot = pc.listBase == kFreeSlot ? uint(gl_InstanceIndex) : visible[pc.listBase + gl_InstanceIndex];
+    Instance inst = instances[slot];
     DrawInfo d = draws[inst.draw];
-    mat4 model = inst.transform;
+    mat4 model = InstanceTransform(inst);
     mat3 normalMatrix;
     vec3 position = inPosition;
     if (d.skin != kFreeSlot) {

@@ -21,7 +21,8 @@ void main()
     }
     DrawInfo d = draws[inst.draw];
     uint src = d.skinXforms + (d.skinPerInstance != 0u ? uint(inst.index) * d.jointCount : 0u);
+    mat4 xf = InstanceTransform(inst);
     for (uint j = 0u; j < d.jointCount; ++j) {
-        joints[inst.joints + j] = inst.transform * skinXforms[src + j];
+        joints[inst.joints + j] = xf * skinXforms[src + j];
     }
 }

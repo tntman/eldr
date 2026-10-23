@@ -69,8 +69,9 @@ void main()
     } else {
         vec3 c = 0.5 * (d.boundsMin.xyz + d.boundsMax.xyz);
         vec3 e = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
-        mat3 m = mat3(inst.transform);
-        wc = (inst.transform * vec4(c, 1.0)).xyz;
+        mat4 xf = InstanceTransform(inst);
+        mat3 m = mat3(xf);
+        wc = (xf * vec4(c, 1.0)).xyz;
         we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
     }
     for (int p = 0; p < 6; ++p) {

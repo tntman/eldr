@@ -114,6 +114,9 @@ private:
     Image _shadowMap;                           // kCascades-layer array view
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
+    // What the atlas holds: redrawn only when the scene or the tiles change.
+    uint64_t _atlasVersion = 0;
+    std::vector<float> _atlasKey;               // the tiles' matrices and rects
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome

@@ -165,12 +165,13 @@ struct Vertex {
     uint16_t color[4];   // half floats; only read when DrawInfo::vertexColors
 };
 struct Instance {
-    float transform[16];
+    float rows[3][4];    // affine transform, column-vector rows (x' = rows[0] . (p, 1))
     uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
     int32_t index;       // index into Mesh::transforms (instanceId AOV)
     uint32_t joints;     // skinned: first of the instance's joint matrices
     uint32_t pad;
 };
+static_assert(sizeof(Instance) == 64, "std430 mirror in shaders/scene.glsl");
 struct DrawInfo {
     float boundsMin[4];  // object space
     float boundsMax[4];
@@ -207,9 +208,10 @@ struct SkinVertex {
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 constexpr uint32_t kNone = 0xFFFFFFFFu;
 constexpr uint32_t kMaxTextures = 4096;
-// Lists of instance indices in Gpu::visible, instanceCapacity each:
-// [0] culled for the camera, [1] identity (every instance), [2, 6) culled
-// for the shadow cascades.
+// Lists of instance indices in Gpu::visible, instanceCapacity each: [0]
+// culled for the camera, [1, 5) culled for the shadow cascades, [5] for the
+// shadow atlas tile being drawn (reused tile after tile). Passes that draw
+// every instance read the instance pool directly (list kNone).
 constexpr uint32_t kVisibleLists = 6;
 
 // Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
@@ -254,7 +256,6 @@ public:
         VkBuffer visible = VK_NULL_HANDLE;
         VkBuffer draws = VK_NULL_HANDLE;           // DrawInfo per mesh slot
         VkBuffer commandTemplate = VK_NULL_HANDLE; // per slot, instanceCount 0
-        VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances (identity list)
         VkBuffer materials = VK_NULL_HANDLE;
         VkBuffer lights = VK_NULL_HANDLE;      // distant lights, then sphere/rect lights
         VkBuffer skin = VK_NULL_HANDLE;        // SkinVertex pool
@@ -264,6 +265,10 @@ public:
         VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)
         VkBuffer blendWeights = VK_NULL_HANDLE; // blend shape weights (float)
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
+        // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
+        // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
+        // even with every instance visible.
+        std::vector<uint32_t> drawChunks;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
@@ -284,6 +289,9 @@ public:
             float size;              // emitter radius for soft shadows (0: point, hard)
         };
         std::vector<ShadowCaster> shadowCasters;
+        // Changes whenever anything a shadow map could see changed (geometry,
+        // instances, poses, visibility); unique across scenes.
+        uint64_t version = 0;
         bool hasBounds = false;
         float boundsMin[3] = {}, boundsMax[3] = {};  // world space, all instances
 
@@ -332,7 +340,7 @@ private:
     RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
         _boundsAlloc, _blendAlloc, _weightAlloc;
     // Host-visible per-commit tables.
-    Buffer _draws, _commandTemplate, _shadowCommands, _materials, _lightBuffer, _staging;
+    Buffer _draws, _commandTemplate, _materials, _lightBuffer, _staging;
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;
@@ -341,6 +349,8 @@ private:
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
+    bool _changed = true;           // since the last Commit: a mesh was added or removed
+    std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;
     VkDeviceMemory _envMemory = VK_NULL_HANDLE;
     VkImageView _envView = VK_NULL_HANDLE;

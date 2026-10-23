@@ -88,6 +88,18 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
     vkCmdPushConstants(cmd, layout, kPushStages, 0, sizeof(p), &p);
 }
 
+// The draws of one command list (commands[first] at offset), one indirect
+// call per chunk (Scene::Gpu::drawChunks).
+void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset)
+{
+    constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
+    for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
+        const uint32_t first = gpu.drawChunks[i];
+        vkCmdDrawIndexedIndirect(cmd, commands, offset + first * stride, gpu.drawChunks[i + 1] - first,
+                                 uint32_t(stride));
+    }
+}
+
 // World-space frustum planes (xyz . p + w >= 0 inside) of a GL clip-space
 // viewProj in row-vector order (Gribb/Hartmann).
 void FrustumPlanes(const float *vp, float planes[6][4])
@@ -463,7 +475,8 @@ void Renderer::_CreateConstantImages()
     }
 
     _shadowAtlas = _dev.CreateImage(kDepthFormat, kShadowAtlasSize, kShadowAtlasSize, 1, 1,
-                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                     VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -736,8 +749,6 @@ struct Renderer::ShadowTile {
 // Gives atlas tiles to the shadow-casting lights whose range reaches into
 // the view, brightest at the camera first, until the atlas is full; the
 // rest stay unshadowed. Writes each light's first tile (or kNone).
-// ponytail: fixed 512 tiles redrawn every frame, each with every caster;
-// per-tile culling and caching static lights' tiles come when it matters.
 std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
                                                               float cutoff)
 {
@@ -756,7 +767,11 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     };
     std::vector<Candidate> candidates;
     for (const Scene::Gpu::ShadowCaster &c : gpu.shadowCasters) {
-        const float range = std::sqrt(c.rangeIntensity / cutoff) + c.extent;
+        // Rounded up to a power of sqrt 2: the cutoff follows the exposure,
+        // which drifts while it adapts, and every change of a tile's far
+        // plane redraws the atlas.
+        const float range = std::exp2(std::ceil(std::log2(std::sqrt(c.rangeIntensity / cutoff)) * 2.0f) * 0.5f) +
+                            c.extent;
         bool inView = range > 0.0f;
         for (const auto &p : planes) {
             inView = inView && p[0] * c.position[0] + p[1] * c.position[1] + p[2] * c.position[2] + p[3] >= -range;
@@ -769,15 +784,26 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     std::sort(candidates.begin(), candidates.end(),
               [](const Candidate &a, const Candidate &b) { return a.priority > b.priority; });
 
+    // Pick by priority, then place in light order: as long as the same lights
+    // win, the tiles (and the cached atlas) stay where they were.
     constexpr uint32_t perRow = kShadowAtlasSize / kShadowTileSize, capacity = perRow * perRow;
+    std::vector<Candidate> chosen;
+    uint32_t used = 0;
+    for (const Candidate &cand : candidates) {
+        const uint32_t need = cand.caster->coneAngle <= kSpotShadowCone ? 1 : 6;
+        if (used + need <= capacity) {
+            chosen.push_back(cand);
+            used += need;
+        }
+    }
+    std::sort(chosen.begin(), chosen.end(),
+              [](const Candidate &a, const Candidate &b) { return a.caster->light < b.caster->light; });
+
     constexpr float tileUv = float(kShadowTileSize) / float(kShadowAtlasSize);
     const Vec3 cube[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
-    for (const Candidate &cand : candidates) {
+    for (const Candidate &cand : chosen) {
         const Scene::Gpu::ShadowCaster &c = *cand.caster;
         const bool spot = c.coneAngle <= kSpotShadowCone;
-        if (tiles.size() + (spot ? 1 : 6) > capacity) {
-            continue;
-        }
         firstTile[c.light] = uint32_t(tiles.size());
         const Vec3 position{c.position[0], c.position[1], c.position[2]};
         const float n = std::max(c.radius * 1.05f, cand.range * 1e-4f), f = std::max(cand.range, n * 2.0f);
@@ -813,11 +839,26 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     return tiles;
 }
 
-// All tiles in one rendering pass over the atlas, each through its own
-// viewport. Without tiles the atlas is only transitioned for its descriptor.
+// Draws the tiles one after another, each culled on the GPU against its
+// own frustum (dropping casters under half a shadow texel) into the shared
+// tile list, unless the atlas already holds exactly these tiles of this
+// scene version (static scenes and lights: drawn once, e.g. for all of TAA's
+// accumulation frames). Without tiles the atlas is only transitioned for
+// its descriptor.
+// ponytail: all or nothing; a moving caster redraws every light's tiles.
 void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles)
 {
     const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
+    std::vector<float> key;
+    for (const ShadowTile &t : tiles) {
+        key.insert(key.end(), t.viewProj, t.viewProj + 16);
+        key.insert(key.end(), t.rect, t.rect + 4);
+    }
+    if (!tiles.empty() && gpu.version == _atlasVersion && key == _atlasKey) {
+        return;  // still in SHADER_READ_ONLY_OPTIMAL from when it was drawn
+    }
+    _atlasVersion = tiles.empty() ? 0 : gpu.version;
+    _atlasKey = std::move(key);
     if (tiles.empty()) {
         ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -826,37 +867,87 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
     }
     constexpr VkPipelineStageFlags2 kTests =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    auto memoryBarrier = [&](VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage,
+                             VkAccessFlags2 dstAccess) {
+        VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        b.srcStageMask = srcStage;
+        b.srcAccessMask = srcAccess;
+        b.dstStageMask = dstStage;
+        b.dstAccessMask = dstAccess;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(_cmd, &dep);
+    };
+    // Clear the whole atlas once; each tile then loads and draws its rect.
     ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
-                 kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    att.imageView = _shadowAtlas.view;
-    att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    att.clearValue.depthStencil.depth = 1.0f;
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, {kShadowAtlasSize, kShadowAtlasSize}};
-    ri.layerCount = 1;
-    ri.pDepthAttachment = &att;
-    vkCmdBeginRendering(_cmd, &ri);
-    // GTAO bound its own set; the shadow pass needs the scene's.
-    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-    vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
-    vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
+                 VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkClearDepthStencilValue far{1.0f, 0};
+    vkCmdClearDepthStencilImage(_cmd, _shadowAtlas.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &far, 1, &range);
+    ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+
+    const VkDeviceSize commandBytes = VkDeviceSize(gpu.drawCount) * sizeof(VkDrawIndexedIndirectCommand);
+    const VkDeviceSize tileCommands = (1 + kCascades) * commandBytes;
+    const uint32_t tileList = (1 + kCascades) * gpu.instanceCapacity;
     const VkDeviceSize vertexOffset = 0;
-    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
-    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
     for (const ShadowTile &t : tiles) {
-        const float x = t.rect[0] * kShadowAtlasSize, y = t.rect[1] * kShadowAtlasSize;
-        const VkViewport vp{x, y, float(kShadowTileSize), float(kShadowTileSize), 0, 1};
-        const VkRect2D scissor{{int32_t(x), int32_t(y)}, {kShadowTileSize, kShadowTileSize}};
+        // The previous tile's draw is done with the list and commands.
+        memoryBarrier(VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | kTests,
+                      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | kTests,
+                      VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT |
+                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        const VkBufferCopy reset{0, tileCommands, commandBytes};
+        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1, &reset);
+        memoryBarrier(VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        CullParams cull{};
+        FrustumPlanes(t.viewProj, cull.planes);
+        cull.instanceCapacity = gpu.instanceCapacity;
+        cull.drawCount = gpu.drawCount;
+        cull.pixelScale = 1.0f / t.params[0];  // shadow texels per unit at distance 1
+        cull.nearDistance = t.params[1];
+        cull.minRadius = 0.5f;
+        cull.listBase = tileList;
+        cull.commandBase = (1 + kCascades) * gpu.drawCount;
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
+        vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        memoryBarrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+
+        const int32_t x = int32_t(t.rect[0] * kShadowAtlasSize), y = int32_t(t.rect[1] * kShadowAtlasSize);
+        VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = _shadowAtlas.view;
+        att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{x, y}, {kShadowTileSize, kShadowTileSize}};
+        ri.layerCount = 1;
+        ri.pDepthAttachment = &att;
+        vkCmdBeginRendering(_cmd, &ri);
+        const VkViewport vp{float(x), float(y), float(kShadowTileSize), float(kShadowTileSize), 0, 1};
         vkCmdSetViewport(_cmd, 0, 1, &vp);
-        vkCmdSetScissor(_cmd, 0, 1, &scissor);
-        PushDraw(_cmd, _layout, t.viewProj, gpu.instanceCapacity);  // identity list
-        vkCmdDrawIndexedIndirect(_cmd, gpu.shadowCommands, 0, gpu.drawCount, sizeof(VkDrawIndexedIndirectCommand));
+        vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+        // GTAO bound its own set; the shadow pass needs the scene's.
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+        vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        PushDraw(_cmd, _layout, t.viewProj, tileList);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands);
+        vkCmdEndRendering(_cmd);
     }
-    vkCmdEndRendering(_cmd);
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -949,8 +1040,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
     // Culling output; host-visible so VisibleInstances() can read it back.
-    // One set of commands for the camera and one per cascade.
-    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (1 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
+    // One set of commands for the camera, one per cascade, one for atlas tiles.
+    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     _UpdateDescriptors(gpu);
@@ -1023,7 +1114,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             FrustumPlanes(fd.cascadeViewProj[c], cull.planes);
             cull.orthographic = 1.0f;
             cull.pixelScale = 1.0f / fd.cascadeTexel[c];
-            cull.listBase = (2 + c) * gpu.instanceCapacity;
+            cull.listBase = (1 + c) * gpu.instanceCapacity;
             cull.commandBase = (1 + c) * gpu.drawCount;
             vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
             vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
@@ -1082,12 +1173,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
             vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
-            PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (2 + c) * gpu.instanceCapacity);
+            PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
-                                     VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
-                                     gpu.drawCount, sizeof(VkDrawIndexedIndirectCommand));
+            DrawChunks(_cmd, gpu, _commands.buffer,
+                       VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
             vkCmdEndRendering(_cmd);
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
@@ -1130,8 +1220,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
-                                 sizeof(VkDrawIndexedIndirectCommand));
+        DrawChunks(_cmd, gpu, _commands.buffer, 0);
     }
     vkCmdEndRendering(_cmd);
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -1187,8 +1276,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         PushDraw(_cmd, _layout, jitteredViewProj, 0);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
-                                 sizeof(VkDrawIndexedIndirectCommand));
+        DrawChunks(_cmd, gpu, _commands.buffer, 0);
     }
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
