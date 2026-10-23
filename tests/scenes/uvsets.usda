@@ -1,0 +1,241 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Texture coordinates, all with step3's quadrants texture (red, green / blue,
+# white). Top row: a uv set named "uv" through a primvar reader;
+# UsdTransform2d scale 2 (tiles 2x2); UsdTransform2d rotation 90 and
+# translation (1, 0). Bottom row: MaterialX place2d (scale 0.5, rotate 30);
+# MaterialX tiledimage (uvtiling 3); a mesh whose only texture coordinates
+# are "map1" and a texture without a reader (first texCoord primvar).
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+}
+
+def Scope "mtl"
+{
+    def Material "uvReader"
+    {
+        token outputs:surface.connect = </mtl/uvReader/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/uvReader/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/uvReader/reader.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "uv"
+            float2 outputs:result
+        }
+    }
+    def Material "scaled"
+    {
+        token outputs:surface.connect = </mtl/scaled/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/scaled/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/scaled/xform.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "xform"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </mtl/scaled/reader.outputs:result>
+            float2 inputs:scale = (2, 2)
+            float2 outputs:result
+        }
+        def Shader "reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+    def Material "rotated"
+    {
+        token outputs:surface.connect = </mtl/rotated/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/rotated/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/rotated/xform.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "xform"
+        {
+            uniform token info:id = "UsdTransform2d"
+            float2 inputs:in.connect = </mtl/rotated/reader.outputs:result>
+            float inputs:rotation = 90
+            float2 inputs:translation = (1, 0)
+            float2 outputs:result
+        }
+        def Shader "reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+    def Material "place2d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/place2d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color.connect = </mtl/place2d/image.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            float2 inputs:texcoord.connect = </mtl/place2d/place.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "place"
+        {
+            uniform token info:id = "ND_place2d_vector2"
+            float2 inputs:texcoord.connect = </mtl/place2d/uv.outputs:out>
+            float2 inputs:scale = (0.5, 0.5)
+            float inputs:rotate = 30
+            float2 outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            int inputs:index = 0
+            float2 outputs:out
+        }
+    }
+    def Material "tiled"
+    {
+        token outputs:mtlx:surface.connect = </mtl/tiled/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color.connect = </mtl/tiled/image.outputs:out>
+            float inputs:specular_roughness = 1
+            token outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_tiledimage_color3"
+            asset inputs:file = @./textures/quadrants.png@ (colorSpace = "srgb_texture")
+            float2 inputs:uvtiling = (3, 3)
+            color3f outputs:out
+        }
+    }
+    def Material "noReader"
+    {
+        token outputs:surface.connect = </mtl/noReader/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/noReader/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float3 outputs:rgb
+        }
+    }
+}
+
+class Mesh "_quad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "uvSet" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:uv = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/uvReader>
+    double3 xformOp:translate = (-2.5, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "scaled" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/scaled>
+    double3 xformOp:translate = (0, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "rotated" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/rotated>
+    double3 xformOp:translate = (2.5, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "place2d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/place2d>
+    double3 xformOp:translate = (-2.5, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "tiled" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/tiled>
+    double3 xformOp:translate = (0, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "map1" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:map1 = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/noReader>
+    double3 xformOp:translate = (2.5, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

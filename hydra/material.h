@@ -46,9 +46,12 @@ public:
               HdDirtyBits *dirtyBits) override;
 
     std::shared_ptr<vkr::Material> const &Get() const { return _material; }
+    // The primvar its textures' coordinates come from; empty: no textures.
+    TfToken const &UvPrimvar() const { return _uvPrimvar; }
 
 private:
     HdVkTextureCache *_textures;
+    TfToken _uvPrimvar;
     std::shared_ptr<vkr::Material> _material;
 };
 

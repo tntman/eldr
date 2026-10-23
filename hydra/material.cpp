@@ -5,6 +5,7 @@
 #include "pxr/base/gf/color.h"
 #include "pxr/base/gf/colorSpace.h"
 #include "pxr/base/gf/half.h"
+#include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -29,7 +30,21 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (UsdPreviewSurface)
     (UsdUVTexture)
+    (UsdTransform2d)
+    (UsdPrimvarReader_float2)
     (UsdPrimvarReader_float3)
+    (st)
+    (texcoord)
+    (rotation)
+    (translation)
+    (pivot)
+    (rotate)
+    (offset)
+    (operationorder)
+    (uvtiling)
+    (uvoffset)
+    (realworldimagesize)
+    (realworldtilesize)
     (ND_UsdPreviewSurface_surfaceshader)
     (ND_standard_surface_surfaceshader)
     (ND_open_pbr_surface_surfaceshader)
@@ -343,13 +358,98 @@ bool StartsWith(TfToken const &t, const char *prefix)
     return t.GetString().rfind(prefix, 0) == 0;
 }
 
+// m1 * m2 for 2x3 affine matrices (row-major, implicit last row 0 0 1).
+void Compose(float *m1, const float *m2)
+{
+    const float r[6] = {m1[0] * m2[0] + m1[1] * m2[3], m1[0] * m2[1] + m1[1] * m2[4],
+                        m1[0] * m2[2] + m1[1] * m2[5] + m1[2], m1[3] * m2[0] + m1[4] * m2[3],
+                        m1[3] * m2[1] + m1[4] * m2[4], m1[3] * m2[2] + m1[4] * m2[5] + m1[5]};
+    std::copy(r, r + 6, m1);
+}
+
+template <typename T>
+T ReadOr(std::map<TfToken, VtValue> const &params, TfToken const &name, T fallback)
+{
+    Read(params, name, &fallback);
+    return fallback;
+}
+
+// Follows a texture's coordinates (`input` of `node`) to the primvar they
+// come from (a reader's varname; MaterialX texcoord index n -> "st" / "st<n>",
+// or geomprop), composing UsdTransform2d and MaterialX place2d into
+// ref->uvTransform. Unconnected: "st".
+void ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken input,
+                  vkr::TextureRef *ref, TfToken *primvar)
+{
+    *primvar = _tokens->st;
+    for (int depth = 0; depth < 8; ++depth) {
+        const auto conn = node->inputConnections.find(input);
+        if (conn == node->inputConnections.end() || conn->second.empty()) {
+            return;
+        }
+        const auto up = net.nodes.find(conn->second[0].upstreamNode);
+        if (up == net.nodes.end()) {
+            return;
+        }
+        node = &up->second;
+        const TfToken &type = node->nodeTypeId;
+        auto const &p = node->parameters;
+        if (type == _tokens->UsdTransform2d) {
+            // T + R (S uv), R counter-clockwise (Storm's codeGen.cpp).
+            const float r = ReadOr(p, _tokens->rotation, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
+            const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), t = ReadOr(p, _tokens->translation, GfVec2f(0));
+            const float m[6] = {c * scale[0], -s * scale[1], t[0], s * scale[0], c * scale[1], t[1]};
+            Compose(ref->uvTransform, m);
+            input = _tokens->in;
+        } else if (StartsWith(type, "ND_place2d")) {
+            // MaterialX's NG_place2d: SRT  pivot + R ((uv - pivot) / scale) - offset,
+            // TRS  pivot + R (uv - pivot - offset) / scale, R by -rotate (mx_rotate_vector2).
+            const float r = ReadOr(p, _tokens->rotate, 0.0f) * 0.0174532925f, c = std::cos(r), s = std::sin(r);
+            const GfVec2f scale = ReadOr(p, _tokens->scale, GfVec2f(1)), pivot = ReadOr(p, _tokens->pivot, GfVec2f(0)),
+                          offset = ReadOr(p, _tokens->offset, GfVec2f(0));
+            const float ix = 1.0f / scale[0], iy = 1.0f / scale[1];
+            const bool trs = ReadOr(p, _tokens->operationorder, 0) == 1;
+            // A = R diag(1/s) (SRT) or diag(1/s) R (TRS), R = (c s; -s c).
+            const float a[4] = {trs ? c * ix : c * ix, trs ? s * ix : s * iy, trs ? -s * iy : -s * ix,
+                                trs ? c * iy : c * iy};
+            const GfVec2f shift = trs ? pivot + offset : pivot;
+            const float m[6] = {a[0], a[1], pivot[0] - a[0] * shift[0] - a[1] * shift[1] - (trs ? 0.0f : offset[0]),
+                                a[2], a[3], pivot[1] - a[2] * shift[0] - a[3] * shift[1] - (trs ? 0.0f : offset[1])};
+            Compose(ref->uvTransform, m);
+            input = _tokens->texcoord;
+        } else if (StartsWith(type, "ND_convert_") || StartsWith(type, "ND_dot_")) {
+            input = _tokens->in;
+        } else if (type == _tokens->UsdPrimvarReader_float2) {
+            TfToken varname;
+            std::string varnameStr;
+            if (Read(p, _tokens->varname, &varname) && !varname.IsEmpty()) {
+                *primvar = varname;
+            } else if (Read(p, _tokens->varname, &varnameStr) && !varnameStr.empty()) {
+                *primvar = TfToken(varnameStr);
+            }
+            return;
+        } else if (StartsWith(type, "ND_texcoord_")) {
+            const int index = ReadOr(p, _tokens->index, 0);
+            *primvar = index == 0 ? _tokens->st : TfToken("st" + std::to_string(index));
+            return;
+        } else if (StartsWith(type, "ND_geompropvalue_")) {
+            std::string geomprop;
+            if (Read(p, _tokens->geomprop, &geomprop) && !geomprop.empty()) {
+                *primvar = TfToken(geomprop);
+            }
+            return;
+        } else {
+            return;
+        }
+    }
+}
+
 // Follows the connection of `name` to a texture, through MaterialX nodes
 // that only convert, extract a channel or decode a normal map. A primvar
 // reader of displayColor on the base colour makes the mesh's colour the base.
-// ponytail: texture coordinates are always "st"; UsdTransform2d, MaterialX
-// texcoord/uvtiling and image defaults are ignored.
+// ponytail: MaterialX image defaults and address modes are ignored.
 void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken name,
-                 HdVkTextureCache *textures, vkr::Material *m, vkr::TextureRef *ref)
+                 HdVkTextureCache *textures, vkr::Material *m, vkr::TextureRef *ref, TfToken *primvar)
 {
     int channel = -1;
     bool normalMap = false;
@@ -426,13 +526,26 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
             std::fill(ref->bias, ref->bias + 3, -1.0f);
         }
         ref->channel = channel;
+        // tiledimage: its own tiling after the incoming coordinates
+        // (NG_tiledimage: (uv uvtiling - uvoffset) realworldtilesize / realworldimagesize).
+        if (StartsWith(type, "ND_tiledimage_")) {
+            auto const &p = node->parameters;
+            const GfVec2f tiling = ReadOr(p, _tokens->uvtiling, GfVec2f(1)), offset = ReadOr(p, _tokens->uvoffset, GfVec2f(0));
+            const GfVec2f k = GfCompDiv(ReadOr(p, _tokens->realworldtilesize, GfVec2f(1)),
+                                        ReadOr(p, _tokens->realworldimagesize, GfVec2f(1)));
+            const float m[6] = {tiling[0] * k[0], 0, -offset[0] * k[0], 0, tiling[1] * k[1], -offset[1] * k[1]};
+            std::copy(m, m + 6, ref->uvTransform);
+        }
+        ReadTexcoord(net, node, preview ? _tokens->st : _tokens->texcoord, ref, primvar);
         return;
     }
 }
 
 // ponytail: metallic workflow only. Ignored for now: specular workflow,
 // coat, sheen, transmission, subsurface, ior and displacement.
-void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m)
+// *uvPrimvar: the primvar the textures' coordinates come from.
+// ponytail: one per material (meshes carry one uv set); a second warns.
+void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
     if (terminal == net.terminals.end()) {
@@ -479,7 +592,14 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         for (int i = 0; i < size; ++i) {
             constant[i] *= weight;
         }
-        ReadTexture(net, &surface, name, textures, m, ref);
+        TfToken primvar;
+        ReadTexture(net, &surface, name, textures, m, ref, &primvar);
+        if (ref->texture && uvPrimvar->IsEmpty()) {
+            *uvPrimvar = primvar;
+        } else if (ref->texture && primvar != *uvPrimvar) {
+            TF_WARN("HdVk: a material reads uv sets '%s' and '%s'; all textures use '%s'", uvPrimvar->GetText(),
+                    primvar.GetText(), uvPrimvar->GetText());
+        }
         for (int i = 0; ref->texture && i < 3; ++i) {
             ref->scale[i] *= weight;
             ref->bias[i] *= weight;
@@ -550,10 +670,11 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
 {
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults
+        _uvPrimvar = TfToken();
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             ReadSurface(HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
-                        _textures, &m);
+                        _textures, &m, &_uvPrimvar);
         }
         *_material = std::move(m);
     }

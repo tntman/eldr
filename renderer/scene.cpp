@@ -19,6 +19,7 @@ struct GpuTexRef {
     int32_t pad;
     float scale[4];
     float bias[4];
+    float uvRows[2][4];  // TextureRef::uvTransform, one row each (w unused)
 };
 struct GpuMaterial {
     float baseColor[4]; // rgb, w = 1: use the mesh's displayColor instead
@@ -993,6 +994,8 @@ void Scene::Commit()
                 g.tex[i].channel = refs[i]->channel;
                 std::copy(refs[i]->scale, refs[i]->scale + 4, g.tex[i].scale);
                 std::copy(refs[i]->bias, refs[i]->bias + 4, g.tex[i].bias);
+                std::copy(refs[i]->uvTransform, refs[i]->uvTransform + 3, g.tex[i].uvRows[0]);
+                std::copy(refs[i]->uvTransform + 3, refs[i]->uvTransform + 6, g.tex[i].uvRows[1]);
             }
             materials.push_back(g);
         }

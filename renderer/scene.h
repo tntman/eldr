@@ -53,6 +53,8 @@ struct TextureRef {
     int channel = -1;
     float scale[4] = {1, 1, 1, 1};
     float bias[4] = {0, 0, 0, 0};
+    // Texture coordinates: (u', v') = ((a b c) (d e f)) (u v 1), row-major.
+    float uvTransform[6] = {1, 0, 0, 0, 1, 0};
 };
 
 // UsdPreviewSurface metallic workflow subset. Constants are used where the

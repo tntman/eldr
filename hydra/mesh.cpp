@@ -24,15 +24,19 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(_tokens, (st));
 
-// Finds a primvar's interpolation; false if the prim doesn't have it.
+// Finds a primvar's interpolation; false if the prim doesn't have it. An
+// empty name finds the first texture coordinate (float2) primvar.
 bool FindPrimvar(HdSceneDelegate *sd, SdfPath const &id, TfToken const &name,
-                 HdInterpolation *interp)
+                 HdInterpolation *interp, TfToken *found = nullptr)
 {
     for (int i = 0; i < HdInterpolationCount; ++i) {
         for (const HdPrimvarDescriptor &d :
              sd->GetPrimvarDescriptors(id, HdInterpolation(i))) {
-            if (d.name == name) {
+            if (d.name == name || (name.IsEmpty() && d.role == HdPrimvarRoleTokens->textureCoordinate)) {
                 *interp = HdInterpolation(i);
+                if (found) {
+                    *found = d.name;
+                }
                 return true;
             }
         }
@@ -184,13 +188,30 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // DirtyPrimvar is all primvars at once, and a skinned mesh gets it every
     // frame for its skinning transforms: re-flatten only what really changed.
     bool jointsDirty = false;
-    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->normals) ||
-        HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->st)) {
+    // The uv set: the one the bound material's textures read, else "st",
+    // else the first texture coordinate primvar.
+    // ponytail: read when the mesh syncs; a material rewired to another uv
+    // set takes effect with the mesh's next primvar or binding change.
+    TfToken uvName = _tokens->st;
+    if (const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(
+            HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)))) {
+        if (!material->UvPrimvar().IsEmpty()) {
+            uvName = material->UvPrimvar();
+        }
+    }
+    if (uvName != _uvName ||
+        HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->normals) ||
+        HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, uvName)) {
+        _uvName = uvName;
         HdInterpolation normalsInterp = _normalsInterp, uvsInterp = _uvsInterp;
         const VtValue normals = FindPrimvar(sceneDelegate, id, HdTokens->normals, &normalsInterp)
             ? sceneDelegate->Get(id, HdTokens->normals) : VtValue();
-        const VtValue uvs = FindPrimvar(sceneDelegate, id, _tokens->st, &uvsInterp)
-            ? sceneDelegate->Get(id, _tokens->st) : VtValue();
+        TfToken uvFound = uvName;
+        const VtValue uvs =
+            FindPrimvar(sceneDelegate, id, uvName, &uvsInterp) ||
+                    FindPrimvar(sceneDelegate, id, _tokens->st, &uvsInterp, &uvFound) ||
+                    FindPrimvar(sceneDelegate, id, TfToken(), &uvsInterp, &uvFound)
+                ? sceneDelegate->Get(id, uvFound) : VtValue();
         HdInterpolation colorsInterp = _colorsInterp;
         const VtValue colors = FindPrimvar(sceneDelegate, id, HdTokens->displayColor, &colorsInterp)
             ? sceneDelegate->Get(id, HdTokens->displayColor) : VtValue();

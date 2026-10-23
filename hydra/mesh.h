@@ -48,6 +48,7 @@ private:
     VtIntArray _primitiveParams;
     VtVec3fArray _points;
     VtValue _normals, _uvs, _colors;
+    TfToken _uvName;  // the primvar _uvs came from (see Sync)
     HdInterpolation _normalsInterp = HdInterpolationVertex;
     HdInterpolation _uvsInterp = HdInterpolationVertex;
     HdInterpolation _colorsInterp = HdInterpolationConstant;
