@@ -310,15 +310,16 @@ void Renderer::_CreatePipelines()
 
     // Per-instance data comes from SSBOs (scene.glsl), not vertex attributes.
     const VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
-    const VkVertexInputAttributeDescription attributes[3] = {
+    const VkVertexInputAttributeDescription attributes[4] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
+        {3, 0, VK_FORMAT_R16G16B16A16_SFLOAT, offsetof(Vertex, color)},
     };
     VkPipelineVertexInputStateCreateInfo meshInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     meshInput.vertexBindingDescriptionCount = 1;
     meshInput.pVertexBindingDescriptions = &binding;
-    meshInput.vertexAttributeDescriptionCount = 3;
+    meshInput.vertexAttributeDescriptionCount = 4;
     meshInput.pVertexAttributeDescriptions = attributes;
     VkPipelineVertexInputStateCreateInfo noInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 

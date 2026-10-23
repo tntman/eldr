@@ -39,9 +39,10 @@ private:
     VtVec3iArray _triangles;
     VtIntArray _primitiveParams;
     VtVec3fArray _points;
-    VtValue _normals, _uvs;
+    VtValue _normals, _uvs, _colors;
     HdInterpolation _normalsInterp = HdInterpolationVertex;
     HdInterpolation _uvsInterp = HdInterpolationVertex;
+    HdInterpolation _colorsInterp = HdInterpolationConstant;
 
     // GPU skinning inputs, the hydra:* primvars (see sceneIndexPlugin.cpp).
     VtVec2fArray _influences;        // (joint, weight) per point, or once if constant

@@ -89,6 +89,22 @@ struct VertexKeyHash {
     }
 };
 
+// Float to IEEE half, rounded; tiny values flush to zero.
+uint16_t ToHalf(float f)
+{
+    uint32_t x;
+    std::memcpy(&x, &f, sizeof(x));
+    const uint32_t sign = (x >> 16) & 0x8000u;
+    const int32_t exponent = int32_t((x >> 23) & 0xFF) - 127 + 15;
+    if (exponent <= 0) {
+        return uint16_t(sign);
+    }
+    if (exponent >= 31) {
+        return uint16_t(sign | 0x7C00u);
+    }
+    return uint16_t(sign | ((uint32_t(exponent) << 10) + (((x & 0x7FFFFFu) + 0x1000u) >> 13)));
+}
+
 uint32_t PackUnorm16(float a, float b)
 {
     auto q = [](float x) { return uint32_t(std::lround(std::clamp(x, 0.0f, 1.0f) * 65535.0f)); };
@@ -339,6 +355,7 @@ void Scene::_UploadGeometry(Mesh &m)
     const bool valid = m.points.size() % 9 == 0 &&
                        (m.normals.empty() || m.normals.size() == m.points.size()) &&
                        (m.uvs.empty() || m.uvs.size() == corners * 2) &&
+                       (m.colors.empty() || m.colors.size() == m.points.size()) &&
                        (!skinned || (m.jointIndices.size() == corners * 4 &&
                                      m.jointWeights.size() == corners * 4 && m.jointCount > 0));
     if (!valid || corners == 0) {
@@ -368,6 +385,11 @@ void Scene::_UploadGeometry(Mesh &m)
         }
         if (!m.uvs.empty()) {
             std::memcpy(key.v.uv, &m.uvs[i * 2], sizeof(key.v.uv));
+        }
+        if (!m.colors.empty()) {
+            for (int c = 0; c < 3; ++c) {
+                key.v.color[c] = ToHalf(m.colors[i * 3 + c]);
+            }
         }
         if (skinned) {
             const uint16_t *j = &m.jointIndices[i * 4];
@@ -830,6 +852,7 @@ void Scene::Commit()
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
+        d.vertexColors = m.colors.empty() ? 0u : 1u;
         // Culling fills in instanceCount; shadows draw every instance through
         // the identity half of the visible buffer.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};

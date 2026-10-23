@@ -65,6 +65,7 @@ struct Mesh {
     std::vector<float> points;   // xyz per corner
     std::vector<float> normals;  // xyz per corner, or empty (flat shading)
     std::vector<float> uvs;      // st per corner, or empty
+    std::vector<float> colors;   // displayColor rgb per corner, or empty (constant `color`)
     // One world transform per instance, 16 floats each, USD row-vector order.
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
@@ -145,6 +146,7 @@ struct Vertex {
     float position[3];
     float normal[3];
     float uv[2];
+    uint16_t color[4];   // half floats; only read when DrawInfo::vertexColors
 };
 struct Instance {
     float transform[16];
@@ -162,7 +164,8 @@ struct DrawInfo {
     uint32_t visible;
     uint32_t skin;        // first SkinVertex of the mesh, kNone if rigid
     uint32_t vertexBase;  // the mesh's first vertex in the vertex pool
-    uint32_t pad[3];
+    uint32_t vertexColors;  // 1: per-vertex displayColor, else `color`
+    uint32_t pad[2];
 };
 // Joint influences of one skinned vertex: four 16-bit joint indices and
 // four unorm16 weights.

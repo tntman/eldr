@@ -25,7 +25,8 @@ struct DrawInfo {
     uint visible;
     uint skin;        // first SkinVertex, kFreeSlot if rigid
     uint vertexBase;  // the mesh's first vertex in the vertex pool
-    uint pad0, pad1, pad2;
+    uint vertexColors;  // 1: per-vertex displayColor, else color
+    uint pad0, pad1;
 };
 
 layout(std430, set = 0, binding = 7) readonly buffer Instances { Instance instances[]; };

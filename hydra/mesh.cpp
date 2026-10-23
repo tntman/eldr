@@ -139,7 +139,7 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
 }
 
 // ponytail: renders the subdivision cage, reads only the "st" primvar for
-// texcoords and constant displayColor, ignores render tags.
+// texcoords, ignores render tags.
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
@@ -169,12 +169,23 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             ? sceneDelegate->Get(id, HdTokens->normals) : VtValue();
         const VtValue uvs = FindPrimvar(sceneDelegate, id, _tokens->st, &uvsInterp)
             ? sceneDelegate->Get(id, _tokens->st) : VtValue();
-        if (normals != _normals || uvs != _uvs || normalsInterp != _normalsInterp || uvsInterp != _uvsInterp) {
+        HdInterpolation colorsInterp = _colorsInterp;
+        const VtValue colors = FindPrimvar(sceneDelegate, id, HdTokens->displayColor, &colorsInterp)
+            ? sceneDelegate->Get(id, HdTokens->displayColor) : VtValue();
+        if (normals != _normals || uvs != _uvs || colors != _colors || normalsInterp != _normalsInterp ||
+            uvsInterp != _uvsInterp || colorsInterp != _colorsInterp) {
             _normals = normals;
             _uvs = uvs;
+            _colors = colors;
             _normalsInterp = normalsInterp;
             _uvsInterp = uvsInterp;
+            _colorsInterp = colorsInterp;
             geometryDirty = true;
+        }
+        // A constant displayColor is a per-mesh value, not vertex data.
+        if (_colors.IsHolding<VtVec3fArray>() && !_colors.UncheckedGet<VtVec3fArray>().empty()) {
+            const GfVec3f &c = _colors.UncheckedGet<VtVec3fArray>()[0];
+            std::copy(c.data(), c.data() + 3, m.color);
         }
 
         auto get = [&](TfToken const &name) { return sceneDelegate->Get(id, name); };
@@ -232,14 +243,6 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         _UpdateVisibility(sceneDelegate, dirtyBits);
         m.visible = IsVisible();
-    }
-
-    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->displayColor)) {
-        const VtValue value = sceneDelegate->Get(id, HdTokens->displayColor);
-        if (value.IsHolding<VtVec3fArray>() && !value.UncheckedGet<VtVec3fArray>().empty()) {
-            const GfVec3f &c = value.UncheckedGet<VtVec3fArray>()[0];
-            std::copy(c.data(), c.data() + 3, m.color);
-        }
     }
 
     // Sprims sync before rprims, so the material already exists here.
@@ -356,6 +359,11 @@ void HdVkMesh::_Flatten()
 
     FlattenPrimvar<GfVec2f>(_uvs, _uvsInterp, util, _triangles, _primitiveParams,
                             HdTypeFloatVec2, &m.uvs);
+    m.colors.clear();
+    if (_colorsInterp != HdInterpolationConstant) {
+        FlattenPrimvar<GfVec3f>(_colors, _colorsInterp, util, _triangles, _primitiveParams,
+                                HdTypeFloatVec3, &m.colors);
+    }
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -342,6 +342,21 @@ int main()
         }
 
         {
+            // Per-vertex displayColor: bottom corners red, top corners green.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 1, 1, 0);
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                const bool top = quad->points[c * 3 + 1] > 0;
+                quad->colors.insert(quad->colors.end(), {top ? 0.0f : 1.0f, top ? 1.0f : 0.0f, 0.0f});
+            }
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(img.At(32, 2, 0) > 4 * img.At(32, 2, 1) && img.At(32, 61, 1) > 4 * img.At(32, 61, 0),
+                   "per-vertex displayColor interpolates bottom red to top green");
+        }
+
+        {
             // White furnace: a uniform dome of radiance 1 and a white surface
             // must return exactly 1 (energy conservation incl. multi-scatter).
             vkr::Scene scene(&device);
