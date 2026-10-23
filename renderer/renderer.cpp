@@ -1775,7 +1775,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 PushDraw(_cmd, _layout, jitteredViewProj, 0);
                 vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
                 vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, 7);
+                DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, 15);
             };
         }
         _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, out.aovs,

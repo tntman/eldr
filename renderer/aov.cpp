@@ -158,7 +158,8 @@ Aovs::~Aovs()
 }
 
 // As the renderer's shading pipelines (variant bits: kWideSkin,
-// kDualQuaternion, GRAPH), into the G-buffer, depth tested read-only.
+// kDualQuaternion, GRAPH, procedurals), into the G-buffer, depth tested
+// read-only.
 const VkPipeline *Aovs::Pipelines(VkPipelineLayout layout)
 {
     if (_geometry[0]) {
@@ -211,8 +212,14 @@ const VkPipeline *Aovs::Pipelines(VkPipelineLayout layout)
     rendering.pColorAttachmentFormats = kGeometryFormats;
     rendering.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
     const VkSpecializationMapEntry entries[2] = {{0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkSpecializationMapEntry proceduralEntry{8, 0, sizeof(VkBool32)};
+    const VkBool32 procedural = VK_TRUE;
+    const VkSpecializationInfo proceduralSpec{1, &proceduralEntry, sizeof(procedural), &procedural};
     VkResult r = VK_SUCCESS;
-    for (int v = 0; v < 8 && r == VK_SUCCESS; ++v) {
+    for (int v = 0; v < 16 && r == VK_SUCCESS; ++v) {
+        if ((v & 8) && !(v & 4)) {
+            continue;  // procedurals come with a program
+        }
         const VkBool32 flags[2] = {(v & 1) ? VK_TRUE : VK_FALSE, (v & 2) ? VK_TRUE : VK_FALSE};
         const VkSpecializationInfo spec{2, entries, sizeof(flags), flags};
         const int graph = v >= 4 ? 2 : 0;
@@ -220,7 +227,7 @@ const VkPipeline *Aovs::Pipelines(VkPipelineLayout layout)
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
              modules[graph], "main", &spec},
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
-             modules[graph + 1], "main"},
+             modules[graph + 1], "main", v >= 8 ? &proceduralSpec : nullptr},
         };
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
         ci.stageCount = 2;

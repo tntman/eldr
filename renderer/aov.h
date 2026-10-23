@@ -48,8 +48,9 @@ public:
     Aovs(const Aovs &) = delete;
     Aovs &operator=(const Aovs &) = delete;
 
-    // The G-buffer pass's pipelines in Renderer's mesh variants (kWideSkin,
-    // kDualQuaternion, GRAPH), made with `layout` on first use.
+    // The G-buffer pass's pipelines in Renderer's 16 mesh variants (bits:
+    // kWideSkin, kDualQuaternion, GRAPH, and with it procedurals:
+    // program.glsl's constant 8), made with `layout` on first use.
     const VkPipeline *Pipelines(VkPipelineLayout layout);
 
     struct Params {
@@ -76,7 +77,7 @@ private:
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _resolve = VK_NULL_HANDLE;
-    VkPipeline _geometry[8] = {};
+    VkPipeline _geometry[16] = {};  // null: procedurals without GRAPH
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _normalSt, _albedo, _emission;  // the G-buffer
