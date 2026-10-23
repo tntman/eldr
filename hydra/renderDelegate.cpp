@@ -126,6 +126,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
+        {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},

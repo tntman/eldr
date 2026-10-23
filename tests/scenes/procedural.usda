@@ -1,0 +1,576 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# MaterialX procedurals as emission, 4 x 3 quads: noise2d (color3,
+# texcoord x 6), noise3d (float, object position x 3; the quad is rotated
+# and scaled, which object space doesn't see), fractal3d (color3, 4
+# octaves), cellnoise2d, cellnoise3d, worleynoise2d (jitter 0.8),
+# worleynoise3d (vector3, solid style), worleynoise2d vector2 (F1 red, F2
+# green), noise2d on the default texture coordinates (st; Storm reads 0
+# there), world position x 0.1 + 0.5, object normal, noise3d vector4 (x,
+# y, w) in world space.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 0, 13)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "mtl"
+{
+    def Material "noise2d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/noise2d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/noise2d/n.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv0"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_multiply_vector2FA"
+            float2 inputs:in1.connect = </mtl/noise2d/uv0.outputs:out>
+            float inputs:in2 = 6
+            float2 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_noise2d_color3FA"
+            float2 inputs:texcoord.connect = </mtl/noise2d/uv.outputs:out>
+            float inputs:amplitude = 0.5
+            float inputs:pivot = 0.5
+            color3f outputs:out
+        }
+    }
+    def Material "noise3d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/noise3d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/noise3d/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            float3 outputs:out
+        }
+        def Shader "p"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/noise3d/p0.outputs:out>
+            float inputs:in2 = 3
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_noise3d_float"
+            float3 inputs:position.connect = </mtl/noise3d/p.outputs:out>
+            float inputs:amplitude = 0.5
+            float inputs:pivot = 0.5
+            float outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/noise3d/n.outputs:out>
+            float outputs:out
+        }
+    }
+    def Material "fractal3d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/fractal3d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/fractal3d/n.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            float3 outputs:out
+        }
+        def Shader "p"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/fractal3d/p0.outputs:out>
+            float inputs:in2 = 2
+            float3 outputs:out
+        }
+        def Shader "f"
+        {
+            uniform token info:id = "ND_fractal3d_color3FA"
+            float3 inputs:position.connect = </mtl/fractal3d/p.outputs:out>
+            float inputs:amplitude = 0.35
+            int inputs:octaves = 4
+            color3f outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_add_color3FA"
+            color3f inputs:in1.connect = </mtl/fractal3d/f.outputs:out>
+            float inputs:in2 = 0.5
+            color3f outputs:out
+        }
+    }
+    def Material "cellnoise2d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/cellnoise2d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/cellnoise2d/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv0"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_multiply_vector2FA"
+            float2 inputs:in1.connect = </mtl/cellnoise2d/uv0.outputs:out>
+            float inputs:in2 = 6
+            float2 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_cellnoise2d_float"
+            float2 inputs:texcoord.connect = </mtl/cellnoise2d/uv.outputs:out>
+            float outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/cellnoise2d/n.outputs:out>
+            float outputs:out
+        }
+    }
+    def Material "cellnoise3d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/cellnoise3d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/cellnoise3d/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            float3 outputs:out
+        }
+        def Shader "p"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/cellnoise3d/p0.outputs:out>
+            float inputs:in2 = 3
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_cellnoise3d_float"
+            float3 inputs:position.connect = </mtl/cellnoise3d/p.outputs:out>
+            float outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/cellnoise3d/n.outputs:out>
+            float outputs:out
+        }
+    }
+    def Material "worley2d"
+    {
+        token outputs:mtlx:surface.connect = </mtl/worley2d/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/worley2d/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv0"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_multiply_vector2FA"
+            float2 inputs:in1.connect = </mtl/worley2d/uv0.outputs:out>
+            float inputs:in2 = 5
+            float2 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_worleynoise2d_float"
+            float2 inputs:texcoord.connect = </mtl/worley2d/uv.outputs:out>
+            float inputs:jitter = 0.8
+            float outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/worley2d/n.outputs:out>
+            float outputs:out
+        }
+    }
+    def Material "worley3dSolid"
+    {
+        token outputs:mtlx:surface.connect = </mtl/worley3dSolid/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/worley3dSolid/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "object"
+            float3 outputs:out
+        }
+        def Shader "p"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/worley3dSolid/p0.outputs:out>
+            float inputs:in2 = 3
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_worleynoise3d_vector3"
+            float3 inputs:position.connect = </mtl/worley3dSolid/p.outputs:out>
+            int inputs:style = 1
+            float3 outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_vector3_color3"
+            float3 inputs:in.connect = </mtl/worley3dSolid/n.outputs:out>
+            float3 outputs:out
+        }
+    }
+    def Material "worley2dF1F2"
+    {
+        token outputs:mtlx:surface.connect = </mtl/worley2dF1F2/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/worley2dF1F2/n.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv0"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_multiply_vector2FA"
+            float2 inputs:in1.connect = </mtl/worley2dF1F2/uv0.outputs:out>
+            float inputs:in2 = 4
+            float2 outputs:out
+        }
+        def Shader "w"
+        {
+            uniform token info:id = "ND_worleynoise2d_vector2"
+            float2 inputs:texcoord.connect = </mtl/worley2dF1F2/uv.outputs:out>
+            float2 outputs:out
+        }
+        def Shader "x"
+        {
+            uniform token info:id = "ND_separate2_vector2"
+            float2 inputs:in.connect = </mtl/worley2dF1F2/w.outputs:out>
+            float outputs:outx
+            float outputs:outy
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_combine3_color3"
+            float inputs:in1.connect = </mtl/worley2dF1F2/x.outputs:outx>
+            float inputs:in2.connect = </mtl/worley2dF1F2/x.outputs:outy>
+            float inputs:in3 = 0
+            color3f outputs:out
+        }
+    }
+    def Material "noise2dDefault"
+    {
+        token outputs:mtlx:surface.connect = </mtl/noise2dDefault/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/noise2dDefault/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_noise2d_vector3FA"
+            float inputs:amplitude = 0.5
+            float inputs:pivot = 0.5
+            float3 outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_vector3_color3"
+            float3 inputs:in.connect = </mtl/noise2dDefault/n.outputs:out>
+            float3 outputs:out
+        }
+    }
+    def Material "positionWorld"
+    {
+        token outputs:mtlx:surface.connect = </mtl/positionWorld/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/positionWorld/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "world"
+            float3 outputs:out
+        }
+        def Shader "h"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/positionWorld/p0.outputs:out>
+            float inputs:in2 = 0.1
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_add_vector3FA"
+            float3 inputs:in1.connect = </mtl/positionWorld/h.outputs:out>
+            float inputs:in2 = 0.5
+            float3 outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_vector3_color3"
+            float3 inputs:in.connect = </mtl/positionWorld/n.outputs:out>
+            float3 outputs:out
+        }
+    }
+    def Material "normalObject"
+    {
+        token outputs:mtlx:surface.connect = </mtl/normalObject/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/normalObject/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_normal_vector3"
+            float3 outputs:out
+        }
+        def Shader "h"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/normalObject/p0.outputs:out>
+            float inputs:in2 = 0.5
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_add_vector3FA"
+            float3 inputs:in1.connect = </mtl/normalObject/h.outputs:out>
+            float inputs:in2 = 0.5
+            float3 outputs:out
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_convert_vector3_color3"
+            float3 inputs:in.connect = </mtl/normalObject/n.outputs:out>
+            float3 outputs:out
+        }
+    }
+    def Material "noise3dWorld"
+    {
+        token outputs:mtlx:surface.connect = </mtl/noise3dWorld/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/noise3dWorld/c.outputs:out>
+            token outputs:out
+        }
+        def Shader "p0"
+        {
+            uniform token info:id = "ND_position_vector3"
+            string inputs:space = "world"
+            float3 outputs:out
+        }
+        def Shader "p"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            float3 inputs:in1.connect = </mtl/noise3dWorld/p0.outputs:out>
+            float inputs:in2 = 1.5
+            float3 outputs:out
+        }
+        def Shader "n"
+        {
+            uniform token info:id = "ND_noise3d_vector4FA"
+            float3 inputs:position.connect = </mtl/noise3dWorld/p.outputs:out>
+            float inputs:amplitude = 0.5
+            float inputs:pivot = 0.5
+            float4 outputs:out
+        }
+        def Shader "s"
+        {
+            uniform token info:id = "ND_separate4_vector4"
+            float4 inputs:in.connect = </mtl/noise3dWorld/n.outputs:out>
+            float outputs:outx
+            float outputs:outy
+            float outputs:outz
+            float outputs:outw
+        }
+        def Shader "c"
+        {
+            uniform token info:id = "ND_combine3_color3"
+            float inputs:in1.connect = </mtl/noise3dWorld/s.outputs:outx>
+            float inputs:in2.connect = </mtl/noise3dWorld/s.outputs:outy>
+            float inputs:in3.connect = </mtl/noise3dWorld/s.outputs:outw>
+            color3f outputs:out
+        }
+    }
+}
+
+class Mesh "_quad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "noise2d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/noise2d>
+    double3 xformOp:translate = (-3.6, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "noise3d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/noise3d>
+    double3 xformOp:translate = (-1.2, 2.4, 0)
+    float3 xformOp:rotateXYZ = (0, 0, 30)
+    float3 xformOp:scale = (0.8, 0.8, 0.8)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+}
+def Mesh "fractal3d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/fractal3d>
+    double3 xformOp:translate = (1.2, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "cellnoise2d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/cellnoise2d>
+    double3 xformOp:translate = (3.6, 2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "cellnoise3d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/cellnoise3d>
+    double3 xformOp:translate = (-3.6, 0.0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "worley2d" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/worley2d>
+    double3 xformOp:translate = (-1.2, 0.0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "worley3dSolid" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/worley3dSolid>
+    double3 xformOp:translate = (1.2, 0.0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "worley2dF1F2" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/worley2dF1F2>
+    double3 xformOp:translate = (3.6, 0.0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "noise2dDefault" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/noise2dDefault>
+    double3 xformOp:translate = (-3.6, -2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "positionWorld" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/positionWorld>
+    double3 xformOp:translate = (-1.2, -2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "normalObject" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/normalObject>
+    double3 xformOp:translate = (1.2, -2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+def Mesh "noise3dWorld" (inherits = </_quad>)
+{
+    rel material:binding = </mtl/noise3dWorld>
+    double3 xformOp:translate = (3.6, -2.4, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

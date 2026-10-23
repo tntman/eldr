@@ -675,12 +675,13 @@ bool ToVec4(VtValue const &v, GfVec4f *out)
 }
 
 // Compiles the shading graphs behind material inputs that the texture and
-// constant path can't express (MaterialX math, several textures, primvars)
+// constant path can't express (MaterialX math, several textures, primvars,
+// noise)
 // into m->program, mesh.frag's per-pixel interpreter (scene.h). Values are
 // an op's result or a constant; ops collect with one virtual register each
 // and get the program's kRegisters in Finish.
 // ponytail: an input's graph is either compiled whole or not at all (a
-// node HdVk lacks, e.g. noise, leaves the input at its constant).
+// node HdVk lacks, e.g. hextiledimage, leaves the input at its constant).
 class GraphCompiler
 {
 public:
@@ -1057,6 +1058,58 @@ private:
             }
             _p.images.push_back(std::move(ref));
             return _Emit(P::kImage, {*uv, *fallback}, uint32_t(_p.images.size() - 1));
+        }
+        // MaterialX procedurals (shaders/noise.glsl): the 2d ones at texture
+        // coordinates, the 3d ones at a position, the surface point in
+        // object space unless connected (their nodedefs' defaultgeomprops).
+        static const std::set<std::string> noises = {"noise2d",     "noise3d",     "fractal2d",     "fractal3d",
+                                                     "cellnoise2d", "cellnoise3d", "worleynoise2d", "worleynoise3d"};
+        if (noises.count(k.name)) {
+            const uint32_t dims = k.name.back() == 'd' && k.name[k.name.size() - 2] == '2' ? 2 : 3;
+            const uint32_t components = k.name.rfind("cellnoise", 0) == 0 ? 1 : Components(k.type);
+            const TfToken position("position");
+            const std::optional<Value> p = dims == 2              ? _Uv(n, _tokens->texcoord, depth)
+                                           : _Connected(n, position) ? _Input(n, position, depth)
+                                                                     : std::optional<Value>(_Emit(P::kPosition, {}, 0));
+            if (!p) {
+                return std::nullopt;
+            }
+            std::vector<const char *> inputs;
+            P::Op op = P::kCellNoise;
+            if (k.name.rfind("noise", 0) == 0) {
+                op = P::kNoise;
+                inputs = {"amplitude", "pivot"};
+            } else if (k.name.rfind("fractal", 0) == 0) {
+                op = P::kFractal;
+                inputs = {"amplitude", "octaves", "lacunarity", "diminish"};
+            } else if (k.name.rfind("worley", 0) == 0) {
+                op = P::kWorleyNoise;
+                inputs = {"jitter", "style"};
+            }
+            std::vector<Value> args = {*p};
+            for (const char *name : inputs) {
+                const std::optional<Value> v = in(name);
+                if (!v) {
+                    return std::nullopt;
+                }
+                args.push_back(*v);
+            }
+            if (op == P::kFractal) {  // (octaves, lacunarity, diminish) in one operand
+                const Value params = _Emit(P::kCombine, {args[2], args[3], args[4]});
+                args.resize(2);
+                args.push_back(params);
+            }
+            return _Emit(op, std::move(args), dims, components);
+        }
+        if (k.name == "position" || k.name == "normal") {
+            TfToken token;
+            std::string space;
+            if (Read(n.parameters, TfToken("space"), &token)) {
+                space = token.GetString();
+            } else {
+                Read(n.parameters, TfToken("space"), &space);
+            }
+            return _Emit(k.name == "position" ? P::kPosition : P::kGeomNormal, {}, space == "world" ? 1 : 0);
         }
         if (k.name == "place2d" || k.name == "UsdTransform2d") {
             for (const char *p : {"pivot", "scale", "rotate", "offset", "rotation", "translation"}) {

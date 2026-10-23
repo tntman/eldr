@@ -66,6 +66,8 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Procedural textures: MaterialX noise in material programs (off: it reads 0).
+        bool proceduralTextures = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -156,12 +158,13 @@ private:
     // Mesh pipelines in variants (Scene::Gpu::chunkKind >> 2): bit 0 eight
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
-    // program (the GRAPH shaders).
+    // program (the GRAPH shaders), and bit 3 with it, one with noise
+    // (program.glsl's kProcedurals).
     VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[8] = {};  // shading, blended over the opaque
+    VkPipeline _translucentPipeline[16] = {};  // shading, blended over the opaque
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[8] = {};             // shading, depth read-only
+    VkPipeline _pipeline[16] = {};             // shading, depth read-only
     VkPipeline _shadowPipeline[4] = {};
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;

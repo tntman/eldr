@@ -1135,7 +1135,8 @@ void Scene::Commit()
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
-                                (program ? Gpu::kProgram : 0);
+                                (program ? Gpu::kProgram : 0) |
+                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;

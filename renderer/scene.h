@@ -105,6 +105,14 @@ struct MaterialProgram {
         kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
         kInvLinear,    // Houdini hinvlinear: a among ten keys (constants from imm0, 4 per vec4), b.x = num
         kUniformRamp,  // Houdini huniformramp: ten values (constants from imm0) at a, b.x = num
+        // MaterialX procedurals (shaders/noise.glsl) at a, in imm0 = 2 or 3
+        // dimensions, imm1 = 1..4 components out (1: splat).
+        kNoise,        // noise2d/3d: value * b + c.x
+        kFractal,      // fractal2d/3d: value * b, c = (octaves, lacunarity, diminish)
+        kCellNoise,    // cellnoise2d/3d (float)
+        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
+        kPosition,     // the surface point, imm0: 0 object space, 1 world
+        kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them.
     enum Input : uint32_t { kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity };
@@ -123,6 +131,18 @@ struct MaterialProgram {
         return uint8_t(kRegisters + constants.size() / 4 - 1);
     }
     bool Valid() const { return kRegisters + constants.size() / 4 <= 256; }
+    // Whether it runs kNoise .. kGeomNormal: such programs get pipelines of
+    // their own, so that code costs the others nothing.
+    bool Procedural() const
+    {
+        for (size_t i = 0; i < code.size(); i += 4) {
+            const uint32_t op = code[i] & 0xFFu;
+            if (op >= kNoise && op <= kGeomNormal) {
+                return true;
+            }
+        }
+        return false;
+    }
     bool Outputs(Input input) const
     {
         for (size_t i = 0; i < code.size(); i += 4) {
@@ -437,9 +457,10 @@ public:
         // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
         // kTranslucent (skipped: drawn per slot, back to front, after the
         // opaque), plus kWide (eight skinning influences), kDualQuat and
-        // kProgram (a material program, shading pass only): kind >> 2 picks
-        // the renderer's pipeline variant. Chunks also end where it changes.
-        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16 };
+        // kProgram (a material program, shading pass only) with kProcedural
+        // (it runs noise, MaterialProgram::Procedural): kind >> 2 picks the
+        // renderer's pipeline variant. Chunks also end where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32 };
         std::vector<uint8_t> chunkKind;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).

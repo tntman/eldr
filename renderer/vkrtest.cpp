@@ -1196,6 +1196,52 @@ int main()
             // (The one texel row blends 1/8 with the border at v 0.625.)
             Expect(img.At(8, y(5) - 2, 0) > 0.8f && black(8, y(5) + 2), "wrap t black, s repeat");
         }
+
+        {
+            // Procedurals: emission programs. Left half: the object-space
+            // position of a quad its instance scales by 0.5 and moves left by
+            // 0.5. Upper right: the world position. Lower right: noise2d
+            // (amplitude 0.5, pivot 0.25) at uv * 4, which
+            // Frame::proceduralTextures off makes its pivot.
+            vkr::Scene scene(&device);
+            using P = vkr::MaterialProgram;
+            vkr::Mesh *object = AddEmitter(scene, -1, -1, 1, 1, 0, 0.0f);
+            object->transforms = {0.5f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5f, 0, 0, 1};
+            P &po = object->material->program;
+            po.Emit(P::kPosition, 0, {}, 0);
+            po.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            P &pw = AddEmitter(scene, 0, 0, 1, 1, 0, 0.0f)->material->program;
+            pw.Emit(P::kPosition, 0, {}, 1);
+            pw.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            P &pn = AddEmitter(scene, 0, -1, 1, 0, 0, 0.0f)->material->program;
+            pn.Emit(P::kTexcoord, 0);
+            pn.Emit(P::kMultiply, 0, {0, pn.Constant(4, 4, 4, 4)});
+            pn.Emit(P::kNoise, 0, {0, pn.Constant(0.5f, 0.5f, 0.5f, 0.5f), pn.Constant(0.25f, 0.25f, 0.25f, 0.25f)}, 2, 1);
+            pn.Emit(P::kOutput, 0, {0}, P::kEmissive);
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            auto near = [&](const Image &i, int x, int y, float r, float g, float b) {
+                return std::abs(i.At(x, y, 0) - r) < 0.01f && std::abs(i.At(x, y, 1) - g) < 0.01f &&
+                       std::abs(i.At(x, y, 2) - b) < 0.01f;
+            };
+            Expect(near(img, 24, 40, (PixelNdc(24) + 0.5f) / 0.5f, PixelNdc(40), 0) &&
+                       near(img, 6, 60, (PixelNdc(6) + 0.5f) / 0.5f, PixelNdc(60), 0),
+                   "procedural: object-space position under the instance transform");
+            Expect(near(img, 40, 50, PixelNdc(40), PixelNdc(50), 0), "procedural: world position");
+            float lo = 1, hi = 0;
+            for (int x = 34; x < 62; ++x) {
+                lo = std::min(lo, img.At(x, 16, 0));
+                hi = std::max(hi, img.At(x, 16, 0));
+            }
+            Expect(lo > -0.25f && hi < 0.75f && hi - lo > 0.1f &&
+                       near(img, 48, 16, img.At(48, 16, 0), img.At(48, 16, 0), img.At(48, 16, 0)),
+                   "procedural: noise2d varies around its pivot, float splat");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.proceduralTextures = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(near(off, 40, 16, 0.25f, 0.25f, 0.25f) && near(off, 56, 4, 0.25f, 0.25f, 0.25f),
+                   "Frame::proceduralTextures off: noise reads 0 (its pivot)");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
