@@ -1,5 +1,6 @@
 """usdview plugin: Eldr > Render Statistics opens a window of what Eldr's
-GetRenderStats() reports about the last frame, refreshed twice a second.
+GetRenderStats() reports about the last frame, refreshed twice a second;
+Eldr > Attribute Editor edits the selected prim's attributes (attributes.py).
 usdenv.cmd puts it on the plugin and Python paths (plugInfo.json beside it)."""
 
 from pxr import Tf
@@ -101,6 +102,7 @@ class _StatsWindow(QtWidgets.QWidget):
 
 
 _window = None
+_attributeWindow = None
 
 
 def _ShowStats(usdviewApi):
@@ -111,14 +113,29 @@ def _ShowStats(usdviewApi):
     _window.raise_()
 
 
+def _ShowAttributes(usdviewApi):
+    global _attributeWindow
+    if _attributeWindow is None:
+        from .attributes import _AttributeWindow
+        _attributeWindow = _AttributeWindow(usdviewApi)
+    _attributeWindow.show()
+    _attributeWindow.raise_()
+    _attributeWindow.Rebuild()
+
+
 class HdVkContainer(PluginContainer):
     def registerPlugins(self, plugRegistry, usdviewApi):
         self._stats = plugRegistry.registerCommandPlugin(
             "HdVkContainer.renderStatistics", "Render Statistics", _ShowStats,
             "HdVk's GPU time per pass, what it drew, memory and convergence")
+        self._attributes = plugRegistry.registerCommandPlugin(
+            "HdVkContainer.attributeEditor", "Attribute Editor", _ShowAttributes,
+            "Edit the selected prim's attribute values (in the session layer)")
 
     def configureView(self, plugRegistry, plugUIBuilder):
-        plugUIBuilder.findOrCreateMenu("Eldr").addItem(self._stats)
+        menu = plugUIBuilder.findOrCreateMenu("Eldr")
+        menu.addItem(self._stats)
+        menu.addItem(self._attributes)
 
 
 Tf.Type.Define(HdVkContainer)
