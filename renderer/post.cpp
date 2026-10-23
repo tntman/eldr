@@ -92,8 +92,10 @@ PostProcess::PostProcess(Device &device)
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
-    _dev.Reserve(_histogramBuffer, 256 * sizeof(uint32_t),
-                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    // Device-local: every histogram workgroup adds to it atomically (in
+    // host memory that crossed PCIe, ~5 ms at 720p).
+    _histogramBuffer = _dev.CreateDeviceBuffer(256 * sizeof(uint32_t),
+                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     _dev.Reserve(_exposureBuffer, sizeof(ExposureState), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::memset(_exposureBuffer.mapped, 0, sizeof(ExposureState));
 
