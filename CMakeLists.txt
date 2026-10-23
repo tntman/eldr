@@ -24,7 +24,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag volume.frag)
+               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -33,7 +33,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
-                renderer/shaders/subsurface.glsl third_party/nanovdb/PNanoVDB.h)
+                renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -59,7 +60,8 @@ foreach(shader mesh.vert mesh.frag aov.frag)
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
-                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl)
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
@@ -76,7 +78,8 @@ foreach(variant layers graph_layers)
         DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
-                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl)
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -91,7 +94,9 @@ add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
-    renderer/transparency.cpp renderer/subsurface.cpp renderer/volume.cpp ${shader_incs})
+    renderer/transparency.cpp renderer/subsurface.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp
+    ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
@@ -172,6 +177,8 @@ if(WIN32)
     set_tests_properties(transmission PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME holdout COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_holdout.py)
     set_tests_properties(holdout PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lighting COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lighting.py)
+    set_tests_properties(lighting PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     if(HDVK_VOLUMES)
         add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
         set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

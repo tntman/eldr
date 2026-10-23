@@ -6,6 +6,7 @@
 #include "renderer.h"
 
 #include "pxr/base/gf/matrix4f.h"
+#include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/renderBuffer.h"
@@ -16,6 +17,7 @@
 #include "pxr/imaging/hd/tokens.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <exception>
 #include <string>
 #include <unordered_set>
@@ -145,6 +147,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.refraction, &frame.refraction},
                                 {t.translucentShadows, &frame.translucentShadows},
                                 {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts},
+                                {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
+                                {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
+                                {t.planarReflections, &frame.planarReflections},
                                 {t.volumes, &frame.volumes}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
@@ -154,11 +159,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.giHysteresis, &frame.giHysteresis},
                                 {t.emissiveLightThreshold, &frame.emissiveLightThreshold},
                                 {t.oitDepthWeight, &frame.oitDepthWeight},
+                                {t.fogDensity, &frame.fogDensity}, {t.fogHeight, &frame.fogHeight},
+                                {t.fogHeightFalloff, &frame.fogHeightFalloff},
+                                {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance},
+                                {t.planarScale, &frame.planarScale},
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
+    // Colours and positions: "x y z" (usdview edits strings) or a
+    // GfVec3f/GfVec3d; false (and `xyz` as it was) if neither.
+    auto readVec3 = [&](TfToken const &token, float xyz[3]) {
+        const VtValue v = delegate->GetRenderSetting(token);
+        if (v.IsHolding<std::string>()) {
+            float c[3];
+            if (std::sscanf(v.UncheckedGet<std::string>().c_str(), "%f %f %f", &c[0], &c[1], &c[2]) == 3) {
+                std::copy(c, c + 3, xyz);
+                return true;
+            }
+        } else if (v.CanCast<GfVec3f>()) {
+            const GfVec3f c = VtValue::Cast<GfVec3f>(v).UncheckedGet<GfVec3f>();
+            std::copy(c.data(), c.data() + 3, xyz);
+            return true;
+        }
+        return false;
+    };
+    readVec3(t.fogColor, frame.fogColor);
+    frame.probePosition[3] = readVec3(t.probePosition, frame.probePosition) ? 1.0f : 0.0f;
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
                                 {t.shadowResolution, &frame.shadowResolution},
                                 {t.shadowCascades, &frame.shadowCascades},
@@ -171,6 +199,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.refractionSamples, &frame.refractionSamples},
                                 {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
                                 {t.subsurfaceSamples, &frame.subsurfaceSamples},
+                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));

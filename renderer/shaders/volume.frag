@@ -21,6 +21,7 @@
 
 #include "frame.glsl"
 #include "lights.glsl"
+#include "fog.glsl"
 
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 63) uniform sampler2D sceneDepth;  // window [0, 1], prepass or not
@@ -371,7 +372,16 @@ void main()
     float transmittance = 1.0;
     uint stepsLeft = params.maxSteps;
     for (uint k = 0u; k < n && transmittance > kOpaque; ++k) {
+        vec3 before = radiance;
+        float transmittanceBefore = transmittance;
         March(ids[k], origin, dir, spans[k].x, spans[k].y, noise, dome, up, stepsLeft, radiance, transmittance);
+        // Volumetric fog (fog.glsl): the image below carries it all the way
+        // to the surface behind. The volume's light reaches the eye through
+        // the fog in front of it, and that fog's own light isn't hidden by
+        // the volume: add what the blend's attenuation takes from it.
+        // ponytail: fog inside a volume's box counts as behind it.
+        vec4 fog = Fog(gl_FragCoord.xy, dot(origin + spans[k].x * dir - frame.cameraPos.xyz, frame.cameraForward.xyz));
+        radiance = before + (radiance - before) * fog.a + (transmittanceBefore - transmittance) * fog.rgb;
     }
     outColor = vec4(radiance, 1.0 - transmittance);
 }

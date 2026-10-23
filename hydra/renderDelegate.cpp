@@ -16,6 +16,7 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
@@ -49,7 +50,7 @@ const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->bas
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
-                                   HdPrimTypeTokens->diskLight};
+                                   HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer,
 #ifdef HDVK_VOLUMES
                                    _openvdbAsset
@@ -153,7 +154,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
-        {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
+        {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
@@ -163,6 +164,11 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
+        {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
+        {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
+        {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},
+        {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
+        {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -170,6 +176,17 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Local Light Shadow Resolution (64-2048)", t.localShadowResolution,
          VtValue(int(frame.localShadowResolution))},
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
+        {"Soft Sun Shadows (distant light angle)", t.softSunShadows, VtValue(frame.softSunShadows)},
+        {"Volumetric Fog", t.fog, VtValue(frame.fog)},
+        {"Fog Density (extinction per unit)", t.fogDensity, VtValue(frame.fogDensity)},
+        {"Fog Height (base)", t.fogHeight, VtValue(frame.fogHeight)},
+        {"Fog Height Falloff (per unit, 0 = even)", t.fogHeightFalloff, VtValue(frame.fogHeightFalloff)},
+        {"Fog Anisotropy (phase g, -1..1)", t.fogAnisotropy, VtValue(frame.fogAnisotropy)},
+        {"Fog Color (r g b)", t.fogColor,
+         VtValue(TfStringPrintf("%g %g %g", frame.fogColor[0], frame.fogColor[1], frame.fogColor[2]))},
+        {"Fog Max Distance (0 = scene)", t.fogMaxDistance, VtValue(frame.fogMaxDistance)},
+        {"Fog Grid Size (froxels across, 16-512)", t.fogGridSize, VtValue(int(frame.fogGridSize))},
+        {"Fog Height Along Z (Z-up stages)", t.fogZUp, VtValue(frame.fogZUp)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
         {"Translucent Shadows (coloured, partial)", t.translucentShadows, VtValue(frame.translucentShadows)},
         {"Translucent Shadow Resolution (1 = full, 2 = half, 4 = quarter)", t.translucentShadowDivisor,
@@ -271,7 +288,7 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
     }
     if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight ||
         typeId == HdPrimTypeTokens->sphereLight || typeId == HdPrimTypeTokens->rectLight ||
-        typeId == HdPrimTypeTokens->diskLight) {
+        typeId == HdPrimTypeTokens->diskLight || typeId == HdPrimTypeTokens->cylinderLight) {
         return new HdVkLight(sprimId, typeId, _scene.get(), _textures.get());
     }
     return nullptr;

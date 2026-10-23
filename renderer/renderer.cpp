@@ -1,6 +1,7 @@
 ﻿#include "renderer.h"
 
 #include "ibl.h"
+#include "probes.h"
 #include "vkmath.h"
 
 #include <algorithm>
@@ -32,6 +33,17 @@ struct FrameData {
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
     uint32_t styles[4];      // kStyle* flags, toon bands for every material
     float translucency[4];   // see frame.glsl
+    // Volumetric fog (shaders/fog.glsl).
+    float fogMedium[4];      // density, height falloff, base height, phase g
+    float fogAlbedo[4];      // scattering colour, froxel depth
+    uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
+    float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
+    // Reflection probe and planar reflections (shaders/probes.glsl).
+    float probe[4];          // capture position, prefiltered levels - 1
+    float probeMin[4];       // the scene's bounds then
+    float probeMax[4];
+    float planarPlane[4];    // the mirror's plane, facing the camera
+    uint32_t planarInfo[4];  // the mirror's mesh slot
 };
 
 namespace {
@@ -97,6 +109,7 @@ constexpr uint32_t kFeatureRefraction = 4096, kFeatureTranslucentShadows = 8192;
 constexpr uint32_t kFeatureSubsurface = 16384;
 // Holdouts (transparency.glsl).
 constexpr uint32_t kFeatureHoldouts = 32768;
+constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -212,6 +225,10 @@ void FrustumPlanes(const float *vp, float planes[6][4])
 
 constexpr uint32_t kBrdfLutSize = 64;
 
+// Stages that sample the shadow maps: shading and the volumetric fog.
+constexpr VkPipelineStageFlags2 kShadowReaders =
+    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
 // Spots with a cone up to this get one perspective atlas tile, wider
 // lights a cube of six. Must match kSpotShadowCone in mesh.frag.
 constexpr float kSpotShadowCone = 1.3962634f;  // 80 degrees
@@ -253,6 +270,7 @@ Renderer::Renderer(Device &device)
     , _post(device)
     , _transparency(device)
     , _subsurface(device)
+    , _fog(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -286,6 +304,7 @@ Renderer::Renderer(Device &device)
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
     _CreatePipelines();
+    _fog.CreatePipelines(_layout);
     _CreateConstantImages();
     if (_dev.rayTracing) {
         _rt = std::make_unique<RayTracing>(_dev, _setLayout);
@@ -379,20 +398,24 @@ void Renderer::_CreateDescriptors()
     // 28..32 material programs: ops, constants, primvar table, primvar values
     // and vertex-rate primvars; 52..59 ray tracing's (RayTracing; partially
     // bound, 52 only exists with Device::rayTracing); 60 last frame's blend
-    // shape weights; 63..65 volumes (volume.frag): the depth (bound with or
-    // without the prepass), NanoVDB grids and GpuVolumes.
+    // shape weights. 47 and 48 the volumetric fog's volumes
+    // (Fog::Descriptors; the fog also reads the lights, the clusters and
+    // the shadow maps 4 and 17..19), 49 the sun's cascades without depth
+    // compare (soft sun shadows' blocker search), 50 the reflection probe
+    // and 51 the planar reflection (Reflections).
+    // 63..65 the volumes (volume.frag): the depth (bound with or without
+    // the prepass), NanoVDB grids and GpuVolumes.
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     // Ray tracing stages read the materials, lights, frame and dome too.
     const VkShaderStageFlags kRt = _dev.rayTracing ? VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
                                                          VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR
                                                    : 0;
-    constexpr uint32_t kBindings = 50;  // 42..46 (Transparency), 63..65 (VolumePass) last
-    const VkDescriptorSetLayoutBinding bindings[kBindings] = {
+    const VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kRt},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kRt},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
@@ -405,9 +428,9 @@ void Renderer::_CreateDescriptors()
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
+        {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {21, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
@@ -440,10 +463,18 @@ void Renderer::_CreateDescriptors()
         {44, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {45, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {46, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        // Volumetric fog's volumes, the sun's raw depths, the reflection
+        // probe, the planar reflection.
+        {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
+        {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
     };
+    constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     std::fill(bindingFlags + 33, bindingFlags + 42, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
@@ -456,10 +487,10 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -899,6 +930,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorBufferInfo frame{_frameData.buffer, 0, sizeof(FrameData)};
     const VkDescriptorImageInfo shadow{_shadowSampler, _shadowMap.view,
                                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo shadowDepth{_clampSampler, _shadowMap.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo env{_clampSampler, gpu.environment ? gpu.environment : _blackCube.view,
                                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo lut{_clampSampler, _brdfLut.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
@@ -1000,6 +1032,18 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         write(43 + i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &tints[i]);
     }
     write(60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevBlendWeights, nullptr);
+    VkDescriptorImageInfo fogStorage[3], fogVolume;
+    _fog.Descriptors(fogStorage, &fogVolume, _clampSampler);
+    write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
+    write(48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &fogVolume);
+    write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
+    // Without a probe or planar reflection: placeholders the shaders skip.
+    const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
+    const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
+    const VkDescriptorImageInfo probeInfo{_clampSampler, probe, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo planarInfo{_clampSampler, planar, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &probeInfo);
+    write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &planarInfo);
     write(63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &volumeDepth);
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
     write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
@@ -1129,6 +1173,70 @@ void Renderer::_FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData
     data->cameraForward[0] = forward.x;
     data->cameraForward[1] = forward.y;
     data->cameraForward[2] = forward.z;
+}
+
+// Volumetric fog's medium, froxel grid and temporal state for this frame
+// (shaders/fog.glsl); false with fog off (its history is dropped then).
+// The froxels reach Frame::fogMaxDistance, or the scene's far end along the
+// view (as the clusters do).
+bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data)
+{
+    if (!frame.fog || !(frame.fogDensity > 0.0f)) {
+        _fog.Skip();
+        return false;
+    }
+    const Mat4 inv = ToMat4(frame.invViewProj);
+    const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+    const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1});
+    const Vec3 forward = Normalize(TransformPoint(inv, {0, 0, 0}) - nearCenter);
+    float depth = frame.fogMaxDistance;
+    if (!(depth > 0.0f)) {
+        depth = Dot(TransformPoint(inv, {0, 0, 1}) - eye, forward);
+        if (!(depth < 1e30f)) {
+            depth = 1e30f;  // infinite far plane
+        }
+        if (gpu.hasBounds) {
+            float sceneFar = 0.0f;
+            for (int k = 0; k < 8; ++k) {
+                const Vec3 c{(k & 1) ? gpu.boundsMax[0] : gpu.boundsMin[0], (k & 2) ? gpu.boundsMax[1] : gpu.boundsMin[1],
+                             (k & 4) ? gpu.boundsMax[2] : gpu.boundsMin[2]};
+                sceneFar = std::max(sceneFar, Dot(c - eye, forward));
+            }
+            depth = std::min(depth, sceneFar);
+        }
+        depth = std::max(depth, 1e-3f);
+    }
+    const uint32_t x = std::clamp(frame.fogGridSize, 16u, 512u);
+    const uint32_t y = std::max(1u, uint32_t(std::lround(float(x) * float(_height) / float(_width))));
+    constexpr uint32_t kSlices = 64;
+    const bool orthographic = std::abs(frame.viewProj[3]) + std::abs(frame.viewProj[7]) + std::abs(frame.viewProj[11]) < 1e-9f;
+    data->features[0] |= kFeatureFog;
+    const float medium[4] = {frame.fogDensity, std::max(frame.fogHeightFalloff, 0.0f), frame.fogHeight,
+                             std::clamp(frame.fogAnisotropy, -0.95f, 0.95f)};
+    std::copy(medium, medium + 4, data->fogMedium);
+    const float albedo[4] = {frame.fogColor[0], frame.fogColor[1], frame.fogColor[2], depth};
+    std::copy(albedo, albedo + 4, data->fogAlbedo);
+    const uint32_t grid[4] = {x, y, kSlices, frame.fogZUp ? 1u : 0u};
+    std::copy(grid, grid + 4, data->fogGrid);
+    // Last frame's grid is the history while the lights and the medium
+    // stay the same (moving geometry keeps it: its shadows lag a little).
+    uint64_t key = gpu.lightingHash;
+    for (const float v : {medium[0], medium[1], medium[2], medium[3], albedo[0], albedo[1], albedo[2]}) {
+        uint32_t bits;
+        std::memcpy(&bits, &v, sizeof(bits));
+        key = (key ^ bits) * 1099511628211ull;
+    }
+    const bool history = _fog.Resize(x, y, kSlices) && _fogDepth > 0.0f && key == _fogKey;
+    _fogKey = key;
+    // History: 90% of last frame's grid, sampled half a slice apart on average.
+    const float temporal[4] = {history ? _fog.Jitter() : 0.5f, history ? 0.9f : 0.0f, history ? _fogDepth : depth,
+                               orthographic ? 1.0f : 0.0f};
+    std::copy(temporal, temporal + 4, data->fogTemporal);
+    data->cameraForward[0] = forward.x;
+    data->cameraForward[1] = forward.y;
+    data->cameraForward[2] = forward.z;
+    _fogDepth = depth;
+    return true;
 }
 
 // std430 mirror of ShadowTile in mesh.frag.
@@ -1265,7 +1373,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
     _atlasKey = std::move(key);
     if (tiles.empty()) {
         ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         return;
     }
@@ -1387,7 +1495,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         _transparency.EndTint(_cmd, _transparency.AtlasTint(), 1);
     }
     ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
@@ -1559,7 +1667,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
 
 bool Renderer::IsConverged() const
 {
-    return (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged());
+    return (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged()) &&
+           !(_reflections && _reflections->ProbePending());
 }
 
 uint32_t Renderer::VisibleInstances() const
@@ -1598,10 +1707,22 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _anisotropy = anisotropy;
     }
 
+    // Reflections beyond the screen: their own renders of the scene, done
+    // before this frame records (probes.h).
+    if (frame.reflectionProbe || frame.planarReflections) {
+        if (!_reflections) {
+            _reflections = std::make_unique<Reflections>(_dev);
+        }
+        _reflections->Update(scene, frame);
+    } else {
+        _reflections.reset();
+    }
+
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
-                     (frame.clusteredLights ? kFeatureClusters : 0);
+                     (frame.clusteredLights ? kFeatureClusters : 0) |
+                     (frame.softShadows && frame.softSunShadows ? kFeatureSoftSun : 0);
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
     fd.features[0] |= (frame.specularWorkflow ? kFeatureSpecularWorkflow : 0) | (frame.clearcoat ? kFeatureClearcoat : 0) |
                       (frame.sheen ? kFeatureSheen : 0) | (frame.thinFilm ? kFeatureThinFilm : 0) |
@@ -1683,7 +1804,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                       (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
-    fd.counts[3] = gpu.environmentLatlong;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
     if (ibl) {
         for (int i = 0; i < 9; ++i) {
@@ -1694,6 +1814,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.envRadiance[3] = 1.0f;
     }
     const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
+    fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
+    // Volumetric fog; it also covers the background, as the sky pass does
+    // (premultiplied: needs post to composite the clear colour behind).
+    const bool fog = _SetupFog(gpu, frame, &fd);
+    const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
+    if (_reflections && _reflections->Probe()) {
+        fd.features[0] |= kFeatureProbe;
+        std::copy(_reflections->ProbePosition(), _reflections->ProbePosition() + 3, fd.probe);
+        fd.probe[3] = float(_reflections->ProbeLevels() - 1);
+        std::copy(_reflections->ProbeMin(), _reflections->ProbeMin() + 3, fd.probeMin);
+        std::copy(_reflections->ProbeMax(), _reflections->ProbeMax() + 3, fd.probeMax);
+    }
+    if (planarImage) {
+        fd.features[0] |= kFeaturePlanar;
+        std::copy(_reflections->PlanarPlane(), _reflections->PlanarPlane() + 4, fd.planarPlane);
+        fd.planarInfo[0] = gpu.mirrorSlot;
+    }
     // Culling output; host-visible so VisibleInstances() can read it back.
     // One set of commands for the camera, one per cascade, one for atlas tiles.
     _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
@@ -1776,6 +1913,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
         }
     };
+    if (planarImage) {
+        // Rendered (and left for readback) by the reflections' renderer.
+        ImageBarrier(_cmd, planarImage, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
 
     const VkDeviceSize vertexOffset = 0;
     if (draw) {
@@ -1803,10 +1948,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdPipelineBarrier2(_cmd, &dep);
 
         // Joint matrices of all skinned instances, read by culling (bounds)
-        // and every vertex stage.
+        // and every vertex stage (reflection renders reuse the last frame's).
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _skinPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
-        vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        if (frame.skinning) {
+            vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        }
         VkMemoryBarrier2 jointsBuilt{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         jointsBuilt.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
         jointsBuilt.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
@@ -1947,12 +2094,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
         ImageBarrier(_cmd, _shadowMap.image, shadowRange,
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         pass("sunShadows");
     } else {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
-                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
@@ -2011,6 +2158,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
     if (!shadowTiles.empty()) {
         pass("localShadows");
+    }
+    if (fog) {
+        _fog.Record(_cmd, _layout, _set);
+        pass("fog");
     }
     if (rayTracing) {
         _rt->Record(_cmd, _set, gpu, pass);
@@ -2072,7 +2223,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 31);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
-    if (sky) {
+    if (sky || (fog && frame.postProcess)) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
         vkCmdDraw(_cmd, 3, 1, 0, 0);
     }
@@ -2111,7 +2262,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _prevBlendSource = gpu.blendWeights;
     }
     // Volumes over everything shaded so far (the OIT-resolved translucent
-    // surfaces included), clipped by the opaque depth.
+    // surfaces included), clipped by the opaque depth. Volumetric fog,
+    // already in the image to the surface behind, applies to them once:
+    // volume.frag puts each behind the fog in front of it.
     // ponytail: glass in front of a volume doesn't dim it (the volume ends
     // up over the glass). Fading volumes by the OIT revealage would fix that
     // but dim volumes in front of glass just as wrongly; choosing per pixel
@@ -2373,6 +2526,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 _stats.passMs.push_back({_passes[i], double(ticks[i + 1] - ticks[i]) * _timestampMs});
             }
             _stats.gpuMs = double(ticks.back() - ticks.front()) * _timestampMs;
+        }
+    }
+    // The reflections' renders ran before this frame's passes.
+    for (const auto &[name, ms] : {std::pair{"planarReflection", _reflections ? _reflections->planarMs : 0.0},
+                                   std::pair{"probeCapture", _reflections ? _reflections->probeMs : 0.0}}) {
+        if (ms > 0) {
+            _stats.passMs.insert(_stats.passMs.begin(), {name, ms});
+            _stats.gpuMs += ms;
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();

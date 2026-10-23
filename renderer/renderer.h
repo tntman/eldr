@@ -3,6 +3,7 @@
 #include "aov.h"
 #include "device.h"
 #include "distortion.h"
+#include "fog.h"
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
@@ -19,6 +20,7 @@
 namespace vkr {
 
 struct FrameData;
+class Reflections;
 
 class Renderer {
 public:
@@ -37,7 +39,7 @@ public:
         float aoRadius = 0.5f;        // world units
         bool ssr = true;              // screen-space reflections (needs postProcess)
         bool shadows = true;          // the distant light's shadow cascades
-        bool localShadows = true;     // sphere/rect/disk lights' shadow atlas
+        bool localShadows = true;     // local lights' shadow atlas
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
@@ -45,7 +47,7 @@ public:
         // speed up a heavy scene.
         bool depthPrepass = true;        // off: the main pass writes depth (no GTAO, no SSR)
         bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
-        bool localLights = true;         // sphere, rect and disk lights
+        bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
         bool normalMaps = true;
@@ -150,6 +152,27 @@ public:
         // Holdouts (Mesh::holdout): black with zero alpha; off: drawn as
         // usual.
         bool holdouts = true;
+        // Soft sun shadows: penumbrae from the distant light's angle (PCSS
+        // on the cascades), with softShadows on.
+        bool softSunShadows = true;
+        // Volumetric fog (fog.h): height fog lit by every light, over every
+        // surface and the sky. Units are the scene's.
+        bool fog = false;
+        float fogDensity = 0.02f;       // extinction per unit at fogHeight
+        float fogHeight = 0.0f;         // base height, along Y (or Z with fogZUp)
+        float fogHeightFalloff = 0.0f;  // density * exp(-falloff * (height - fogHeight)); 0: uniform
+        float fogAnisotropy = 0.6f;     // Henyey-Greenstein g: 0 even, towards 1 forward (shafts towards lights)
+        float fogColor[3] = {1, 1, 1};  // scattering albedo
+        float fogMaxDistance = 0.0f;    // view depth the froxels reach (then constant); 0: the scene's far end
+        uint32_t fogGridSize = 160;     // froxels across (16..512); rows by aspect, 64 slices
+        bool fogZUp = false;            // heights along Z (Z-up stages)
+        // Reflection probe and planar reflections (probes.h).
+        bool reflectionProbe = false;    // one cube captured in the scene, before the dome (with imageBasedLighting)
+        uint32_t probeResolution = 128;  // its faces' texels (16..512, a power of two)
+        float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
+        bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
+        float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
         // OpenVDB volumes, raymarched over the shaded image (VolumePass).
         bool volumes = true;
         VolumePass::Settings volume;
@@ -217,6 +240,11 @@ public:
     // Copies the last frame's outputs (as Render's, extra AOVs aside) to
     // host memory, for consumers that ask after Render.
     void Read(const Targets &out);
+    // The last frame's colour target: raw HDR, premultiplied (with
+    // Frame::postProcess off), in TRANSFER_SRC_OPTIMAL. Planar reflections
+    // sample another renderer's.
+    VkImage HdrColorImage() const { return _color.image; }
+    VkImageView HdrColorView() const { return _color.view; }
 
 private:
     void _CreateDescriptors();
@@ -227,6 +255,7 @@ private:
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
+    bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
                                               uint32_t *rtLights, uint32_t rtSlots);
@@ -244,6 +273,10 @@ private:
     PostProcess _post;
     Transparency _transparency;
     Subsurface _subsurface;
+    Fog _fog;
+    float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
+    uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)
+    std::unique_ptr<Reflections> _reflections;  // made when a frame first asks for them
     // TAA state: frames in the history, jitter sequence, last camera.
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
