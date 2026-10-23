@@ -72,6 +72,10 @@ public:
         // surfaces; the scale multiplies every material's offset.
         bool displacement = true;
         float displacementScale = 1.0f;
+        // Levels of detail (Scene builds them for heavy meshes): off draws
+        // every mesh whole; a bias of 1 allows twice the screen error.
+        bool lod = true;
+        float lodBias = 0.0f;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -181,6 +185,9 @@ private:
     // Last frame's joint matrices for motion vectors, copied before skin.comp
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
+    Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
+    uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;

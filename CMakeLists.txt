@@ -55,7 +55,7 @@ list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
-    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
+    renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp renderer/lod.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
@@ -109,6 +109,8 @@ if(WIN32)
     set_tests_properties(subdivision PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME displacement COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_displacement.py)
     set_tests_properties(displacement PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lod COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lod.py)
+    set_tests_properties(lod PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

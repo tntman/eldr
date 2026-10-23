@@ -21,13 +21,14 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
     uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
-    vec4 geometry;       // x: displacement scale (kFeatureDisplacement)
+    vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
 // 256: kFeatureProcedurals (program.glsl)
 const uint kFeatureDisplacement = 1024u;  // a drawn material displaces (displace.glsl)
+const uint kFeatureLod = 2048u;           // levels of detail (cull.comp)
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

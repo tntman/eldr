@@ -2,6 +2,9 @@
 
 #include "device.h"
 #include "ibl.h"
+#include "lod.h"
+
+#include <future>
 
 #include <map>
 #include <memory>
@@ -285,6 +288,17 @@ private:
     float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
+    // Levels of detail (lod.h), coarser and coarser: their triangles in the
+    // index pool after the mesh's own, and instance slots (never valid)
+    // reserving levels 2 and 3 their range of the visible lists.
+    struct Lod {
+        uint32_t firstIndex, indexCount;
+        float error;  // relative to the bounding radius
+    };
+    std::vector<Lod> _lods;
+    uint32_t _lodFirstIndex = 0, _lodIndexCount = 0;
+    uint32_t _lodInstanceBase = 0, _lodInstanceCount = 0;
+    uint32_t _lodGeneration = 0;  // geometry uploads, to drop stale levels
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -387,6 +401,11 @@ constexpr uint32_t kMaxTextures = 4096;
 // shadow atlas tile being drawn (reused tile after tile). Passes that draw
 // every instance read the instance pool directly (list kNone).
 constexpr uint32_t kVisibleLists = 6;
+// Levels of detail: meshes from kLodMinTriangles get up to kMaxLods coarser
+// levels, each about half the triangles, none moving the surface more than
+// kLodMaxError of the mesh's bounding radius.
+constexpr uint32_t kLodMinTriangles = 1000, kMaxLods = 3, kLodMaxInstances = 1u << 20;
+constexpr float kLodMaxError = 0.25f;
 
 // Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
 class RangeAllocator {
@@ -420,6 +439,8 @@ public:
 
     // Uploads dirty data. The GPU must be idle.
     void Commit();
+    // Levels of detail are still building (a later Commit adds them).
+    bool LodsPending() const { return !_pendingLods.empty(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
@@ -517,6 +538,13 @@ public:
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
         VkBuffer displacements = VK_NULL_HANDLE;
         bool displaced = false;
+        // Levels of detail: per mesh slot its LOD commands and their ranges
+        // of the visible lists (shaders/cull.comp's Lod). The LOD commands
+        // are slots after the meshes' (drawCount counts both): level 1
+        // fills the mesh's range from its end, levels 2 and 3 a second
+        // range from either end.
+        VkBuffer lods = VK_NULL_HANDLE;
+        uint32_t meshCount = 0;  // mesh slots, the first of the drawCount slots
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -582,6 +610,17 @@ private:
 
     Gpu _gpu;
     Buffer _displacements;  // Gpu::displacements
+    Buffer _lodTable;       // Gpu::lods
+    void _StoreLods(Mesh &mesh, std::vector<LodLevel> levels);
+    void _ReserveLodInstances(Mesh &mesh);
+    // Levels of detail building in the background, for a mesh's upload
+    // (generation); mesh null once it was removed.
+    struct PendingLods {
+        Mesh *mesh;
+        uint32_t generation;
+        std::future<std::vector<LodLevel>> levels;
+    };
+    std::vector<PendingLods> _pendingLods;
 };
 
 } // namespace vkr

@@ -51,7 +51,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \
-    ((displacementScale, "hdvk:displacementScale"))
+    ((displacementScale, "hdvk:displacementScale"))          \
+    ((lod, "hdvk:lod"))                                      \
+    ((lodBias, "hdvk:lodBias"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

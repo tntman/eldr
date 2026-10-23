@@ -29,7 +29,7 @@ struct FrameData {
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
-    float geometry[4];       // displacement scale (kFeatureDisplacement)
+    float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
 };
 
 namespace {
@@ -71,7 +71,7 @@ const uint32_t kSkinComp[] =
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 constexpr uint32_t kFeatureProcedurals = 256;
-constexpr uint32_t kFeatureDisplacement = 1024;
+constexpr uint32_t kFeatureDisplacement = 1024, kFeatureLod = 2048;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -276,6 +276,7 @@ Renderer::~Renderer()
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
     _dev.Destroy(_prevJoints);
+    _dev.Destroy(_lodState);
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
@@ -340,10 +341,12 @@ void Renderer::_CreateDescriptors()
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
     // and vertex-rate primvars, 39 displacement per material (mesh.vert
-    // displaces with textures, so 0, 3 and 25 reach the vertex stage).
+    // displaces with textures, so 0, 3 and 25 reach the vertex stage), 40
+    // and 41 levels of detail per mesh slot and the camera's last level per
+    // instance slot (cull.comp).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     constexpr VkShaderStageFlags kVertex = VK_SHADER_STAGE_VERTEX_BIT;
-    const VkDescriptorSetLayoutBinding bindings[34] = {
+    const VkDescriptorSetLayoutBinding bindings[36] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kVertex},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -378,20 +381,22 @@ void Renderer::_CreateDescriptors()
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
+        {40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[34] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[36] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 34;
+    flags.bindingCount = 36;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 34;
+    slci.bindingCount = 36;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 26},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -780,6 +785,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo displacements{gpu.displacements, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo lods{gpu.lods, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo lodState{_lodState.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -830,6 +837,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
     write(39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &displacements, nullptr);
+    write(40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lods, nullptr);
+    write(41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lodState, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1229,6 +1238,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.features[0] |= kFeatureDisplacement;
         fd.geometry[0] = frame.displacementScale;
     }
+    if (frame.lod) {
+        fd.features[0] |= kFeatureLod;
+        fd.geometry[1] = frame.lodBias;
+        fd.geometry[2] = float(++_lodFrame & 0xFFFFFFu);  // exact as a float
+    }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
 
@@ -1309,6 +1323,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
+    // The camera's level of detail per instance slot, kept across frames
+    // (cull.comp); a new pool starts from whatever is there.
+    if (VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t) > _lodState.size) {
+        _dev.Destroy(_lodState);
+        _lodState = _dev.CreateDeviceBuffer(VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t),
+                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     _lastDrawCount = draw ? gpu.drawCount : 0;
@@ -1393,6 +1414,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
         vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+        // Shadows draw the levels of detail the camera picked (cull.comp).
+        VkMemoryBarrier2 lodPicked{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        lodPicked.srcStageMask = lodPicked.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        lodPicked.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        lodPicked.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+        dep.pMemoryBarriers = &lodPicked;
+        vkCmdPipelineBarrier2(_cmd, &dep);
         // Each cascade's ortho box (which spans the scene's whole depth
         // towards the light, so every caster in it stays); instances under
         // half a shadow texel are dropped.
@@ -1533,6 +1561,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _gtao.Clear(_cmd);
     }
 
+    // The atlas draws the camera's levels of detail (cull.comp): it is
+    // redrawn when the camera moves while there are levels.
+    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
+        std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
+        _atlasVersion = 0;
+    }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>());
     if (!shadowTiles.empty()) {
         pass("localShadows");

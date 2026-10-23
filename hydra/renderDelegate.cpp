@@ -111,6 +111,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
         {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
+        {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
+        {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
@@ -269,7 +271,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["trianglesTotal"] = size_t(gpu.triangleCount);
     stats["instancesDrawn"] = size_t(frame.instances);
     stats["instancesTotal"] = size_t(gpu.instanceCount);
-    stats["meshes"] = size_t(gpu.drawCount);
+    stats["meshes"] = size_t(gpu.meshCount);
     stats["drawCalls"] = size_t(frame.drawCalls);
     stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;
 

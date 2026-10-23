@@ -24,9 +24,11 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 {
 }
 
+// Not while levels of detail build either: the app keeps drawing until
+// they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
-    return !_renderer || _renderer->IsConverged();
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending());
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -104,13 +106,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency},
                                 {t.proceduralTextures, &frame.proceduralTextures},
-                                {t.displacement, &frame.displacement}}) {
+                                {t.displacement, &frame.displacement}, {t.lod, &frame.lod}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
-                                {t.displacementScale, &frame.displacementScale}}) {
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},

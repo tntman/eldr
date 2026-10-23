@@ -1273,6 +1273,45 @@ int main()
             frame.displacement = false;
             Expect(Render(renderer, scene, frame).depth[32 * 64 + 16] == 1.0f, "Frame::displacement off: not displaced");
         }
+
+        {
+            // Levels of detail: a bumpy 32 x 32 grid (2048 triangles), one
+            // instance filling the view and one 4 pixels wide. The small one
+            // draws a coarser level; Frame::lod off, or a bias asking for a
+            // thousandth of a pixel, draws both whole.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *grid = scene.AddMesh();
+            const int n = 32;
+            auto point = [&](int i, int j) {
+                const float x = float(i) / n * 2 - 1, y = float(j) / n * 2 - 1;
+                return std::array<float, 3>{x, y, 0.05f * std::sin(x * 9) * std::cos(y * 7)};
+            };
+            for (int j = 0; j < n; ++j) {
+                for (int i = 0; i < n; ++i) {
+                    for (const auto &c : {point(i, j), point(i + 1, j), point(i + 1, j + 1), point(i, j),
+                                          point(i + 1, j + 1), point(i, j + 1)}) {
+                        grid->points.insert(grid->points.end(), c.begin(), c.end());
+                    }
+                }
+            }
+            grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1,
+                                0.06f, 0, 0, 0, 0, 0.06f, 0, 0, 0, 0, 0.06f, 0, 0.5f, 0.5f, 0.2f, 1};
+            do {  // the levels build in the background
+                scene.Commit();
+            } while (scene.LodsPending());
+            Render(renderer, scene);
+            const uint64_t lod = renderer.GetStats().triangles;
+            vkr::Renderer::Frame whole = IdentityFrame();
+            whole.lod = false;
+            Render(renderer, scene, whole);
+            Expect(renderer.GetStats().triangles == 2u * 2048u, "Frame::lod off: every triangle");
+            Expect(lod < 2u * 2048u - 512u, "levels of detail: the small grid draws a coarser level");
+            whole.lod = true;
+            whole.lodBias = -10.0f;
+            Render(renderer, scene, whole);
+            Expect(renderer.GetStats().triangles == 2u * 2048u, "Frame::lodBias -10: every triangle");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
