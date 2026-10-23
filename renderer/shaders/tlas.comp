@@ -13,8 +13,7 @@ struct RtSlot {  // rt.glsl
     uint flags;
 };
 layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]; };
-const uint kRtSlotEmitter = 1u;  // promoted to a light: instance mask 2 instead of 1
-const uint kRtSlotCutout = 2u;   // alpha-tested: any-hit shaders run, else forced opaque
+const uint kRtSlotCutout = 2u;  // alpha-tested: any-hit shaders run, else forced opaque
 
 struct TlasInstance {
     vec4 rows[3];
@@ -41,8 +40,7 @@ void main()
     if (i < instances.length() && inst.draw != kFreeSlot && draws[inst.draw].visible != 0u &&
         rtSlots[inst.draw].blas != uvec2(0u)) {
         RtSlot s = rtSlots[inst.draw];
-        uint mask = (s.flags & kRtSlotEmitter) != 0u ? 2u : 1u;
-        t.indexMask = inst.draw | (mask << 24);
+        t.indexMask = inst.draw | (0xFFu << 24);
         // VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR, and
         // FORCE_NO_OPAQUE or FORCE_OPAQUE.
         t.sbtFlags = (1u | ((s.flags & kRtSlotCutout) != 0u ? 8u : 4u)) << 24;

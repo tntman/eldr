@@ -113,6 +113,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
         {"GI Rays per Probe per Frame (16-512)", t.giRays, VtValue(int(frame.giRays))},
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
+        {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
+        {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
         {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},

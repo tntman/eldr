@@ -15,7 +15,8 @@
 // each shaded where it lands with direct light and, for further bounces,
 // the probes' last irradiance; misses see the dome. gi_update.comp blends
 // them into the probe atlases. Rays that hit a back face (the probe is in
-// or behind a wall) store a short negative distance and no light.
+// or behind a wall) store a short negative distance and no light. Emitters
+// promoted to lights don't add their emission: their light already does.
 layout(std430, set = 1, binding = 1) writeonly buffer GiRays { vec4 giRays[]; };  // radiance, distance
 
 void main()
@@ -32,7 +33,7 @@ void main()
     } else if ((hit.flags & kHitBackface) != 0u) {
         result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
     } else {
-        result = vec4(ShadeHit(dir, uvec3(ray, probe, rt.params.x), true), hit.t);
+        result = vec4(ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u), hit.t);
     }
     giRays[probe * rays + ray] = result;
 }

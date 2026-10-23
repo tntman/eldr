@@ -247,6 +247,9 @@ private:
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
     // Ray tracing: unique per geometry upload (a new BLAS when it changes).
     uint64_t _geometryVersion = 0;
+    // Emissive lights: the object-space area of `points`, at this version.
+    float _emitterArea = 0;
+    uint64_t _emitterAreaVersion = 0;
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -386,6 +389,12 @@ public:
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
+    // Emissive meshes as lights: from the next Commit, each instance of a
+    // small rigid mesh whose material emits at least `threshold` (a constant
+    // emissiveColor's brightest channel, scene-referred radiance) also
+    // lights the scene as a sphere light around it, of the same power
+    // (pi x radiance x area), casting shadows. Returns whether it changed.
+    bool SetEmissiveLights(bool on, float threshold);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -478,7 +487,8 @@ public:
         struct SlotGeometry {
             uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
             uint64_t version;
-            bool cutout;  // alpha-tested: any-hit shaders run
+            bool cutout;   // alpha-tested: any-hit shaders run
+            bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
         };
         std::vector<SlotGeometry> slotGeometry;
     };
@@ -512,6 +522,8 @@ private:
     void _Upload(Texture &texture);
     int32_t _TextureIndex(Texture *t);
     void _UpdateEnvironment(const Dome *dome);
+    struct Emitter;
+    std::vector<Emitter> _FindEmitters();
     void _DestroyEnvironment();
     template <typename T>
     static void _RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item);
@@ -537,6 +549,8 @@ private:
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
     uint32_t _tagMask = ~0u;
+    bool _emissiveLights = true;
+    float _emissiveThreshold = 4.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;

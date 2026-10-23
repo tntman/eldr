@@ -53,7 +53,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((gi, "hdvk:gi"))                                        \
     ((giProbes, "hdvk:giProbes"))                            \
     ((giRays, "hdvk:giRaysPerProbe"))                        \
-    ((giHysteresis, "hdvk:giHysteresis"))
+    ((giHysteresis, "hdvk:giHysteresis"))                    \
+    ((emissiveLights, "hdvk:emissiveLights"))                \
+    ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

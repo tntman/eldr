@@ -122,8 +122,41 @@ bool RtOpaque()
     return gl_FragCoord.z >= texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
 }
 
+// Traced reflections around this pixel: up to 8 taps (kPoisson within
+// `radius` pixels, rotated per pixel and frame) whose surfaces lie in this
+// pixel's plane (p, n), averaged with it, before TAA averages the frames:
+// a ray or a few per pixel are noisy on rough surfaces. Taps without a
+// reflection (a = 0) don't count.
+vec4 RtAround(vec3 p, vec3 n, float radius)
+{
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    vec4 sum = imageLoad(rtReflectionImage, pixel);
+    if (radius < 1.0) {
+        return sum;
+    }
+    float weights = 1.0;
+    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
+                                                           vec2(0.06711056, 0.00583715))));
+    mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    float tolerance = 0.02 * distance(p, frame.cameraPos.xyz);
+    ivec2 size = imageSize(rtReflectionImage);
+    for (int i = 0; i < 8; ++i) {
+        ivec2 tap = clamp(pixel + ivec2(rotation * kPoisson[i] * radius), ivec2(0), size - 1);
+        vec4 ndc = vec4((vec2(tap) + 0.5) / vec2(size) * 2.0 - 1.0, texelFetch(sceneDepth, tap, 0).r * 2.0 - 1.0, 1.0);
+        vec4 q = frame.invViewProj * ndc;
+        vec4 traced = imageLoad(rtReflectionImage, tap);
+        if (traced.a > 0.0 && abs(dot(q.xyz / q.w - p, n)) < tolerance) {
+            sum += traced;
+            weights += 1.0;
+        }
+    }
+    return sum / weights;
+}
+
 // The traced shadow of `light`, if it has one (then it has no shadow map):
 // unshadowed on translucent surfaces.
+// ponytail: unfiltered (a fixed blur would soften hard and small shadows
+// alike); a filter sized by the penumbra needs the blockers' distances.
 bool RtShadow(uint light, out float visibility)
 {
     visibility = 1.0;
@@ -142,39 +175,15 @@ bool RtShadow(uint light, out float visibility)
 }
 
 // Traced reflections replace the dome's (and SSR) by their weight (a),
-// which fades out over rough surfaces. Rough ones are noisy (a ray or a
-// few per pixel and frame): they are averaged over up to 12 pixels around
-// (kPoisson, rotated per pixel and frame), over pixels whose surface lies
-// in this one's plane (p, n), before TAA averages the frames.
+// which fades out over rough surfaces; rough ones are averaged over up to
+// 12 pixels around.
 vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 {
     if ((frame.features.x & kFeatureRtReflections) == 0u || !RtOpaque()) {
         return specular;
     }
-    ivec2 pixel = ivec2(gl_FragCoord.xy);
-    vec4 center = imageLoad(rtReflectionImage, pixel);
-    float radius = 12.0 * smoothstep(0.05, 0.5, perceptual);
-    if (radius >= 1.0) {
-        vec3 sum = center.rgb;
-        float weights = 1.0;
-        float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                               vec2(0.06711056, 0.00583715))));
-        mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
-        float tolerance = 0.02 * distance(p, frame.cameraPos.xyz);
-        ivec2 size = imageSize(rtReflectionImage);
-        for (int i = 0; i < 8; ++i) {
-            ivec2 tap = clamp(pixel + ivec2(rotation * kPoisson[i] * radius), ivec2(0), size - 1);
-            vec4 ndc = vec4((vec2(tap) + 0.5) / vec2(size) * 2.0 - 1.0, texelFetch(sceneDepth, tap, 0).r * 2.0 - 1.0, 1.0);
-            vec4 q = frame.invViewProj * ndc;
-            vec4 traced = imageLoad(rtReflectionImage, tap);
-            if (traced.a > 0.0 && abs(dot(q.xyz / q.w - p, n)) < tolerance) {
-                sum += traced.rgb;
-                weights += 1.0;
-            }
-        }
-        center.rgb = sum / weights;
-    }
-    return mix(specular, center.rgb, center.a);
+    float weight = imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;
+    return mix(specular, RtAround(p, n, 12.0 * smoothstep(0.05, 0.5, perceptual)).rgb, weight);
 }
 
 // Diffuse light from the probes where they cover p, else `fallback` (the

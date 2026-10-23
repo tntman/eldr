@@ -11,14 +11,14 @@ layout(location = 1) rayPayloadEXT float unoccluded;
 void Trace(vec3 origin, vec3 dir, float cone)
 {
     hit.t = cone;
-    traceRayEXT(tlas, gl_RayFlagsNoneEXT, kMaskAll, 0, 0, 0, origin, 0.0, dir, 1e30, 0);
+    traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0, origin, 0.0, dir, 1e30, 0);
 }
 
-// 1 if nothing (but light-emitting meshes) is in the way up to tMax.
+// 1 if nothing is in the way up to tMax.
 float TraceShadow(vec3 origin, vec3 dir, float tMax)
 {
     unoccluded = 0.0;
-    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, kMaskSurface, 1, 0, 1,
+    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF, 1, 0, 1,
                 origin, 0.0, dir, tMax, 1);
     return unoccluded;
 }

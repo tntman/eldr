@@ -103,13 +103,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency}, {t.rtShadows, &frame.rtShadows},
-                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}}) {
+                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
+                                {t.emissiveLights, &frame.emissiveLights}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
-                                {t.giHysteresis, &frame.giHysteresis}}) {
+                                {t.giHysteresis, &frame.giHysteresis},
+                                {t.emissiveLightThreshold, &frame.emissiveLightThreshold}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
@@ -122,6 +124,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
                                 {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
+    }
+    if (_scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold)) {
+        _scene.Commit();
     }
     // The scene camera's lens; usdview's free camera has none.
     const GfMatrix4d projection = state->GetProjectionMatrix();

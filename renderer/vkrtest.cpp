@@ -1145,6 +1145,41 @@ int main()
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
 
+        {
+            // Emissive surfaces as lights: a small bright emitter (black
+            // otherwise) at z = 0, x = -0.6, lights the white wall at z = 0.5
+            // as a sphere light of its power, and a small occluder at
+            // z = 0.25, x = -0.3 shadows it, as in the local light test.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddEmitter(scene, -0.62f, -0.02f, -0.58f, 0.02f, 0, 2000.0f);
+            scene.Commit();
+            const Image lit = Render(renderer, scene);
+            scene.SetEmissiveLights(false, 4.0f);
+            scene.Commit();
+            const Image off = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 5000.0f);
+            scene.Commit();
+            const Image dim = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 4.0f);
+            scene.Commit();
+            Expect(lit.At(41, 32, 0) > 0.05f && off.At(41, 32, 0) == 0.0f && dim.At(41, 32, 0) == 0.0f,
+                   "a bright emitter lights the wall; off or under the threshold it doesn't");
+            Expect(lit.At(32, 32, 0) < 0.2f * lit.At(41, 32, 0), "the emitter's light casts shadows");
+            if (device.rayTracing) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, scene, frame);
+                Expect(traced.At(32, 32, 0) < 0.2f * traced.At(41, 32, 0) &&
+                           std::abs(traced.At(41, 32, 0) - lit.At(41, 32, 0)) < 0.05f * lit.At(41, 32, 0),
+                       "the emitter's light has traced shadows, and doesn't shadow itself");
+            }
+        }
+
         if (device.rayTracing) {
             // Ray-traced sun shadow: the cascade test's scene with a hard sun
             // (angle 0), traced instead of the cascades.

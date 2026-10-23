@@ -9,7 +9,7 @@ layout(set = 0, binding = 52) uniform accelerationStructureEXT tlas;
 layout(std430, set = 0, binding = 55) readonly buffer RtVertices { float rtVertices[]; };
 layout(std430, set = 0, binding = 56) readonly buffer RtIndices { uint rtIndices[]; };
 // Per mesh slot: its BLAS's address (0: none), first index, flags
-// (tlas.comp: 1 promoted to a light, 2 cutout).
+// (kRtSlotEmitter, 2: cutout, see tlas.comp).
 struct RtSlot {
     uvec2 blas;
     uint firstIndex;
@@ -17,9 +17,8 @@ struct RtSlot {
 };
 layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]; };
 
-// Instance masks: ordinary geometry, and emissive meshes promoted to
-// lights (no shadow rays see them: they would shadow their own light).
-const uint kMaskSurface = 1u, kMaskEmitter = 2u, kMaskAll = 0xFFu;
+// Every instance of the mesh is also a light (Scene::SetEmissiveLights).
+const uint kRtSlotEmitter = 1u;
 
 // Ray payload (location 0) of traced rays.
 struct RtHit {
@@ -35,6 +34,7 @@ struct RtHit {
     float pad;
 };
 const uint kHitBackface = 1u;  // the shading normal faces away from the ray
+const uint kHitEmitter = 2u;   // a light stands in for its emission (kRtSlotEmitter)
 
 // Corner k (0..2) of a mesh slot's triangle in the vertex pool; then its
 // position, normal, uv (object space) and displayColor.
