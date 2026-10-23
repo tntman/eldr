@@ -7,7 +7,7 @@
                 "Types": {
                     "hdvkUsdview.HdVkContainer": {
                         "bases": ["pxr.Usdviewq.plugin.PluginContainer"],
-                        "displayName": "HdVk render statistics"
+                        "displayName": "Eldr render statistics"
                     }
                 }
             }

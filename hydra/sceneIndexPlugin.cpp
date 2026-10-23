@@ -253,9 +253,9 @@ TF_REGISTRY_FUNCTION(TfType)
 
 TF_REGISTRY_FUNCTION(HdSceneIndexPlugin)
 {
-    // Keyed by the renderer's displayName in plugInfo.json.
+    // Keyed by the renderer's displayName in plugInfo.json ("Eldr", HdVk's product name).
     HdSceneIndexPluginRegistry::GetInstance().RegisterSceneIndexForRenderer(
-        "HdVk", TfToken("HdVk_SceneIndexPlugin"),
+        "Eldr", TfToken("HdVk_SceneIndexPlugin"),
         /*inputArgs=*/nullptr, /*insertionPhase=*/0,
         HdSceneIndexPluginRegistry::InsertionOrderAtStart);
 }

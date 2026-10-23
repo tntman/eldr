@@ -5,14 +5,14 @@
                 "Types": {
                     "HdVkRendererPlugin": {
                         "bases": ["HdRendererPlugin"],
-                        "displayName": "HdVk",
+                        "displayName": "Eldr",
                         "priority": 99
                     },
                     "HdVk_SceneIndexPlugin": {
                         "bases": ["HdSceneIndexPlugin"],
-                        "loadWithRenderer": "HdVk",
+                        "loadWithRenderer": "Eldr",
                         "priority": 0,
-                        "displayName": "Implicit surfaces to meshes for HdVk"
+                        "displayName": "Scene index for Eldr (implicit surfaces, skinning inputs)"
                     }
                 }
             },

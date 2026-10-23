@@ -194,7 +194,7 @@ void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim) { delete bprim; }
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
     VtDictionary stats;
-    stats["rendererName"] = std::string("HdVk");
+    stats["rendererName"] = std::string("Eldr");  // plugInfo.json's displayName
     if (!_device || !_renderer) {
         return stats;
     }

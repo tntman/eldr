@@ -1,7 +1,7 @@
 {
     "HdVkRendererPlugin": {
         "valid": true,
-        "menulabel": "HdVk",
+        "menulabel": "Eldr",
         "menupriority": 30,
         "depthstyle": "opengl",
         "statsdatapaths": {

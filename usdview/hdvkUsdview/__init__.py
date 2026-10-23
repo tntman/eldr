@@ -1,4 +1,4 @@
-"""usdview plugin: HdVk > Render Statistics opens a window of what HdVk's
+"""usdview plugin: Eldr > Render Statistics opens a window of what Eldr's
 GetRenderStats() reports about the last frame, refreshed twice a second.
 usdenv.cmd puts it on the plugin and Python paths (plugInfo.json beside it)."""
 
@@ -26,8 +26,8 @@ PASSES = [
 
 def Rows(stats):
     """The window's (label, value) rows; a row without a value is a heading."""
-    if stats.get("rendererName") != "HdVk":
-        return [("HdVk is not the viewport's renderer.", "")]
+    if stats.get("rendererName") != "Eldr":
+        return [("Eldr is not the viewport's renderer.", "")]
     get = lambda key: stats.get(key, 0)
     ms = lambda key: "%.2f ms" % get(key)
     count = lambda key: "{:,}".format(get(key)).replace(",", " ")
@@ -63,7 +63,7 @@ def Rows(stats):
 class _StatsWindow(QtWidgets.QWidget):
     def __init__(self, usdviewApi):
         super().__init__(usdviewApi.qMainWindow, QtCore.Qt.Tool)
-        self.setWindowTitle("HdVk Render Statistics")
+        self.setWindowTitle("Eldr Render Statistics")
         self._api = usdviewApi
         self._label = QtWidgets.QLabel()
         self._label.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
@@ -104,7 +104,7 @@ class HdVkContainer(PluginContainer):
             "HdVk's GPU time per pass, what it drew, memory and convergence")
 
     def configureView(self, plugRegistry, plugUIBuilder):
-        plugUIBuilder.findOrCreateMenu("HdVk").addItem(self._stats)
+        plugUIBuilder.findOrCreateMenu("Eldr").addItem(self._stats)
 
 
 Tf.Type.Define(HdVkContainer)

@@ -51,7 +51,7 @@ def expect(ok, what):
         print("FAIL:", what, file=sys.stderr)
 
 
-expect(stats.get("rendererName") == "HdVk", "rendererName")
+expect(stats.get("rendererName") == "Eldr", "rendererName")
 expect(stats.get("trianglesTotal") == 24 and stats.get("trianglesDrawn") == 12, "triangles drawn after culling")
 expect(stats.get("instancesTotal") == 2 and stats.get("instancesDrawn") == 1, "instances drawn after culling")
 expect(stats.get("gpuTimeMs", 0) > 0 and "shading" in stats.get("gpuPassMs", {}), "GPU time per pass")
