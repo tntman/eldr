@@ -104,7 +104,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
                                 {t.translucency, &frame.translucency}, {t.rtShadows, &frame.rtShadows},
                                 {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
-                                {t.emissiveLights, &frame.emissiveLights}}) {
+                                {t.emissiveLights, &frame.emissiveLights},
+                                {t.proceduralTextures, &frame.proceduralTextures}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
