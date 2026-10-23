@@ -1,5 +1,6 @@
-"""Headless check of texture wrap modes: tests/scenes/wrap.usda, emission
-only and no lights or post processing, so pixels are the textures' values.
+"""Headless check of texture wrap modes (tests/scenes/wrap.usda) and several
+uv sets per mesh (multiuv.usda): emission only and no lights or post
+processing, so pixels are the textures' values.
 Run: usdenv.cmd python tests\\test_textures.py"""
 import os
 import sys
@@ -82,6 +83,15 @@ for what, ((cx, cy), right, topLeft) in cells.items():
     expect(image, viewProj, cx - 0.2, cy - 0.2, red, what + ", inside")
     expect(image, viewProj, cx + 0.6, cy - 0.2, right, what + ", right")
     expect(image, viewProj, cx - 0.6, cy + 0.6, topLeft, what + ", top left")
+
+# multiuv.usda: quads 2 wide; st1 mirrors u, st2 mirrors v. At st (0.25,
+# 0.25) st1 reads green and st2 blue; at st (0.75, 0.75) st1 blue, st2 green.
+image, viewProj = render("multiuv.usda")
+half = tuple((g + b) / 2 for g, b in zip(green, blue))
+for what, x, low, high in (("UsdPrimvarReader st1", -2.5, green, blue), ("MaterialX texcoord index 1", 0, green, blue),
+                           ("MaterialX geompropvalue st1 and st2", 2.5, half, half)):
+    expect(image, viewProj, x - 0.5, -0.5, low, what + ", lower left")
+    expect(image, viewProj, x + 0.5, 0.5, high, what + ", upper right")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

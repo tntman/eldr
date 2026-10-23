@@ -704,8 +704,12 @@ public:
         const TfToken uv = *_uvPrimvar;
         _failed.clear();
         std::optional<Value> v = _Input(node, name, 0);
-        // A normal is a tangent-space one only out of a normalmap.
-        if (v && target == P::kNormal && !(v->op && _ops[v->index].op == P::kNormalMap)) {
+        // A normal is a tangent-space one only out of a normalmap or a
+        // texture (UsdPreviewSurface's, decoded by its scale and bias).
+        // ponytail: the tangent frame follows the mesh's uv set, whichever
+        // set the normal map reads.
+        if (v && target == P::kNormal &&
+            !(v->op && (_ops[v->index].op == P::kNormalMap || _ops[v->index].op == P::kImage))) {
             v.reset();
         }
         if (v && weight != 1.0f) {
@@ -859,18 +863,33 @@ private:
         return _Const(_Parameter(node, input));
     }
 
-    // Texture coordinates: a connected input, else the mesh's uv set.
+    // Texture coordinates: a connected input, else "st".
     std::optional<Value> _Uv(HdMaterialNode2 const &node, TfToken const &input, int depth)
     {
         return _Connected(node, input) ? _Input(node, input, depth) : std::optional<Value>(_Texcoord(_tokens->st));
     }
 
-    Value _Texcoord(TfToken const &primvar)
+    // A uv set: the mesh's (kTexcoord) if it is the material's, the first
+    // one read, else a primvar like any other (the mesh packs it per
+    // vertex), (0, 0) or `fallback` where missing.
+    Value _Texcoord(TfToken const &primvar, std::optional<Value> fallback = std::nullopt)
     {
         if (_uvPrimvar->IsEmpty()) {
             *_uvPrimvar = primvar;
         }
-        return _Emit(P::kTexcoord, {});
+        if (primvar == *_uvPrimvar) {
+            return _Emit(P::kTexcoord, {});
+        }
+        return _Primvar(primvar, fallback ? *fallback : _Const(GfVec4f(0.0f)));
+    }
+
+    Value _Primvar(TfToken const &name, Value fallback)
+    {
+        auto slot = std::find(_p.primvars.begin(), _p.primvars.end(), name.GetString());
+        if (slot == _p.primvars.end()) {
+            slot = _p.primvars.insert(slot, name.GetString());
+        }
+        return _Emit(P::kPrimvar, {fallback}, uint32_t(slot - _p.primvars.begin()));
     }
 
     std::optional<Value> _Node(SdfPath const &path, TfToken const &output, int depth)
@@ -1003,18 +1022,11 @@ private:
             if (name == _tokens->displayColor) {
                 return _Emit(P::kDisplayColor, {});
             }
-            if (Components(k.type) == 2 && (name == _tokens->st || name == *_uvPrimvar)) {
-                return _Texcoord(name);
-            }
             const std::optional<Value> fallback = in(k.name == "geompropvalue" ? "default" : "fallback");
             if (!fallback) {
                 return std::nullopt;
             }
-            auto slot = std::find(_p.primvars.begin(), _p.primvars.end(), name.GetString());
-            if (slot == _p.primvars.end()) {
-                slot = _p.primvars.insert(slot, name.GetString());
-            }
-            return _Emit(P::kPrimvar, {*fallback}, uint32_t(slot - _p.primvars.begin()));
+            return Components(k.type) == 2 ? _Texcoord(name, fallback) : _Primvar(name, *fallback);
         }
         if (k.name == "image" || k.name == "tiledimage" || k.name == "UsdUVTexture") {
             const bool preview = k.name == "UsdUVTexture";
@@ -1102,8 +1114,8 @@ private:
 
 // ponytail: metallic workflow only. Ignored for now: specular workflow,
 // coat, sheen, transmission, subsurface, ior and displacement.
-// *uvPrimvar: the primvar the textures' coordinates come from.
-// ponytail: one per material (meshes carry one uv set); a second warns.
+// *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
+// reads; textures on other sets are read by the program, through primvars.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
@@ -1157,13 +1169,12 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         ReadTexture(net, &surface, name, textures, m, ref, &primvar);
         if (ref->texture && uvPrimvar->IsEmpty()) {
             *uvPrimvar = primvar;
-        } else if (ref->texture && primvar != *uvPrimvar) {
-            TF_WARN("HdVk: a material reads uv sets '%s' and '%s'; all textures use '%s'", uvPrimvar->GetText(),
-                    primvar.GetText(), uvPrimvar->GetText());
         }
-        for (int i = 0; ref->texture && i < 3; ++i) {
-            ref->scale[i] *= weight;
-            ref->bias[i] *= weight;
+        // A texture on another uv set than the material's goes to the
+        // program, which reads that set as a primvar.
+        vkr::TextureRef otherUvSet;
+        if (ref->texture && primvar != *uvPrimvar) {
+            std::swap(otherUvSet, *ref);
         }
         const auto c = surface.inputConnections.find(name);
         if (!ref->texture && c != surface.inputConnections.end() && !c->second.empty() &&
@@ -1172,10 +1183,19 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
             static std::mutex mutex;
             static std::set<std::string> warned;
             std::lock_guard<std::mutex> lock(mutex);
-            if (warned.insert(graph.Failed()).second) {
+            if (otherUvSet.texture) {
+                std::swap(otherUvSet, *ref);
+                TF_WARN("HdVk: a material reads uv sets '%s' and '%s' but can't run a graph for '%s'; its "
+                        "textures read '%s'", uvPrimvar->GetText(), primvar.GetText(), name.GetText(),
+                        uvPrimvar->GetText());
+            } else if (warned.insert(graph.Failed()).second) {
                 TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
                         graph.Failed().c_str());
             }
+        }
+        for (int i = 0; ref->texture && i < 3; ++i) {
+            ref->scale[i] *= weight;
+            ref->bias[i] *= weight;
         }
     };
 
