@@ -1007,7 +1007,9 @@ void Scene::Commit()
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
-    std::vector<uint8_t> cutout(slots);
+    std::vector<uint8_t> kind(slots, Gpu::kOpaque);
+    _gpu.translucent.clear();
+    _gpu.translucentCenters.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -1025,7 +1027,15 @@ void Scene::Commit()
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
-        cutout[slot] = drawable && m.material && m.material->opacityThreshold > 0;
+        if (drawable && m.material && m.material->opacityThreshold > 0) {
+            kind[slot] = Gpu::kCutout;
+        } else if (drawable && m.material && (m.material->opacity < 1 || m.material->opacityTex.texture)) {
+            kind[slot] = Gpu::kTranslucent;
+            _gpu.translucent.push_back(uint32_t(slot));
+            for (int k = 0; k < 3; ++k) {
+                _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
+            }
+        }
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
@@ -1055,19 +1065,19 @@ void Scene::Commit()
     // needs instance ranges.
     constexpr double kChunkTriangles = 5e8;
     _gpu.drawChunks.assign(1, 0);
-    _gpu.chunkCutout.assign(1, 0);
+    _gpu.chunkKind.assign(1, Gpu::kOpaque);
     double triangles = 0;
     for (size_t slot = 0; slot < slots; ++slot) {
         const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
-        if (triangles > 0 && (triangles + t > kChunkTriangles || cutout[slot] != _gpu.chunkCutout.back())) {
+        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back())) {
             _gpu.drawChunks.push_back(uint32_t(slot));
-            _gpu.chunkCutout.push_back(cutout[slot]);
+            _gpu.chunkKind.push_back(kind[slot]);
             triangles = 0;
         }
-        _gpu.chunkCutout.back() = cutout[slot];
+        _gpu.chunkKind.back() = kind[slot];
         triangles += t;
     }
     _gpu.drawChunks.push_back(uint32_t(slots));

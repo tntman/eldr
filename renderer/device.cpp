@@ -62,6 +62,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f.features.multiDrawIndirect, "multiDrawIndirect");
     need(f.features.drawIndirectFirstInstance, "drawIndirectFirstInstance");
     need(f.features.samplerAnisotropy, "samplerAnisotropy");
+    need(f.features.independentBlend, "independentBlend");  // translucency: blended colour, plain ids
     need(f12.drawIndirectCount, "drawIndirectCount");
     need(f12.runtimeDescriptorArray, "runtimeDescriptorArray");
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");
@@ -184,6 +185,7 @@ Device::Device()
         f.features.multiDrawIndirect = VK_TRUE;
         f.features.drawIndirectFirstInstance = VK_TRUE;
         f.features.samplerAnisotropy = VK_TRUE;
+        f.features.independentBlend = VK_TRUE;
 
         VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f};
         dci.queueCreateInfoCount = 1;

@@ -613,6 +613,30 @@ int main()
         }
 
         {
+            // Translucency: a blue quad of opacity 0.5 over the left half of
+            // a red one blends half and half there, and leaves the depth
+            // (prepass) to the red one.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto red = std::make_shared<vkr::Material>(), blue = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 1;
+            red->baseColor[1] = red->baseColor[2] = 0;
+            red->roughness = 1;
+            blue->baseColor[2] = 1;
+            blue->baseColor[0] = blue->baseColor[1] = 0;
+            blue->roughness = 1;
+            blue->opacity = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = red;
+            AddQuad(scene, -1, -1, 0, 1, 0)->material = blue;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(std::abs(img.At(16, 32, 0) - 0.5f) < 0.06f && std::abs(img.At(16, 32, 2) - 0.5f) < 0.06f,
+                   "translucent quad blends half and half over the opaque one");
+            Expect(img.At(48, 32, 0) > 0.9f && img.At(48, 32, 2) < 0.05f, "beside it, the opaque quad alone");
+            Expect(img.depth[32 * 64 + 16] == img.depth[32 * 64 + 48], "translucency writes no depth");
+        }
+
+        {
             // Motion vectors: a quad moved by 0.25 (NDC x) since the last
             // frame was 0.125 uv to the left; once it stops, it has none.
             vkr::Scene scene(&device);

@@ -63,7 +63,7 @@ struct Material {
     float metallic = 0;
     float roughness = 0.5f;
     float occlusion = 1;
-    float opacity = 1;
+    float opacity = 1;           // below 1 (or a texture) without a threshold: translucent
     float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
     bool baseColorFromDisplayColor = false;  // diffuseColor <- primvar reader "displayColor"
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
@@ -296,9 +296,14 @@ public:
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
         // even with every instance visible.
         std::vector<uint32_t> drawChunks;
-        // Per chunk: cutout materials, drawn with the alpha-tested depth
-        // passes. Chunks also end where this changes.
-        std::vector<uint8_t> chunkCutout;
+        // Per chunk: kOpaque, kCutout (alpha-tested depth passes) or
+        // kTranslucent (skipped: drawn per slot, back to front, after the
+        // opaque); chunks also end where it changes.
+        enum : uint8_t { kOpaque, kCutout, kTranslucent };
+        std::vector<uint8_t> chunkKind;
+        // The translucent slots and their world bounds' centres (xyz).
+        std::vector<uint32_t> translucent;
+        std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones

@@ -463,7 +463,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         std::fill(constant, constant + size, valueDefault);
         GfVec3f v;
         if (size == 1) {
-            Read(surface.parameters, name, constant);
+            // A colour read as a scalar (standard_surface's opacity): its
+            // first channel.
+            if (!Read(surface.parameters, name, constant) && Read(surface.parameters, name, &v)) {
+                constant[0] = v[0];
+            }
         } else if (Read(surface.parameters, name, &v)) {
             const TfToken colorSpace = ParameterColorSpace(surface.parameters, name);
             if (NeedsConversion(colorSpace)) {

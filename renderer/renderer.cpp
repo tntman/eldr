@@ -97,16 +97,20 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
     vkCmdPushConstants(cmd, layout, kPushStages, 0, sizeof(p), &p);
 }
 
-// The draws of one command list (commands[first] at offset), one indirect
-// call per chunk (Scene::Gpu::drawChunks), each with its pipeline: `cutout`
-// for chunks of cutout materials.
+// The opaque and cutout draws of one command list (commands[first] at
+// offset), one indirect call per chunk (Scene::Gpu::drawChunks), each with
+// its pipeline: `cutout` for chunks of cutout materials. Translucent chunks
+// are left to the translucent pass (and cast no shadows).
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
                 VkPipeline opaque, VkPipeline cutout)
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
-        const VkPipeline pipeline = gpu.chunkCutout[i] ? cutout : opaque;
+        if (gpu.chunkKind[i] == Scene::Gpu::kTranslucent) {
+            continue;
+        }
+        const VkPipeline pipeline = gpu.chunkKind[i] == Scene::Gpu::kCutout ? cutout : opaque;
         if (pipeline != bound) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             bound = pipeline;
@@ -223,7 +227,8 @@ Renderer::~Renderer()
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
     for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
-                         _lightsPipeline, _skinPipeline, _prepassCutoutPipeline, _shadowCutoutPipeline}) {
+                         _lightsPipeline, _skinPipeline, _prepassCutoutPipeline, _shadowCutoutPipeline,
+                         _translucentPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -443,6 +448,24 @@ void Renderer::_CreatePipelines()
     ci.pDynamicState = &dynamic;
     ci.layout = _layout;
     VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &_pipeline);
+
+    // Translucent: premultiplied blending over the opaque colour (and its
+    // coverage alpha); ids are written (picking), motion vectors stay the
+    // opaque surface's.
+    if (r == VK_SUCCESS) {
+        VkPipelineColorBlendAttachmentState over[4] = {attachments[0], attachments[1], attachments[2],
+                                                       attachments[3]};
+        over[0].blendEnable = VK_TRUE;
+        over[0].srcColorBlendFactor = over[0].srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        over[0].dstColorBlendFactor = over[0].dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        over[0].colorBlendOp = over[0].alphaBlendOp = VK_BLEND_OP_ADD;
+        over[3].colorWriteMask = 0;
+        VkPipelineColorBlendStateCreateInfo overBlend = blend;
+        overBlend.pAttachments = over;
+        VkGraphicsPipelineCreateInfo tci = ci;
+        tci.pColorBlendState = &overBlend;
+        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &tci, nullptr, &_translucentPipeline);
+    }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
     // positions, invariant). Shadow: plus slope-scaled bias.
@@ -1366,6 +1389,26 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
         vkCmdDraw(_cmd, 3, 1, 0, 0);
+    }
+    // Translucent meshes last, back to front by their bounds' centres; they
+    // test the opaque depth but write none.
+    // ponytail: sorted per mesh, not per instance or triangle.
+    if (draw && !gpu.translucent.empty()) {
+        std::vector<std::pair<float, uint32_t>> order;
+        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+            const float *c = &gpu.translucentCenters[i * 3];
+            const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
+            order.push_back({Dot(d, d), gpu.translucent[i]});
+        }
+        std::sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _translucentPipeline);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        for (const auto &[distance, slot] : order) {
+            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(slot) * sizeof(VkDrawIndexedIndirectCommand),
+                                     1, sizeof(VkDrawIndexedIndirectCommand));
+        }
     }
     vkCmdEndRendering(_cmd);
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),

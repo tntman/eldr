@@ -1,0 +1,165 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Translucency (opacity without a cutout threshold): a glass sphere
+# (UsdPreviewSurface opacity 0.15, glossy) and a MaterialX quad (constant
+# opacity 0.4) in front of the step3-style texture quad, and a water plane
+# (opacity 0.5) over a checker floor. Highlights stay, diffuse light and the
+# background mix by opacity; translucent meshes cast no shadows.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 1.6, 7)
+    float xformOp:rotateX = -10
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 0.5
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/floor/tex.outputs:rgb>
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/udim.1001.png@
+            float2 inputs:st.connect = </mtl/floor/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+    def Material "quadrants"
+    {
+        token outputs:surface.connect = </mtl/quadrants/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/quadrants/tex.outputs:rgb>
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float3 outputs:rgb
+        }
+    }
+    def Material "glass"
+    {
+        token outputs:surface.connect = </mtl/glass/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.95, 1)
+            float inputs:opacity = 0.15
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+    def Material "water"
+    {
+        token outputs:surface.connect = </mtl/water/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.35, 0.4)
+            float inputs:opacity = 0.5
+            float inputs:roughness = 0.1
+            token outputs:surface
+        }
+    }
+    def Material "mtlxTint"
+    {
+        token outputs:mtlx:surface.connect = </mtl/mtlxTint/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (1, 0.5, 0.1)
+            color3f inputs:opacity = (0.4, 0.4, 0.4)
+            float inputs:specular_roughness = 0.3
+            token outputs:out
+        }
+    }
+}
+
+def Mesh "floor" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-4, 0, -4), (4, 0, -4), (4, 0, 4), (-4, 0, 4)]
+    texCoord2f[] primvars:st = [(0, 0), (4, 0), (4, 4), (0, 4)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/floor>
+}
+
+def Mesh "texQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1.5, 0, 0), (1.5, 0, 0), (1.5, 3, 0), (-1.5, 3, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/quadrants>
+    double3 xformOp:translate = (0, 0, -2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "glassBall" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 0.8
+    rel material:binding = </mtl/glass>
+    double3 xformOp:translate = (-1, 1.2, 0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "tintQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.7, 0, 0), (0.7, 0, 0), (0.7, 1.6, 0), (-0.7, 1.6, 0)]
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/mtlxTint>
+    double3 xformOp:translate = (1.2, 0.5, 0.8)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "water" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-4, 0.25, 1), (4, 0.25, 1), (4, 0.25, 4), (-4, 0.25, 4)]
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/water>
+}

@@ -442,9 +442,16 @@ void main()
     vec3 tangentNormal = vec3(0.0, 0.0, 1.0);
     bool hasNormalMap = false;
     bool present = true;
+    float alpha = 1.0;
     if (inMaterial != kNoMaterial) {
         Material m = materials[inMaterial];
         present = Present(m, inUv);
+        // Translucent (opacity without a cutout threshold): diffuse light and
+        // emission scale with opacity, highlights don't (premultiplied, as
+        // glass). Opaque materials have opacity 1.
+        if (m.emissive.w <= 0.0) {
+            alpha = clamp(Fetch(m.tex[6], m.params.wwww).r, 0.0, 1.0);
+        }
         baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor, 1.0) : m.baseColor).rgb;
         emissive = Fetch(m.tex[1], m.emissive).rgb;
         metallic = Fetch(m.tex[2], m.params.xxxx).r;
@@ -472,7 +479,8 @@ void main()
     metallic = clamp(metallic, 0.0, 1.0);
     float perceptual = clamp(roughness, 0.045, 1.0);
     float a = perceptual * perceptual;
-    vec3 diffuseColor = baseColor * (1.0 - metallic);
+    vec3 diffuseColor = baseColor * (1.0 - metallic) * alpha;
+    emissive *= alpha;
     vec3 f0 = mix(vec3(0.04), baseColor, metallic);  // ior 1.5
     float NoV = max(dot(n, v), 1e-4);
 
@@ -483,7 +491,7 @@ void main()
     vec3 FssEss = f0 * ab.x + ab.y;
     vec3 energyCompensation = 1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0);
 
-    vec3 color = emissive;
+    vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
         Light light = lights[i];
         vec3 l = light.position.xyz;
@@ -542,7 +550,7 @@ void main()
     if (!present) {
         discard;
     }
-    outColor = vec4(color, 1.0);
+    outColor = vec4(color, alpha);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
