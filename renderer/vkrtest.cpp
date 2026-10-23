@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <tuple>
 #include <vector>
 
 static int failures = 0;
@@ -1143,6 +1144,68 @@ int main()
             const float off = RenderPost(device, scene, 0.0f).At(32, 44, 1);
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
+        }
+
+        {
+            // Cylinder light along x (half length 0.3, radius 0.05) 0.5 in
+            // front of a white, fully rough wall: its diffuse light against
+            // the integral over its side (the caps don't emit), in front of
+            // it, beside it and past its end.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Light *tube = AddSphereLight(scene, 0, 0, 0, 0.05f, 4.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.3f;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            auto expected = [](int px, int py) {
+                const float px3[3] = {PixelNdc(px), PixelNdc(py), 0.5f};
+                const int nx = 300, nphi = 128;
+                const float r = 0.05f, h = 0.3f, dx = 2 * h / nx, dphi = 2 * 3.14159265f / nphi;
+                double sum = 0;
+                for (int i = 0; i < nx; ++i) {
+                    for (int j = 0; j < nphi; ++j) {
+                        const float phi = (j + 0.5f) * dphi, c = std::cos(phi), s = std::sin(phi);
+                        const float w[3] = {-h + (i + 0.5f) * dx - px3[0], r * c - px3[1], r * s - px3[2]};
+                        const float dist = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+                        const float cosWall = -w[2] / dist, cosLight = -(c * w[1] + s * w[2]) / dist;
+                        if (cosWall > 0 && cosLight > 0) {
+                            sum += 4.0 * cosWall * cosLight / (dist * dist) * r * dphi * dx;
+                        }
+                    }
+                }
+                return float(sum / 3.14159265);
+            };
+            // (Specular at roughness 1 adds a few percent at grazing angles.)
+            for (auto [px, py, tolerance] : {std::tuple{32, 32, 0.03f}, {32, 50, 0.03f}, {60, 32, 0.07f}}) {
+                Expect(std::abs(img.At(px, py, 0) / expected(px, py) - 1.0f) < tolerance,
+                       "cylinder light: diffuse matches the integral over its side");
+            }
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.clusteredLights = false;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) < 1e-3f,
+                   "cylinder light: clusters reach as far as the light does");
+            tube->point = true;  // treatAsLine: a thinner highlight, the same diffuse
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / img.At(32, 32, 0) - 1.0f) < 0.02f,
+                   "cylinder light: treatAsLine keeps its power");
+            scene.RemoveLight(tube);
+
+            // Shadow from the atlas (cube faces): the setup of the local light
+            // shadow test, with a short tube along y.
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            tube = AddSphereLight(scene, -0.6f, 0, 0, 0.01f, 80.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0;
+            tube->halfWidth[1] = 0.05f;
+            tube->castShadows = true;
+            scene.Commit();
+            const Image shadowed = Render(renderer, scene);
+            Expect(shadowed.At(32, 32, 0) < 0.3f * shadowed.At(41, 32, 0) && shadowed.At(41, 32, 0) > 0.01f,
+                   "cylinder light shadow (atlas cube faces)");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

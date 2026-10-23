@@ -251,16 +251,20 @@ private:
 // (intensity, exposure, color, temperature, normalize) into irradiance for
 // distant lights and the emitting surface's radiance for sphere/rect lights.
 struct Light {
-    enum class Type { Distant, Sphere, Rect, Disk };
+    enum class Type { Distant, Sphere, Rect, Disk, Cylinder };
     Type type = Type::Distant;
     float direction[3] = {0, 0, 1};      // distant: towards the light; sphere/rect: emission axis (light -Z)
     float irradiance[3] = {1, 1, 1};     // distant, linear RGB
     float radiance[3] = {1, 1, 1};       // sphere/rect, linear RGB
     float position[3] = {0, 0, 0};       // sphere/rect center
-    float halfWidth[3] = {0.5f, 0, 0};   // rect: center to the +X edge; disk: radius along X
+    // Rect: center to the +X edge; disk: radius along X; cylinder: center to
+    // the +X end of its axis (half its length).
+    float halfWidth[3] = {0.5f, 0, 0};
     float halfHeight[3] = {0, 0.5f, 0};  // rect: center to the +Y edge; disk: radius along Y
-    float radius = 0.5f;                 // sphere
-    bool point = false;                  // sphere: shade as a point (treatAsPoint), same power
+    float radius = 0.5f;                 // sphere, cylinder
+    // Sphere: shade as a point (treatAsPoint); cylinder: as a line
+    // (treatAsLine). Same power, only the highlight loses the radius.
+    bool point = false;
     float coneAngle = 180.0f;            // UsdLuxShapingAPI around the emission axis, degrees
     float coneSoftness = 0.0f;
     float focus = 0.0f;

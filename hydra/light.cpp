@@ -68,7 +68,7 @@ HdVkLight::~HdVkLight()
 // UsdLux semantics as in hdEmbree: emitted radiance is color * intensity *
 // 2^exposure (* blackbody), divided by the light's area if normalize.
 // ponytail: ignores dome poleAxis/portals, shadow color/distance, IES
-// profiles, rect textures and cylinder lights.
+// profiles and rect textures.
 void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
     if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyResource))) {
@@ -137,6 +137,16 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         // Not a light input, so it's looked up as the plain attribute.
         light.point = param(TfToken("treatAsPoint"), false);
         area = 4.0f * kPi * light.radius * light.radius;
+    } else if (_type == HdPrimTypeTokens->cylinderLight) {
+        // Axis along local X, emitting from its side only (UsdLux).
+        const double scale = (xf.TransformDir(GfVec3d(0, 1, 0)).GetLength() +
+                              xf.TransformDir(GfVec3d(0, 0, 1)).GetLength()) / 2.0;
+        const GfVec3d halfAxis = xf.TransformDir(GfVec3d(0.5 * param(HdLightTokens->length, 1.0f), 0, 0));
+        light.type = vkr::Light::Type::Cylinder;
+        light.radius = float(param(HdLightTokens->radius, 0.5f) * scale);
+        Copy(halfAxis, light.halfWidth);
+        light.point = param(TfToken("treatAsLine"), false);
+        area = float(2.0 * kPi * light.radius * 2.0 * halfAxis.GetLength());
     } else {
         // Rect: half extents; disk: radius along X and Y.
         const bool disk = _type == HdPrimTypeTokens->diskLight;

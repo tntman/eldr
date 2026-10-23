@@ -30,7 +30,7 @@ public:
         float aoRadius = 0.5f;        // world units
         bool ssr = true;              // screen-space reflections (needs postProcess)
         bool shadows = true;          // the distant light's shadow cascades
-        bool localShadows = true;     // sphere/rect/disk lights' shadow atlas
+        bool localShadows = true;     // local lights' shadow atlas
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
@@ -38,7 +38,7 @@ public:
         // speed up a heavy scene.
         bool depthPrepass = true;        // off: the main pass writes depth (no GTAO, no SSR)
         bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
-        bool localLights = true;         // sphere, rect and disk lights
+        bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
         bool normalMaps = true;

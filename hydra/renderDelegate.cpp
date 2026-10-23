@@ -29,7 +29,7 @@ const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->bas
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
-                                   HdPrimTypeTokens->diskLight};
+                                   HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
 
 } // namespace
@@ -109,7 +109,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
-        {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
+        {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
@@ -179,7 +179,7 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
     }
     if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight ||
         typeId == HdPrimTypeTokens->sphereLight || typeId == HdPrimTypeTokens->rectLight ||
-        typeId == HdPrimTypeTokens->diskLight) {
+        typeId == HdPrimTypeTokens->diskLight || typeId == HdPrimTypeTokens->cylinderLight) {
         return new HdVkLight(sprimId, typeId, _scene.get(), _textures.get());
     }
     return nullptr;

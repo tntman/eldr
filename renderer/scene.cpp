@@ -1287,13 +1287,14 @@ void Scene::Commit()
                 continue;
             }
             const bool sphere = l->type == Light::Type::Sphere;
+            const bool cylinder = l->type == Light::Type::Cylinder;
             std::copy(l->position, l->position + 3, g.position);
-            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : 3.0f;
+            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : cylinder ? 4.0f : 3.0f;
             std::copy(l->radiance, l->radiance + 3, g.color);
             std::copy(l->direction, l->direction + 3, g.axis);
-            g.axis[3] = sphere ? l->radius : 0.0f;
+            g.axis[3] = sphere || cylinder ? l->radius : 0.0f;
             std::copy(l->halfWidth, l->halfWidth + 3, g.halfWidth);
-            g.halfWidth[3] = sphere && !l->point ? l->radius : 0.0f;
+            g.halfWidth[3] = (sphere || cylinder) && !l->point ? l->radius : 0.0f;
             std::copy(l->halfHeight, l->halfHeight + 3, g.halfHeight);
             const float cone = l->coneAngle * 0.0174532925f;
             g.shaping[0] = cone * (1.0f - std::clamp(l->coneSoftness, 0.0f, 1.0f));
@@ -1313,6 +1314,14 @@ void Scene::Commit()
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;
                     c.size = l->point ? 0.0f : l->radius;
+                } else if (cylinder) {
+                    // Seen from the side it is a 2r x length rect; casters
+                    // can come within r / sqrt 2 of the center (radius 0).
+                    const float h = std::sqrt(l->halfWidth[0] * l->halfWidth[0] + l->halfWidth[1] * l->halfWidth[1] +
+                                              l->halfWidth[2] * l->halfWidth[2]);
+                    c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
+                    c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
+                    c.extent = h;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];

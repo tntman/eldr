@@ -209,10 +209,61 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     return sum / float(samples);
 }
 
-// Sphere, rect or disk light (UsdLux semantics as in hdEmbree: cone and
-// focus shaping around the emission axis; rects and disks emit from their
-// -Z side). Diffuse: Frostbite's horizon-clipped sphere/disk illuminance;
-// for rects the exact polygon form factor vector with Heitz's horizon
+// One edge's term of a polygon's form factor vector (corners relative to
+// the shading point); the sum over a closed loop, / 2 pi, is the vector.
+vec3 EdgeFormFactor(vec3 a, vec3 b)
+{
+    vec3 v0 = normalize(a), v1 = normalize(b);
+    vec3 c = cross(v0, v1);
+    float len = length(c);
+    return len > 1e-8 ? acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len : vec3(0.0);
+}
+
+// Form factor vector of the rect toLight +- hw +- hh (seen from the
+// shading point), pointing at it whatever the winding.
+vec3 RectFormFactor(vec3 toLight, vec3 hw, vec3 hh)
+{
+    vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
+    vec3 formFactor = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        formFactor += EdgeFormFactor(corners[i], corners[(i + 1) % 4]);
+    }
+    formFactor /= 2.0 * PI;
+    return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
+}
+
+// Form factor vector of the side of a cylinder (axis toLight +- axis,
+// radius r) facing the shading point: the three facets of the half hexagon
+// prism inscribed in it there, whose sum is the form factor of their
+// outline (within a few percent of the cylinder while r is under a tenth
+// of the distance).
+vec3 CylinderFormFactor(vec3 toLight, vec3 axis, float r)
+{
+    vec3 side = cross(axis, toLight);
+    float len = length(side);
+    if (len <= 1e-8) {
+        return vec3(0.0);  // seen end-on: only the caps, which don't emit
+    }
+    side /= len;
+    vec3 face = normalize(cross(side, axis));
+    face = dot(face, toLight) > 0.0 ? -face : face;  // towards the shading point
+    vec3 q[4] = vec3[4](toLight - r * side, toLight + r * (0.8660254 * face - 0.5 * side),
+                        toLight + r * (0.8660254 * face + 0.5 * side), toLight + r * side);
+    vec3 loop[8] = vec3[8](q[0] - axis, q[1] - axis, q[2] - axis, q[3] - axis,
+                           q[3] + axis, q[2] + axis, q[1] + axis, q[0] + axis);
+    vec3 formFactor = vec3(0.0);
+    for (int i = 0; i < 8; ++i) {
+        formFactor += EdgeFormFactor(loop[i], loop[(i + 1) % 8]);
+    }
+    formFactor /= 2.0 * PI;
+    return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
+}
+
+// Sphere, rect, disk or cylinder light (UsdLux semantics as in hdEmbree:
+// cone and focus shaping around the emission axis; rects and disks emit
+// from their -Z side, cylinders from their sides). Diffuse: Frostbite's
+// horizon-clipped sphere/disk illuminance; for rects (and cylinders' rect
+// silhouettes) the exact polygon form factor vector with Heitz's horizon
 // approximation.
 // Specular: Karis' representative point with (a / a')^2 normalization.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
@@ -244,6 +295,26 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         sourceRadius = light.halfWidth.w;
         vec3 centerToRay = dot(toLight, r) * r - toLight;
         l = normalize(toLight + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+    } else if (uint(light.position.w) == kLightCylinder) {
+        // Diffuse: the form factor of its side facing p (the caps don't
+        // emit). Specular: the point of the axis closest to the reflection
+        // ray (Karis 2013), widened by the radius like a sphere's;
+        // normalized a / a' across and along the axis.
+        vec3 axis = light.halfWidth.xyz;
+        vec3 formFactor = CylinderFormFactor(toLight, axis, light.axis.w);
+        float f = length(formFactor);
+        diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
+        sourceRadius = light.halfWidth.w;
+        vec3 l0 = toLight - axis, l1 = toLight + axis, ld = l1 - l0;
+        float rd = dot(r, ld);
+        vec3 closest = l0 + ld * clamp((dot(r, l0) * rd - dot(l0, ld)) / max(dot(ld, ld) - rd * rd, 1e-8), 0.0, 1.0);
+        vec3 centerToRay = dot(closest, r) * r - closest;
+        l = normalize(closest + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+        d = max(length(closest), 1e-8);  // aWide below: across the axis, at its nearest part
+        float cosSubtended = dot(normalize(l0), normalize(l1));
+        float aAcross = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+        float aAlong = clamp(aAcross + sqrt((1.0 - cosSubtended) / (1.0 + cosSubtended + 1e-4)) / 3.0, 0.0, 1.0);
+        specularE = PI * f * aAcross / aAlong;
     } else {
         if (dot(toLight, light.axis.xyz) >= 0.0) {
             return vec3(0.0);  // behind the emitting side
@@ -251,20 +322,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
         bool rect = uint(light.position.w) == kLightRect;
         if (rect) {
-            vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
-            vec3 formFactor = vec3(0.0);
-            for (int i = 0; i < 4; ++i) {
-                vec3 v0 = normalize(corners[i]), v1 = normalize(corners[(i + 1) % 4]);
-                vec3 c = cross(v0, v1);
-                float len = length(c);
-                if (len > 1e-8) {
-                    formFactor += acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len;
-                }
-            }
-            formFactor /= 2.0 * PI;
-            if (dot(formFactor, toLight) < 0.0) {
-                formFactor = -formFactor;  // winding-independent: points at the light
-            }
+            vec3 formFactor = RectFormFactor(toLight, hw, hh);
             float f = length(formFactor);
             diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
             specularE = PI * f;
