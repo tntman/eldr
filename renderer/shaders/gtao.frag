@@ -13,7 +13,7 @@ layout(set = 0, binding = 0) uniform sampler2D sceneDepth;  // window depth [0, 
 
 layout(push_constant) uniform GtaoParams {
     mat4 invViewProj;  // NDC -> world (row-vector order)
-    vec4 eye;          // camera position
+    vec4 eye;          // camera position; w: slices (directions per pixel)
     vec4 params;       // world radius, noise index, 1/width, 1/height
 } pc;
 
@@ -21,7 +21,6 @@ layout(location = 0) out vec2 outAo;  // visibility, distance to the camera (0 =
 
 const float PI = 3.14159265359;
 const float HALF_PI = 1.57079632679;
-const int kSlices = 3;
 const int kSteps = 3;  // per side
 
 vec3 WorldPos(vec2 uv, float depth)
@@ -89,8 +88,9 @@ void main()
     float sliceNoise = Noise(gl_FragCoord.xy);
     float stepNoise = Noise(gl_FragCoord.yx + vec2(17.0, 43.0));
     float visibility = 0.0;
-    for (int slice = 0; slice < kSlices; ++slice) {
-        float phi = (float(slice) + sliceNoise) * PI / float(kSlices);
+    int slices = max(int(pc.eye.w), 1);
+    for (int slice = 0; slice < slices; ++slice) {
+        float phi = (float(slice) + sliceNoise) * PI / float(slices);
         vec2 omega = vec2(cos(phi), sin(phi));  // pixels; +y is up like NDC
         // The slice plane holds the view vector and this screen direction.
         vec3 direction = normalize(WorldPos(uv + omega * pc.params.zw, depth) - surface);
@@ -137,6 +137,6 @@ void main()
         float arc1 = (cosN + 2.0 * h1 * sin(angleN) - cos(2.0 * h1 - angleN)) / 4.0;
         visibility += mix(projectedLength, 1.0, 0.05) * (arc0 + arc1);
     }
-    visibility = max(pow(clamp(visibility / float(kSlices), 0.0, 1.0), 2.2), 0.03);
+    visibility = max(pow(clamp(visibility / float(slices), 0.0, 1.0), 2.2), 0.03);
     outAo = vec2(visibility, distanceToEye);
 }

@@ -90,30 +90,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     HdRenderDelegate *delegate = GetRenderIndex()->GetRenderDelegate();
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
-    frame.postProcess = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->postProcess,
-                                                         frame.postProcess);
-    frame.taa = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->taa, frame.taa);
-    frame.ambientOcclusion = delegate->GetRenderSetting<bool>(
-        HdVkRenderSettingsTokens->ambientOcclusion, frame.ambientOcclusion);
-    frame.aoRadius = delegate->GetRenderSetting<float>(HdVkRenderSettingsTokens->aoRadius, frame.aoRadius);
-    frame.ssr = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->ssr, frame.ssr);
-    frame.post.autoExposure = delegate->GetRenderSetting<bool>(
-        HdVkRenderSettingsTokens->autoExposure, frame.post.autoExposure);
-    frame.post.exposureCompensation = delegate->GetRenderSetting<float>(
-        HdVkRenderSettingsTokens->exposureCompensation, frame.post.exposureCompensation);
-    frame.post.bloomIntensity = delegate->GetRenderSetting<float>(
-        HdVkRenderSettingsTokens->bloomIntensity, frame.post.bloomIntensity);
-    frame.shadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->shadows, frame.shadows);
-    frame.localShadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->localShadows,
-                                                          frame.localShadows);
-    frame.softShadows = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->softShadows,
-                                                         frame.softShadows);
-    frame.taaSamples = uint32_t(std::max(
-        delegate->GetRenderSetting<int>(HdVkRenderSettingsTokens->taaSamples, int(frame.taaSamples)), 1));
-    frame.cullPixels = delegate->GetRenderSetting<float>(HdVkRenderSettingsTokens->cullPixels, frame.cullPixels);
-    frame.depthOfField = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->depthOfField,
-                                                          frame.depthOfField);
-    frame.motionBlur = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->motionBlur, frame.motionBlur);
+    // Each setting over the renderer's default (renderDelegate.cpp lists
+    // them); counts are ints in Hydra, at least 1.
+    const auto &t = *HdVkRenderSettingsTokens;
+    for (auto [token, value] : {std::pair{t.postProcess, &frame.postProcess}, {t.taa, &frame.taa},
+                                {t.ambientOcclusion, &frame.ambientOcclusion}, {t.ssr, &frame.ssr},
+                                {t.autoExposure, &frame.post.autoExposure}, {t.shadows, &frame.shadows},
+                                {t.localShadows, &frame.localShadows}, {t.softShadows, &frame.softShadows},
+                                {t.depthOfField, &frame.depthOfField}, {t.motionBlur, &frame.motionBlur},
+                                {t.depthPrepass, &frame.depthPrepass}, {t.frustumCulling, &frame.frustumCulling},
+                                {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
+                                {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
+                                {t.materialGraphs, &frame.materialGraphs}, {t.objectMotion, &frame.objectMotion},
+                                {t.translucency, &frame.translucency}}) {
+        *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
+                                {t.exposureCompensation, &frame.post.exposureCompensation},
+                                {t.bloomIntensity, &frame.post.bloomIntensity}}) {
+        *value = delegate->GetRenderSetting<float>(token, *value);
+    }
+    for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
+                                {t.shadowResolution, &frame.shadowResolution},
+                                {t.shadowCascades, &frame.shadowCascades},
+                                {t.localShadowResolution, &frame.localShadowResolution},
+                                {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
+                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
+        *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
+    }
     // The scene camera's lens; usdview's free camera has none.
     const GfMatrix4d projection = state->GetProjectionMatrix();
     if (const HdCamera *camera = state->GetCamera()) {

@@ -91,6 +91,20 @@ static Image Render(vkr::Renderer &renderer, const vkr::Scene &scene,
     return img;
 }
 
+// Largest colour difference between two images (0: identical colour).
+static float MaxDifference(const Image &a, const Image &b)
+{
+    float worst = 0.0f;
+    for (int y = 0; y < 64; ++y) {
+        for (int x = 0; x < 64; ++x) {
+            for (int c = 0; c < 4; ++c) {
+                worst = std::max(worst, std::abs(a.At(x, y, c) - b.At(x, y, c)));
+            }
+        }
+    }
+    return worst;
+}
+
 static vkr::Light *AddLight(vkr::Scene &scene, float x, float y, float z)
 {
     vkr::Light *light = scene.AddLight();
@@ -231,8 +245,13 @@ int main()
                                    {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 50.0f, 0, 0, 1});
             tri->transformsDirty = true;
             scene.Commit();
-            Render(renderer, scene);
+            const Image culled = Render(renderer, scene);
             Expect(renderer.VisibleInstances() == 2, "off-screen instance culled");
+            vkr::Renderer::Frame everything = IdentityFrame();
+            everything.frustumCulling = false;
+            const Image unculled = Render(renderer, scene, everything);
+            Expect(renderer.VisibleInstances() == 3 && MaxDifference(culled, unculled) == 0.0f,
+                   "Frame::frustumCulling off: every instance drawn, the same image");
 
             // Editing geometry in place: the same mesh now covers the top.
             tri->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
@@ -560,6 +579,9 @@ int main()
             scene.Commit();
             v = Render(renderer, scene).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white metal returns 1");
+            vkr::Renderer::Frame noIbl = IdentityFrame();
+            noIbl.imageBasedLighting = false;
+            Expect(Render(renderer, scene, noIbl).At(32, 32, 0) == 0.0f, "Frame::imageBasedLighting off: no dome light");
         }
 
         {
@@ -583,6 +605,17 @@ int main()
             Expect(ratio(34) < 0.9f, "GTAO darkens the wall next to the ledge");
             Expect(ratio(60) > 0.98f, "GTAO leaves the open wall alone");
             Expect(ratio(16) > 0.98f, "GTAO leaves the flat ledge alone");
+            frame.ambientOcclusion = true;
+            frame.aoSlices = 1;
+            Expect(Render(renderer, scene, frame).At(34, 32, 0) < 0.9f * off.At(34, 32, 0),
+                   "Frame::aoSlices 1: GTAO still darkens next to the ledge");
+            // Without the prepass the main pass writes depth: the same image,
+            // depth and ids as with it (and no AO).
+            frame.aoSlices = 3;
+            frame.depthPrepass = false;
+            const Image noPrepass = Render(renderer, scene, frame);
+            Expect(MaxDifference(noPrepass, off) < 1e-3f && noPrepass.depth == off.depth && noPrepass.primId == off.primId,
+                   "Frame::depthPrepass off: the same image, depth and ids, without AO");
         }
 
         {
@@ -660,6 +693,13 @@ int main()
                 }
             }
             Expect(worst < 0.03f, "clustered lights: every pixel gets all lights in range");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.clusteredLights = false;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) < 1e-3f,
+                   "Frame::clusteredLights off: every light per pixel, the same image");
+            frame.clusteredLights = true;
+            frame.localLights = false;
+            Expect(Render(renderer, scene, frame).At(31, 33, 0) == 0.0f, "Frame::localLights off: no local light");
         }
 
         {
@@ -682,6 +722,11 @@ int main()
                 light->castShadows = true;
                 scene.Commit();
                 const Image shadowed = Render(renderer, scene);
+                vkr::Renderer::Frame smallTiles = IdentityFrame();
+                smallTiles.localShadowResolution = 128;
+                const Image coarse = Render(renderer, scene, smallTiles);
+                Expect(coarse.At(32, 32, 0) < 0.2f * coarse.At(41, 32, 0),
+                       "Frame::localShadowResolution 128: still shadowed");
                 vkr::Renderer::Frame noLocalShadows = IdentityFrame();
                 noLocalShadows.localShadows = false;
                 const Image disabled = Render(renderer, scene, noLocalShadows);
@@ -700,13 +745,14 @@ int main()
 
             // A big sphere light (same power) softens the shadow's edges:
             // many more partly lit pixels along the row than from a point.
-            auto penumbra = [&](float radius, bool soft) {
+            auto penumbra = [&](float radius, bool soft, uint32_t samples = 16) {
                 vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, radius, 0.16f / (radius * radius));
                 light->point = radius < 0.05f;
                 light->castShadows = true;
                 scene.Commit();
                 vkr::Renderer::Frame frame = IdentityFrame();
                 frame.softShadows = soft;
+                frame.softShadowSamples = samples;
                 const Image img = Render(renderer, scene, frame);
                 const float open = img.At(41, 32, 0);
                 int partial = 0;
@@ -720,6 +766,7 @@ int main()
             const int hard = penumbra(0.02f, true), soft = penumbra(0.15f, true);
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
             Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
+            Expect(penumbra(0.15f, true, 4) >= hard + 3, "Frame::softShadowSamples 4: still a penumbra");
         }
 
         {
@@ -744,6 +791,11 @@ int main()
                    "translucent quad blends half and half over the opaque one");
             Expect(img.At(48, 32, 0) > 0.9f && img.At(48, 32, 2) < 0.05f, "beside it, the opaque quad alone");
             Expect(img.depth[32 * 64 + 16] == img.depth[32 * 64 + 48], "translucency writes no depth");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.translucency = false;
+            const Image opaque = Render(renderer, scene, frame);
+            Expect(opaque.At(16, 32, 0) > 0.9f && opaque.At(16, 32, 2) < 0.05f,
+                   "Frame::translucency off: only the opaque quad");
         }
 
         {
@@ -762,6 +814,9 @@ int main()
             Expect(std::abs(moved.Vel(40, 32, 0) + 0.125f) < 0.002f && std::abs(moved.Vel(40, 32, 1)) < 0.002f,
                    "motion vector of a moved quad");
             Expect(moved.Vel(4, 32, 0) == 0.0f, "no motion vector where nothing was drawn");
+            vkr::Renderer::Frame still = IdentityFrame();
+            still.objectMotion = false;
+            Expect(Render(renderer, scene, still).Vel(40, 32, 0) == 0.0f, "Frame::objectMotion off: no motion vectors");
             scene.Commit();
             Expect(std::abs(Render(renderer, scene).Vel(40, 32, 0)) < 0.002f, "a quad that stopped has no motion");
         }
@@ -783,6 +838,12 @@ int main()
             vkr::Renderer::Frame noShadows = IdentityFrame();
             noShadows.shadows = false;
             Expect(Render(renderer, scene, noShadows).At(3, 32, 0) > 0.9f * lit, "Frame::shadows off: no sun shadow");
+            vkr::Renderer::Frame coarse = IdentityFrame();
+            coarse.shadowResolution = 512;
+            coarse.shadowCascades = 1;
+            const Image one = Render(renderer, scene, coarse);
+            Expect(one.At(3, 32, 0) < 0.1f * lit && one.At(51, 32, 0) > 0.9f * lit,
+                   "one 512 cascade: still shadowed, still lit beside");
         }
 
         {
@@ -965,6 +1026,12 @@ int main()
             Expect(near(54, 32, 0.625f, 0.625f, 0.625f), "MaterialX overlay");
             Expect(near(9, 9, 0, 1, 0), "MaterialX hsvadjust");
             Expect(img.At(22, 9, 0) > 1.8f && img.At(22, 9, 2) < 0.2f, "program samples a texture");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.anisotropy = 1;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) < 1e-3f,
+                   "Frame::anisotropy 1: the same head-on texture");
+            frame.materialGraphs = false;
+            Expect(Render(renderer, scene, frame).At(8, 54, 0) == 0.0f, "Frame::materialGraphs off: plain (black) inputs");
         }
 
         {

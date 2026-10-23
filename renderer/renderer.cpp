@@ -28,6 +28,7 @@ struct FrameData {
     float ssr[4];  // enabled, noise index
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
+    uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
 };
 
 namespace {
@@ -65,6 +66,25 @@ const uint32_t kLightsComp[] =
 const uint32_t kSkinComp[] =
 #include "skin.comp.inc"
 ;
+
+// FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
+constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
+
+// Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
+// ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
+VkSampler CreateMaterialSampler(VkDevice device, float anisotropy)
+{
+    VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
+    sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sci.anisotropyEnable = anisotropy > 1.0f;
+    sci.maxAnisotropy = anisotropy;
+    sci.maxLod = VK_LOD_CLAMP_NONE;
+    VkSampler sampler = VK_NULL_HANDLE;
+    Check(vkCreateSampler(device, &sci, nullptr, &sampler), "vkCreateSampler");
+    return sampler;
+}
 
 // Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and 63
 // indices each.
@@ -276,17 +296,11 @@ Renderer::~Renderer()
 
 void Renderer::_CreateDescriptors()
 {
-    // ponytail: one material sampler (trilinear, 16x aniso, repeat) for every
-    // texture; UsdUVTexture wrapS/wrapT are ignored.
+    // The materials' sampler is made by Render (Frame::anisotropy).
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sci.anisotropyEnable = VK_TRUE;
-    sci.maxAnisotropy = 16.0f;
     sci.maxLod = VK_LOD_CLAMP_NONE;
-    Check(vkCreateSampler(_dev.device, &sci, nullptr, &_sampler), "vkCreateSampler");
-
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     sci.anisotropyEnable = VK_FALSE;
     sci.maxAnisotropy = 1.0f;
@@ -444,8 +458,9 @@ void Renderer::_CreatePipelines()
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-    // Prepass and shadows write depth; shading (and the sky) only test
-    // against the finished prepass depth.
+    // Prepass and shadows write depth; shading (and the sky) test against
+    // the finished prepass depth, and write it only without a prepass
+    // (dynamic depth write, Frame::depthPrepass).
     VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_TRUE;
@@ -470,6 +485,11 @@ void Renderer::_CreatePipelines()
     VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynamicStates;
+    const VkDynamicState shadingStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                             VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE};
+    VkPipelineDynamicStateCreateInfo shadingDynamic = dynamic;
+    shadingDynamic.dynamicStateCount = 3;
+    shadingDynamic.pDynamicStates = shadingStates;
     VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     rendering.colorAttachmentCount = 4;
     rendering.pColorAttachmentFormats = colorFormats;
@@ -487,7 +507,7 @@ void Renderer::_CreatePipelines()
     ci.pMultisampleState = &multisample;
     ci.pDepthStencilState = &depthReadOnly;
     ci.pColorBlendState = &blend;
-    ci.pDynamicState = &dynamic;
+    ci.pDynamicState = &shadingDynamic;
     ci.layout = _layout;
     // Every mesh pipeline four times, its vertex stage specialized with
     // kWideSkin (variant bit 0: eight skinning influences) and
@@ -545,6 +565,7 @@ void Renderer::_CreatePipelines()
         pci.pStages = depthStages;
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
+        pci.pDynamicState = &dynamic;
         r = createMesh(pci, _prepassPipeline, 4);
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
@@ -587,10 +608,16 @@ void Renderer::_CreatePipelines()
     Check(r, "vkCreateGraphicsPipelines");
 }
 
-// Shadow cascades, BRDF LUT and the no-dome placeholder never change size.
-void Renderer::_CreateConstantImages()
+// The sun's cascades, `size` texels square; Render makes them (again) when
+// Frame::shadowResolution changes. The GPU is idle there.
+void Renderer::_CreateShadowMap(uint32_t size)
 {
-    _shadowMap = _dev.CreateImage(kDepthFormat, kShadowSize, kShadowSize, kCascades, 1,
+    for (VkImageView &v : _shadowLayers) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+        v = VK_NULL_HANDLE;
+    }
+    _dev.Destroy(_shadowMap);
+    _shadowMap = _dev.CreateImage(kDepthFormat, size, size, kCascades, 1,
                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                                   VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     for (uint32_t c = 0; c < kCascades; ++c) {
@@ -601,7 +628,13 @@ void Renderer::_CreateConstantImages()
         vci.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, c, 1};
         Check(vkCreateImageView(_dev.device, &vci, nullptr, &_shadowLayers[c]), "vkCreateImageView");
     }
+    _shadowSize = size;
+}
 
+// The local lights' atlas, BRDF LUT and the no-dome placeholder never change
+// size.
+void Renderer::_CreateConstantImages()
+{
     _shadowAtlas = _dev.CreateImage(kDepthFormat, kShadowAtlasSize, kShadowAtlasSize, 1, 1,
                                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT,
@@ -679,7 +712,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
 
 // The GPU is idle here (Render waits for every frame), so rewriting the set
 // in place is legal without update-after-bind.
-void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
+void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass)
 {
     std::vector<VkDescriptorImageInfo> images(gpu.textures.size());
     for (size_t i = 0; i < images.size(); ++i) {
@@ -699,7 +732,12 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo commands{_commands.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo ao{_clampSampler, _gtao.Output(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo previous{_clampSampler, _taa.History(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    const VkDescriptorImageInfo depth{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    // Without the prepass the main pass writes depth and nothing reads it
+    // there (no SSR): the LUT stands in, so the attachment isn't also bound
+    // for sampling.
+    const VkDescriptorImageInfo depth = prepass
+        ? VkDescriptorImageInfo{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}
+        : VkDescriptorImageInfo{_clampSampler, _brdfLut.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo clusters{_clusters.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo skin{gpu.skin, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo joints{gpu.joints, 0, VK_WHOLE_SIZE};
@@ -773,8 +811,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     vkUpdateDescriptorSets(_dev.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 }
 
-// Splits the camera frustum (clamped to the scene) into kCascades slices and
-// fits a stable, texel-snapped orthographic shadow frustum to each.
+// Splits the camera frustum (clamped to the scene) into Frame::shadowCascades
+// slices and fits a stable, texel-snapped orthographic shadow frustum to
+// each. Splits past the last are -1, so Shadow() finds none there.
 bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const
 {
     if (gpu.shadowLight == kNone || !gpu.hasBounds) {
@@ -816,10 +855,12 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
     }
     const float margin = 0.01f * (zMax - zMin) + 1e-3f;
 
+    const uint32_t cascades = std::clamp(frame.shadowCascades, 1u, kCascades);
+    std::fill(data->cascadeSplits, data->cascadeSplits + kCascades, -1.0f);
     float splitNear = n;
-    for (uint32_t c = 0; c < kCascades; ++c) {
+    for (uint32_t c = 0; c < cascades; ++c) {
         // Practical split scheme: 75% logarithmic, 25% uniform.
-        const float t = float(c + 1) / kCascades;
+        const float t = float(c + 1) / float(cascades);
         const float logSplit = n > 0 ? n * std::pow(shadowFar / n, t) : shadowFar * t;
         const float splitFar = 0.75f * logSplit + 0.25f * (n + (shadowFar - n) * t);
 
@@ -838,7 +879,7 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
         radius = std::ceil(radius * 16.0f) / 16.0f;  // quantized so it doesn't shimmer
 
         // Snap the center to whole shadow texels in light space.
-        const float texel = 2 * radius / kShadowSize;
+        const float texel = 2 * radius / float(_shadowSize);
         Vec3 lc = TransformPoint(lightView, center);
         lc.x = std::floor(lc.x / texel) * texel;
         lc.y = std::floor(lc.y / texel) * texel;
@@ -919,7 +960,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     };
     std::vector<Candidate> candidates;
     for (const Scene::Gpu::ShadowCaster &c : gpu.shadowCasters) {
-        if (!frame.localShadows) {
+        if (!frame.localShadows || !frame.localLights) {
             break;
         }
         // Rounded up to a power of sqrt 2: the cutoff follows the exposure,
@@ -941,7 +982,8 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
 
     // Pick by priority, then place in light order: as long as the same lights
     // win, the tiles (and the cached atlas) stay where they were.
-    constexpr uint32_t perRow = kShadowAtlasSize / kShadowTileSize, capacity = perRow * perRow;
+    const uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
+    const uint32_t perRow = kShadowAtlasSize / tileSize, capacity = perRow * perRow;
     std::vector<Candidate> chosen;
     uint32_t used = 0;
     for (const Candidate &cand : candidates) {
@@ -954,7 +996,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     std::sort(chosen.begin(), chosen.end(),
               [](const Candidate &a, const Candidate &b) { return a.caster->light < b.caster->light; });
 
-    constexpr float tileUv = float(kShadowTileSize) / float(kShadowAtlasSize);
+    const float tileUv = float(tileSize) / float(kShadowAtlasSize);
     const Vec3 cube[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
     for (const Candidate &cand : chosen) {
         const Scene::Gpu::ShadowCaster &c = *cand.caster;
@@ -964,7 +1006,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         const float n = std::max(c.radius * 1.05f, cand.range * 1e-4f), f = std::max(cand.range, n * 2.0f);
         // A few texels of margin: PCF near a tile's (or cube face's) edge
         // must not read the neighbour.
-        const float margin = 1.0f + 6.0f / float(kShadowTileSize);
+        const float margin = 1.0f + 6.0f / float(tileSize);
         const float tanHalf = (spot ? std::tan(c.coneAngle) : 1.0f) * margin;
         auto add = [&](Vec3 direction) {
             ShadowTile t{};
@@ -974,7 +1016,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             t.rect[0] = float(k % perRow) * tileUv;
             t.rect[1] = float(k / perRow) * tileUv;
             t.rect[2] = t.rect[3] = tileUv;
-            t.params[0] = 2.0f * tanHalf / float(kShadowTileSize);
+            t.params[0] = 2.0f * tanHalf / float(tileSize);
             t.params[1] = n;
             t.params[2] = f;
             t.params[3] = frame.softShadows ? c.size : 0.0f;
@@ -1079,18 +1121,20 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
                       VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
 
-        const int32_t x = int32_t(t.rect[0] * kShadowAtlasSize), y = int32_t(t.rect[1] * kShadowAtlasSize);
+        const int32_t x = int32_t(std::lround(t.rect[0] * kShadowAtlasSize));
+        const int32_t y = int32_t(std::lround(t.rect[1] * kShadowAtlasSize));
+        const uint32_t size = uint32_t(std::lround(t.rect[2] * kShadowAtlasSize));
         VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
         att.imageView = _shadowAtlas.view;
         att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         att.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-        ri.renderArea = {{x, y}, {kShadowTileSize, kShadowTileSize}};
+        ri.renderArea = {{x, y}, {size, size}};
         ri.layerCount = 1;
         ri.pDepthAttachment = &att;
         vkCmdBeginRendering(_cmd, &ri);
-        const VkViewport vp{float(x), float(y), float(kShadowTileSize), float(kShadowTileSize), 0, 1};
+        const VkViewport vp{float(x), float(y), float(size), float(size), 0, 1};
         vkCmdSetViewport(_cmd, 0, 1, &vp);
         vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
         // GTAO bound its own set; the shadow pass needs the scene's.
@@ -1135,9 +1179,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
+    const uint32_t shadowSize = std::clamp(frame.shadowResolution, 256u, 8192u);
+    if (shadowSize != _shadowSize) {
+        _CreateShadowMap(shadowSize);
+    }
+    const float anisotropy = float(std::clamp(frame.anisotropy, 1u, 16u));
+    if (anisotropy != _anisotropy) {
+        vkDestroySampler(_dev.device, _sampler, nullptr);
+        _sampler = CreateMaterialSampler(_dev.device, anisotropy);
+        _anisotropy = anisotropy;
+    }
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
+    fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
+                     (frame.clusteredLights ? kFeatureClusters : 0);
+    fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
+    fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
 
@@ -1169,7 +1227,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Reflections shade hits with last frame's resolved image, which exists
     // once post (TAA resolve) ran at this size.
     std::memcpy(fd.prevViewProj, _historyValid ? _prevViewProj : frame.viewProj, sizeof(fd.prevViewProj));
-    if (frame.ssr && frame.postProcess && _historyValid) {
+    if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
     }
@@ -1179,17 +1237,20 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.viewport[1] = float(_height);
     const bool shadows = frame.shadows && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          _FitCascades(gpu, frame, &fd);
+    const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
+    const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
     fd.counts[0] = gpu.lightCount;
-    fd.localLights[0] = gpu.localLightCount;
+    fd.localLights[0] = localLights;
     fd.localLights[1] = sample;
-    if (gpu.localLightCount > 0) {
+    if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
     }
     const std::vector<ShadowTile> shadowTiles = _PlanLocalShadows(gpu, frame, fd.clusters[3]);
     fd.counts[1] = shadows ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
     fd.counts[3] = gpu.environmentLatlong;
-    if (gpu.environment) {
+    const bool ibl = gpu.environment && frame.imageBasedLighting;
+    if (ibl) {
         for (int i = 0; i < 9; ++i) {
             std::memcpy(fd.envSh[i], gpu.environmentSh[i], sizeof(gpu.environmentSh[i]));
         }
@@ -1215,7 +1276,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
-    _UpdateDescriptors(gpu);
+    _UpdateDescriptors(gpu, frame.depthPrepass);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
@@ -1247,7 +1308,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         for (uint32_t k = 0; k <= kCascades; ++k) {
             resets[k] = {0, k * commandBytes, commandBytes};
         }
-        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, shadows ? 1 + kCascades : 1, resets);
+        vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1 + cascades, resets);
         if (prevJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
             vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
@@ -1275,8 +1336,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
 
+        // Without frustum culling the planes stay zero (everything is inside)
+        // and so does the minimum size.
         CullParams cull{};
-        FrustumPlanes(frame.viewProj, cull.planes);
+        if (frame.frustumCulling) {
+            FrustumPlanes(frame.viewProj, cull.planes);
+            cull.minRadius = std::max(frame.cullPixels, 0.0f);
+        }
         cull.instanceCapacity = gpu.instanceCapacity;
         cull.drawCount = gpu.drawCount;
         // Screen size of an instance: its world radius over the size of a
@@ -1290,7 +1356,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                             std::abs(frame.viewProj[11]) < 1e-9f ? 1.0f : 0.0f;
         cull.pixelScale = (cull.orthographic > 0 ? 1.0f : Dot(mid - eye, forward)) / std::max(pixel, 1e-30f);
         cull.nearDistance = Dot(nearCenter - eye, forward);
-        cull.minRadius = std::max(frame.cullPixels, 0.0f);
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
@@ -1298,7 +1363,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         // Each cascade's ortho box (which spans the scene's whole depth
         // towards the light, so every caster in it stays); instances under
         // half a shadow texel are dropped.
-        for (uint32_t c = 0; shadows && c < kCascades; ++c) {
+        for (uint32_t c = 0; c < cascades; ++c) {
             FrustumPlanes(fd.cascadeViewProj[c], cull.planes);
             cull.orthographic = 1.0f;
             cull.minRadius = 0.5f;
@@ -1320,7 +1385,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdPipelineBarrier2(_cmd, &dep);
         pass("culling");
     }
-    if (gpu.localLightCount > 0) {
+    if (localLights > 0 && frame.clusteredLights) {
         // Light clusters, read by the shading pass.
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _lightsPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
@@ -1346,7 +1411,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-        for (uint32_t c = 0; c < kCascades; ++c) {
+        for (uint32_t c = 0; c < cascades; ++c) {
             VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
             att.imageView = _shadowLayers[c];
             att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -1354,12 +1419,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             att.clearValue.depthStencil.depth = 1.0f;
             VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-            ri.renderArea = {{0, 0}, {kShadowSize, kShadowSize}};
+            ri.renderArea = {{0, 0}, {_shadowSize, _shadowSize}};
             ri.layerCount = 1;
             ri.pDepthAttachment = &att;
             vkCmdBeginRendering(_cmd, &ri);
-            const VkViewport vp{0, 0, float(kShadowSize), float(kShadowSize), 0, 1};
-            const VkRect2D scissor{{0, 0}, {kShadowSize, kShadowSize}};
+            const VkViewport vp{0, 0, float(_shadowSize), float(_shadowSize), 0, 1};
+            const VkRect2D scissor{{0, 0}, {_shadowSize, _shadowSize}};
             vkCmdSetViewport(_cmd, 0, 1, &vp);
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline[0]);
@@ -1385,6 +1450,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
 
     // Depth prepass: the main pass then shades each pixel once, and GTAO
     // reads the finished depth before it. From here on depth is read-only.
+    // Without it (Frame::depthPrepass) the main pass writes depth itself.
     constexpr VkPipelineStageFlags2 kDepthTests =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -1401,31 +1467,34 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     ri.renderArea = {{0, 0}, {_width, _height}};
     ri.layerCount = 1;
     ri.pDepthAttachment = &depthAtt;
-    vkCmdBeginRendering(_cmd, &ri);
     // No Y flip: NDC y=-1 lands in memory row 0, which is the bottom row
     // in GL/Hydra order, so readback needs no flip either.
     const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
     const VkRect2D scissor{{0, 0}, {_width, _height}};
-    vkCmdSetViewport(_cmd, 0, 1, &vp);
-    vkCmdSetScissor(_cmd, 0, 1, &scissor);
-    if (draw) {
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline[0]);
-        PushDraw(_cmd, _layout, jitteredViewProj, 0);
-        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
-        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, 3);
+    if (frame.depthPrepass) {
+        vkCmdBeginRendering(_cmd, &ri);
+        vkCmdSetViewport(_cmd, 0, 1, &vp);
+        vkCmdSetScissor(_cmd, 0, 1, &scissor);
+        if (draw) {
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline[0]);
+            PushDraw(_cmd, _layout, jitteredViewProj, 0);
+            vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+            vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, 3);
+        }
+        vkCmdEndRendering(_cmd);
+        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                     kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     kDepthTests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+        pass("depthPrepass");
     }
-    vkCmdEndRendering(_cmd);
-    ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
-                 kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 kDepthTests | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
-    pass("depthPrepass");
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
-    if (frame.ambientOcclusion && draw && gpu.environment) {
-        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample);
+    if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
+        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,
+                     std::clamp(frame.aoSlices, 1u, 8u));
         pass("ambientOcclusion");
     } else {
         _gtao.Clear(_cmd);
@@ -1468,9 +1537,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     colorAtts[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     colorAtts[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     // clearValue zero: no object motion where nothing is drawn.
-    depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
-    depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-    depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+    if (frame.depthPrepass) {
+        depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
+        depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+    }
     ri.colorAttachmentCount = 4;
     ri.pColorAttachments = colorAtts;
     vkCmdBeginRendering(_cmd, &ri);
@@ -1478,13 +1549,17 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
     // GTAO bound its own set; the sky and shading need the scene's again.
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+    // Motion vectors: 1 with last frame's joints, 2 without, 0 none (mesh.vert).
+    const uint32_t motion = !frame.objectMotion ? 0 : prevJoints ? 1 : 2;
+    vkCmdSetDepthWriteEnable(_cmd, frame.depthPrepass ? VK_FALSE : VK_TRUE);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline[0]);
-        PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, 7);
     }
+    vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skyPipeline);
         vkCmdDraw(_cmd, 3, 1, 0, 0);
@@ -1492,7 +1567,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Translucent meshes last, back to front by their bounds' centres; they
     // test the opaque depth but write none.
     // ponytail: sorted per mesh, not per instance or triangle.
-    if (draw && !gpu.translucent.empty()) {
+    if (draw && frame.translucency && !gpu.translucent.empty()) {
         std::vector<std::pair<float, size_t>> order;
         for (size_t i = 0; i < gpu.translucent.size(); ++i) {
             const float *c = &gpu.translucentCenters[i * 3];
@@ -1500,7 +1575,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             order.push_back({Dot(d, d), i});
         }
         std::sort(order.begin(), order.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
-        PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         VkPipeline bound = VK_NULL_HANDLE;
@@ -1515,6 +1590,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
     }
     vkCmdEndRendering(_cmd);
+    if (!frame.depthPrepass) {
+        ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
+                     kDepthTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+    }
     pass("shading");
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

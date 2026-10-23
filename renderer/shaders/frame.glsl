@@ -20,7 +20,11 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
+    uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
 } frame;
+
+// frame.features.x: what the renderer's settings switched on.
+const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

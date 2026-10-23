@@ -120,11 +120,12 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
 }
 
 void Gtao::Record(VkCommandBuffer cmd, const float invViewProj[16], const float eye[3], float radius,
-                  uint32_t noise)
+                  uint32_t noise, uint32_t slices)
 {
     GtaoParams params{};
     std::copy(invViewProj, invViewProj + 16, params.invViewProj);
     std::copy(eye, eye + 3, params.eye);
+    params.eye[3] = float(slices);
     params.params[0] = radius;
     params.params[1] = float(noise);
     params.params[2] = 1.0f / _width;

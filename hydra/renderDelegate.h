@@ -29,7 +29,23 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((taaSamples, "hdvk:taaSamples"))                        \
     ((cullPixels, "hdvk:cullPixels"))                        \
     ((depthOfField, "hdvk:depthOfField"))                    \
-    ((motionBlur, "hdvk:motionBlur"))
+    ((motionBlur, "hdvk:motionBlur"))                        \
+    ((depthPrepass, "hdvk:depthPrepass"))                    \
+    ((frustumCulling, "hdvk:frustumCulling"))                \
+    ((localLights, "hdvk:localLights"))                      \
+    ((clusteredLights, "hdvk:clusteredLights"))              \
+    ((imageBasedLighting, "hdvk:imageBasedLighting"))        \
+    ((normalMaps, "hdvk:normalMaps"))                        \
+    ((materialGraphs, "hdvk:materialGraphs"))                \
+    ((objectMotion, "hdvk:objectMotion"))                    \
+    ((translucency, "hdvk:translucency"))                    \
+    ((shadowResolution, "hdvk:shadowResolution"))            \
+    ((shadowCascades, "hdvk:shadowCascades"))                \
+    ((localShadowResolution, "hdvk:localShadowResolution"))  \
+    ((softShadowSamples, "hdvk:softShadowSamples"))          \
+    ((aoSlices, "hdvk:aoSlices"))                            \
+    ((ssrSteps, "hdvk:ssrSteps"))                            \
+    ((anisotropy, "hdvk:anisotropy"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

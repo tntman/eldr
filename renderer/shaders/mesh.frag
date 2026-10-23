@@ -187,8 +187,9 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
 
     float searchUv = min(size * 3.0 / receiver * uvPerUnit, maxUv);
+    int samples = int(frame.features.z);
     float blockers = 0.0, count = 0.0;
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < samples; ++i) {
         vec2 s = clamp(uv + rotation * kPoisson[i] * searchUv, lo, hi);
         float d = texelFetch(shadowAtlasDepth, ivec2(s * atlasSize), 0).r;
         if (d < ref) {
@@ -202,10 +203,10 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float blocker = ShadowDistance(blockers / count, t.params.y, t.params.z);
     float filterUv = clamp(size * (1.0 / blocker - 1.0 / receiver) * uvPerUnit, 1.0 / atlasSize, maxUv);
     float sum = 0.0;
-    for (int i = 0; i < 16; ++i) {
+    for (int i = 0; i < samples; ++i) {
         sum += texture(shadowAtlas, vec3(clamp(uv + rotation * kPoisson[i] * filterUv, lo, hi), ref));
     }
-    return sum / 16.0;
+    return sum / float(samples);
 }
 
 // Sphere, rect or disk light (UsdLux semantics as in hdEmbree: cone and
@@ -349,7 +350,7 @@ float SceneDepth(vec2 ndc)
 // SSR would jitter the ray by GGX sampling and let TAA average it.
 float TraceReflection(vec3 p, vec3 r, out vec4 hit)
 {
-    const int kSteps = 32;
+    int steps = int(frame.features.y);
     hit = vec4(0.0);
     vec4 c0 = frame.viewProj * vec4(p, 1.0);
     vec4 dc = frame.viewProj * vec4(r, 0.0);
@@ -377,8 +378,8 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                                                vec2(0.06711056, 0.00583715))));
     float uPrev = 0.0;
     vec3 sPrev = s0;
-    for (int i = 0; i < kSteps; ++i) {
-        float u = mix(uStart, uEnd, (float(i) + noise) / float(kSteps));
+    for (int i = 0; i < steps; ++i) {
+        float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
         vec3 s = mix(s0, s1, u);
         float z = s.z * 0.5 + 0.5;
         if (z >= 1.0) {
@@ -467,7 +468,7 @@ void main()
         hasNormalMap = m.tex[5].index >= 0;
         tangentNormal = Fetch(m.tex[5], vec4(0.0, 0.0, 1.0, 0.0)).xyz;
 #ifdef GRAPH
-        if (m.program.y > 0u) {
+        if (m.program.y > 0u && (frame.features.x & kFeatureMaterialGraphs) != 0u) {
             RunProgram(m.program, baseColor, emissive, metallic, roughness, occlusion, tangentNormal, hasNormalMap,
                        alpha);
         }
@@ -485,7 +486,7 @@ void main()
     if (dot(n, ng) < 0.0) {
         n = -n;
     }
-    if (hasNormalMap) {
+    if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }
 
@@ -524,14 +525,19 @@ void main()
         color += radiance;
     }
 
-    // Sphere and rect lights from this pixel's cluster.
-    if (frame.localLights.x > 0u) {
+    // Sphere and rect lights from this pixel's cluster (without clusters:
+    // all of them).
+    if (frame.localLights.x > 0u && (frame.features.x & kFeatureClusters) != 0u) {
         float viewDepth = dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz);
         uint base = ClusterIndex(gl_FragCoord.xy, viewDepth) * (kMaxClusterLights + 1u);
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
             color += LocalLight(clusterLights[base + 1u + k], inWorldPos, n, ng, v, diffuseColor, f0,
                                 a, NoV, energyCompensation);
+        }
+    } else {
+        for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
+            color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV, energyCompensation);
         }
     }
 

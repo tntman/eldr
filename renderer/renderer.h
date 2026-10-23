@@ -34,6 +34,25 @@ public:
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
+        // Always worth having, but each costs time: off to compare or to
+        // speed up a heavy scene.
+        bool depthPrepass = true;        // off: the main pass writes depth (no GTAO, no SSR)
+        bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
+        bool localLights = true;         // sphere, rect and disk lights
+        bool clusteredLights = true;     // off: every pixel loops over all local lights
+        bool imageBasedLighting = true;  // the dome's diffuse and specular light
+        bool normalMaps = true;
+        bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
+        bool objectMotion = true;        // moving objects' motion vectors (TAA, motion blur); off: camera only
+        bool translucency = true;        // off: translucent objects aren't drawn
+        // Quality against speed.
+        uint32_t shadowResolution = 2048;      // sun cascades, texels square (256..8192)
+        uint32_t shadowCascades = kCascades;   // 1..kCascades
+        uint32_t localShadowResolution = 512;  // a local light's atlas tile (64..kShadowAtlasSize / 2)
+        uint32_t softShadowSamples = 16;       // PCSS blocker search and filter taps (1..16)
+        uint32_t aoSlices = 3;                 // GTAO directions per pixel (1..8)
+        uint32_t ssrSteps = 32;                // reflection ray march steps (1..256)
+        uint32_t anisotropy = 16;              // material texture filtering (1 = off .. 16)
         // The camera's lens (UsdGeomCamera, world units), with postProcess:
         // depth of field when fStop > 0, motion blur while the shutter is open.
         bool depthOfField = true;
@@ -64,9 +83,9 @@ public:
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr VkFormat kVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr uint32_t kCascades = 4;
-    static constexpr uint32_t kShadowSize = 2048;
-    // Shadow atlas for sphere/rect/disk lights, in square tiles.
-    static constexpr uint32_t kShadowAtlasSize = 4096, kShadowTileSize = 512;
+    // Shadow atlas for sphere/rect/disk lights, in square tiles
+    // (Frame::localShadowResolution).
+    static constexpr uint32_t kShadowAtlasSize = 4096;
 
     explicit Renderer(Device &device);
     ~Renderer();
@@ -103,7 +122,8 @@ private:
     void _CreatePipelines();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
-    void _UpdateDescriptors(const Scene::Gpu &gpu);
+    void _CreateShadowMap(uint32_t size);
+    void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     struct ShadowTile;
@@ -166,6 +186,8 @@ private:
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
+    uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
+    float _anisotropy = 0;                      // _sampler's (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
     // What the atlas holds: redrawn only when the scene or the tiles change.

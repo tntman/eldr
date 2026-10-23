@@ -20,9 +20,10 @@ public:
     // Expects depth in DEPTH_READ_ONLY_OPTIMAL and leaves Output() in
     // SHADER_READ_ONLY_OPTIMAL. `invViewProj` maps the depth buffer's
     // (jittered) NDC to world space, row-vector order; `radius` is in world
-    // units; `noise` picks this frame's sampling pattern.
+    // units; `noise` picks this frame's sampling pattern; `slices` is the
+    // number of directions per pixel.
     void Record(VkCommandBuffer cmd, const float invViewProj[16], const float eye[3], float radius,
-                uint32_t noise);
+                uint32_t noise, uint32_t slices);
 
     // Output() = 1 (unoccluded) everywhere, same final layout as Record.
     void Clear(VkCommandBuffer cmd);
