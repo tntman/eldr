@@ -39,6 +39,9 @@ const vec2 kPoisson[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367),
     vec2(0.14383161, -0.14100790));
 
+#define RT_RESULTS
+#include "gi.glsl"  // ray-traced shadows and reflections, GI probes
+
 // mesh.vert's packed outputs.
 layout(location = 0) in vec4 inWorldPosPrevX;
 layout(location = 1) in vec4 inNormalPrevY;
@@ -153,6 +156,10 @@ float ShadowDistance(float depth, float n, float f)
 // tile (cube face seams can show under very soft shadows).
 float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
 {
+    float traced;
+    if (RtShadow(index, traced)) {
+        return traced;
+    }
     uint tile = lightShadow[index];
     if (tile == kNone) {
         return 1.0;
@@ -303,6 +310,10 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
 // Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
 float Shadow(vec3 p, vec3 ng, vec3 l)
 {
+    float traced;
+    if (RtShadow(frame.counts.y, traced)) {
+        return traced;
+    }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
     int c = 0;
     while (c < 4 && depth > frame.cascadeSplits[c]) {
@@ -560,6 +571,7 @@ void main()
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
     }
+    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
@@ -576,6 +588,7 @@ void main()
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
     }
+    specular = RtReflection(specular, inWorldPos, n, perceptual);
     float Ems = 1.0 - Ess;
     vec3 Favg = f0 + (1.0 - f0) / 21.0;
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);

@@ -317,6 +317,11 @@ private:
     float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
+    // Ray tracing: unique per geometry upload (a new BLAS when it changes).
+    uint64_t _geometryVersion = 0;
+    // Emissive lights: the object-space area of `points`, at this version.
+    float _emitterArea = 0;
+    uint64_t _emitterAreaVersion = 0;
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -341,6 +346,7 @@ struct Light {
     float specular = 1.0f;
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
+    float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced shadows)
 
 private:
     friend class Scene;
@@ -457,6 +463,12 @@ public:
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
+    // Emissive meshes as lights: from the next Commit, each instance of a
+    // small rigid mesh whose material emits at least `threshold` (a constant
+    // emissiveColor's brightest channel, scene-referred radiance) also
+    // lights the scene as a sphere light around it, of the same power
+    // (pi x radiance x area), casting shadows. Returns whether it changed.
+    bool SetEmissiveLights(bool on, float threshold);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -550,6 +562,18 @@ public:
         float environmentWorldToLocal[16] = {};
         // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
         VkDeviceSize blendWeightsBytes = 0;
+
+        // Ray tracing (RayTracing builds a BLAS per slot from these): per mesh
+        // slot its vertices and triangles in the pools, `version` unique per
+        // upload, 0 for slots ray tracing skips (not drawn, translucent or
+        // skinned).
+        struct SlotGeometry {
+            uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
+            uint64_t version;
+            bool cutout;   // alpha-tested: any-hit shaders run
+            bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
+        };
+        std::vector<SlotGeometry> slotGeometry;
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -581,6 +605,8 @@ private:
     void _Upload(Texture &texture);
     int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);
+    struct Emitter;
+    std::vector<Emitter> _FindEmitters();
     void _DestroyEnvironment();
     template <typename T>
     static void _RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item);
@@ -607,6 +633,8 @@ private:
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
     uint32_t _tagMask = ~0u;
+    bool _emissiveLights = true;
+    float _emissiveThreshold = 4.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;

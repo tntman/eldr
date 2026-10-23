@@ -12,7 +12,7 @@ const uint kLightSphere = 1u, kLightRect = 2u, kLightDisk = 3u;
 struct Light {
     vec4 position;    // distant: direction to the light; else center. w: type
     vec4 color;       // distant: irradiance; else radiance of the emitting surface
-    vec4 axis;        // emission axis (light -Z); w: sphere radius
+    vec4 axis;        // emission axis (light -Z); w: sphere radius, distant: half its angle (radians)
     vec4 halfWidth;   // rect: center to the +X edge, disk: radius along X; w: sphere shading radius (0 = point)
     vec4 halfHeight;  // rect: center to the +Y edge, disk: radius along Y; w: diffuse multiplier
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier

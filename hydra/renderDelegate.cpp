@@ -130,6 +130,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
+        {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
+        {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
+        {"GI Rays per Probe per Frame (16-512)", t.giRays, VtValue(int(frame.giRays))},
+        {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
+        {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
+        {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
         {"Local Lights (sphere, rect, disk)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
@@ -137,6 +143,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
+        {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
+         VtValue(int(frame.rtReflectionSamples))},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -145,6 +154,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.localShadowResolution))},
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
+        {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
+        {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
          VtValue(frame.specularWorkflow)},
@@ -261,6 +272,8 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
     stats["hostMemoryUsed"] = size_t(memory.host);
+    stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
+    stats["rayTracingSupported"] = _device->rayTracing;  // else the hdvk:rt* settings are ignored
     stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
     stats["peakMemory"] = size_t(memory.peakDeviceLocal);
     stats["vramSize"] = size_t(memory.heapSize);

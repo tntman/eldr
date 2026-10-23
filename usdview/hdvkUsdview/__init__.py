@@ -16,6 +16,9 @@ PASSES = [
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("localShadows", "Local light shadows"),
+    ("accelerationStructures", "Acceleration structures (TLAS)"),
+    ("giProbes", "Global illumination probes"),
+    ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),
@@ -56,6 +59,7 @@ def Rows(stats):
              ("  textures", ReportMetricSize(get("textureMemory"))),
              ("  vertices, instances", ReportMetricSize(get("primvar"))),
              ("  indices", ReportMetricSize(get("topology"))),
+             ("  acceleration structures", ReportMetricSize(get("accelerationStructureMemory"))),
              ("  peak", ReportMetricSize(get("peakMemory"))),
              ("System memory the GPU reads", ReportMetricSize(get("hostMemoryUsed")))]
     if get("vramSize"):

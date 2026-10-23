@@ -62,6 +62,18 @@ expect(stats.get("gpuMemoryUsed", 0) > stats.get("primvar", 0) > 0, "graphics me
 rows = dict(hdvkUsdview.Rows(stats))
 expect(rows.get("Triangles") == "12 of 24" and "Shading" in rows, "the usdview window's rows")
 
+# Ray-traced shadows (where the GPU has ray tracing pipelines) add their pass
+# and acceleration structures; switched off, both are gone again.
+if stats.get("rayTracingSupported"):
+    engine.SetRendererSetting("hdvk:rtShadows", True)
+    engine.Render(stage.GetPseudoRoot(), params)
+    traced = engine.GetRenderStats()
+    expect("rayTracing" in traced["gpuPassMs"] and traced.get("accelerationStructureMemory", 0) > 0,
+           "hdvk:rtShadows traces")
+    engine.SetRendererSetting("hdvk:rtShadows", False)
+    engine.Render(stage.GetPseudoRoot(), params)
+    expect(engine.GetRenderStats().get("accelerationStructureMemory") == 0, "ray tracing off frees its memory")
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

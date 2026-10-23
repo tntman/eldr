@@ -139,12 +139,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
                                 {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
-                                {t.hairShading, &frame.hairShading}}) {
+                                {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
+                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
+                                {t.emissiveLights, &frame.emissiveLights}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
-                                {t.bloomIntensity, &frame.post.bloomIntensity}}) {
+                                {t.bloomIntensity, &frame.post.bloomIntensity},
+                                {t.giHysteresis, &frame.giHysteresis},
+                                {t.emissiveLightThreshold, &frame.emissiveLightThreshold}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},
@@ -152,7 +156,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.shadowCascades, &frame.shadowCascades},
                                 {t.localShadowResolution, &frame.localShadowResolution},
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
-                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
+                                {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
+                                {t.rtShadowSamples, &frame.rtShadowSamples},
+                                {t.rtReflectionSamples, &frame.rtReflectionSamples},
+                                {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
@@ -193,6 +200,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
+    if (_scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold)) {
+        _scene.Commit();
+    }
     // The scene camera's lens; usdview's free camera has none.
     if (camera) {
         frame.shutter = float(camera->GetShutterClose() - camera->GetShutterOpen());

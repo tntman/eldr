@@ -1147,6 +1147,215 @@ int main()
         }
 
         {
+            // Emissive surfaces as lights: a small bright emitter (black
+            // otherwise) at z = 0, x = -0.6, lights the white wall at z = 0.5
+            // as a sphere light of its power, and a small occluder at
+            // z = 0.25, x = -0.3 shadows it, as in the local light test.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddEmitter(scene, -0.62f, -0.02f, -0.58f, 0.02f, 0, 2000.0f);
+            scene.Commit();
+            const Image lit = Render(renderer, scene);
+            scene.SetEmissiveLights(false, 4.0f);
+            scene.Commit();
+            const Image off = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 5000.0f);
+            scene.Commit();
+            const Image dim = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 4.0f);
+            scene.Commit();
+            Expect(lit.At(41, 32, 0) > 0.05f && off.At(41, 32, 0) == 0.0f && dim.At(41, 32, 0) == 0.0f,
+                   "a bright emitter lights the wall; off or under the threshold it doesn't");
+            Expect(lit.At(32, 32, 0) < 0.2f * lit.At(41, 32, 0), "the emitter's light casts shadows");
+            if (device.rayTracing) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, scene, frame);
+                Expect(traced.At(32, 32, 0) < 0.2f * traced.At(41, 32, 0) &&
+                           std::abs(traced.At(41, 32, 0) - lit.At(41, 32, 0)) < 0.05f * lit.At(41, 32, 0),
+                       "the emitter's light has traced shadows, and doesn't shadow itself");
+            }
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced sun shadow: the cascade test's scene with a hard sun
+            // (angle 0), traced instead of the cascades.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            sun->angle = 0;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image traced = Render(renderer, scene, frame);
+            const vkr::Renderer::Stats stats = renderer.GetStats();
+            const Image mapped = Render(renderer, scene);
+            const float lit = mapped.At(51, 32, 0);
+            int differ = 0;
+            for (int x = 0; x < 64; ++x) {
+                differ += std::abs(traced.At(x, 32, 0) - mapped.At(x, 32, 0)) > 0.1f * lit;
+            }
+            Expect(traced.At(3, 32, 0) < 0.01f * lit && std::abs(traced.At(51, 32, 0) - lit) < 0.01f * lit &&
+                       differ <= 2,
+                   "ray-traced sun shadow matches the cascades'");
+            Expect(stats.accelerationStructureBytes > 0 &&
+                       std::any_of(stats.passMs.begin(), stats.passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "rayTracing") == 0; }),
+                   "ray tracing pass timed, its memory counted");
+
+            // A cutout with nothing left casts no traced shadow (any-hit).
+            auto cutout = std::make_shared<vkr::Material>();
+            cutout->opacity = 0;
+            cutout->opacityThreshold = 0.5f;
+            occluder->material = cutout;
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(3, 32, 0) > 0.9f * lit, "traced shadows skip cut-out surfaces");
+            occluder->material = nullptr;
+            scene.Commit();
+
+            // The sun's angle softens the traced shadow: TAA-free frames of
+            // one ray each differ, their average has a penumbra.
+            sun->angle = 20;
+            scene.Commit();
+            frame.rtShadowSamples = 16;
+            const Image soft = Render(renderer, scene, frame);
+            int partial = 0;
+            for (int x = 0; x < 32; ++x) {
+                const float v = soft.At(x, 32, 0) / lit;
+                partial += v > 0.05f && v < 0.95f;
+            }
+            Expect(partial >= 3, "the sun's angle gives traced shadows a penumbra");
+
+            // Off again: no tracing, no acceleration structures.
+            Render(renderer, scene);
+            Expect(renderer.GetStats().accelerationStructureBytes == 0, "ray tracing off frees its structures");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced local light shadow (the atlas test's scene).
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddSphereLight(scene, -0.6f, 0, 0, 0.02f, 400.0f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image img = Render(renderer, scene, frame);
+            Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced reflections: the SSR test's mirror over an emitter,
+            // without post (so no SSR): only traced rays see the emitter.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, 0, 0, 0, 0, 0);
+            mirror->points = {-0.8f, 0, 0, 0.8f, 0, 0, 0.8f, 0.8f, -0.8f,
+                              -0.8f, 0, 0, 0.8f, 0.8f, -0.8f, -0.8f, 0.8f, -0.8f};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            vkr::Mesh *emitter = AddEmitter(scene, 0, 0, 0, 0, 0, 1.0f);
+            emitter->points = {-0.8f, -0.8f, -0.6f, 0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f,
+                               -0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f, -0.8f, -0.1f, 0.1f};
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float off = Render(renderer, scene, frame).At(32, 41, 1);
+            frame.rtReflections = true;
+            const float on = Render(renderer, scene, frame).At(32, 41, 1);
+            Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
+        }
+
+        if (device.rayTracing) {
+            // Global illumination: a white wall at z = 0.5 and, edge-on to the
+            // camera in the x = 0 plane, a red panel whose -x side the sun
+            // lights head-on; the sun only grazes the wall. Bounced light
+            // tints the wall left of the panel red.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto red = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 0.9f;
+            red->baseColor[1] = red->baseColor[2] = 0.0f;
+            red->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = scene.AddMesh();
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, -0.5f, 0, 0.6f, 0.45f,
+                             0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, -0.6f, 0.45f};
+            panel->material = red;
+            AddLight(scene, -1, 0, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image direct = Render(renderer, scene, frame);
+            frame.gi = true;
+            frame.giProbes = 8;
+            Image img, last;
+            int frames = 0;
+            do {
+                last = img;
+                img = Render(renderer, scene, frame);
+                ++frames;
+            } while (!renderer.IsConverged() && frames < 200);
+            const float r = img.At(28, 32, 0), g = img.At(28, 32, 1);
+            Expect(std::abs(direct.At(28, 32, 0) - direct.At(28, 32, 1)) < 1e-3f && r > 1.2f * g && g > 0.0f,
+                   "GI bounces the red panel's light onto the white wall");
+            Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
+            Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+            Render(renderer, scene);
+            Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
+        }
+
+        if (device.rayTracing) {
+            // No light through walls: a closed room (thin walls without
+            // normals, its front one behind the camera's near plane) with
+            // the sun outside; its back wall only sees the room.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto wall = [&](std::array<float, 12> c) {
+                vkr::Mesh *m = scene.AddMesh();
+                m->points = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+                             c[0], c[1], c[2], c[6], c[7], c[8], c[9], c[10], c[11]};
+                m->material = white;
+            };
+            wall({-1, -1, 0.5f, 1, -1, 0.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // back
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, 1, -1.5f, -1, 1, -1.5f});        // front
+            wall({-1, -1, -1.5f, -1, -1, 0.5f, -1, 1, 0.5f, -1, 1, -1.5f});        // left
+            wall({1, -1, -1.5f, 1, -1, 0.5f, 1, 1, 0.5f, 1, 1, -1.5f});            // right
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, -1, 0.5f, -1, -1, 0.5f});        // floor
+            wall({-1, 1, -1.5f, 1, 1, -1.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // ceiling
+            AddLight(scene, -1, 0.3f, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.gi = true;
+            Image img;
+            for (int i = 0; i < 40; ++i) {
+                img = Render(renderer, scene, frame);
+            }
+            float brightest = 0;
+            for (int y = 4; y < 60; y += 4) {
+                for (int x = 4; x < 60; x += 4) {
+                    brightest = std::max(brightest, img.At(x, y, 0));
+                }
+            }
+            Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
+        } else {
+            std::puts("no ray tracing on this GPU: its tests skipped");
+        }
+
+        {
             // Wrap modes: emissive rows with st (0..2, 0..1) over a 2x1
             // texture (left texel red, right blue), one row per mode, the
             // last a program's image; u 1.27 (pixel 40) and 1.77 (pixel 56)

@@ -6,6 +6,7 @@
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
+#include "raytracing.h"
 #include "scene.h"
 #include "taa.h"
 
@@ -98,6 +99,30 @@ public:
         bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
         uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
         bool hairShading = true;       // curves (Mesh::hair) with strand highlights
+        // Ray tracing (raytracing.cpp), ignored without Device::rayTracing.
+        // With the depth prepass: traced shadows of the sun and the three
+        // lights that matter most (no shadow maps for them; soft from the
+        // sun's angle and the lights' size) and traced reflections (instead
+        // of the dome's and SSR, up to roughness 0.7), both noisy per frame
+        // for TAA to average. Skinned and translucent meshes don't block
+        // rays.
+        bool rtShadows = false;
+        uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16)
+        bool rtReflections = false;
+        uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        // Global illumination (ray-traced DDGI probes; ignored without
+        // Device::rayTracing): the diffuse light bounced off the scene,
+        // instead of the dome's unoccluded light.
+        bool gi = false;
+        uint32_t giProbes = 16;      // along the scene's longest side (2..64; at most 16384 in all)
+        uint32_t giRays = 128;       // per probe and frame (16..512)
+        float giHysteresis = 0.97f;  // weight of the probes' history (0..0.99): smoother, but slower to react
+        // Emissive surfaces as lights: small meshes emitting at least the
+        // threshold also light the scene as sphere lights (with shadows);
+        // the caller applies these to the Scene (Scene::SetEmissiveLights).
+        // GI picks up every emissive surface's light regardless.
+        bool emissiveLights = true;
+        float emissiveLightThreshold = 4.0f;  // scene-referred radiance of the brightest channel
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -148,6 +173,7 @@ public:
         uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
+        uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
     };
     const Stats &GetStats() const { return _stats; }
 
@@ -172,7 +198,8 @@ private:
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     struct ShadowTile;
-    std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
+    std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
+                                              uint32_t *rtLights, uint32_t rtSlots);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
 
     Device &_dev;
@@ -255,6 +282,7 @@ private:
     bool _prevBlendValid = false;
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
+    std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
 };
 
 } // namespace vkr

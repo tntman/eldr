@@ -1,6 +1,7 @@
 #include "device.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -195,22 +196,49 @@ Device::Device()
         vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, nullptr);
         std::vector<VkExtensionProperties> extensions(extensionCount);
         vkEnumerateDeviceExtensionProperties(physical, nullptr, &extensionCount, extensions.data());
-        const char *budget = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME;
-        memoryBudget = std::any_of(extensions.begin(), extensions.end(), [&](const VkExtensionProperties &e) {
-            return std::strcmp(e.extensionName, budget) == 0;
-        });
-
-        // Optional: GPU sharing with OpenGL (usdview), see interop.h.
         auto has = [&](const char *name) {
             return std::any_of(extensions.begin(), extensions.end(),
                                [&](const VkExtensionProperties &e) { return std::strcmp(e.extensionName, name) == 0; });
         };
+        std::vector<const char *> enabled;
+        memoryBudget = has(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        if (memoryBudget) {
+            enabled.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        }
+
+        // Optional: ray tracing pipelines (no ray queries needed; Pascal
+        // runs them in NVIDIA's compute fallback).
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR fas{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR frt{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, &fas};
+        VkPhysicalDeviceVulkan12Features has12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &frt};
+        VkPhysicalDeviceFeatures2 hasFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &has12};
+        vkGetPhysicalDeviceFeatures2(physical, &hasFeatures);
+        const char *disable = std::getenv("HDVK_NO_RAY_TRACING");
+        rayTracing = !(disable && std::strcmp(disable, "1") == 0) && has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+                     has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
+                     has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME) && fas.accelerationStructure &&
+                     frt.rayTracingPipeline && has12.bufferDeviceAddress;
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR eas{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+        VkPhysicalDeviceRayTracingPipelineFeaturesKHR ert{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR, &eas};
+        if (rayTracing) {
+            eas.accelerationStructure = VK_TRUE;
+            ert.rayTracingPipeline = VK_TRUE;
+            f13.pNext = &ert;
+            f12.bufferDeviceAddress = VK_TRUE;
+            enabled.insert(enabled.end(), {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                                           VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+                                           VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});
+            rayTracingInputUsage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                   VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+        }
+
+        // Optional: GPU sharing with OpenGL (usdview), see interop.h.
         const char *win32[2] = {"VK_KHR_external_memory_win32", "VK_KHR_external_semaphore_win32"};
         externalWin32 = has(win32[0]) && has(win32[1]);
-        std::vector<const char *> enabled;
-        if (memoryBudget) {
-            enabled.push_back(budget);
-        }
         if (externalWin32) {
             enabled.insert(enabled.end(), win32, win32 + 2);
         }
@@ -263,7 +291,11 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
         for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
             if ((req.memoryTypeBits & (1u << i)) &&
                 (mp.memoryTypes[i].propertyFlags & wanted) == wanted) {
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, next};
+                // Ray tracing reads buffers through device addresses.
+                VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, next};
+                flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        rayTracing ? static_cast<const void *>(&flags) : next};
                 ai.allocationSize = req.size;
                 ai.memoryTypeIndex = i;
                 VkDeviceMemory memory = VK_NULL_HANDLE;
