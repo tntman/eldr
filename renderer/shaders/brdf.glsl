@@ -1,10 +1,10 @@
 // Shading beyond mesh.frag's metallic-roughness base (Lambert diffuse, GGX
 // specular), from the material's constants (material.glsl): the specular
-// workflow, a clearcoat, sheen, thin-film iridescence and anisotropy.
-// mesh.frag includes it after its inputs
-// and calls PrepareLayers once per pixel (before the lights), LayerLight
-// per light (and AnisotropicSpecular for the base's GGX), BentNormal and
-// LayerAmbient for the dome. Only materials with lobes
+// workflow, a clearcoat, sheen, thin-film iridescence, anisotropy and toon
+// bands. mesh.frag includes it after its inputs and calls PrepareLayers
+// once per pixel (before the lights), LayerLight per light (and
+// AnisotropicSpecular for the base's GGX), BentNormal and LayerAmbient for
+// the dome, ToonShade last. Only materials with lobes
 // (vkr::Material::Layered) shade with the LAYERS build of mesh.frag; the
 // plain build gets the empty versions at the end, so plain materials pay
 // nothing. Within LAYERS each lobe costs a branch unless the material uses
@@ -13,6 +13,8 @@
 // frame.features.x bits (renderer.cpp's Frame switches).
 const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
            kFeatureAnisotropy = 128u;
+// frame.styles.x bits.
+const uint kStyleToon = 1u;
 
 #ifdef LAYERS
 
@@ -35,6 +37,9 @@ struct Layers {
     bool openPbrAnisotropy;  // OpenPBR's roughness mapping, else standard_surface's
     vec3 tangent;          // the stretch direction, with the bitangent across it
     vec3 bitangent;
+    float toonBands;       // the material's own (0: the frame's)
+    float toonSoftness;
+    vec3 albedo;           // the base's, before the lobes change it (toon bands)
 };
 Layers layers;
 
@@ -107,15 +112,19 @@ vec3 Iridescence(float cosTheta1, float thickness, float eta2, vec3 f0)
 // they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, inout vec3 tint, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0));
+    layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0), 0.0, 0.0,
+                    diffuseColor + f0);
     if (inMaterial == kNoMaterial) {
         return;
     }
     Material m = materials[inMaterial];
+    layers.toonBands = m.toon.x;
+    layers.toonSoftness = m.toon.y;
     // UsdPreviewSurface's specular workflow: F0 is specularColor (F90
     // white); hydra/material.cpp already dropped metallic.
     if (m.specularColor.w > 0.0 && (frame.features.x & kFeatureSpecularWorkflow) != 0u) {
         f0 = m.specularColor.rgb;
+        layers.albedo = diffuseColor + f0;
     }
     // A thin film on the base's specular (dielectric and metal): its
     // reflectance towards the viewer stands in for F0.
@@ -269,3 +278,35 @@ vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
 }
 
 #endif
+
+// NPR toon shading, as EEVEE's Shader to RGB into a constant colour ramp:
+// the lit result's intensity relative to the surface's albedo (so textures
+// keep their detail) falls into `bands` flat steps per unit, each shown at
+// its middle (highlights past white keep stepping); edges are `softness`
+// of a band wide, at least a pixel. Emission stays as it is.
+vec3 Toon(vec3 color, vec3 emissive, vec3 albedo, float bands, float softness)
+{
+    const vec3 luma = vec3(0.2126, 0.7152, 0.0722);
+    vec3 lit = color - emissive;
+    float intensity = dot(lit, luma) / max(dot(albedo, luma), 1e-4);
+    float x = intensity * bands;
+    float edge = clamp(max(softness, fwidth(x)), 1e-4, 1.0);
+    float level = (floor(x) + smoothstep(1.0 - edge, 1.0, fract(x)) + 0.5) / bands;
+    return emissive + lit * (level / max(intensity, 1e-4));
+}
+
+// Last, before cutouts discard (fwidth needs the whole quad): toon bands
+// from the material's eldr:toonBands (hydra/material.cpp), else the
+// frame's for every material. `albedo`: diffuse colour plus F0.
+vec3 ToonShade(vec3 color, vec3 emissive, vec3 albedo)
+{
+    float bands = float(frame.styles.y), softness = 0.05;
+#ifdef LAYERS
+    albedo = layers.albedo;  // sheen and coats would make bands uneven
+    if (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u) {
+        bands = layers.toonBands;
+        softness = layers.toonSoftness;
+    }
+#endif
+    return bands > 0.0 ? Toon(color, emissive, albedo, bands, softness) : color;
+}

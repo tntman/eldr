@@ -2,6 +2,7 @@
 Hydra: tests/scenes/lobes.usda rendered with each lobe's setting on and
 off (no post processing), comparing the mean colour over each sphere.
 Run: usdenv.cmd python tests\\test_lobes.py"""
+import math
 import os
 import sys
 
@@ -107,6 +108,26 @@ for prim in ("/brushedSteel", "/brushedGold"):
     on, off = compare("hdvk:anisotropicSpecular", prim, lambda image, prim: list(pixels(image, prim)))
     change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
     expect(change > 0.1, prim[1:] + ": the highlights stretch (%.2f of the image changes)" % change)
+
+
+def flat(image, prim):
+    """The share of a sphere's pixels in its three most common brightness
+    levels (2% wide): toon bands make it large."""
+    levels = {}
+    for c in pixels(image, prim):
+        luminance = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+        if luminance > 0.005:
+            key = int(math.log(luminance) / 0.02)
+            levels[key] = levels.get(key, 0) + 1
+    return sum(sorted(levels.values())[-3:]) / sum(levels.values())
+
+
+on, off = compare("hdvk:toon", "/toon", flat)
+expect(on > 0.6 and off < 0.3, "toon: eldr:toonBands bands the sphere (%.2f flat, %.2f off)" % (on, off))
+plain = flat(render({}), "/plain")
+everything = flat(render({"hdvk:toonBands": 3}), "/plain")
+engine.SetRendererSetting("hdvk:toonBands", 0)
+expect(everything > 0.6 and plain < 0.3, "hdvk:toonBands bands every material (%.2f flat, %.2f off)" % (everything, plain))
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

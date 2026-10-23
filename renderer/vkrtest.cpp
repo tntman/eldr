@@ -1303,6 +1303,39 @@ int main()
             Expect(std::abs(nearly - Render(renderer, scene, frame).At(32, 32, 1)) < 0.01f * nearly,
                    "nearly isotropic anisotropic GGX is GGX");
         }
+
+        {
+            // Toon: with two bands per unit a white quad lit at cos 0.6 and
+            // 0.7 shows the same flat band (both in [0.5, 1), shown at 0.75),
+            // at cos 0.4 the band below (0.25), a third as bright.
+            // Frame::toonBands bands a plain material the same way; toon off
+            // is smooth again.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 1;
+            material->toonBands = 2;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto lit = [&](float cosine) {
+                light->direction[0] = std::sqrt(1 - cosine * cosine);
+                light->direction[2] = -cosine;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 0);
+            };
+            auto banded = [&](const char *what) {
+                const float a = lit(0.6f), b = lit(0.7f), c = lit(0.4f);
+                Expect(std::abs(a - b) < 0.01f * a && std::abs(c / a - 1.0f / 3.0f) < 0.05f, what);
+            };
+            banded("toon: flat bands");
+            frame.toon = false;
+            Expect(lit(0.7f) > 1.1f * lit(0.6f), "Frame::toon off: smooth");
+            material->toonBands = 0;
+            frame.toon = true;
+            frame.toonBands = 2;
+            banded("Frame::toonBands: every material in bands");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

@@ -105,7 +105,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.translucency, &frame.translucency},
                                 {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
                                 {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
-                                {t.anisotropicSpecular, &frame.anisotropicSpecular}}) {
+                                {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -121,6 +121,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // The scene camera's lens; usdview's free camera has none.
     const GfMatrix4d projection = state->GetProjectionMatrix();
     if (const HdCamera *camera = state->GetCamera()) {

@@ -582,6 +582,7 @@ void main()
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
     color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+    color = ToonShade(color, emissive, diffuseColor + f0);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;

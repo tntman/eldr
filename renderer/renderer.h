@@ -73,6 +73,8 @@ public:
         bool sheen = true;             // microfiber lobe (fabric, fuzz)
         bool thinFilm = true;          // thin-film iridescence on the specular
         bool anisotropicSpecular = true;  // highlights stretched along a tangent (brushed metal)
+        bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
+        uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

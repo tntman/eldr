@@ -111,6 +111,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (specular_anisotropy)
     (specular_rotation)
     (specular_roughness_anisotropy)
+    ((toonBands, "eldr:toonBands"))
+    ((toonSoftness, "eldr:toonSoftness"))
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1155,6 +1157,12 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
         m->openPbrAnisotropy = true;
     }
+    // NPR toon has no USD standard: Eldr's own inputs on any surface it
+    // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
+    // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
+    // width, in bands).
+    m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
+    m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
 }
 
 // ponytail: metallic and specular workflows; the lobes ReadLobes reads.

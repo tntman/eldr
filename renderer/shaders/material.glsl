@@ -29,6 +29,7 @@ struct Material {
     vec4 sheenColor;
     vec4 thinFilm;       // weight (0: none), thickness (nm), ior
     vec4 anisotropy;     // amount (0: none), rotation (turns), 1: OpenPBR's roughness mapping
+    vec4 toon;           // bands (0: none), softness
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

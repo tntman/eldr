@@ -180,10 +180,18 @@ struct Material {
     float anisotropy = 0;
     float anisotropyRotation = 0;
     bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    // NPR toon: the lit result's intensity quantized into this many flat
+    // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
+    // `toonSoftness` of a band wide.
+    float toonBands = 0;
+    float toonSoftness = 0.05f;
 
     // Whether any lobe beyond the metallic base is on: such materials shade
     // with the renderer's LAYERS pipelines, the others never pay for them.
-    bool Layered() const { return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0; }
+    bool Layered() const
+    {
+        return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0;
+    }
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
