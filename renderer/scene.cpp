@@ -856,6 +856,7 @@ void Scene::Commit()
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
     _gpu.shadowLight = kNone;
+    _gpu.shadowCasters.clear();
     for (const bool distant : {true, false}) {  // distant lights first
         for (const auto &l : _lights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
@@ -889,6 +890,33 @@ void Scene::Commit()
             g.shaping[1] = cone;
             g.shaping[2] = l->focus;
             std::copy(l->focusTint, l->focusTint + 3, g.focusTint);
+            if (l->castShadows) {
+                // Mirrors LightRange() in shaders/lights.glsl.
+                Scene::Gpu::ShadowCaster c{};
+                c.light = lightCount + localLightCount;
+                std::copy(l->position, l->position + 3, c.position);
+                std::copy(l->direction, l->direction + 3, c.axis);
+                c.coneAngle = cone;
+                const float radiance = std::max({l->radiance[0], l->radiance[1], l->radiance[2]}) *
+                                       std::max(l->diffuse, l->specular);
+                if (sphere) {
+                    c.rangeIntensity = radiance * l->radius * l->radius;
+                    c.radius = l->radius;
+                    c.size = l->point ? 0.0f : l->radius;
+                } else {
+                    const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
+                    const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];
+                    const float cz = l->halfWidth[0] * l->halfHeight[1] - l->halfWidth[1] * l->halfHeight[0];
+                    const float area = (l->type == Light::Type::Rect ? 4.0f : 3.14159265f) *
+                                       std::sqrt(cx * cx + cy * cy + cz * cz);
+                    c.rangeIntensity = radiance * area / 3.14159265f;
+                    c.size = std::sqrt(area / 3.14159265f);
+                    const float ex = l->halfWidth[0] + l->halfHeight[0], ey = l->halfWidth[1] + l->halfHeight[1],
+                                ez = l->halfWidth[2] + l->halfHeight[2];
+                    c.extent = std::sqrt(ex * ex + ey * ey + ez * ez);
+                }
+                _gpu.shadowCasters.push_back(c);
+            }
             ++localLightCount;
         }
     }

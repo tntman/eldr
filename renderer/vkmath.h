@@ -67,6 +67,28 @@ inline Mat4 LookAlong(Vec3 forward)
     return v;
 }
 
+inline Mat4 Translate(Vec3 t)
+{
+    Mat4 m;
+    m.m[3][0] = t.x;
+    m.m[3][1] = t.y;
+    m.m[3][2] = t.z;
+    return m;
+}
+
+// GL-style square perspective projection with tan(fov / 2) = tanHalf
+// (view z in [-n, -f] -> NDC z in [-1, 1]).
+inline Mat4 Perspective(float tanHalf, float n, float f)
+{
+    Mat4 p;
+    p.m[0][0] = p.m[1][1] = 1 / tanHalf;
+    p.m[2][2] = -(f + n) / (f - n);
+    p.m[2][3] = -1;
+    p.m[3][2] = -2 * f * n / (f - n);
+    p.m[3][3] = 0;
+    return p;
+}
+
 // GL-style orthographic projection (view z in [-n, -f] -> NDC z in [-1, 1]).
 inline Mat4 Ortho(float l, float r, float b, float t, float n, float f)
 {

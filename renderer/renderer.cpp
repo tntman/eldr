@@ -96,6 +96,10 @@ void FrustumPlanes(const float *vp, float planes[6][4])
 
 constexpr uint32_t kBrdfLutSize = 64;
 
+// Spots with a cone up to this get one perspective atlas tile, wider
+// lights a cube of six. Must match kSpotShadowCone in mesh.frag.
+constexpr float kSpotShadowCone = 1.3962634f;  // 80 degrees
+
 VkImageSubresourceRange Range(VkImageAspectFlags aspect, uint32_t layers = 1)
 {
     return {aspect, 0, 1, 0, layers};
@@ -158,13 +162,16 @@ Renderer::~Renderer()
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_shadowMap, &_brdfLut, &_blackCube}) {
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_shadowMap, &_shadowAtlas, &_brdfLut,
+                       &_blackCube}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
     _dev.Destroy(_clusters);
+    _dev.Destroy(_lightShadows);
+    _dev.Destroy(_shadowTiles);
     for (VkPipeline p : {_prepassPipeline, _pipeline, _shadowPipeline, _skyPipeline, _cullPipeline,
                          _lightsPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
@@ -213,9 +220,11 @@ void Renderer::_CreateDescriptors()
     // lists and the culled indirect commands; 11 is the GTAO result, 12
     // and 13 last frame's color and this frame's depth for reflections, 14
     // the light clusters (written by lights.comp, which also reads 2 and 3),
-    // 15 and 16 the skinning pools (SkinVertex, joint matrices).
+    // 15 and 16 the skinning pools (SkinVertex, joint matrices), 17..19
+    // the local lights' shadow atlas, first tile per light and the tiles, 20
+    // the atlas again without depth compare (soft shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[17] = {
+    const VkDescriptorSetLayoutBinding bindings[21] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -233,20 +242,24 @@ void Renderer::_CreateDescriptors()
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
     };
-    const VkDescriptorBindingFlags bindingFlags[17] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[21] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 17;
+    flags.bindingCount = 21;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 17;
+    slci.bindingCount = 21;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 6},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 11},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -421,6 +434,9 @@ void Renderer::_CreateConstantImages()
         Check(vkCreateImageView(_dev.device, &vci, nullptr, &_shadowLayers[c]), "vkCreateImageView");
     }
 
+    _shadowAtlas = _dev.CreateImage(kDepthFormat, kShadowAtlasSize, kShadowAtlasSize, 1, 1,
+                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                    VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
@@ -512,6 +528,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo clusters{_clusters.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo skin{gpu.skin, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo joints{gpu.joints, 0, VK_WHOLE_SIZE};
+    const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo shadowTiles{_shadowTiles.buffer, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -541,6 +561,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &clusters, nullptr);
     write(15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &skin, nullptr);
     write(16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &joints, nullptr);
+    write(17, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &atlas);
+    write(18, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lightShadows, nullptr);
+    write(19, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &shadowTiles, nullptr);
+    write(20, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &atlasDepth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -666,6 +690,142 @@ void Renderer::_FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData
     data->cameraForward[2] = forward.z;
 }
 
+// std430 mirror of ShadowTile in mesh.frag.
+struct Renderer::ShadowTile {
+    float viewProj[16];
+    float rect[4];    // atlas uv offset, uv scale
+    float params[4];  // shadow texel size per unit of distance from the light, near, far, light size
+};
+
+// Gives atlas tiles to the shadow-casting lights whose range reaches into
+// the view, brightest at the camera first, until the atlas is full; the
+// rest stay unshadowed. Writes each light's first tile (or kNone).
+// ponytail: fixed 512 tiles redrawn every frame, each with every caster;
+// per-tile culling and caching static lights' tiles come when it matters.
+std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
+                                                              float cutoff)
+{
+    const uint32_t lights = gpu.lightCount + gpu.localLightCount;
+    _dev.Reserve(_lightShadows, std::max(lights, 1u) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    auto *firstTile = static_cast<uint32_t *>(_lightShadows.mapped);
+    std::fill(firstTile, firstTile + lights, kNone);
+    std::vector<ShadowTile> tiles;
+
+    float planes[6][4];
+    FrustumPlanes(frame.viewProj, planes);
+    const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+    struct Candidate {
+        const Scene::Gpu::ShadowCaster *caster;
+        float range, priority;
+    };
+    std::vector<Candidate> candidates;
+    for (const Scene::Gpu::ShadowCaster &c : gpu.shadowCasters) {
+        const float range = std::sqrt(c.rangeIntensity / cutoff) + c.extent;
+        bool inView = range > 0.0f;
+        for (const auto &p : planes) {
+            inView = inView && p[0] * c.position[0] + p[1] * c.position[1] + p[2] * c.position[2] + p[3] >= -range;
+        }
+        if (inView) {
+            const Vec3 d = Vec3{c.position[0], c.position[1], c.position[2]} - eye;
+            candidates.push_back({&c, range, c.rangeIntensity / std::max(Dot(d, d), 1e-12f)});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(),
+              [](const Candidate &a, const Candidate &b) { return a.priority > b.priority; });
+
+    constexpr uint32_t perRow = kShadowAtlasSize / kShadowTileSize, capacity = perRow * perRow;
+    constexpr float tileUv = float(kShadowTileSize) / float(kShadowAtlasSize);
+    const Vec3 cube[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+    for (const Candidate &cand : candidates) {
+        const Scene::Gpu::ShadowCaster &c = *cand.caster;
+        const bool spot = c.coneAngle <= kSpotShadowCone;
+        if (tiles.size() + (spot ? 1 : 6) > capacity) {
+            continue;
+        }
+        firstTile[c.light] = uint32_t(tiles.size());
+        const Vec3 position{c.position[0], c.position[1], c.position[2]};
+        const float n = std::max(c.radius * 1.05f, cand.range * 1e-4f), f = std::max(cand.range, n * 2.0f);
+        // A few texels of margin: PCF near a tile's (or cube face's) edge
+        // must not read the neighbour.
+        const float margin = 1.0f + 6.0f / float(kShadowTileSize);
+        const float tanHalf = (spot ? std::tan(c.coneAngle) : 1.0f) * margin;
+        auto add = [&](Vec3 direction) {
+            ShadowTile t{};
+            const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, n, f);
+            std::memcpy(t.viewProj, viewProj.m, sizeof(t.viewProj));
+            const uint32_t k = uint32_t(tiles.size());
+            t.rect[0] = float(k % perRow) * tileUv;
+            t.rect[1] = float(k / perRow) * tileUv;
+            t.rect[2] = t.rect[3] = tileUv;
+            t.params[0] = 2.0f * tanHalf / float(kShadowTileSize);
+            t.params[1] = n;
+            t.params[2] = f;
+            t.params[3] = c.size;
+            tiles.push_back(t);
+        };
+        if (spot) {
+            add({c.axis[0], c.axis[1], c.axis[2]});
+        } else {
+            for (const Vec3 &d : cube) {
+                add(d);  // same face order as LocalShadow() in mesh.frag
+            }
+        }
+    }
+    _dev.Reserve(_shadowTiles, std::max<size_t>(tiles.size(), 1) * sizeof(ShadowTile),
+                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(tiles.begin(), tiles.end(), static_cast<ShadowTile *>(_shadowTiles.mapped));
+    return tiles;
+}
+
+// All tiles in one rendering pass over the atlas, each through its own
+// viewport. Without tiles the atlas is only transitioned for its descriptor.
+void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles)
+{
+    const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
+    if (tiles.empty()) {
+        ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        return;
+    }
+    constexpr VkPipelineStageFlags2 kTests =
+        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    ImageBarrier(_cmd, _shadowAtlas.image, range, VK_PIPELINE_STAGE_2_NONE, 0,
+                 kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    att.imageView = _shadowAtlas.view;
+    att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.clearValue.depthStencil.depth = 1.0f;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {kShadowAtlasSize, kShadowAtlasSize}};
+    ri.layerCount = 1;
+    ri.pDepthAttachment = &att;
+    vkCmdBeginRendering(_cmd, &ri);
+    // GTAO bound its own set; the shadow pass needs the scene's.
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+    vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+    vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
+    const VkDeviceSize vertexOffset = 0;
+    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+    for (const ShadowTile &t : tiles) {
+        const float x = t.rect[0] * kShadowAtlasSize, y = t.rect[1] * kShadowAtlasSize;
+        const VkViewport vp{x, y, float(kShadowTileSize), float(kShadowTileSize), 0, 1};
+        const VkRect2D scissor{{int32_t(x), int32_t(y)}, {kShadowTileSize, kShadowTileSize}};
+        vkCmdSetViewport(_cmd, 0, 1, &vp);
+        vkCmdSetScissor(_cmd, 0, 1, &scissor);
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, t.viewProj);
+        vkCmdDrawIndexedIndirect(_cmd, gpu.shadowCommands, 0, gpu.drawCount, sizeof(VkDrawIndexedIndirectCommand));
+    }
+    vkCmdEndRendering(_cmd);
+    ImageBarrier(_cmd, _shadowAtlas.image, range, kTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 bool Renderer::IsConverged() const
 {
     return (!_adapting || _post.ExposureConverged()) && _taaConverged;
@@ -735,9 +895,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool shadows = gpu.drawCount > 0 && gpu.instanceCapacity > 0 && _FitCascades(gpu, frame, &fd);
     fd.counts[0] = gpu.lightCount;
     fd.localLights[0] = gpu.localLightCount;
+    fd.localLights[1] = sample;
     if (gpu.localLightCount > 0) {
         _FitClusters(gpu, frame, &fd);
     }
+    const std::vector<ShadowTile> shadowTiles = _PlanLocalShadows(gpu, frame, fd.clusters[3]);
     fd.counts[1] = shadows ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
     fd.counts[3] = gpu.environmentLatlong;
@@ -917,6 +1079,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     } else {
         _gtao.Clear(_cmd);
     }
+
+    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>());
 
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {

@@ -29,6 +29,28 @@ layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;  // GTAO, 1 = 
 layout(set = 0, binding = 12) uniform sampler2D previousColor;     // last frame's HDR result, premultiplied
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;        // prepass depth, window [0, 1]
 
+// Local lights' shadows (Renderer::_PlanLocalShadows): per light its first
+// atlas tile; spots up to kSpotShadowCone have one, other lights six cube
+// faces along +X, -X, +Y, -Y, +Z, -Z.
+const float kSpotShadowCone = 1.3962634;
+struct ShadowTile {
+    mat4 viewProj;
+    vec4 rect;    // atlas uv offset, uv scale
+    vec4 params;  // x: shadow texel size per unit of distance from the light, y/z: near/far, w: light size
+};
+layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
+layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
+layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
+layout(set = 0, binding = 20) uniform sampler2D shadowAtlasDepth;  // same atlas, raw depths
+
+const vec2 kPoisson[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870),
+    vec2(0.34495938, 0.29387760), vec2(-0.91588581, 0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379), vec2(0.44323325, -0.97511554),
+    vec2(0.53742981, -0.47373420), vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+    vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367),
+    vec2(0.14383161, -0.14100790));
+
 layout(location = 0) in vec3 inWorldPos;
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUv;
@@ -109,15 +131,94 @@ float SphereIlluminance(float cosTheta, float sinSigmaSqr)
                atan(sinThetaSqrtY / max(x, 1e-8)), 0.0);
 }
 
+// Distance along the tile's axis from window depth (GL perspective).
+float ShadowDistance(float depth, float n, float f)
+{
+    return 2.0 * f * n / ((f + n) - (depth * 2.0 - 1.0) * (f - n));
+}
+
+// Shadow of a sphere/rect/disk light at p, normal offset as for the
+// cascades. Points get 3x3 PCF; lights with a size get contact-hardening
+// soft shadows (PCSS, Fernando 2005): the average depth of the blockers
+// around the receiver sets the penumbra width by similar triangles, then
+// Poisson PCF over it, rotated per pixel and frame for TAA to average.
+// ponytail: blockers are searched assuming none closer than a quarter of
+// the way to the receiver, and kernels are clamped to 24 texels and to the
+// tile (cube face seams can show under very soft shadows).
+float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
+{
+    uint tile = lightShadow[index];
+    if (tile == kNone) {
+        return 1.0;
+    }
+    vec3 fromLight = p - light.position.xyz;
+    if (light.shaping.y > kSpotShadowCone) {
+        vec3 a = abs(fromLight);
+        tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
+              : a.y >= a.z               ? (fromLight.y > 0.0 ? 2u : 3u)
+                                         : (fromLight.z > 0.0 ? 4u : 5u);
+    }
+    ShadowTile t = shadowTiles[tile];
+    float dist = length(fromLight);
+    float texel = t.params.x * dist;
+    vec3 l = -fromLight / max(dist, 1e-8);
+    float NoL = clamp(dot(ng, l), 0.0, 1.0);
+    vec4 clip = t.viewProj * vec4(p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 uv = t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw;
+    float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
+    float atlasSize = float(textureSize(shadowAtlas, 0).x);
+    vec2 lo = t.rect.xy + 0.5 / atlasSize, hi = t.rect.xy + t.rect.zw - 0.5 / atlasSize;
+    float size = t.params.w;
+    if (size <= 0.0) {
+        float sum = 0.0;
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                sum += texture(shadowAtlas, vec3(clamp(uv + vec2(x, y) / atlasSize, lo, hi), ref));
+            }
+        }
+        return sum / 9.0;
+    }
+
+    float uvPerUnit = 1.0 / (t.params.x * atlasSize);  // atlas uv per unit of the plane at distance 1
+    float receiver = clip.w;                           // distance along the tile's axis
+    float maxUv = 24.0 / atlasSize;
+    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
+                                                           vec2(0.06711056, 0.00583715))));
+    mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+
+    float searchUv = min(size * 3.0 / receiver * uvPerUnit, maxUv);
+    float blockers = 0.0, count = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        vec2 s = clamp(uv + rotation * kPoisson[i] * searchUv, lo, hi);
+        float d = texelFetch(shadowAtlasDepth, ivec2(s * atlasSize), 0).r;
+        if (d < ref) {
+            blockers += d;
+            count += 1.0;
+        }
+    }
+    if (count == 0.0) {
+        return 1.0;
+    }
+    float blocker = ShadowDistance(blockers / count, t.params.y, t.params.z);
+    float filterUv = clamp(size * (1.0 / blocker - 1.0 / receiver) * uvPerUnit, 1.0 / atlasSize, maxUv);
+    float sum = 0.0;
+    for (int i = 0; i < 16; ++i) {
+        sum += texture(shadowAtlas, vec3(clamp(uv + rotation * kPoisson[i] * filterUv, lo, hi), ref));
+    }
+    return sum / 16.0;
+}
+
 // Sphere, rect or disk light (UsdLux semantics as in hdEmbree: cone and
 // focus shaping around the emission axis; rects and disks emit from their
 // -Z side). Diffuse: Frostbite's horizon-clipped sphere/disk illuminance;
 // for rects the exact polygon form factor vector with Heitz's horizon
 // approximation.
 // Specular: Karis' representative point with (a / a')^2 normalization.
-vec3 LocalLight(Light light, vec3 p, vec3 n, vec3 v, vec3 diffuseColor, vec3 f0, float a,
+vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
                 float NoV, vec3 energyCompensation)
 {
+    Light light = lights[index];
     vec3 toLight = light.position.xyz - p;
     float d = length(toLight);
     float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
@@ -188,7 +289,7 @@ vec3 LocalLight(Light light, vec3 p, vec3 n, vec3 v, vec3 diffuseColor, vec3 f0,
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
-    return radiance * (diffuse + specular);
+    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
 }
 
 // Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
@@ -404,13 +505,12 @@ void main()
     }
 
     // Sphere and rect lights from this pixel's cluster.
-    // ponytail: unshadowed; spot/point shadows (atlas) come later.
     if (frame.localLights.x > 0u) {
         float viewDepth = dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz);
         uint base = ClusterIndex(gl_FragCoord.xy, viewDepth) * (kMaxClusterLights + 1u);
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
-            color += LocalLight(lights[clusterLights[base + 1u + k]], inWorldPos, n, v, diffuseColor, f0,
+            color += LocalLight(clusterLights[base + 1u + k], inWorldPos, n, ng, v, diffuseColor, f0,
                                 a, NoV, energyCompensation);
         }
     }

@@ -123,6 +123,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         *dirtyBits = Clean;
         return;
     }
+    light.castShadows = param(HdLightTokens->shadowEnable, true);
 
     Copy(xf.Transform(GfVec3d(0.0)), light.position);
     Copy(xf.TransformDir(GfVec3d(0, 0, -1)).GetNormalized(), light.direction);

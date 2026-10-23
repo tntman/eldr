@@ -462,6 +462,58 @@ int main()
         }
 
         {
+            // Local light shadows: light at (-0.6, 0, 0), a small occluder at
+            // z = 0.25 around x = -0.3, the wall at z = 0.5. The shadow lands
+            // around x = 0, where the camera sees the wall past the occluder.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            for (const float cone : {45.0f, 180.0f}) {  // one spot tile, then cube faces
+                vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, 0.02f, 400.0f);
+                const float len = std::sqrt(0.61f);
+                light->direction[0] = 0.6f / len;
+                light->direction[1] = 0;
+                light->direction[2] = 0.5f / len;
+                light->coneAngle = cone;
+                light->castShadows = true;
+                scene.Commit();
+                const Image shadowed = Render(renderer, scene);
+                light->castShadows = false;
+                scene.Commit();
+                const Image open = Render(renderer, scene);
+                Expect(shadowed.At(32, 32, 0) < 0.2f * shadowed.At(41, 32, 0),
+                       cone < 90 ? "spot light shadow (atlas tile)" : "point light shadow (cube faces)");
+                Expect(open.At(32, 32, 0) > 0.5f * open.At(41, 32, 0) &&
+                           std::abs(open.At(41, 32, 0) - shadowed.At(41, 32, 0)) < 0.01f * open.At(41, 32, 0),
+                       "outside the shadow, lighting is unchanged");
+                scene.RemoveLight(light);
+            }
+
+            // A big sphere light (same power) softens the shadow's edges:
+            // many more partly lit pixels along the row than from a point.
+            auto penumbra = [&](float radius) {
+                vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, radius, 0.16f / (radius * radius));
+                light->point = radius < 0.05f;
+                light->castShadows = true;
+                scene.Commit();
+                const Image img = Render(renderer, scene);
+                const float open = img.At(41, 32, 0);
+                int partial = 0;
+                for (int x = 22; x < 42; ++x) {
+                    const float v = img.At(x, 32, 0) / open;
+                    partial += v > 0.1f && v < 0.9f;
+                }
+                scene.RemoveLight(light);
+                return partial;
+            };
+            const int hard = penumbra(0.02f), soft = penumbra(0.15f);
+            Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
+        }
+
+        {
             // Shadow: occluder at z = -0.5 in front of a ground quad at z = 0.5,
             // light from the camera side tilted towards +x, so the shadow lands
             // one unit to the left (-x) of the occluder.

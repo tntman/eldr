@@ -121,7 +121,7 @@ struct Light {
     float diffuse = 1.0f;                // UsdLux diffuse/specular multipliers
     float specular = 1.0f;
     bool visible = true;
-    bool castShadows = false;            // distant only: the first visible caster gets the CSM
+    bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
 
 private:
     friend class Scene;
@@ -229,6 +229,19 @@ public:
 
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
+        // Sphere/rect/disk lights that cast shadows; the renderer gives the
+        // ones that matter most this frame tiles in its shadow atlas.
+        struct ShadowCaster {
+            uint32_t light;          // index into lights
+            float position[3];
+            float axis[3];           // emission axis
+            float coneAngle;         // radians (UsdLux cone:angle; pi = no cone)
+            float rangeIntensity;    // range = sqrt(rangeIntensity / cutoff) + extent, as LightRange()
+            float extent;
+            float radius;            // sphere radius: the shadow near plane stays outside it
+            float size;              // emitter radius for soft shadows (0: point, hard)
+        };
+        std::vector<ShadowCaster> shadowCasters;
         bool hasBounds = false;
         float boundsMin[3] = {}, boundsMax[3] = {};  // world space, all instances
 

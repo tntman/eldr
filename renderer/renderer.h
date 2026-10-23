@@ -45,6 +45,8 @@ public:
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr uint32_t kCascades = 4;
     static constexpr uint32_t kShadowSize = 2048;
+    // Shadow atlas for sphere/rect/disk lights, in square tiles.
+    static constexpr uint32_t kShadowAtlasSize = 4096, kShadowTileSize = 512;
 
     explicit Renderer(Device &device);
     ~Renderer();
@@ -69,6 +71,9 @@ private:
     void _UpdateDescriptors(const Scene::Gpu &gpu);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
+    struct ShadowTile;
+    std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
+    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
 
     Device &_dev;
     Gtao _gtao;
@@ -106,6 +111,8 @@ private:
     VkFence _fence = VK_NULL_HANDLE;
     Image _color, _primId, _instanceId, _depth;
     Image _shadowMap;                           // kCascades-layer array view
+    Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
+    Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome
