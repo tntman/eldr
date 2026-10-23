@@ -21,6 +21,9 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
     uvec4 features;      // x: kFeature* flags, y: SSR steps, z: soft shadow samples
+    // Shading styles (brdf.glsl): x: kStyle* flags, y: toon bands for every
+    // material (0: only materials with their own).
+    uvec4 styles;
     // Translucency (transparency.glsl): x: refraction blur taps, y:
     // refraction background mip levels, z: 1 / distance of the nearest
     // translucent mesh, w: OIT depth weight exponent.

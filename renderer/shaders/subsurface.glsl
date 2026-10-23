@@ -25,6 +25,18 @@ void SubsurfaceBegin(inout vec3 baseColor, inout vec3 emissive, inout float meta
     }
 }
 
+// After PrepareLayers (brdf.glsl): the subsurface pass keeps what a coat
+// and sheen take from the diffuse light, but none of their own reflection.
+void SubsurfaceLayers()
+{
+#ifdef LAYERS
+    if (kShadingPass == 2u) {
+        layers.coat = 0.0;
+        layers.sheen = vec3(0.0);
+    }
+#endif
+}
+
 // Light from the shadow-casting sun through thin parts (ears, leaves) to
 // the side facing away from it: the distance it travelled inside, from
 // where the shadow map first saw the surface, is bracketed by comparing at

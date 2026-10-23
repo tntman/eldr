@@ -1,0 +1,29 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+#define RAY_TRACING
+#include "frame.glsl"
+#include "scene.glsl"
+#include "material.glsl"
+#include "rt.glsl"
+
+// Cutout materials (only their BLASes are not opaque): rays pass where
+// the opacity is under the threshold, as the alpha-tested passes draw them.
+hitAttributeEXT vec2 barycentrics;
+
+void main()
+{
+    uint slot = gl_InstanceCustomIndexEXT;
+    uint material = draws[slot].material;
+    if (material == kNoMaterial) {
+        return;
+    }
+    uint triangle = uint(gl_PrimitiveID);
+    vec3 b = vec3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
+    vec2 uv = RtUv(RtVertex(slot, triangle, 0u)) * b.x + RtUv(RtVertex(slot, triangle, 1u)) * b.y +
+              RtUv(RtVertex(slot, triangle, 2u)) * b.z;
+    if (!Present(materials[material], uv)) {  // finest mip: no ray cone here
+        ignoreIntersectionEXT;
+    }
+}

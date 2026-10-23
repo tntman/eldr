@@ -46,8 +46,8 @@ struct DrawInfo {
     uint motion;           // first instance's rows in motionRows, kFreeSlot: didn't move
     uint primvars;         // its material program's primvar slots (program.glsl), kFreeSlot: none
     uint primvarVertices;  // its first vec4 of vertex-rate primvars, kFreeSlot: none
+    uint hair;             // 1: shaded as hair (brdf.glsl)
     uint holdout;          // 1: a holdout (transparency.glsl)
-    uint pad0, pad1, pad2;
 };
 
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).

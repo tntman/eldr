@@ -7,13 +7,16 @@
 namespace vkr {
 
 // HDR scene -> display: histogram auto-exposure with temporal adaptation,
-// bloom (13-tap down / tent up mip chain) and ACES tonemapping.
+// bloom (13-tap down / tent up mip chain) and tonemapping (ACES, AgX or none).
 class PostProcess {
 public:
     struct Settings {
         bool autoExposure = true;
         float exposureCompensation = 0.0f;  // EV, also the fixed exposure without auto
         float bloomIntensity = 0.04f;       // 0 disables bloom
+        // AgX tonemapping: the curve from scene to display (shaders/tonemap.frag).
+        enum class Tonemapper { Aces, Agx, AgxPunchy, None };  // None: exposed linear, unclamped
+        Tonemapper tonemapper = Tonemapper::Aces;
     };
 
     explicit PostProcess(Device &device);
@@ -33,6 +36,7 @@ public:
                 const float background[4]);
 
     VkImage Output() const { return _output.image; }
+    VkImageView OutputView() const { return _output.view; }
 
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;

@@ -366,9 +366,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
 
     // Sprims sync before rprims, so the material already exists here.
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
+        SetMaterialId(sceneDelegate->GetMaterialId(id));  // Cryptomatte's material ids
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(
-                HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
+                HdPrimTypeTokens->material, GetMaterialId()));
         m.material = material ? material->Get() : nullptr;
     }
     _SyncSubsets(sceneDelegate);

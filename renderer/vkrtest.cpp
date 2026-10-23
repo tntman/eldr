@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <tuple>
 #include <vector>
 
 static int failures = 0;
@@ -1146,6 +1147,215 @@ int main()
         }
 
         {
+            // Emissive surfaces as lights: a small bright emitter (black
+            // otherwise) at z = 0, x = -0.6, lights the white wall at z = 0.5
+            // as a sphere light of its power, and a small occluder at
+            // z = 0.25, x = -0.3 shadows it, as in the local light test.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddEmitter(scene, -0.62f, -0.02f, -0.58f, 0.02f, 0, 2000.0f);
+            scene.Commit();
+            const Image lit = Render(renderer, scene);
+            scene.SetEmissiveLights(false, 4.0f);
+            scene.Commit();
+            const Image off = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 5000.0f);
+            scene.Commit();
+            const Image dim = Render(renderer, scene);
+            scene.SetEmissiveLights(true, 4.0f);
+            scene.Commit();
+            Expect(lit.At(41, 32, 0) > 0.05f && off.At(41, 32, 0) == 0.0f && dim.At(41, 32, 0) == 0.0f,
+                   "a bright emitter lights the wall; off or under the threshold it doesn't");
+            Expect(lit.At(32, 32, 0) < 0.2f * lit.At(41, 32, 0), "the emitter's light casts shadows");
+            if (device.rayTracing) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, scene, frame);
+                Expect(traced.At(32, 32, 0) < 0.2f * traced.At(41, 32, 0) &&
+                           std::abs(traced.At(41, 32, 0) - lit.At(41, 32, 0)) < 0.05f * lit.At(41, 32, 0),
+                       "the emitter's light has traced shadows, and doesn't shadow itself");
+            }
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced sun shadow: the cascade test's scene with a hard sun
+            // (angle 0), traced instead of the cascades.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            sun->angle = 0;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image traced = Render(renderer, scene, frame);
+            const vkr::Renderer::Stats stats = renderer.GetStats();
+            const Image mapped = Render(renderer, scene);
+            const float lit = mapped.At(51, 32, 0);
+            int differ = 0;
+            for (int x = 0; x < 64; ++x) {
+                differ += std::abs(traced.At(x, 32, 0) - mapped.At(x, 32, 0)) > 0.1f * lit;
+            }
+            Expect(traced.At(3, 32, 0) < 0.01f * lit && std::abs(traced.At(51, 32, 0) - lit) < 0.01f * lit &&
+                       differ <= 2,
+                   "ray-traced sun shadow matches the cascades'");
+            Expect(stats.accelerationStructureBytes > 0 &&
+                       std::any_of(stats.passMs.begin(), stats.passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "rayTracing") == 0; }),
+                   "ray tracing pass timed, its memory counted");
+
+            // A cutout with nothing left casts no traced shadow (any-hit).
+            auto cutout = std::make_shared<vkr::Material>();
+            cutout->opacity = 0;
+            cutout->opacityThreshold = 0.5f;
+            occluder->material = cutout;
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(3, 32, 0) > 0.9f * lit, "traced shadows skip cut-out surfaces");
+            occluder->material = nullptr;
+            scene.Commit();
+
+            // The sun's angle softens the traced shadow: TAA-free frames of
+            // one ray each differ, their average has a penumbra.
+            sun->angle = 20;
+            scene.Commit();
+            frame.rtShadowSamples = 16;
+            const Image soft = Render(renderer, scene, frame);
+            int partial = 0;
+            for (int x = 0; x < 32; ++x) {
+                const float v = soft.At(x, 32, 0) / lit;
+                partial += v > 0.05f && v < 0.95f;
+            }
+            Expect(partial >= 3, "the sun's angle gives traced shadows a penumbra");
+
+            // Off again: no tracing, no acceleration structures.
+            Render(renderer, scene);
+            Expect(renderer.GetStats().accelerationStructureBytes == 0, "ray tracing off frees its structures");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced local light shadow (the atlas test's scene).
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddSphereLight(scene, -0.6f, 0, 0, 0.02f, 400.0f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image img = Render(renderer, scene, frame);
+            Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced reflections: the SSR test's mirror over an emitter,
+            // without post (so no SSR): only traced rays see the emitter.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, 0, 0, 0, 0, 0);
+            mirror->points = {-0.8f, 0, 0, 0.8f, 0, 0, 0.8f, 0.8f, -0.8f,
+                              -0.8f, 0, 0, 0.8f, 0.8f, -0.8f, -0.8f, 0.8f, -0.8f};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            vkr::Mesh *emitter = AddEmitter(scene, 0, 0, 0, 0, 0, 1.0f);
+            emitter->points = {-0.8f, -0.8f, -0.6f, 0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f,
+                               -0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f, -0.8f, -0.1f, 0.1f};
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float off = Render(renderer, scene, frame).At(32, 41, 1);
+            frame.rtReflections = true;
+            const float on = Render(renderer, scene, frame).At(32, 41, 1);
+            Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
+        }
+
+        if (device.rayTracing) {
+            // Global illumination: a white wall at z = 0.5 and, edge-on to the
+            // camera in the x = 0 plane, a red panel whose -x side the sun
+            // lights head-on; the sun only grazes the wall. Bounced light
+            // tints the wall left of the panel red.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto red = std::make_shared<vkr::Material>();
+            red->baseColor[0] = 0.9f;
+            red->baseColor[1] = red->baseColor[2] = 0.0f;
+            red->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = scene.AddMesh();
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, -0.5f, 0, 0.6f, 0.45f,
+                             0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, -0.6f, 0.45f};
+            panel->material = red;
+            AddLight(scene, -1, 0, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image direct = Render(renderer, scene, frame);
+            frame.gi = true;
+            frame.giProbes = 8;
+            Image img, last;
+            int frames = 0;
+            do {
+                last = img;
+                img = Render(renderer, scene, frame);
+                ++frames;
+            } while (!renderer.IsConverged() && frames < 200);
+            const float r = img.At(28, 32, 0), g = img.At(28, 32, 1);
+            Expect(std::abs(direct.At(28, 32, 0) - direct.At(28, 32, 1)) < 1e-3f && r > 1.2f * g && g > 0.0f,
+                   "GI bounces the red panel's light onto the white wall");
+            Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
+            Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+            Render(renderer, scene);
+            Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
+        }
+
+        if (device.rayTracing) {
+            // No light through walls: a closed room (thin walls without
+            // normals, its front one behind the camera's near plane) with
+            // the sun outside; its back wall only sees the room.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            auto wall = [&](std::array<float, 12> c) {
+                vkr::Mesh *m = scene.AddMesh();
+                m->points = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+                             c[0], c[1], c[2], c[6], c[7], c[8], c[9], c[10], c[11]};
+                m->material = white;
+            };
+            wall({-1, -1, 0.5f, 1, -1, 0.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // back
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, 1, -1.5f, -1, 1, -1.5f});        // front
+            wall({-1, -1, -1.5f, -1, -1, 0.5f, -1, 1, 0.5f, -1, 1, -1.5f});        // left
+            wall({1, -1, -1.5f, 1, -1, 0.5f, 1, 1, 0.5f, 1, 1, -1.5f});            // right
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, -1, 0.5f, -1, -1, 0.5f});        // floor
+            wall({-1, 1, -1.5f, 1, 1, -1.5f, 1, 1, 0.5f, -1, 1, 0.5f});            // ceiling
+            AddLight(scene, -1, 0.3f, -0.2f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.gi = true;
+            Image img;
+            for (int i = 0; i < 40; ++i) {
+                img = Render(renderer, scene, frame);
+            }
+            float brightest = 0;
+            for (int y = 4; y < 60; y += 4) {
+                for (int x = 4; x < 60; x += 4) {
+                    brightest = std::max(brightest, img.At(x, y, 0));
+                }
+            }
+            Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
+        } else {
+            std::puts("no ray tracing on this GPU: its tests skipped");
+        }
+
+        {
             // Wrap modes: emissive rows with st (0..2, 0..1) over a 2x1
             // texture (left texel red, right blue), one row per mode, the
             // last a program's image; u 1.27 (pixel 40) and 1.77 (pixel 56)
@@ -1241,6 +1451,378 @@ int main()
             const Image off = Render(renderer, scene, frame);
             Expect(near(off, 40, 16, 0.25f, 0.25f, 0.25f) && near(off, 56, 4, 0.25f, 0.25f, 0.25f),
                    "Frame::proceduralTextures off: noise reads 0 (its pivot)");
+        }
+
+        {
+            // AgX tonemapping: auto-exposure puts a uniform screen at middle
+            // gray, which each curve maps to its own value (none: as is).
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0, 1.0f);
+            scene.Commit();
+            using T = vkr::PostProcess::Settings::Tonemapper;
+            for (auto [tonemapper, expected, what] :
+                 {std::tuple{T::Aces, 0.106f, "tonemap: ACES(0.18) = 0.106"},
+                  std::tuple{T::Agx, 0.214f, "tonemap: AgX(0.18) = 0.214"},
+                  std::tuple{T::AgxPunchy, 0.097f, "tonemap: AgX punchy(0.18) = 0.097"},
+                  std::tuple{T::None, 0.18f, "tonemap: none(0.18) = 0.18"}}) {
+                vkr::Renderer post(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.taa = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = tonemapper;
+                Expect(std::abs(Render(post, scene, frame).At(32, 32, 1) - expected) < 0.01f, what);
+            }
+        }
+
+        {
+            // Lens distortion: barrel (k1 > 0) bows a vertical strip right
+            // of the centre into a ")", and ids and depth move with the colour
+            // (row 55 still looks inside the unwidened view).
+            vkr::Scene scene(&device);
+            vkr::Mesh *strip = AddEmitter(scene, 0.4f, -1, 0.6f, 1, 0, 1.0f);
+            strip->primId = 7;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.distortion.k1 = 0.5f;
+            const Image warped = Render(renderer, scene, frame);
+            frame.lensDistortion = false;
+            const Image straight = Render(renderer, scene, frame);
+            auto centre = [](const Image &img, int y) {
+                float sum = 0, count = 0;
+                for (int x = 0; x < 64; ++x) {
+                    const bool lit = img.At(x, y, 0) > 0.5f;
+                    sum += lit ? float(x) : 0.0f;
+                    count += lit ? 1.0f : 0.0f;
+                }
+                return count > 0 ? sum / count : -1.0f;
+            };
+            Expect(std::abs(centre(straight, 32) - 47.5f) < 0.6f && std::abs(centre(straight, 63) - 47.5f) < 0.6f,
+                   "distortion off: the strip stays straight");
+            Expect(std::abs(centre(warped, 32) - 46.0f) < 1.0f && std::abs(centre(warped, 55) - 43.5f) < 1.0f,
+                   "barrel distortion bows the strip");
+            Expect(warped.Prim(46, 32) == 7 && warped.Prim(51, 32) == -1 && warped.depth[32 * 64 + 51] == 1.0f &&
+                       std::abs(warped.depth[32 * 64 + 46] - 0.5f) < 1e-3f,
+                   "ids and depth are warped with the colour");
+
+            // The warp's reach: a corner of k1 = 0.1 looks 1.2 times as far
+            // out; a fisheye's 45 degree half view reaches tan(1 rad).
+            vkr::LensDistortion::Params p;
+            p.k1 = 0.1f;
+            Expect(std::abs(vkr::LensDistortion::Overscan(p, 1.0f) - 1.2f) < 1e-3f, "overscan of a barrel lens");
+            p = {};
+            p.fisheye = true;
+            const float edge[2] = {1, 0};
+            float source[2];
+            Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
+                   "equidistant fisheye");
+        }
+
+        {
+            // Blend shape motion: a skinned quad (one joint at rest) whose
+            // blend shape lifts its top corners by 0.4. At row 40 (y = 0.27)
+            // the surface rose 0.22 between weight 0 and 1 (motion vector
+            // -0.11 uv); back at weight 0 it sank 0.31 (+0.15).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+            quad->jointCount = 1;
+            quad->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+            quad->blendOffsets = {0, 0.4f, 0, 0};
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                quad->jointIndices.insert(quad->jointIndices.end(), {0, 0, 0, 0});
+                quad->jointWeights.insert(quad->jointWeights.end(), {1, 0, 0, 0});
+                quad->blendRanges.insert(quad->blendRanges.end(), {0u, quad->points[c * 3 + 1] > 0 ? 1u : 0u});
+            }
+            quad->blendShapeCount = 1;
+            quad->blendWeights = {0.0f};
+            scene.Commit();
+            Render(renderer, scene);
+            auto weight = [&](float w, bool motion) {
+                quad->blendWeights = {w};
+                quad->jointsDirty = true;
+                scene.Commit();
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.blendShapeMotion = motion;
+                return Render(renderer, scene, frame).Vel(32, 40, 1);
+            };
+            Expect(std::abs(weight(1.0f, true) + 0.11f) < 0.005f, "blend shape motion: rising");
+            Expect(std::abs(weight(0.0f, true) - 0.153f) < 0.005f, "blend shape motion: sinking");
+            Expect(std::abs(weight(1.0f, false)) < 1e-4f, "Frame::blendShapeMotion off: no blend shape motion");
+        }
+
+        {
+            // Extra AOVs and Cryptomatte: a quad at z = 0.5 facing the camera
+            // (identity view), uv across it; nothing around it.
+            Expect(vkr::CryptomatteHash("The quick brown fox jumps over the lazy dog") == 0x2e4ff723u &&
+                       vkr::CryptomatteHash("") == 0x00800000u,
+                   "Cryptomatte ids: MurmurHash3, no denormal floats");
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f);
+            quad->primId = 3;
+            auto material = std::make_shared<vkr::Material>();
+            const float base[3] = {0.2f, 0.4f, 0.6f}, emissive[3] = {1.0f, 0.5f, 0.25f};
+            std::copy(base, base + 3, material->baseColor);
+            std::copy(emissive, emissive + 3, material->emissive);
+            quad->material = material;
+            scene.Commit();
+            std::vector<std::vector<float>> aovs(vkr::Aovs::kCount);
+            vkr::Renderer::Targets out;
+            for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
+                aovs[k].assign(64 * 64 * vkr::Aovs::Components(vkr::Aovs::Kind(k)), -7.0f);
+                out.aovs[k] = aovs[k].data();
+            }
+            const uint32_t ids[8] = {0, 0, 0, 0, 0, 0, vkr::CryptomatteHash("/quad"), vkr::CryptomatteHash("/mat")};
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.cryptomatte = ids;
+            frame.cryptomatteIds = 4;
+            renderer.Render(scene, frame, out);
+            auto at = [&](vkr::Aovs::Kind k, int x, int y, int c) {
+                return aovs[k][(y * 64 + x) * vkr::Aovs::Components(k) + c];
+            };
+            auto near = [](float a, float b) { return std::abs(a - b) < 2e-3f; };
+            using A = vkr::Aovs;
+            Expect(near(at(A::kNormal, 32, 32, 2), -1.0f) && near(at(A::kNormalEye, 32, 32, 2), -1.0f),
+                   "AOV normal and Neye face the camera");
+            Expect(near(at(A::kPositionEye, 32, 32, 2), 0.5f) && near(at(A::kCameraDepth, 32, 32, 0), 0.5f) &&
+                       near(at(A::kPositionEye, 32, 32, 0), 1.0f / 64.0f),
+                   "AOV Peye and cameraDepth");
+            Expect(near(at(A::kSt, 32, 32, 0), 0.5f + 1.0f / 64.0f) && near(at(A::kSt, 32, 32, 1), 0.5f + 1.0f / 64.0f),
+                   "AOV primvars:st");
+            Expect(near(at(A::kAlbedo, 32, 32, 1), 0.4f) && near(at(A::kEmission, 32, 32, 2), 0.25f),
+                   "AOV albedo and emission");
+            float object, matte;
+            std::memcpy(&object, &ids[6], 4);
+            std::memcpy(&matte, &ids[7], 4);
+            Expect(at(A::kCryptoObject, 32, 32, 0) == object && at(A::kCryptoObject, 32, 32, 1) == 1.0f &&
+                       at(A::kCryptoMaterial, 32, 32, 0) == matte && at(A::kCryptoMaterial, 32, 32, 2) == 0.0f,
+                   "Cryptomatte object and material ids at coverage 1");
+            bool empty = true;
+            for (uint32_t k = 0; k < A::kCount; ++k) {
+                for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
+                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                }
+            }
+            Expect(empty, "AOVs are 0 where nothing was drawn");
+        }
+
+        {
+            // Specular workflow: F0 is specularColor. A black quad with F0
+            // (0.5, 0, 0) under the head-on light reflects 12.5 times the
+            // default material's 0.16 (plus multiple scattering) in red and
+            // nothing in green; the setting off falls back to F0 0.04.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->specularWorkflow = true;
+            material->specularColor[0] = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.specularWorkflow = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(on.At(32, 32, 0) > 2.0f && on.At(32, 32, 0) < 2.2f && on.At(32, 32, 1) < 0.001f,
+                   "specular workflow: specularColor is F0");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
+                   "Frame::specularWorkflow off: F0 0.04");
+        }
+
+        {
+            // Clearcoat: a coat as rough as the base (0.5, F0 0.04) over a
+            // black dielectric adds the base's own 0.16 under the head-on
+            // light, minus the few percent it takes from the base; a red
+            // coat colour tints the white diffuse beneath. Under a uniform
+            // dome (white furnace) the coated white surface still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->coat = 1;
+            material->coatRoughness = 0.5f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float coated = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.clearcoat = false;
+            const float bare = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(std::abs(bare - 0.16f) < 0.02f && coated > 1.8f * bare && coated < 2.0f * bare,
+                   "clearcoat adds a second specular lobe");
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->coatColor[1] = material->coatColor[2] = 0.0f;
+            scene.Commit();
+            frame.clearcoat = true;
+            const Image red = Render(renderer, scene, frame);
+            Expect(red.At(32, 32, 0) > 1.0f && red.At(32, 32, 1) < 0.4f, "coat colour tints the base beneath");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->coat = 1;
+            white->coatRoughness = 0.1f;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: coated white dielectric returns 1");
+        }
+
+        {
+            // Sheen: microfibers shine at grazing angles. A strip tilted 80
+            // degrees away from the view, lit from the camera: the Imageworks
+            // lobe (roughness 0.3) adds D * V * cos * pi = 0.81 * 0.8 * 0.17
+            // * pi = 0.35. Under a uniform dome (white furnace) white sheen
+            // over a white diffuse still returns 1.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            const float c = std::cos(80.0f * 3.14159265f / 180.0f), s = std::sin(80.0f * 3.14159265f / 180.0f);
+            vkr::Mesh *strip = AddQuad(scene, 0, 0, 0, 0, 0);
+            strip->points = {-1, -c, -s, 1, -c, -s, 1, c, s, -1, -c, -s, 1, c, s, -1, c, s};
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->sheen = 1;
+            strip->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float on = Render(renderer, scene, frame).At(32, 32, 1);
+            frame.sheen = false;
+            const float off = Render(renderer, scene, frame).At(32, 32, 1);
+            Expect(on - off > 0.3f && on - off < 0.4f, "sheen brightens grazing angles");
+
+            vkr::Scene furnace(&device);
+            furnace.AddDome();
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 0.7f;
+            white->sheen = 1;
+            AddQuad(furnace, -1, -1, 1, 1, 0)->material = white;
+            furnace.Commit();
+            const float v = Render(renderer, furnace).At(32, 32, 0);
+            Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white sheen over white returns 1");
+        }
+
+        {
+            // Thin film: 300 nm of index 1.8 on a black dielectric reflects
+            // (0.095, 0.043, 0.122) head-on (Belcour & Barla's model, worked
+            // out on the CPU), purple instead of the bare 0.04 grey: times
+            // 4 under the head-on light (the default material's 0.16 / 0.04).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->thinFilm = 1;
+            material->thinFilmThickness = 300;
+            material->thinFilmIor = 1.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image on = Render(renderer, scene, frame);
+            frame.thinFilm = false;
+            const Image off = Render(renderer, scene, frame);
+            const float expected[3] = {0.095f * 4, 0.043f * 4, 0.122f * 4};
+            bool close = true;
+            for (int c = 0; c < 3; ++c) {
+                close = close && std::abs(on.At(32, 32, c) / expected[c] - 1.0f) < 0.15f;
+            }
+            Expect(close, "thin film reflects its interference colour");
+            Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 2) - 0.16f) < 0.02f,
+                   "Frame::thinFilm off: the bare base");
+        }
+
+        {
+            // Anisotropy: on a black quad whose u runs along x, a light
+            // tilted towards x shines on the centre far more than one tilted
+            // as much towards y (the highlight stretches along u); a quarter
+            // turn of rotation swaps them. Nearly isotropic, the anisotropic
+            // GGX is the isotropic one.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 0.0f);
+            material->roughness = 0.3f;
+            material->anisotropy = 0.8f;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene).At(32, 32, 1);
+            };
+            Expect(specular(0.4f, 0) > 3 * specular(0, 0.4f), "anisotropic highlight stretches along u");
+            material->anisotropyRotation = 0.25f;
+            Expect(specular(0, 0.4f) > 3 * specular(0.4f, 0), "rotated a quarter turn it stretches along v");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.anisotropicSpecular = false;
+            const float across = specular(0.4f, 0);
+            Expect(Render(renderer, scene, frame).At(32, 32, 1) > 2 * across, "Frame::anisotropicSpecular off: isotropic");
+            material->anisotropy = 1e-3f;
+            const float nearly = specular(0.4f, 0);
+            Expect(std::abs(nearly - Render(renderer, scene, frame).At(32, 32, 1)) < 0.01f * nearly,
+                   "nearly isotropic anisotropic GGX is GGX");
+        }
+
+        {
+            // Toon: with two bands per unit a white quad lit at cos 0.6 and
+            // 0.7 shows the same flat band (both in [0.5, 1), shown at 0.75),
+            // at cos 0.4 the band below (0.25), a third as bright.
+            // Frame::toonBands bands a plain material the same way; toon off
+            // is smooth again.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 1;
+            material->toonBands = 2;
+            AddQuad(scene, -1, -1, 1, 1, 0)->material = material;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto lit = [&](float cosine) {
+                light->direction[0] = std::sqrt(1 - cosine * cosine);
+                light->direction[2] = -cosine;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 0);
+            };
+            auto banded = [&](const char *what) {
+                const float a = lit(0.6f), b = lit(0.7f), c = lit(0.4f);
+                Expect(std::abs(a - b) < 0.01f * a && std::abs(c / a - 1.0f / 3.0f) < 0.05f, what);
+            };
+            banded("toon: flat bands");
+            frame.toon = false;
+            Expect(lit(0.7f) > 1.1f * lit(0.6f), "Frame::toon off: smooth");
+            material->toonBands = 0;
+            frame.toon = true;
+            frame.toonBands = 2;
+            banded("Frame::toonBands: every material in bands");
+        }
+
+        {
+            // Hair: strands along u (x here) light up where the half vector
+            // is across them. A red strip without a material: in green (the
+            // white primary lobe; the diffuse is red) a light tilted 45
+            // degrees towards y shines on the centre far more than one tilted
+            // as much towards x. Without hair shading it is isotropic GGX.
+            vkr::Scene scene(&device);
+            vkr::Light *light = AddLight(scene, 0, 0, -1);
+            vkr::Mesh *strip = AddQuad(scene, -1, -0.2f, 1, 0.2f, 0);
+            strip->color[0] = 1;
+            strip->color[1] = strip->color[2] = 0;
+            strip->hair = true;
+            vkr::Renderer::Frame frame = IdentityFrame();
+            auto specular = [&](float x, float y) {
+                const float len = std::sqrt(x * x + y * y + 1);
+                light->direction[0] = x / len;
+                light->direction[1] = y / len;
+                light->direction[2] = -1 / len;
+                scene.Commit();
+                return Render(renderer, scene, frame).At(32, 32, 1);
+            };
+            Expect(specular(0, 1) > 2 * specular(1, 0), "hair: highlights across the strands");
+            frame.hairShading = false;
+            Expect(std::abs(specular(0, 1) / specular(1, 0) - 1) < 0.05f, "Frame::hairShading off: isotropic");
         }
 
         {

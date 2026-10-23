@@ -1,0 +1,39 @@
+#version 460
+#extension GL_EXT_ray_tracing : require
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+#define RAY_TRACING
+#include "frame.glsl"
+#include "lights.glsl"
+#include "scene.glsl"
+#include "material.glsl"
+#include "rt.glsl"
+#include "gi.glsl"
+#include "rt_shade.glsl"
+
+// Global illumination: rt.giParams.y rays per probe (x: ray, y: probe),
+// each shaded where it lands with direct light and, for further bounces,
+// the probes' last irradiance; misses see the dome. gi_update.comp blends
+// them into the probe atlases. Rays that hit a back face (the probe is in
+// or behind a wall) store a short negative distance and no light. Emitters
+// promoted to lights don't add their emission: their light already does.
+layout(std430, set = 1, binding = 1) writeonly buffer GiRays { vec4 giRays[]; };  // radiance, distance
+
+void main()
+{
+    uint ray = gl_LaunchIDEXT.x, probe = gl_LaunchIDEXT.y, rays = gl_LaunchSizeEXT.x;
+    uvec3 c = uvec3(probe % rt.giCounts.x, (probe / rt.giCounts.x) % rt.giCounts.y,
+                    probe / (rt.giCounts.x * rt.giCounts.y));
+    vec3 origin = rt.giOrigin.xyz + vec3(c) * rt.giOrigin.w;
+    vec3 dir = GiRayDirection(ray, rays);
+    Trace(origin, dir, 2.0 * sqrt(PI / float(rays)));
+    vec4 result;
+    if (hit.t < 0.0) {
+        result = vec4(Dome(dir, 0.5 * float(frame.counts.z)), 1e30);
+    } else if ((hit.flags & kHitBackface) != 0u) {
+        result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
+    } else {
+        result = vec4(ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u), hit.t);
+    }
+    giRays[probe * rays + ray] = result;
+}
