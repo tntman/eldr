@@ -34,27 +34,28 @@ float SrgbToLinear(float c)
 
 Vec3 Texel(const Texture &t, uint32_t x, uint32_t y)
 {
-    const size_t i = size_t(y) * t.width + x;
-    switch (t.format) {
-    case Texture::Format::RGBA8: {
-        const uint8_t *p = &t.pixels[i * 4];
-        return {p[0] / 255.0f, p[1] / 255.0f, p[2] / 255.0f};
+    const uint32_t n = Channels(t.format);
+    const size_t i = (size_t(y) * t.width + x) * n;
+    // Clamp so a stray Inf/NaN texel can't poison every filtered texel.
+    auto clean = [](float v) { return std::isfinite(v) ? std::max(v, 0.0f) : 0.0f; };
+    float c[3] = {};
+    for (uint32_t k = 0; k < std::min(n, 3u); ++k) {
+        const size_t j = i + k;
+        switch (t.format) {
+        case Texture::Format::R8:
+        case Texture::Format::RG8:
+        case Texture::Format::RGBA8:      c[k] = t.pixels[j] / 255.0f; break;
+        case Texture::Format::RGBA8_SRGB: c[k] = SrgbToLinear(t.pixels[j] / 255.0f); break;
+        case Texture::Format::R16:
+        case Texture::Format::RG16:
+        case Texture::Format::RGBA16:
+            c[k] = reinterpret_cast<const uint16_t *>(t.pixels.data())[j] / 65535.0f;
+            break;
+        case Texture::Format::RGBA32F: c[k] = clean(reinterpret_cast<const float *>(t.pixels.data())[j]); break;
+        default: c[k] = clean(HalfToFloat(reinterpret_cast<const uint16_t *>(t.pixels.data())[j])); break;
+        }
     }
-    case Texture::Format::RGBA8_SRGB: {
-        const uint8_t *p = &t.pixels[i * 4];
-        return {SrgbToLinear(p[0] / 255.0f), SrgbToLinear(p[1] / 255.0f), SrgbToLinear(p[2] / 255.0f)};
-    }
-    case Texture::Format::RGBA16F: {
-        const auto *p = reinterpret_cast<const uint16_t *>(t.pixels.data()) + i * 4;
-        return {HalfToFloat(p[0]), HalfToFloat(p[1]), HalfToFloat(p[2])};
-    }
-    default: {
-        const auto *p = reinterpret_cast<const float *>(t.pixels.data()) + i * 4;
-        // Clamp so a stray Inf/NaN texel can't poison every filtered texel.
-        auto clean = [](float v) { return std::isfinite(v) ? std::max(v, 0.0f) : 0.0f; };
-        return {clean(p[0]), clean(p[1]), clean(p[2])};
-    }
-    }
+    return n < 3 ? Vec3{c[0], c[0], c[0]} : Vec3{c[0], c[1], c[2]};  // gray (+ alpha)
 }
 
 // Bilinear latlong lookup; u wraps, v (from the top) clamps. Texture rows are

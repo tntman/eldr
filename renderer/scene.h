@@ -15,8 +15,10 @@ class Scene;
 // Decoded image, rows bottom-up (so USD st (0,0) is the first texel),
 // 4 channels, tightly packed. Its GPU copy is made by Scene::Commit and
 // freed with the texture; drop the last reference only while the GPU is idle.
+// One- and two-channel formats are gray and gray+alpha: sampling spreads
+// the gray to rgb (alpha 1 without one), as UsdUVTexture reads them.
 struct Texture {
-    enum class Format { RGBA8, RGBA8_SRGB, RGBA16F, RGBA32F };
+    enum class Format { R8, RG8, RGBA8, RGBA8_SRGB, R16, RG16, RGBA16, R16F, RG16F, RGBA16F, RGBA32F };
 
     uint32_t width = 0;
     uint32_t height = 0;
@@ -35,6 +37,9 @@ private:
     VkDeviceMemory _memory = VK_NULL_HANDLE;
     VkImageView _view = VK_NULL_HANDLE;
 };
+
+uint32_t Channels(Texture::Format f);
+uint32_t BytesPerChannel(Texture::Format f);
 
 // texel * scale + bias, then one channel (0..3) or all of them (-1).
 // UDIM tiles 1001..1100: tile 1001 + u + 10 v covers uv [u, u+1) x [v, v+1).

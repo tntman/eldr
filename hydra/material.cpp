@@ -2,6 +2,7 @@
 
 #include "scene.h"
 
+#include "pxr/base/gf/half.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
@@ -12,6 +13,7 @@
 #include "pxr/usd/sdf/assetPath.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -75,6 +77,20 @@ void ExpandToRgba(const T *src, size_t texels, int channels, T one, T *dst)
     }
 }
 
+// Gray and gray+alpha stay one and two channels (the texture view spreads
+// the gray), rgb gains an alpha of `one` (no GPU blits rgb formats for mips).
+template <typename T>
+std::vector<uint8_t> Pack(const T *src, size_t texels, int channels, T one)
+{
+    std::vector<uint8_t> out(texels * (channels == 3 ? 4 : channels) * sizeof(T));
+    if (channels == 3) {
+        ExpandToRgba<T>(src, texels, 3, one, reinterpret_cast<T *>(out.data()));
+    } else {
+        std::memcpy(out.data(), src, out.size());
+    }
+    return out;
+}
+
 std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const &colorSpace)
 {
     const HioImage::SourceColorSpace cs =
@@ -116,42 +132,57 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
         return nullptr;
     }
 
+    // Stored as compactly as the GPU samples them: 8 and 16 bit and half stay
+    // as they are, floats become halves unless they hold values past the
+    // half range (bright HDR suns keep their energy). 8-bit sRGB stays RGBA:
+    // one- and two-channel sRGB formats aren't universally supported.
+    using F = vkr::Texture::Format;
     auto tex = std::make_shared<vkr::Texture>();
     tex->width = uint32_t(w);
     tex->height = uint32_t(h);
     const size_t texels = size_t(w) * h;
+    auto byChannels = [&](F one, F two, F four) { return channels == 1 ? one : channels == 2 ? two : four; };
+    std::vector<uint16_t> halves;
+    if (type == HioTypeFloat) {
+        const auto *f = reinterpret_cast<const float *>(src.data());
+        const size_t n = texels * channels;
+        if (std::all_of(f, f + n, [](float v) { return !std::isfinite(v) || std::abs(v) <= 65504.0f; })) {
+            halves.resize(n);
+            for (size_t i = 0; i < n; ++i) {
+                halves[i] = GfHalf(std::isfinite(f[i]) ? f[i] : 0.0f).bits();
+            }
+        }
+    }
     switch (type) {
     case HioTypeUnsignedByte:
     case HioTypeUnsignedByteSRGB:
-        tex->format = (type == HioTypeUnsignedByteSRGB || image->IsColorSpaceSRGB())
-            ? vkr::Texture::Format::RGBA8_SRGB : vkr::Texture::Format::RGBA8;
-        tex->pixels.resize(texels * 4);
-        ExpandToRgba<uint8_t>(src.data(), texels, channels, 255, tex->pixels.data());
+        if (type == HioTypeUnsignedByteSRGB || image->IsColorSpaceSRGB()) {
+            tex->format = F::RGBA8_SRGB;
+            tex->pixels.resize(texels * 4);
+            ExpandToRgba<uint8_t>(src.data(), texels, channels, 255, tex->pixels.data());
+        } else {
+            tex->format = byChannels(F::R8, F::RG8, F::RGBA8);
+            tex->pixels = Pack<uint8_t>(src.data(), texels, channels, 255);
+        }
+        break;
+    case HioTypeUnsignedShort:
+        tex->format = byChannels(F::R16, F::RG16, F::RGBA16);
+        tex->pixels = Pack<uint16_t>(reinterpret_cast<const uint16_t *>(src.data()), texels, channels, 0xFFFF);
         break;
     case HioTypeHalfFloat:
-        tex->format = vkr::Texture::Format::RGBA16F;
-        tex->pixels.resize(texels * 8);
-        ExpandToRgba<uint16_t>(reinterpret_cast<const uint16_t *>(src.data()), texels,
-                               channels, 0x3C00, reinterpret_cast<uint16_t *>(tex->pixels.data()));
+        tex->format = byChannels(F::R16F, F::RG16F, F::RGBA16F);
+        tex->pixels = Pack<uint16_t>(reinterpret_cast<const uint16_t *>(src.data()), texels, channels, 0x3C00);
         break;
-    case HioTypeUnsignedShort: {
-        // 16-bit PNG/TIFF: widen to float rather than add another GPU format.
-        std::vector<float> f(texels * channels);
-        const auto *s = reinterpret_cast<const uint16_t *>(src.data());
-        for (size_t i = 0; i < f.size(); ++i) {
-            f[i] = s[i] / 65535.0f;
-        }
-        tex->format = vkr::Texture::Format::RGBA32F;
-        tex->pixels.resize(texels * 16);
-        ExpandToRgba<float>(f.data(), texels, channels, 1.0f,
-                            reinterpret_cast<float *>(tex->pixels.data()));
-        break;
-    }
     default:  // HioTypeFloat
-        tex->format = vkr::Texture::Format::RGBA32F;
-        tex->pixels.resize(texels * 16);
-        ExpandToRgba<float>(reinterpret_cast<const float *>(src.data()), texels, channels,
-                            1.0f, reinterpret_cast<float *>(tex->pixels.data()));
+        if (!halves.empty()) {
+            tex->format = byChannels(F::R16F, F::RG16F, F::RGBA16F);
+            tex->pixels = Pack<uint16_t>(halves.data(), texels, channels, 0x3C00);
+        } else {
+            tex->format = F::RGBA32F;
+            tex->pixels.resize(texels * 16);
+            ExpandToRgba<float>(reinterpret_cast<const float *>(src.data()), texels, channels, 1.0f,
+                                reinterpret_cast<float *>(tex->pixels.data()));
+        }
         break;
     }
     return tex;

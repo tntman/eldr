@@ -394,6 +394,27 @@ int main()
             scene.Commit();
             const Image cut = Render(renderer, scene);
             Expect(cut.Prim(8, 32) == -1 && cut.Prim(56, 32) == quad->primId, "cutout: no surface below the threshold");
+
+            // Compact formats: gray (+ alpha) textures of each kind read as a
+            // gray rgb of 0.5.
+            material->opacityThreshold = 0;
+            material->opacityTex.texture = nullptr;
+            using F = vkr::Texture::Format;
+            const std::pair<F, std::vector<uint8_t>> grays[] = {
+                {F::R8, {128}}, {F::RG8, {128, 255}}, {F::R16, {0x00, 0x80}}, {F::R16F, {0x00, 0x38}}};
+            for (const auto &[format, bytes] : grays) {
+                auto gray = std::make_shared<vkr::Texture>();
+                gray->width = gray->height = 1;
+                gray->format = format;
+                gray->pixels = bytes;
+                material->baseColorTex.texture = gray;
+                scene.Commit();
+                const Image img = Render(renderer, scene);
+                const float r = img.At(32, 32, 0);
+                Expect(std::abs(r - 0.5f) < 0.05f && std::abs(img.At(32, 32, 1) - r) < 0.01f &&
+                           std::abs(img.At(32, 32, 2) - r) < 0.01f,
+                       "compact gray texture formats read as gray rgb");
+            }
         }
 
         {

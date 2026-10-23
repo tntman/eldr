@@ -42,8 +42,15 @@ constexpr VkBufferUsageFlags kPoolUsage =
 VkFormat ToVk(Texture::Format f)
 {
     switch (f) {
+    case Texture::Format::R8:         return VK_FORMAT_R8_UNORM;
+    case Texture::Format::RG8:        return VK_FORMAT_R8G8_UNORM;
     case Texture::Format::RGBA8:      return VK_FORMAT_R8G8B8A8_UNORM;
     case Texture::Format::RGBA8_SRGB: return VK_FORMAT_R8G8B8A8_SRGB;
+    case Texture::Format::R16:        return VK_FORMAT_R16_UNORM;
+    case Texture::Format::RG16:       return VK_FORMAT_R16G16_UNORM;
+    case Texture::Format::RGBA16:     return VK_FORMAT_R16G16B16A16_UNORM;
+    case Texture::Format::R16F:       return VK_FORMAT_R16_SFLOAT;
+    case Texture::Format::RG16F:      return VK_FORMAT_R16G16_SFLOAT;
     case Texture::Format::RGBA16F:    return VK_FORMAT_R16G16B16A16_SFLOAT;
     case Texture::Format::RGBA32F:    return VK_FORMAT_R32G32B32A32_SFLOAT;
     }
@@ -52,11 +59,7 @@ VkFormat ToVk(Texture::Format f)
 
 size_t BytesPerPixel(Texture::Format f)
 {
-    switch (f) {
-    case Texture::Format::RGBA16F: return 8;
-    case Texture::Format::RGBA32F: return 16;
-    default:                       return 4;
-    }
+    return size_t(Channels(f)) * BytesPerChannel(f);
 }
 
 void MemoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
@@ -674,6 +677,31 @@ void Scene::_UpdateWorldBounds(Mesh &m)
     }
 }
 
+uint32_t Channels(Texture::Format f)
+{
+    switch (f) {
+    case Texture::Format::R8:
+    case Texture::Format::R16:
+    case Texture::Format::R16F: return 1;
+    case Texture::Format::RG8:
+    case Texture::Format::RG16:
+    case Texture::Format::RG16F: return 2;
+    default: return 4;
+    }
+}
+
+uint32_t BytesPerChannel(Texture::Format f)
+{
+    switch (f) {
+    case Texture::Format::R8:
+    case Texture::Format::RG8:
+    case Texture::Format::RGBA8:
+    case Texture::Format::RGBA8_SRGB: return 1;
+    case Texture::Format::RGBA32F: return 4;
+    default: return 2;
+    }
+}
+
 void Scene::_Upload(Texture &t)
 {
     const VkFormat format = ToVk(t.format);
@@ -702,6 +730,10 @@ void Scene::_Upload(Texture &t)
     vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vci.format = format;
     vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1};
+    if (Channels(t.format) < 4) {  // gray (+ alpha): rrr1 or rrrg
+        vci.components = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R,
+                          Channels(t.format) == 2 ? VK_COMPONENT_SWIZZLE_G : VK_COMPONENT_SWIZZLE_ONE};
+    }
     Check(vkCreateImageView(device, &vci, nullptr, &t._view), "vkCreateImageView");
 
     _device->Reserve(_staging, t.pixels.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
