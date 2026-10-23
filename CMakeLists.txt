@@ -27,6 +27,13 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
+    DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl)
+list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp

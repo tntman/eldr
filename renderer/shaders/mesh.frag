@@ -5,6 +5,7 @@
 #include "frame.glsl"
 #include "lights.glsl"
 #include "material.glsl"
+#include "scene.glsl"
 
 // Depth is read-only here (the prepass wrote it), so the depth test can run
 // before the shader even though cutouts discard.
@@ -38,17 +39,27 @@ const vec2 kPoisson[16] = vec2[](
     vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590), vec2(0.19984126, 0.78641367),
     vec2(0.14383161, -0.14100790));
 
-layout(location = 0) in vec3 inWorldPos;
-layout(location = 1) in vec3 inNormal;
+// mesh.vert's packed outputs.
+layout(location = 0) in vec4 inWorldPosPrevX;
+layout(location = 1) in vec4 inNormalPrevY;
 layout(location = 2) in vec2 inUv;
-layout(location = 3) in vec3 inColor;
-layout(location = 4) flat in uint inMaterial;
-layout(location = 5) flat in int inPrimId;
-layout(location = 6) flat in int inInstanceId;
+layout(location = 3) in vec4 inColorPrevZ;
+layout(location = 4) flat in uint inSlot;  // instance slot: draw (material, prim id) and instance index
+#define inWorldPos (inWorldPosPrevX.xyz)
+#define inNormal (inNormalPrevY.xyz)
+#define inColor (inColorPrevZ.rgb)
+#define inPrevWorldPos vec3(inWorldPosPrevX.w, inNormalPrevY.w, inColorPrevZ.w)
+#define inMaterial (draws[instances[inSlot].draw].material)
+#define inPrimId (draws[instances[inSlot].draw].primId)
+#define inInstanceId (instances[inSlot].index)
 
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out int outPrimId;      // Hydra picking / selection
 layout(location = 2) out int outInstanceId;
+// The surface point's own motion since last frame, in uv as last frame's
+// camera saw it (camera motion comes from depth in TAA). Static geometry
+// writes exactly zero: both positions are the same bits.
+layout(location = 3) out vec2 outVelocity;
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -534,4 +545,7 @@ void main()
     outColor = vec4(color, 1.0);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
+    vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
+    vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
+    outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
 }

@@ -13,11 +13,12 @@ public:
     TemporalAA(const TemporalAA &) = delete;
     TemporalAA &operator=(const TemporalAA &) = delete;
 
-    // (Re)creates the targets; `color` and `depth` must stay valid until
-    // the next Resize. History starts empty.
-    void Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth);
+    // (Re)creates the targets; `color`, `depth` and `velocity` (motion
+    // vectors, see mesh.frag) must stay valid until the next Resize. History
+    // starts empty.
+    void Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth, VkImageView velocity);
 
-    // Expects color in SHADER_READ_ONLY_OPTIMAL, depth in
+    // Expects color and velocity in SHADER_READ_ONLY_OPTIMAL, depth in
     // DEPTH_READ_ONLY_OPTIMAL, and leaves Output() in SHADER_READ_ONLY_OPTIMAL. `alpha` is the current frame's blend weight
     // (1 ignores history); `reprojection` maps current jittered NDC to the
     // previous frame's clip space (row-vector order).

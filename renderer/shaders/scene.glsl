@@ -43,7 +43,8 @@ struct DrawInfo {
     uint blendWeights;     // first blend shape weight
     uint blendShapes;      // weights per pose; 0: no blend shapes
     uint blendPerInstance; // 1: blendShapes weights per instance
-    uint pad0, pad1, pad2;
+    uint motion;           // first instance's rows in motionRows, kFreeSlot: didn't move
+    uint pad0, pad1;
 };
 
 struct SkinVertex {

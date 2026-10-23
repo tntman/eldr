@@ -208,7 +208,7 @@ Scene::~Scene()
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
-                          &_materials, &_udimTiles, &_lightBuffer, &_staging}) {
+                          &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -891,11 +891,25 @@ void Scene::Commit()
                         sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, false);
     }
 
-    // Upload only what changed.
+    // Upload only what changed. Rigid meshes that moved keep their previous
+    // transforms for motion vectors (a new or re-flattened mesh has none).
     bool changed = _changed;
     _changed = false;
+    std::vector<float> motion;
+    std::vector<uint32_t> motionBase(_meshes.size(), kNone);
     for (const auto &m : _meshes) {
         const bool geometry = m->geometryDirty, transforms = m->transformsDirty || geometry;
+        if (transforms && !geometry && m->jointIndices.empty() && !m->transforms.empty() &&
+            m->prevTransforms.size() == m->transforms.size()) {
+            motionBase[m->_slot] = uint32_t(motion.size() / 12);
+            for (size_t i = 0; i < m->prevTransforms.size(); i += 16) {
+                const float *x = &m->prevTransforms[i];  // as _UploadInstances' rows
+                for (int r = 0; r < 3; ++r) {
+                    motion.insert(motion.end(), {x[r], x[4 + r], x[8 + r], x[12 + r]});
+                }
+            }
+        }
+        m->prevTransforms.clear();
         const bool joints = !m->jointIndices.empty() && (m->jointsDirty || transforms);
         if (geometry) {
             _UploadGeometry(*m);
@@ -978,6 +992,7 @@ void Scene::Commit()
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
+        d.motion = motionBase[slot];
         cutout[slot] = drawable && m.material && m.material->opacityThreshold > 0;
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;
@@ -1041,6 +1056,8 @@ void Scene::Commit()
     _device->Reserve(_udimTiles, std::max<size_t>(udimTiles.size(), 1) * sizeof(int32_t),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(udimTiles.begin(), udimTiles.end(), static_cast<int32_t *>(_udimTiles.mapped));
+    _device->Reserve(_motion, std::max<size_t>(motion.size(), 4) * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(motion.begin(), motion.end(), static_cast<float *>(_motion.mapped));
 
     _device->Reserve(_lightBuffer, _lights.size() * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1136,6 +1153,8 @@ void Scene::Commit()
     _gpu.lights = _lightBuffer.buffer;
     _gpu.skin = _skin.buffer;
     _gpu.joints = _joints.buffer;
+    _gpu.jointsBytes = _joints.size;
+    _gpu.motion = _motion.buffer;
     _gpu.skinXforms = _skinXforms.buffer;
     _gpu.jointBounds = _jointBoundsPool.buffer;
     _gpu.blendOffsets = _blendOffsets.buffer;

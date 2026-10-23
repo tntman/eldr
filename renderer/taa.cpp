@@ -37,13 +37,14 @@ TemporalAA::TemporalAA(Device &device)
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     Check(vkCreateSampler(d, &sci, nullptr, &_linear), "vkCreateSampler");
 
-    const VkDescriptorSetLayoutBinding bindings[3] = {
+    const VkDescriptorSetLayoutBinding bindings[4] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 3;
+    slci.bindingCount = 4;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(TaaParams)};
@@ -76,7 +77,8 @@ void TemporalAA::_Destroy()
     _dev.Destroy(_history);
 }
 
-void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth)
+void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth,
+                        VkImageView velocity)
 {
     _Destroy();
     _width = width;
@@ -102,7 +104,7 @@ void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkIm
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
 
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 1;
     pci.poolSizeCount = 1;
@@ -114,11 +116,11 @@ void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkIm
     ai.pSetLayouts = &_setLayout;
     Check(vkAllocateDescriptorSets(_dev.device, &ai, &_set), "vkAllocateDescriptorSets");
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[3] = {
+    const VkDescriptorImageInfo images[4] = {
         {_nearest, color, ro}, {_linear, _history.view, ro},
-        {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}};
-    VkWriteDescriptorSet writes[3] = {};
-    for (uint32_t i = 0; i < 3; ++i) {
+        {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {_nearest, velocity, ro}};
+    VkWriteDescriptorSet writes[4] = {};
+    for (uint32_t i = 0; i < 4; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = _set;
         writes[i].dstBinding = i;
@@ -126,7 +128,7 @@ void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkIm
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[i].pImageInfo = &images[i];
     }
-    vkUpdateDescriptorSets(_dev.device, 3, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
 }
 
 void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float alpha)

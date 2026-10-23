@@ -7,6 +7,7 @@
 
 // Alpha test of cutout materials in the depth-only passes (prepass,
 // shadows). Opaque draws run those passes without a fragment shader.
+// mesh.vert built with DEPTH_ONLY.
 layout(location = 2) in vec2 inUv;
 layout(location = 4) flat in uint inMaterial;
 

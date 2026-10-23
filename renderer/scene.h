@@ -77,6 +77,9 @@ struct Mesh {
     std::vector<float> colors;   // displayColor rgb per corner, or empty (constant `color`)
     // One world transform per instance, 16 floats each, USD row-vector order.
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    // The transforms they replace, when they change (motion vectors of
+    // rigid meshes); Commit uploads and clears them.
+    std::vector<float> prevTransforms;
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
@@ -199,7 +202,8 @@ struct DrawInfo {
     uint32_t blendWeights;     // first blend shape weight
     uint32_t blendShapes;      // weights per pose; 0: no blend shapes
     uint32_t blendPerInstance; // 1: blendShapes weights per instance
-    uint32_t pad[3];
+    uint32_t motion;           // first instance's rows in Gpu::motion, kNone: didn't move
+    uint32_t pad[2];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -273,6 +277,10 @@ public:
         VkBuffer lights = VK_NULL_HANDLE;      // distant lights, then sphere/rect lights
         VkBuffer skin = VK_NULL_HANDLE;        // SkinVertex pool
         VkBuffer joints = VK_NULL_HANDLE;      // joint matrices, built on the GPU (mat4)
+        VkDeviceSize jointsBytes = 0;
+        // Last commit's transforms (3 rows of vec4 per instance) of rigid
+        // meshes that moved since: their motion vectors.
+        VkBuffer motion = VK_NULL_HANDLE;
         VkBuffer skinXforms = VK_NULL_HANDLE;  // skinning transforms (mat4)
         VkBuffer jointBounds = VK_NULL_HANDLE; // JointBounds pool
         VkBuffer blendOffsets = VK_NULL_HANDLE; // blend shape offsets (vec4)
@@ -357,7 +365,7 @@ private:
     RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
         _boundsAlloc, _blendAlloc, _weightAlloc;
     // Host-visible per-commit tables.
-    Buffer _draws, _commandTemplate, _materials, _udimTiles, _lightBuffer, _staging;
+    Buffer _draws, _commandTemplate, _materials, _udimTiles, _motion, _lightBuffer, _staging;
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;

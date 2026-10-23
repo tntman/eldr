@@ -7,6 +7,7 @@
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out int outPrimId;      // the sky is not pickable
 layout(location = 2) out int outInstanceId;
+layout(location = 3) out vec2 outVelocity;  // the sky doesn't move by itself
 
 void main()
 {
@@ -20,4 +21,5 @@ void main()
     outColor = vec4(c * frame.envRadiance.rgb, 1.0);
     outPrimId = -1;
     outInstanceId = -1;
+    outVelocity = vec2(0.0);
 }

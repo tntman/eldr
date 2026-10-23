@@ -35,6 +35,9 @@ namespace {
 const uint32_t kMeshVert[] =
 #include "mesh.vert.inc"
 ;
+const uint32_t kMeshDepthVert[] =
+#include "mesh_depth.vert.inc"
+;
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
 ;
@@ -81,13 +84,16 @@ constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADE
 struct DrawParams {
     float viewProj[16];
     uint32_t listBase;
+    uint32_t motion;  // see mesh.vert
 };
 
-void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewProj, uint32_t listBase)
+void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewProj, uint32_t listBase,
+              uint32_t motion = 0)
 {
     DrawParams p;
     std::memcpy(p.viewProj, viewProj, sizeof(p.viewProj));
     p.listBase = listBase;
+    p.motion = motion;
     vkCmdPushConstants(cmd, layout, kPushStages, 0, sizeof(p), &p);
 }
 
@@ -205,13 +211,14 @@ Renderer::~Renderer()
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_shadowMap, &_shadowAtlas, &_brdfLut,
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_shadowMap, &_shadowAtlas, &_brdfLut,
                        &_blackCube}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
+    _dev.Destroy(_prevJoints);
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
@@ -265,11 +272,12 @@ void Renderer::_CreateDescriptors()
     // the light clusters (written by lights.comp, which also reads 2 and 3),
     // 15, 16, 21 and 22 skinning (SkinVertex, joint matrices built by
     // skin.comp, skinning transforms, per-joint rest bounds), 23 and 24
-    // blend shape offsets and weights, 25 the UDIM tile table, 17..19
+    // blend shape offsets and weights, 25 the UDIM tile table, 26 and 27
+    // last frame's joints and moved rigid transforms (motion vectors), 17..19
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[26] = {
+    const VkDescriptorSetLayoutBinding bindings[28] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -277,8 +285,8 @@ void Renderer::_CreateDescriptors()
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
+        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
         {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -296,20 +304,22 @@ void Renderer::_CreateDescriptors()
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[26] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[28] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 26;
+    flags.bindingCount = 28;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 26;
+    slci.bindingCount = 28;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 18},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -351,6 +361,7 @@ void Renderer::_CreatePipelines()
         Check(r, "vkCreateComputePipelines");
     }
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
+    VkShaderModule depthVert = CreateShaderModule(device, kMeshDepthVert, sizeof(kMeshDepthVert));
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
@@ -395,24 +406,25 @@ void Renderer::_CreatePipelines()
     VkPipelineDepthStencilStateCreateInfo depthReadOnly = depth;
     depthReadOnly.depthWriteEnable = VK_FALSE;
     depthReadOnly.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
-    // Attachments: color, primId, instanceId. Identical blend states, so no
-    // independentBlend feature is needed (the sky writes -1 ids).
-    VkPipelineColorBlendAttachmentState attachments[3] = {};
+    // Attachments: color, primId, instanceId, velocity. Identical blend
+    // states, so no independentBlend feature is needed (the sky writes -1 ids
+    // and no velocity).
+    VkPipelineColorBlendAttachmentState attachments[4] = {};
     for (VkPipelineColorBlendAttachmentState &a : attachments) {
         a.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     }
     VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    blend.attachmentCount = 3;
+    blend.attachmentCount = 4;
     blend.pAttachments = attachments;
-    const VkFormat colorFormats[3] = {kColorFormat, kIdFormat, kIdFormat};
+    const VkFormat colorFormats[4] = {kColorFormat, kIdFormat, kIdFormat, kVelocityFormat};
     VkDynamicState dynamicStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                                        VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynamicStates;
     VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    rendering.colorAttachmentCount = 3;
+    rendering.colorAttachmentCount = 4;
     rendering.pColorAttachmentFormats = colorFormats;
     rendering.depthAttachmentFormat = kDepthFormat;
 
@@ -432,14 +444,17 @@ void Renderer::_CreatePipelines()
     ci.layout = _layout;
     VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &_pipeline);
 
-    // Depth prepass: same vertex stage, depth only. Shadow: plus slope-scaled bias.
+    // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
+    // positions, invariant). Shadow: plus slope-scaled bias.
     if (r == VK_SUCCESS) {
+        const VkPipelineShaderStageCreateInfo depthStages[1] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert)};
         VkPipelineRenderingCreateInfo depthRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         depthRendering.depthAttachmentFormat = kDepthFormat;
         VkPipelineColorBlendStateCreateInfo noBlend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         VkGraphicsPipelineCreateInfo pci = ci;
         pci.pNext = &depthRendering;
         pci.stageCount = 1;
+        pci.pStages = depthStages;
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pci, nullptr, &_prepassPipeline);
@@ -456,7 +471,7 @@ void Renderer::_CreatePipelines()
         }
 
         // Cutouts: the same two with the alpha test.
-        const VkPipelineShaderStageCreateInfo maskStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, meshVert),
+        const VkPipelineShaderStageCreateInfo maskStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert),
                                                                stage(VK_SHADER_STAGE_FRAGMENT_BIT, maskFrag)};
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
@@ -478,7 +493,7 @@ void Renderer::_CreatePipelines()
         r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, meshFrag, maskFrag, skyVert, skyFrag}) {
+    for (VkShaderModule m : {meshVert, depthVert, meshFrag, maskFrag, skyVert, skyFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -542,7 +557,7 @@ void Renderer::_CreateConstantImages()
 
 void Renderer::_Resize(uint32_t width, uint32_t height)
 {
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth}) {
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity}) {
         _dev.Destroy(*img);
     }
     _width = width;
@@ -555,14 +570,18 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _instanceId = _dev.CreateImage(kIdFormat, width, height, 1, 1, kTarget,
                                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _velocity = _dev.CreateImage(kVelocityFormat, width, height, 1, 1,
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _depth = _dev.CreateImage(kDepthFormat, width, height, 1, 1,
                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
                                   VK_IMAGE_USAGE_SAMPLED_BIT,
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
+    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4 + 4),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _gtao.Resize(width, height, _depth.view);
-    _taa.Resize(width, height, _color.view, _depth.view);
+    _taa.Resize(width, height, _color.view, _depth.view, _velocity.view);
     _post.Resize(width, height, _taa.Output());
     _taaValid = false;
     _historyValid = false;
@@ -599,6 +618,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorBufferInfo blendOffsets{gpu.blendOffsets, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo blendWeights{gpu.blendWeights, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo udimTiles{gpu.udimTiles, 0, VK_WHOLE_SIZE};
+    // Without skinned instances the joint pool may not exist yet: bind the
+    // (unused) motion rows instead.
+    const VkDescriptorBufferInfo prevJoints{_prevJoints.buffer ? _prevJoints.buffer : gpu.motion, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo motion{gpu.motion, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlas{_shadowSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo atlasDepth{_clampSampler, _shadowAtlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo lightShadows{_lightShadows.buffer, 0, VK_WHOLE_SIZE};
@@ -641,6 +664,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendOffsets, nullptr);
     write(24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &blendWeights, nullptr);
     write(25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &udimTiles, nullptr);
+    write(26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevJoints, nullptr);
+    write(27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &motion, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1039,10 +1064,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     std::memcpy(fd.viewProj, jitteredViewProj, sizeof(fd.viewProj));
 
+    // Last frame's camera (motion vectors; without history: this one).
     // Reflections shade hits with last frame's resolved image, which exists
     // once post (TAA resolve) ran at this size.
+    std::memcpy(fd.prevViewProj, _historyValid ? _prevViewProj : frame.viewProj, sizeof(fd.prevViewProj));
     if (frame.ssr && frame.postProcess && _historyValid) {
-        std::memcpy(fd.prevViewProj, _prevViewProj, sizeof(fd.prevViewProj));
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
     }
@@ -1076,6 +1102,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
                  VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    // Last frame's joints exist when the pool is still the buffer they were
+    // built in (it is rebuilt by every frame's skin.comp).
+    const bool prevJoints = gpu.joints && gpu.jointsBytes > 0 && _prevJointsSource == gpu.joints &&
+                            _prevJoints.size >= gpu.jointsBytes;
+    if (gpu.joints && gpu.jointsBytes > _prevJoints.size) {
+        // Device-local: only GPU copies fill it, and every skinned vertex
+        // reads it in the main pass.
+        _dev.Destroy(_prevJoints);
+        _prevJoints = _dev.CreateDeviceBuffer(gpu.jointsBytes,
+                                              VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    }
+    _prevJointsSource = gpu.joints;
     _UpdateDescriptors(gpu);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     _lastDrawCount = draw ? gpu.drawCount : 0;
@@ -1096,10 +1134,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             resets[k] = {0, k * commandBytes, commandBytes};
         }
         vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, shadows ? 1 + kCascades : 1, resets);
+        if (prevJoints) {
+            const VkBufferCopy all{0, 0, gpu.jointsBytes};
+            vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
+        }
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toCull.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
         toCull.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
-        toCull.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        toCull.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
         toCull.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         dep.memoryBarrierCount = 1;
@@ -1281,7 +1323,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     }
 
-    VkRenderingAttachmentInfo colorAtts[3] = {};
+    ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_NONE, 0,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo colorAtts[4] = {};
     for (int i = 0; i < 3; ++i) {
         colorAtts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colorAtts[i].imageView = colorTargets[i]->view;
@@ -1295,10 +1340,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const float transparent[4] = {0, 0, 0, 0};
     std::memcpy(colorAtts[0].clearValue.color.float32, frame.postProcess ? transparent : frame.clearColor,
                 sizeof(frame.clearColor));
+    colorAtts[3].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAtts[3].imageView = _velocity.view;
+    colorAtts[3].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    colorAtts[3].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    colorAtts[3].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // clearValue zero: no object motion where nothing is drawn.
     depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL;
     depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
-    ri.colorAttachmentCount = 3;
+    ri.colorAttachmentCount = 4;
     ri.pColorAttachments = colorAtts;
     vkCmdBeginRendering(_cmd, &ri);
     vkCmdSetViewport(_cmd, 0, 1, &vp);
@@ -1307,7 +1358,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
-        PushDraw(_cmd, _layout, jitteredViewProj, 0);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0, prevJoints ? 1 : 2);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline);
@@ -1317,6 +1368,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdDraw(_cmd, 3, 1, 0, 0);
     }
     vkCmdEndRendering(_cmd);
+    ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     constexpr VkPipelineStageFlags2 kPostStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
@@ -1395,6 +1450,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
     // Copy only what the caller asked for, packed one after another.
     struct Output {
@@ -1404,11 +1463,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         void *dst;
         VkDeviceSize offset;
     };
-    Output outputs[4] = {
+    Output outputs[5] = {
         {frame.postProcess ? _post.Output() : _color.image, VK_IMAGE_ASPECT_COLOR_BIT, 8, out.color, 0},
         {_depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, 4, out.depth, 0},
         {_primId.image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.primId, 0},
         {_instanceId.image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
+        {_velocity.image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.velocity, 0},
     };
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {

@@ -38,6 +38,8 @@ struct Image {
     float At(int x, int y, int c) const { return HalfToFloat(color[(y * 64 + x) * 4 + c]); }
     int32_t Prim(int x, int y) const { return primId[y * 64 + x]; }
     int32_t Inst(int x, int y) const { return instanceId[y * 64 + x]; }
+    std::vector<uint16_t> velocity = std::vector<uint16_t>(64 * 64 * 2);
+    float Vel(int x, int y, int c) const { return HalfToFloat(velocity[(y * 64 + x) * 2 + c]); }
 };
 
 // Identity camera: world == GL clip space, looking down +Z from z = -2.
@@ -79,6 +81,7 @@ static Image Render(vkr::Renderer &renderer, const vkr::Scene &scene,
     out.depth = img.depth.data();
     out.primId = img.primId.data();
     out.instanceId = img.instanceId.data();
+    out.velocity = img.velocity.data();
     renderer.Render(scene, frame, out);
     return img;
 }
@@ -586,6 +589,26 @@ int main()
             const int hard = penumbra(0.02f, true), soft = penumbra(0.15f, true);
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
             Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
+        }
+
+        {
+            // Motion vectors: a quad moved by 0.25 (NDC x) since the last
+            // frame was 0.125 uv to the left; once it stops, it has none.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+            scene.Commit();
+            Render(renderer, scene);
+            quad->prevTransforms = quad->transforms;
+            quad->transforms[12] = 0.25f;  // row-vector order: translation is the last row
+            quad->transformsDirty = true;
+            scene.Commit();
+            const Image moved = Render(renderer, scene);
+            Expect(std::abs(moved.Vel(40, 32, 0) + 0.125f) < 0.002f && std::abs(moved.Vel(40, 32, 1)) < 0.002f,
+                   "motion vector of a moved quad");
+            Expect(moved.Vel(4, 32, 0) == 0.0f, "no motion vector where nothing was drawn");
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).Vel(40, 32, 0)) < 0.002f, "a quad that stopped has no motion");
         }
 
         {

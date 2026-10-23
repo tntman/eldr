@@ -6,12 +6,13 @@
 // Reinhard-compressed colour so very bright HDR samples neither dominate
 // nor ring (Catmull-Rom's negative lobes) into dark halos. Colour is
 // premultiplied by coverage; alpha is resolved alongside it.
-// ponytail: camera motion only; moving objects ghost until object motion
-// vectors exist.
+// The camera's motion comes from reprojecting the depth, each object's own
+// motion from its motion vectors (see mesh.frag).
 
 layout(set = 0, binding = 0) uniform sampler2D current;     // jittered HDR frame
 layout(set = 0, binding = 1) uniform sampler2D history;     // last resolve, linear filter
 layout(set = 0, binding = 2) uniform sampler2D sceneDepth;  // window depth [0, 1]
+layout(set = 0, binding = 3) uniform sampler2D velocity;    // object motion in last frame's uv
 
 layout(push_constant) uniform TaaParams {
     mat4 reprojection;  // current jittered NDC -> previous clip (row-vector order)
@@ -92,7 +93,7 @@ void main()
     vec2 uv = gl_FragCoord.xy * pc.params.yz;
     float depth = texelFetch(sceneDepth, p, 0).r;
     vec4 prev = pc.reprojection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-    vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
+    vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5 + texelFetch(velocity, p, 0).xy;
     if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
         outColor = cur;  // came from off-screen
         return;

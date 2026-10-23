@@ -43,11 +43,13 @@ public:
         float *depth = nullptr;         // window depth in [0, 1]
         int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
         int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
+        uint16_t *velocity = nullptr;   // object motion vectors, two halves per pixel (see mesh.frag)
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     static constexpr VkFormat kIdFormat = VK_FORMAT_R32_SINT;
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
+    static constexpr VkFormat kVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr uint32_t kCascades = 4;
     static constexpr uint32_t kShadowSize = 2048;
     // Shadow atlas for sphere/rect/disk lights, in square tiles.
@@ -113,11 +115,16 @@ private:
     VkPipeline _skinPipeline = VK_NULL_HANDLE;      // joint matrices from skinning transforms
     Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
+    // Last frame's joint matrices for motion vectors, copied before skin.comp
+    // rewrites them; usable while the joint pool is the same buffer.
+    Buffer _prevJoints;
+    VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     Image _color, _primId, _instanceId, _depth;
+    Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
