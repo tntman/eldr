@@ -429,6 +429,8 @@ void Scene::Commit()
             std::memcpy(out.transform, x, sizeof(out.transform));
             std::memcpy(out.color, m->color, sizeof(m->color));
             out.material = material;
+            out.primId = m->primId;
+            out.instanceId = int32_t(i);
             // World AABB of this instance (row-vector: p' = p * M).
             for (int k = 0; k < 3; ++k) {
                 const float c = center[0] * x[k] + center[1] * x[4 + k] + center[2] * x[8 + k] + x[12 + k];

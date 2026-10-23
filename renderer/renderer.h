@@ -20,7 +20,17 @@ public:
         bool showEnvironment = true;  // draw the dome texture as background
     };
 
+    // Host memory a frame is copied to, bottom row first (GL/Hydra order).
+    // Null pointers skip that output's readback.
+    struct Targets {
+        void *color = nullptr;          // RGBA16F, 8 bytes per pixel
+        float *depth = nullptr;         // window depth in [0, 1]
+        int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
+        int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
+    };
+
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    static constexpr VkFormat kIdFormat = VK_FORMAT_R32_SINT;
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr uint32_t kCascades = 4;
     static constexpr uint32_t kShadowSize = 2048;
@@ -30,11 +40,8 @@ public:
     Renderer(const Renderer &) = delete;
     Renderer &operator=(const Renderer &) = delete;
 
-    // Draws `scene` and blocks until the result is copied to host memory,
-    // bottom row first (GL/Hydra order).
-    //   color: width*height RGBA16F (8 bytes per pixel)
-    //   depth: width*height floats, window depth in [0, 1]; may be null
-    void Render(const Scene &scene, const Frame &frame, void *color, float *depth);
+    // Draws `scene` and blocks until the requested outputs are in `out`.
+    void Render(const Scene &scene, const Frame &frame, const Targets &out);
 
 private:
     struct Image {
@@ -68,7 +75,7 @@ private:
     VkCommandPool _pool = VK_NULL_HANDLE;
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
-    Image _color, _depth;
+    Image _color, _primId, _instanceId, _depth;
     Image _shadowMap;                           // kCascades-layer array view
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;

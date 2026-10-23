@@ -143,6 +143,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     const SdfPath &id = GetId();
     vkr::Mesh &m = *_mesh;
     bool geometryDirty = false;
+    m.primId = GetPrimId();  // assigned by the render index after construction
 
     if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
         _topology = HdMeshTopology(GetMeshTopology(sceneDelegate), 0);

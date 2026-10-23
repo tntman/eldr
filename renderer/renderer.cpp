@@ -91,8 +91,9 @@ Renderer::Renderer(Device &device)
 Renderer::~Renderer()
 {
     vkDeviceWaitIdle(_dev.device);
-    _Destroy(_color);
-    _Destroy(_depth);
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth}) {
+        _Destroy(*img);
+    }
     _Destroy(_shadowMap);
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
@@ -204,7 +205,7 @@ void Renderer::_CreatePipelines()
         {0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX},
         {1, sizeof(Instance), VK_VERTEX_INPUT_RATE_INSTANCE},
     };
-    const VkVertexInputAttributeDescription attributes[9] = {
+    const VkVertexInputAttributeDescription attributes[11] = {
         {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
         {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
         {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
@@ -214,11 +215,13 @@ void Renderer::_CreatePipelines()
         {6, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 48},
         {7, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Instance, color)},
         {8, 1, VK_FORMAT_R32_UINT, offsetof(Instance, material)},
+        {9, 1, VK_FORMAT_R32_SINT, offsetof(Instance, primId)},
+        {10, 1, VK_FORMAT_R32_SINT, offsetof(Instance, instanceId)},
     };
     VkPipelineVertexInputStateCreateInfo meshInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     meshInput.vertexBindingDescriptionCount = 2;
     meshInput.pVertexBindingDescriptions = bindings;
-    meshInput.vertexAttributeDescriptionCount = 9;
+    meshInput.vertexAttributeDescriptionCount = 11;
     meshInput.pVertexAttributeDescriptions = attributes;
     VkPipelineVertexInputStateCreateInfo noInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
 
@@ -237,20 +240,25 @@ void Renderer::_CreatePipelines()
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_TRUE;
     depth.depthCompareOp = VK_COMPARE_OP_LESS;
-    VkPipelineColorBlendAttachmentState attachment{};
-    attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    // Attachments: color, primId, instanceId. Identical blend states, so no
+    // independentBlend feature is needed (the sky writes -1 ids).
+    VkPipelineColorBlendAttachmentState attachments[3] = {};
+    for (VkPipelineColorBlendAttachmentState &a : attachments) {
+        a.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                           VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    }
     VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    blend.attachmentCount = 1;
-    blend.pAttachments = &attachment;
+    blend.attachmentCount = 3;
+    blend.pAttachments = attachments;
+    const VkFormat colorFormats[3] = {kColorFormat, kIdFormat, kIdFormat};
     VkDynamicState dynamicStates[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
                                        VK_DYNAMIC_STATE_DEPTH_BIAS};
     VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynamicStates;
     VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    rendering.colorAttachmentCount = 1;
-    rendering.pColorAttachmentFormats = &kColorFormat;
+    rendering.colorAttachmentCount = 3;
+    rendering.pColorAttachmentFormats = colorFormats;
     rendering.depthAttachmentFormat = kDepthFormat;
 
     VkPipelineShaderStageCreateInfo stages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, meshVert),
@@ -400,17 +408,22 @@ void Renderer::_CreateConstantImages()
 
 void Renderer::_Resize(uint32_t width, uint32_t height)
 {
-    _Destroy(_color);
-    _Destroy(_depth);
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth}) {
+        _Destroy(*img);
+    }
     _width = width;
     _height = height;
-    _color = _CreateImage(kColorFormat, width, height, 1,
-                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+    constexpr VkImageUsageFlags kTarget = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    _color = _CreateImage(kColorFormat, width, height, 1, kTarget,
                           VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _primId = _CreateImage(kIdFormat, width, height, 1, kTarget,
+                           VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _instanceId = _CreateImage(kIdFormat, width, height, 1, kTarget,
+                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _depth = _CreateImage(kDepthFormat, width, height, 1,
                           VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                           VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4),
+    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
 }
 
@@ -541,7 +554,7 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
 
 // ponytail: synchronous, one frame in flight, CPU readback every frame.
 // GL interop (step 7) removes the readback; frames in flight come with it.
-void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float *depth)
+void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
 {
     if (frame.width == 0 || frame.height == 0) {
         return;
@@ -550,7 +563,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
-    const VkDeviceSize colorBytes = VkDeviceSize(_width) * _height * 8;
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
@@ -624,23 +636,30 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 
-    ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
-                 VK_PIPELINE_STAGE_2_NONE, 0,
-                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
+    for (const Image *img : colorTargets) {
+        ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                     VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
                  VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
-    VkRenderingAttachmentInfo colorAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    colorAtt.imageView = _color.view;
-    colorAtt.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    colorAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    colorAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    std::memcpy(colorAtt.clearValue.color.float32, frame.clearColor, sizeof(frame.clearColor));
+    VkRenderingAttachmentInfo colorAtts[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        colorAtts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colorAtts[i].imageView = colorTargets[i]->view;
+        colorAtts[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAtts[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAtts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        std::fill(colorAtts[i].clearValue.color.int32, colorAtts[i].clearValue.color.int32 + 4, -1);
+    }
+    std::memcpy(colorAtts[0].clearValue.color.float32, frame.clearColor, sizeof(frame.clearColor));
     VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAtt.imageView = _depth.view;
     depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -651,8 +670,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, {_width, _height}};
     ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &colorAtt;
+    ri.colorAttachmentCount = 3;
+    ri.pColorAttachments = colorAtts;
     ri.pDepthAttachment = &depthAtt;
     vkCmdBeginRendering(_cmd, &ri);
 
@@ -675,26 +694,47 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
     }
     vkCmdEndRendering(_cmd);
 
-    ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
-                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
-                 VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    for (const Image *img : colorTargets) {
+        ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                     VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    }
     ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
                  VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-    VkBufferImageCopy copy{};
-    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-    copy.imageExtent = {_width, _height, 1};
-    vkCmdCopyImageToBuffer(_cmd, _color.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           _readback.buffer, 1, &copy);
-    copy.bufferOffset = colorBytes;
-    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    vkCmdCopyImageToBuffer(_cmd, _depth.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           _readback.buffer, 1, &copy);
+    // Copy only what the caller asked for, packed one after another.
+    struct Output {
+        const Image *image;
+        VkImageAspectFlags aspect;
+        VkDeviceSize bytesPerPixel;
+        void *dst;
+        VkDeviceSize offset;
+    };
+    Output outputs[4] = {
+        {&_color, VK_IMAGE_ASPECT_COLOR_BIT, 8, out.color, 0},
+        {&_depth, VK_IMAGE_ASPECT_DEPTH_BIT, 4, out.depth, 0},
+        {&_primId, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.primId, 0},
+        {&_instanceId, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
+    };
+    VkDeviceSize offset = 0;
+    for (Output &o : outputs) {
+        if (!o.dst) {
+            continue;
+        }
+        o.offset = offset;
+        VkBufferImageCopy copy{};
+        copy.bufferOffset = offset;
+        copy.imageSubresource = {o.aspect, 0, 0, 1};
+        copy.imageExtent = {_width, _height, 1};
+        vkCmdCopyImageToBuffer(_cmd, o.image->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               _readback.buffer, 1, &copy);
+        offset += o.bytesPerPixel * _width * _height;
+    }
 
     VkBufferMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
     toHost.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
@@ -721,9 +761,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, void *color, float
     Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
 
     const auto *src = static_cast<const uint8_t *>(_readback.mapped);
-    std::memcpy(color, src, colorBytes);
-    if (depth) {
-        std::memcpy(depth, src + colorBytes, VkDeviceSize(_width) * _height * 4);
+    for (const Output &o : outputs) {
+        if (o.dst) {
+            std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _width * _height);
+        }
     }
 }
 

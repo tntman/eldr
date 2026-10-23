@@ -61,6 +61,11 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->depth) {
         return HdAovDescriptor(HdFormatFloat32, false, VtValue(1.0f));
     }
+    // Picking and selection highlighting. ponytail: no elementId (face
+    // picking) yet; the task controller skips AOVs that come back invalid.
+    if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
+        return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
+    }
     return HdAovDescriptor();
 }
 

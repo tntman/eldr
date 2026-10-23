@@ -36,8 +36,12 @@ layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUv;
 layout(location = 3) in vec3 inColor;
 layout(location = 4) flat in uint inMaterial;
+layout(location = 5) flat in int inPrimId;
+layout(location = 6) flat in int inInstanceId;
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out int outPrimId;      // Hydra picking / selection
+layout(location = 2) out int outInstanceId;
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -201,4 +205,6 @@ void main()
         color += occlusion * (FssEss * specular + (Fms * Ems + kd) * Lavg);
     }
     outColor = vec4(color, 1.0);
+    outPrimId = inPrimId;
+    outInstanceId = inInstanceId;
 }

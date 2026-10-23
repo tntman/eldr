@@ -33,7 +33,11 @@ static float HalfToFloat(uint16_t h)
 struct Image {
     std::vector<uint16_t> color = std::vector<uint16_t>(64 * 64 * 4);  // RGBA16F
     std::vector<float> depth = std::vector<float>(64 * 64);
+    std::vector<int32_t> primId = std::vector<int32_t>(64 * 64);
+    std::vector<int32_t> instanceId = std::vector<int32_t>(64 * 64);
     float At(int x, int y, int c) const { return HalfToFloat(color[(y * 64 + x) * 4 + c]); }
+    int32_t Prim(int x, int y) const { return primId[y * 64 + x]; }
+    int32_t Inst(int x, int y) const { return instanceId[y * 64 + x]; }
 };
 
 // Identity camera: world == GL clip space, looking down +Z from z = -2.
@@ -69,7 +73,12 @@ static Image Render(vkr::Renderer &renderer, const vkr::Scene &scene,
                     const vkr::Renderer::Frame &frame = IdentityFrame())
 {
     Image img;
-    renderer.Render(scene, frame, img.color.data(), img.depth.data());
+    vkr::Renderer::Targets out;
+    out.color = img.color.data();
+    out.depth = img.depth.data();
+    out.primId = img.primId.data();
+    out.instanceId = img.instanceId.data();
+    renderer.Render(scene, frame, out);
     return img;
 }
 
@@ -117,6 +126,7 @@ int main()
             tri->points = {-0.5f, -0.5f, 0, 0.5f, -0.5f, 0, 0, 0.5f, 0};
             tri->color[0] = 1;
             tri->color[1] = tri->color[2] = 0;
+            tri->primId = 7;
 
             // Arrays that disagree in size must be dropped, not drawn.
             vkr::Mesh *bad = scene.AddMesh();
@@ -137,6 +147,8 @@ int main()
             // (above the apex). Swapped results mean the image is upside down.
             Expect(img.At(32, 20, 0) > 0.5f, "row 20 (lower half) is inside");
             Expect(img.At(32, 56, 2) == 1, "row 56 (upper half) is outside");
+            Expect(img.Prim(32, 32) == 7 && img.Inst(32, 32) == 0, "ids where the triangle is");
+            Expect(img.Prim(0, 0) == -1 && img.Inst(0, 0) == -1, "ids are -1 where nothing is");
 
             // Two instances of the triangle, shifted left and right: one draw.
             tri->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5f, 0, 0, 1,
@@ -146,6 +158,8 @@ int main()
             const Image twice = Render(renderer, scene);
             Expect(twice.At(16, 32, 0) > 0.5f && twice.At(48, 32, 0) > 0.5f, "both instances drawn");
             Expect(twice.At(32, 50, 2) == 1, "gap between instances");
+            Expect(twice.Inst(16, 32) == 0 && twice.Inst(48, 32) == 1, "instanceId follows transforms order");
+            Expect(twice.Prim(16, 32) == 7 && twice.Prim(48, 32) == 7, "both instances keep the primId");
 
             scene.RemoveMesh(tri);
             scene.Commit();

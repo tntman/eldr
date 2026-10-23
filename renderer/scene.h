@@ -68,6 +68,7 @@ struct Mesh {
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     std::shared_ptr<Material> material;
+    int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
     bool geometryDirty = true;   // set after changing points/normals/uvs
 
@@ -112,7 +113,9 @@ struct Vertex {
 struct Instance {
     float transform[16];
     float color[3];
-    uint32_t material;  // kNoMaterial: color + default material
+    uint32_t material;   // kNoMaterial: color + default material
+    int32_t primId;      // Mesh::primId
+    int32_t instanceId;  // index into Mesh::transforms
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 constexpr uint32_t kNone = 0xFFFFFFFFu;

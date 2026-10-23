@@ -50,5 +50,11 @@ add_dependencies(testPlugin hdVk)
 enable_testing()
 add_test(NAME vkrtest COMMAND vkrtest)
 add_test(NAME plugin COMMAND testPlugin)
+if(WIN32)
+    # Picking through UsdImagingGL like usdview (needs the usdenv.cmd environment).
+    file(TO_NATIVE_PATH ${CMAKE_SOURCE_DIR}/usdenv.cmd usdenv)
+    add_test(NAME selection COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_selection.py)
+    set_tests_properties(selection PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

@@ -31,7 +31,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
 
     vkr::Renderer::Frame frame;
-    HdRenderBuffer *color = nullptr, *depth = nullptr;
+    HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         if (b.aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -44,18 +44,26 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             if (b.clearValue.IsHolding<float>()) {
                 frame.clearDepth = b.clearValue.UncheckedGet<float>();
             }
+        } else if (b.aovName == HdAovTokens->primId) {
+            primId = b.renderBuffer;
+        } else if (b.aovName == HdAovTokens->instanceId) {
+            instanceId = b.renderBuffer;
         }
     }
-    // Formats are the ones GetDefaultAovDescriptor asks for.
+    // Formats are the ones GetDefaultAovDescriptor asks for; a buffer with
+    // another format or size is left alone rather than overrun.
     if (!color || color->GetFormat() != HdFormatFloat16Vec4) {
         return;
     }
     frame.width = color->GetWidth();
     frame.height = color->GetHeight();
-    if (depth && (depth->GetFormat() != HdFormatFloat32 ||
-                  depth->GetWidth() != frame.width || depth->GetHeight() != frame.height)) {
-        depth = nullptr;
-    }
+    auto usable = [&](HdRenderBuffer *b, HdFormat format) {
+        return b && b->GetFormat() == format && b->GetWidth() == frame.width &&
+               b->GetHeight() == frame.height ? b : nullptr;
+    };
+    depth = usable(depth, HdFormatFloat32);
+    primId = usable(primId, HdFormatInt32);
+    instanceId = usable(instanceId, HdFormatInt32);
 
     const GfMatrix4d view = state->GetWorldToViewMatrix();
     const GfMatrix4d viewProj = view * state->GetProjectionMatrix();
@@ -69,16 +77,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.cameraPos[1] = float(eye[1]);
     frame.cameraPos[2] = float(eye[2]);
 
-    void *colorData = color->Map();
-    float *depthData = depth ? static_cast<float *>(depth->Map()) : nullptr;
+    vkr::Renderer::Targets out;
+    out.color = color->Map();
+    out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
+    out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
+    out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
     try {
-        _renderer->Render(_scene, frame, colorData, depthData);
+        _renderer->Render(_scene, frame, out);
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
-    color->Unmap();
-    if (depth) {
-        depth->Unmap();
+    for (HdRenderBuffer *b : {color, depth, primId, instanceId}) {
+        if (b) {
+            b->Unmap();
+        }
     }
 }
 

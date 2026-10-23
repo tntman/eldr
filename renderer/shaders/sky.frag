@@ -5,6 +5,8 @@
 #include "frame.glsl"
 
 layout(location = 0) out vec4 outColor;
+layout(location = 1) out int outPrimId;      // the sky is not pickable
+layout(location = 2) out int outInstanceId;
 
 void main()
 {
@@ -16,4 +18,6 @@ void main()
     vec3 local = normalize(mat3(frame.envWorldToLocal) * dir);
     vec3 c = textureLod(textures[nonuniformEXT(frame.counts.w)], LatlongUv(local), 0.0).rgb;
     outColor = vec4(c * frame.envRadiance.rgb, 1.0);
+    outPrimId = -1;
+    outInstanceId = -1;
 }

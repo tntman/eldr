@@ -13,6 +13,8 @@ layout(location = 5) in vec4 inModel2;
 layout(location = 6) in vec4 inModel3;
 layout(location = 7) in vec3 inColor;
 layout(location = 8) in uint inMaterial;
+layout(location = 9) in int inPrimId;
+layout(location = 10) in int inInstanceId;
 
 layout(push_constant) uniform PushConstants {
     mat4 viewProj;
@@ -23,6 +25,8 @@ layout(location = 1) out vec3 outNormal;
 layout(location = 2) out vec2 outUv;
 layout(location = 3) out vec3 outColor;
 layout(location = 4) flat out uint outMaterial;
+layout(location = 5) flat out int outPrimId;
+layout(location = 6) flat out int outInstanceId;
 
 void main()
 {
@@ -36,4 +40,6 @@ void main()
     outUv = inUv;
     outColor = inColor;
     outMaterial = inMaterial;
+    outPrimId = inPrimId;
+    outInstanceId = inInstanceId;
 }
