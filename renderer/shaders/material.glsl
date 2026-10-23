@@ -30,6 +30,10 @@ struct Material {
     vec4 thinFilm;       // weight (0: none), thickness (nm), ior
     vec4 anisotropy;     // amount (0: none), rotation (turns), 1: OpenPBR's roughness mapping
     vec4 toon;           // bands (0: none), softness
+    vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
+    vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
+    vec4 subsurface;        // colour, weight (subsurface.glsl)
+    vec4 subsurfaceRadius;  // per channel, world units
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

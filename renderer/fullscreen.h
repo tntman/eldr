@@ -6,7 +6,7 @@ namespace vkr {
 
 // Pipeline drawing fullscreen.vert + `frag` into one color attachment of
 // `format`: no depth, dynamic viewport/scissor, optionally additive or
-// premultiplied over (`over`: src + dst * (1 - src alpha)).
+// premultiplied over the target (`over`: src + (1 - src alpha) dst).
 VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
                                     const uint32_t *frag, size_t fragBytes, VkFormat format,
                                     bool additive = false, bool over = false);

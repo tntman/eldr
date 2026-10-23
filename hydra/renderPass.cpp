@@ -141,7 +141,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
                                 {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
                                 {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
-                                {t.emissiveLights, &frame.emissiveLights}, {t.volumes, &frame.volumes}}) {
+                                {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
+                                {t.refraction, &frame.refraction},
+                                {t.translucentShadows, &frame.translucentShadows},
+                                {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts},
+                                {t.volumes, &frame.volumes}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -149,6 +153,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
                                 {t.giHysteresis, &frame.giHysteresis},
                                 {t.emissiveLightThreshold, &frame.emissiveLightThreshold},
+                                {t.oitDepthWeight, &frame.oitDepthWeight},
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy}}) {
@@ -163,6 +168,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
                                 {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays},
+                                {t.refractionSamples, &frame.refractionSamples},
+                                {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
+                                {t.subsurfaceSamples, &frame.subsurfaceSamples},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
