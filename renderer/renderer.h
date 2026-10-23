@@ -3,6 +3,7 @@
 #include "device.h"
 #include "post.h"
 #include "scene.h"
+#include "taa.h"
 
 #include <chrono>
 
@@ -22,6 +23,7 @@ public:
         float clearDepth = 1.0f;
         bool showEnvironment = true;  // draw the dome texture as background
         bool postProcess = true;      // false: color is the raw linear HDR scene
+        bool taa = true;              // with postProcess: jittered + temporally resolved
         PostProcess::Settings post;
     };
 
@@ -48,7 +50,8 @@ public:
     // Draws `scene` and blocks until the requested outputs are in `out`.
     void Render(const Scene &scene, const Frame &frame, const Targets &out);
 
-    // False while auto-exposure is still adapting: keep rendering frames.
+    // False while auto-exposure adapts or TAA is still accumulating a still
+    // camera: keep rendering frames.
     bool IsConverged() const;
 
     // Instances that survived culling in the last frame (main view).
@@ -63,7 +66,14 @@ private:
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
 
     Device &_dev;
+    TemporalAA _taa;
     PostProcess _post;
+    // TAA state: frames in the history, jitter sequence, last camera.
+    uint32_t _taaFrames = 0, _haltonIndex = 0;
+    float _prevViewProj[16] = {};
+    bool _taaValid = false;
+    bool _taaWarmup = false;  // accumulating a fresh history for a still camera
+    bool _taaConverged = true;
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;
     bool _adapting = false;       // last frame ran auto-exposure

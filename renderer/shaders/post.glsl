@@ -1,6 +1,11 @@
 // Bindings shared by every post pass (same set layout everywhere).
 // Only compute passes may write buffers: fragment-stage writes would need
 // the fragmentStoresAndAtomics feature.
+//
+// The HDR input is premultiplied by coverage: the scene is cleared to
+// transparent black and geometry and sky write alpha 1, so alpha < 1 means
+// (partly) the app's background colour, composited in display space by the
+// tonemap pass.
 #ifdef POST_WRITABLE
 #define POST_ACCESS
 #else
@@ -16,22 +21,15 @@ layout(std430, set = 0, binding = 3) POST_ACCESS buffer Exposure {
     float avgLogLum;
     float pad;
 } exposure;
-layout(set = 0, binding = 4) uniform sampler2D sceneDepth;  // 1.0 where no geometry was drawn
 
-// Meaning of a/b differs per pass; see each shader.
+// Meaning of a/b/c differs per pass; see each shader.
 layout(push_constant) uniform PostParams {
     vec4 a;
     vec4 b;
+    vec4 c;
 } pc;
 
 float Luminance(vec3 c)
 {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
-}
-
-// Pixels still at the cleared depth show the app's background colour,
-// unless the dome is drawn there (`sky`).
-bool IsBackground(ivec2 p, float sky)
-{
-    return sky < 0.5 && texelFetch(sceneDepth, p, 0).r >= 1.0;
 }

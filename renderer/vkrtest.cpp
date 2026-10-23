@@ -114,15 +114,25 @@ static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, fl
     return quad;
 }
 
-// Post-processed render through a fresh renderer (exposure starts unadapted).
-static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f)
+// Post-processed render through a fresh renderer, repeated until converged
+// like usdrecord does: exposure snaps on the first frame, TAA accumulates
+// 16 jittered frames of the still camera.
+static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f,
+                        bool taa = true)
 {
     vkr::Renderer renderer(device);
     vkr::Renderer::Frame frame = IdentityFrame();
     frame.postProcess = true;
+    frame.taa = taa;
     frame.post.bloomIntensity = bloom;
-    Image img = Render(renderer, scene, frame);
-    Expect(renderer.IsConverged(), "first post frame snaps exposure");
+    Image img;
+    int frames = 0;
+    do {
+        img = Render(renderer, scene, frame);
+        ++frames;
+    } while (!renderer.IsConverged() && frames < 64);
+    Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
+                                         : "without TAA the first frame is final");
     return img;
 }
 
@@ -341,6 +351,29 @@ int main()
             const Image img = RenderPost(device, scene);
             Expect(img.At(32, 60, 2) == 1.0f && img.At(32, 60, 0) == 0.0f, "background passes through");
             Expect(std::abs(img.At(32, 8, 1) - 0.106f) < 0.01f, "exposure from geometry only");
+        }
+
+        {
+            // TAA anti-aliases edges: a slanted emitter edge gets coverage
+            // values between background (G = 0) and geometry (G = 0.106).
+            vkr::Scene scene(&device);
+            vkr::Mesh *tri = AddEmitter(scene, 0, 0, 0, 0, 0, 1.0f);
+            tri->points = {-1, -1, 0, 1, -1, 0, -1, 0.6f, 0};
+            tri->uvs.clear();
+            scene.Commit();
+            auto partial = [](const Image &img) {
+                int n = 0;
+                for (int y = 0; y < 64; ++y) {
+                    for (int x = 0; x < 64; ++x) {
+                        const float g = img.At(x, y, 1);
+                        n += g > 0.01f && g < 0.095f;
+                    }
+                }
+                return n;
+            };
+            const int smooth = partial(RenderPost(device, scene, 0.0f, true));
+            const int hard = partial(RenderPost(device, scene, 0.0f, false));
+            Expect(smooth > 30 && hard < 5, "TAA turns the hard edge into partial coverage");
         }
 
         {

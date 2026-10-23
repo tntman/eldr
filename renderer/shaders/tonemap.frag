@@ -2,10 +2,12 @@
 #extension GL_GOOGLE_include_directive : require
 #include "post.glsl"
 
-// Bloom composite, exposure and ACES tonemapping. The output is display
-// referred but still linear: the app applies the sRGB transfer (usdview's
-// default colour correction does).
-// a = (bloom intensity, bloom mip count, count background, 0), b = (1/width, 1/height)
+// Bloom, exposure and ACES tonemapping, then compositing over the app's
+// background colour by coverage. The output is display referred but still
+// linear: the app applies the sRGB transfer (usdview's default colour
+// correction does).
+// a = (bloom intensity, bloom mip count, 0, 0), b = (1/width, 1/height),
+// c = background colour
 layout(location = 0) out vec4 outColor;
 
 // Stephen Hill's fit of the ACES RRT + sRGB ODT (sRGB linear in and out).
@@ -27,17 +29,17 @@ vec3 AcesFitted(vec3 c)
 
 void main()
 {
-    ivec2 p = ivec2(gl_FragCoord.xy);
-    vec4 hdr = texelFetch(src, p, 0);
-    // The app's background colour passes through untouched.
-    if (IsBackground(p, pc.a.z)) {
-        outColor = hdr;
+    vec4 hdr = texelFetch(src, ivec2(gl_FragCoord.xy), 0);
+    float coverage = clamp(hdr.a, 0.0, 1.0);
+    if (coverage <= 0.0) {
+        outColor = pc.c;  // background colour passes through exactly
         return;
     }
-    vec3 c = hdr.rgb;
+    vec3 c = hdr.rgb / coverage;
     if (pc.a.x > 0.0) {
         vec3 b = textureLod(bloom, gl_FragCoord.xy * pc.b.xy, 0.0).rgb / pc.a.y;
         c = mix(c, b, pc.a.x);
     }
-    outColor = vec4(AcesFitted(c * exp2(exposure.ev)), hdr.a);
+    // ponytail: bloom doesn't spill onto the app's background colour.
+    outColor = mix(pc.c, vec4(AcesFitted(c * exp2(exposure.ev)), 1.0), coverage);
 }

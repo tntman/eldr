@@ -1,5 +1,7 @@
 #include "post.h"
 
+#include "fullscreen.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -8,9 +10,6 @@ namespace vkr {
 
 namespace {
 
-const uint32_t kFullscreenVert[] =
-#include "fullscreen.vert.inc"
-;
 const uint32_t kBloomDownFrag[] =
 #include "bloom_down.frag.inc"
 ;
@@ -34,6 +33,10 @@ constexpr uint32_t kMaxBloomLevels = 6;
 
 struct ExposureState {  // mirror of Exposure in post.glsl
     float ev, targetEv, avgLogLum, pad;
+};
+
+struct Params {  // mirror of PostParams in post.glsl
+    float a[4], b[4], c[4];
 };
 
 void BufferBarrier(VkCommandBuffer cmd, VkBuffer buffer,
@@ -70,21 +73,18 @@ PostProcess::PostProcess(Device &device)
     sci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     Check(vkCreateSampler(d, &sci, nullptr, &_linear), "vkCreateSampler");
-    sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;  // exact depth reads
-    Check(vkCreateSampler(d, &sci, nullptr, &_nearest), "vkCreateSampler");
 
-    const VkDescriptorSetLayoutBinding bindings[5] = {
+    const VkDescriptorSetLayoutBinding bindings[4] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kStages},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kStages},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kStages},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kStages},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kStages},
     };
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 5;
+    slci.bindingCount = 4;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkPushConstantRange range{kStages, 0, 32};
+    const VkPushConstantRange range{kStages, 0, sizeof(Params)};
     VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     lci.setLayoutCount = 1;
     lci.pSetLayouts = &_setLayout;
@@ -112,70 +112,9 @@ PostProcess::PostProcess(Device &device)
     _histogram = compute(kHistogramComp, sizeof(kHistogramComp));
     _exposure = compute(kExposureComp, sizeof(kExposureComp));
 
-    VkShaderModule vert = CreateShaderModule(d, kFullscreenVert, sizeof(kFullscreenVert));
-    auto graphics = [&](const uint32_t *code, size_t bytes, bool additive) {
-        VkShaderModule frag = CreateShaderModule(d, code, bytes);
-        const VkPipelineShaderStageCreateInfo stages[2] = {
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-             VK_SHADER_STAGE_VERTEX_BIT, vert, "main"},
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-             VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main"},
-        };
-        VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        viewport.viewportCount = viewport.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        raster.polygonMode = VK_POLYGON_MODE_FILL;
-        raster.cullMode = VK_CULL_MODE_NONE;
-        raster.lineWidth = 1.0f;
-        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineColorBlendAttachmentState attachment{};
-        attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        if (additive) {
-            attachment.blendEnable = VK_TRUE;
-            attachment.srcColorBlendFactor = attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-            attachment.srcAlphaBlendFactor = attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        }
-        VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blend.attachmentCount = 1;
-        blend.pAttachments = &attachment;
-        const VkDynamicState dynamicStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynamic.dynamicStateCount = 2;
-        dynamic.pDynamicStates = dynamicStates;
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &kFormat;
-        VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
-        ci.stageCount = 2;
-        ci.pStages = stages;
-        ci.pVertexInputState = &input;
-        ci.pInputAssemblyState = &assembly;
-        ci.pViewportState = &viewport;
-        ci.pRasterizationState = &raster;
-        ci.pMultisampleState = &multisample;
-        ci.pColorBlendState = &blend;
-        ci.pDynamicState = &dynamic;
-        ci.layout = _layout;
-        VkPipeline p = VK_NULL_HANDLE;
-        const VkResult r = vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &p);
-        vkDestroyShaderModule(d, frag, nullptr);
-        Check(r, "vkCreateGraphicsPipelines");
-        return p;
-    };
-    try {
-        _down = graphics(kBloomDownFrag, sizeof(kBloomDownFrag), false);
-        _up = graphics(kBloomUpFrag, sizeof(kBloomUpFrag), true);
-        _tonemap = graphics(kTonemapFrag, sizeof(kTonemapFrag), false);
-    } catch (...) {
-        vkDestroyShaderModule(d, vert, nullptr);
-        throw;
-    }
-    vkDestroyShaderModule(d, vert, nullptr);
+    _down = CreateFullscreenPipeline(d, _layout, kBloomDownFrag, sizeof(kBloomDownFrag), kFormat);
+    _up = CreateFullscreenPipeline(d, _layout, kBloomUpFrag, sizeof(kBloomUpFrag), kFormat, true);
+    _tonemap = CreateFullscreenPipeline(d, _layout, kTonemapFrag, sizeof(kTonemapFrag), kFormat);
 }
 
 PostProcess::~PostProcess()
@@ -189,7 +128,6 @@ PostProcess::~PostProcess()
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
     vkDestroySampler(d, _linear, nullptr);
-    vkDestroySampler(d, _nearest, nullptr);
     _dev.Destroy(_histogramBuffer);
     _dev.Destroy(_exposureBuffer);
 }
@@ -218,37 +156,33 @@ VkDescriptorSet PostProcess::_CreateSet(VkImageView src)
     Check(vkAllocateDescriptorSets(_dev.device, &ai, &set), "vkAllocateDescriptorSets");
 
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[3] = {
-        {_linear, src, ro}, {_linear, _bloomMips[0], ro}, {_nearest, _depth, ro}};
+    const VkDescriptorImageInfo images[2] = {{_linear, src, ro}, {_linear, _bloomMips[0], ro}};
     const VkDescriptorBufferInfo buffers[2] = {
         {_histogramBuffer.buffer, 0, VK_WHOLE_SIZE}, {_exposureBuffer.buffer, 0, VK_WHOLE_SIZE}};
-    VkWriteDescriptorSet writes[5] = {};
-    const uint32_t bindings[5] = {0, 1, 2, 3, 4};
-    for (int i = 0; i < 5; ++i) {
+    VkWriteDescriptorSet writes[4] = {};
+    for (uint32_t i = 0; i < 4; ++i) {
         writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[i].dstSet = set;
-        writes[i].dstBinding = bindings[i];
+        writes[i].dstBinding = i;
         writes[i].descriptorCount = 1;
+        if (i < 2) {
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[i].pImageInfo = &images[i];
+        } else {
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[i].pBufferInfo = &buffers[i - 2];
+        }
     }
-    writes[0].descriptorType = writes[1].descriptorType = writes[4].descriptorType =
-        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[0].pImageInfo = &images[0];
-    writes[1].pImageInfo = &images[1];
-    writes[4].pImageInfo = &images[2];
-    writes[2].descriptorType = writes[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    writes[2].pBufferInfo = &buffers[0];
-    writes[3].pBufferInfo = &buffers[1];
-    vkUpdateDescriptorSets(_dev.device, 5, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
     return set;
 }
 
-void PostProcess::Resize(uint32_t width, uint32_t height, VkImageView hdr, VkImageView depth)
+void PostProcess::Resize(uint32_t width, uint32_t height, VkImageView hdr)
 {
     _DestroyTargets();
     _width = width;
     _height = height;
     _hdr = hdr;
-    _depth = depth;
 
     // Bloom chain from half resolution down to roughly 8 pixels.
     const uint32_t bw = std::max(1u, width / 2), bh = std::max(1u, height / 2);
@@ -274,7 +208,7 @@ void PostProcess::Resize(uint32_t width, uint32_t height, VkImageView hdr, VkIma
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
 
     const uint32_t sets = levels + 1;
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * sets},
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * sets},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2 * sets}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = sets;
@@ -287,36 +221,14 @@ void PostProcess::Resize(uint32_t width, uint32_t height, VkImageView hdr, VkIma
     }
 }
 
-void PostProcess::_Fullscreen(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set,
-                              VkImageView target, uint32_t width, uint32_t height, bool load,
-                              const float params[8])
+void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool resetExposure,
+                         const float background[4])
 {
-    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    att.imageView = target;
-    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    att.loadOp = load ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, {width, height}};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 1;
-    ri.pColorAttachments = &att;
-    vkCmdBeginRendering(cmd, &ri);
-    const VkViewport vp{0, 0, float(width), float(height), 0, 1};
-    const VkRect2D scissor{{0, 0}, {width, height}};
-    vkCmdSetViewport(cmd, 0, 1, &vp);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
-    vkCmdPushConstants(cmd, _layout, kStages, 0, 32, params);
-    vkCmdDraw(cmd, 3, 1, 0, 0);
-    vkCmdEndRendering(cmd);
-}
-
-void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, bool skyBackground, float dt,
-                         bool resetExposure)
-{
-    const float sky = skyBackground ? 1.0f : 0.0f;
+    auto fullscreen = [&](VkPipeline pipeline, VkDescriptorSet set, VkImageView target,
+                          uint32_t width, uint32_t height, bool load, const Params &params) {
+        DrawFullscreen(cmd, pipeline, _layout, set, target, width, height, load, kStages,
+                       &params, sizeof(params));
+    };
 
     // Histogram, then exposure (one invocation; it also does the adaptation).
     vkCmdFillBuffer(cmd, _histogramBuffer.buffer, 0, VK_WHOLE_SIZE, 0);
@@ -325,18 +237,18 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, bool skyBackgro
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
                                                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_hdrSet, 0, nullptr);
-    const float histogramParams[8] = {kMinLogLum, kLogLumRange, sky, 0,
-                                      float(_width), float(_height), 0, 0};
+    const Params histogramParams{{kMinLogLum, kLogLumRange, 0, 0}, {float(_width), float(_height), 0, 0}, {}};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _histogram);
-    vkCmdPushConstants(cmd, _layout, kStages, 0, 32, histogramParams);
+    vkCmdPushConstants(cmd, _layout, kStages, 0, sizeof(Params), &histogramParams);
     vkCmdDispatch(cmd, (_width + 15) / 16, (_height + 15) / 16, 1);
     BufferBarrier(cmd, _histogramBuffer.buffer,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
-    const float exposureParams[8] = {dt, s.exposureCompensation, s.autoExposure ? 1.0f : 0.0f,
-                                     resetExposure ? 1.0f : 0.0f, kMinLogLum, kLogLumRange, 0, 0};
+    const Params exposureParams{{dt, s.exposureCompensation, s.autoExposure ? 1.0f : 0.0f,
+                                 resetExposure ? 1.0f : 0.0f},
+                                {kMinLogLum, kLogLumRange, 0, 0}, {}};
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _exposure);
-    vkCmdPushConstants(cmd, _layout, kStages, 0, 32, exposureParams);
+    vkCmdPushConstants(cmd, _layout, kStages, 0, sizeof(Params), &exposureParams);
     vkCmdDispatch(cmd, 1, 1, 1);
     BufferBarrier(cmd, _exposureBuffer.buffer,
                   VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
@@ -363,9 +275,9 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, bool skyBackgro
             if (i > 0) {
                 mipSize(i - 1, &sw, &sh);
             }
-            const float params[8] = {1.0f / sw, 1.0f / sh, i == 0 ? 1.0f : 0.0f, 0,
-                                     1.0f / w, 1.0f / h, 0, 0};
-            _Fullscreen(cmd, _down, i == 0 ? _hdrSet : _mipSets[i - 1], _bloomMips[i], w, h, false, params);
+            const Params params{{1.0f / sw, 1.0f / sh, i == 0 ? 1.0f : 0.0f, 0},
+                                {1.0f / w, 1.0f / h, 0, 0}, {}};
+            fullscreen(_down, i == 0 ? _hdrSet : _mipSets[i - 1], _bloomMips[i], w, h, false, params);
             ImageBarrier(cmd, _bloom.image, Mip(i),
                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -380,8 +292,8 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, bool skyBackgro
                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            const float params[8] = {1.0f / sw, 1.0f / sh, 1.0f, 0, 1.0f / w, 1.0f / h, 0, 0};
-            _Fullscreen(cmd, _up, _mipSets[i + 1], _bloomMips[i], w, h, true, params);
+            const Params params{{1.0f / sw, 1.0f / sh, 1.0f, 0}, {1.0f / w, 1.0f / h, 0, 0}, {}};
+            fullscreen(_up, _mipSets[i + 1], _bloomMips[i], w, h, true, params);
             ImageBarrier(cmd, _bloom.image, Mip(i),
                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -393,9 +305,9 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, bool skyBackgro
     ImageBarrier(cmd, _output.image, Mip(0), VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    const float tonemapParams[8] = {s.bloomIntensity, float(levels), sky, 0,
-                                    1.0f / _width, 1.0f / _height, 0, 0};
-    _Fullscreen(cmd, _tonemap, _hdrSet, _output.view, _width, _height, false, tonemapParams);
+    Params tonemapParams{{s.bloomIntensity, float(levels), 0, 0}, {1.0f / _width, 1.0f / _height, 0, 0}, {}};
+    std::copy(background, background + 4, tonemapParams.c);
+    fullscreen(_tonemap, _hdrSet, _output.view, _width, _height, false, tonemapParams);
     ImageBarrier(cmd, _output.image, Mip(0),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,

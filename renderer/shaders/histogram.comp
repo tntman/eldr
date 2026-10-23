@@ -5,7 +5,7 @@
 
 // Log-luminance histogram for auto-exposure. Bin 0 holds (near) black,
 // bins 1..255 span [minLogLum, minLogLum + logLumRange].
-// a = (minLogLum, logLumRange, count background, 0), b = (width, height)
+// a = (minLogLum, logLumRange, 0, 0), b = (width, height)
 layout(local_size_x = 16, local_size_y = 16) in;
 
 shared uint localBins[256];
@@ -15,11 +15,14 @@ void main()
     localBins[gl_LocalInvocationIndex] = 0u;
     barrier();
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
-    // The app's background colour (no geometry, no sky) must not steer exposure.
-    if (p.x < int(pc.b.x) && p.y < int(pc.b.y) && !IsBackground(p, pc.a.z)) {
-        float l = Luminance(texelFetch(src, p, 0).rgb);
-        uint bin = l < 1e-6 ? 0u : uint(clamp((log2(l) - pc.a.x) / pc.a.y, 0.0, 1.0) * 254.0 + 1.0);
-        atomicAdd(localBins[bin], 1u);
+    if (p.x < int(pc.b.x) && p.y < int(pc.b.y)) {
+        vec4 c = texelFetch(src, p, 0);
+        // The app's background colour (coverage 0) must not steer exposure.
+        if (c.a >= 0.5) {
+            float l = Luminance(c.rgb / c.a);
+            uint bin = l < 1e-6 ? 0u : uint(clamp((log2(l) - pc.a.x) / pc.a.y, 0.0, 1.0) * 254.0 + 1.0);
+            atomicAdd(localBins[bin], 1u);
+        }
     }
     barrier();
     atomicAdd(bins[gl_LocalInvocationIndex], localBins[gl_LocalInvocationIndex]);

@@ -79,6 +79,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::PostProcess::Settings defaults;
     return {
         {"Post Processing (exposure, bloom, tonemap)", HdVkRenderSettingsTokens->postProcess, VtValue(true)},
+        {"Temporal Anti-Aliasing", HdVkRenderSettingsTokens->taa, VtValue(true)},
         {"Auto Exposure", HdVkRenderSettingsTokens->autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", HdVkRenderSettingsTokens->exposureCompensation,
          VtValue(defaults.exposureCompensation)},

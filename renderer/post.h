@@ -21,15 +21,16 @@ public:
     PostProcess(const PostProcess &) = delete;
     PostProcess &operator=(const PostProcess &) = delete;
 
-    // (Re)creates size-dependent targets; `hdr` and `depth` must stay valid
-    // until the next Resize.
-    void Resize(uint32_t width, uint32_t height, VkImageView hdr, VkImageView depth);
+    // (Re)creates size-dependent targets; `hdr` must stay valid until the
+    // next Resize. It holds the scene premultiplied by coverage (alpha 0
+    // where only the app's background shows).
+    void Resize(uint32_t width, uint32_t height, VkImageView hdr);
 
-    // Records every pass. Expects hdr and depth in SHADER_READ_ONLY_OPTIMAL
-    // and leaves Output() in TRANSFER_SRC_OPTIMAL. `skyBackground`: pixels
-    // without geometry show the dome, so they get exposed and tonemapped too.
-    void Record(VkCommandBuffer cmd, const Settings &settings, bool skyBackground, float dt,
-                bool resetExposure);
+    // Records every pass. Expects hdr in SHADER_READ_ONLY_OPTIMAL and leaves
+    // Output() in TRANSFER_SRC_OPTIMAL. The tonemapped scene is composited
+    // over `background` (display-referred) by coverage.
+    void Record(VkCommandBuffer cmd, const Settings &settings, float dt, bool resetExposure,
+                const float background[4]);
 
     VkImage Output() const { return _output.image; }
 
@@ -38,13 +39,10 @@ public:
 
 private:
     VkDescriptorSet _CreateSet(VkImageView src);
-    void _Fullscreen(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set,
-                     VkImageView target, uint32_t width, uint32_t height, bool load,
-                     const float params[8]);
     void _DestroyTargets();
 
     Device &_dev;
-    VkSampler _linear = VK_NULL_HANDLE, _nearest = VK_NULL_HANDLE;
+    VkSampler _linear = VK_NULL_HANDLE;
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkDescriptorPool _pool = VK_NULL_HANDLE;  // recreated by Resize
@@ -53,7 +51,7 @@ private:
     Buffer _histogramBuffer, _exposureBuffer;  // exposure state persists across frames
 
     uint32_t _width = 0, _height = 0;
-    VkImageView _hdr = VK_NULL_HANDLE, _depth = VK_NULL_HANDLE;
+    VkImageView _hdr = VK_NULL_HANDLE;
     Image _bloom;                         // half resolution, one mip per bloom level
     std::vector<VkImageView> _bloomMips;  // single-mip views
     Image _output;

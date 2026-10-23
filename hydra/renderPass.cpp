@@ -80,6 +80,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
     frame.postProcess = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->postProcess, true);
+    frame.taa = delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->taa, true);
     frame.post.autoExposure = delegate->GetRenderSetting<bool>(
         HdVkRenderSettingsTokens->autoExposure, frame.post.autoExposure);
     frame.post.exposureCompensation = delegate->GetRenderSetting<float>(

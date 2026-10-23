@@ -92,10 +92,26 @@ Mat4 ToMat4(const float *m)
     return r;
 }
 
+// Low-discrepancy sub-pixel offsets in [0, 1) for TAA jitter.
+float Halton(uint32_t index, uint32_t base)
+{
+    float f = 1.0f, r = 0.0f;
+    for (; index > 0; index /= base) {
+        f /= float(base);
+        r += f * float(index % base);
+    }
+    return r;
+}
+
+// Frames a still camera accumulates before TAA reports converged; while
+// the camera moves the blend weight stays at 1 / (kTaaMoving + 1) = 0.1.
+constexpr uint32_t kTaaSamples = 16, kTaaMoving = 9;
+
 } // namespace
 
 Renderer::Renderer(Device &device)
     : _dev(device)
+    , _taa(device)
     , _post(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -425,7 +441,9 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    _post.Resize(width, height, _color.view, _depth.view);
+    _taa.Resize(width, height, _color.view, _depth.view);
+    _post.Resize(width, height, _taa.Output());
+    _taaValid = false;
 }
 
 // The GPU is idle here (Render waits for every frame), so rewriting the set
@@ -563,7 +581,7 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
 
 bool Renderer::IsConverged() const
 {
-    return !_adapting || _post.ExposureConverged();
+    return (!_adapting || _post.ExposureConverged()) && _taaConverged;
 }
 
 uint32_t Renderer::VisibleInstances() const
@@ -592,6 +610,28 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd = FrameData{};
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
+
+    // TAA: offset the main pass by a sub-pixel Halton jitter. The camera
+    // matrices used for culling, shadows and reprojection stay unjittered.
+    const bool taa = frame.postProcess && frame.taa;
+    float jitteredViewProj[16];
+    std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
+    Mat4 unjitter;  // jittered NDC -> unjittered NDC
+    if (taa) {
+        const uint32_t i = (_haltonIndex++ % kTaaSamples) + 1;
+        const float jx = (Halton(i, 2) - 0.5f) * 2.0f / float(_width);
+        const float jy = (Halton(i, 3) - 0.5f) * 2.0f / float(_height);
+        for (int r = 0; r < 4; ++r) {  // clip.xy += jitter * clip.w
+            jitteredViewProj[r * 4 + 0] += jx * jitteredViewProj[r * 4 + 3];
+            jitteredViewProj[r * 4 + 1] += jy * jitteredViewProj[r * 4 + 3];
+        }
+        unjitter.m[3][0] = -jx;
+        unjitter.m[3][1] = -jy;
+        // The sky reconstructs rays per pixel, so it follows the jitter too.
+        const Mat4 invJittered = unjitter * ToMat4(frame.invViewProj);
+        std::memcpy(fd.invViewProj, invJittered.m, sizeof(fd.invViewProj));
+    }
+
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
     fd.viewport[0] = float(_width);
     fd.viewport[1] = float(_height);
@@ -726,7 +766,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         colorAtts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         std::fill(colorAtts[i].clearValue.color.int32, colorAtts[i].clearValue.color.int32 + 4, -1);
     }
-    std::memcpy(colorAtts[0].clearValue.color.float32, frame.clearColor, sizeof(frame.clearColor));
+    // With post on, the scene is premultiplied by coverage (cleared to
+    // transparent) and the tonemap composites the app's colour behind it.
+    const float transparent[4] = {0, 0, 0, 0};
+    std::memcpy(colorAtts[0].clearValue.color.float32, frame.postProcess ? transparent : frame.clearColor,
+                sizeof(frame.clearColor));
     VkRenderingAttachmentInfo depthAtt{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     depthAtt.imageView = _depth.view;
     depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
@@ -750,7 +794,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     vkCmdSetScissor(_cmd, 0, 1, &scissor);
     if (draw) {
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline);
-        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, frame.viewProj);
+        vkCmdPushConstants(_cmd, _layout, kPushStages, 0, 64, jitteredViewProj);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, 0, gpu.drawCount,
@@ -775,16 +819,54 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                      kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        // Adaptation runs on wall-clock time; the first frame (or toggling
-        // auto-exposure) snaps straight to the target.
+        // TAA weight: 1 without usable history; 1/(n+1) over n history
+        // frames, capped at kTaaMoving while the camera moves (0.1) and at
+        // kTaaSamples - 1 while it is still (a 16-sample average).
+        float alpha = 1.0f;
+        Mat4 reprojection;
+        if (taa) {
+            const bool moved = _taaValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+            if (_taaValid) {
+                reprojection = unjitter * ToMat4(frame.invViewProj) * ToMat4(_prevViewProj);
+            }
+            if (!_taaValid) {
+                _taaFrames = 0;
+                _taaWarmup = true;
+            } else if (moved) {
+                _taaFrames = std::min(_taaFrames, kTaaMoving);
+                _taaWarmup = false;
+            }
+            alpha = 1.0f / float(_taaFrames + 1);
+            _taaConverged = _taaValid && !moved && _taaFrames == kTaaSamples - 1;  // sample 16 of a still camera
+            _taaFrames = std::min(_taaFrames + 1, kTaaSamples - 1);
+            std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
+            _taaValid = true;
+        } else {
+            _taaValid = false;
+            _taaWarmup = false;
+            _taaConverged = true;
+        }
+
+        // Adaptation runs on wall-clock time. The first frame, toggling
+        // auto-exposure and a fresh TAA history snap straight to the target:
+        // while TAA accumulates a new image its histogram still shifts, and
+        // the settled image should be exposed for itself.
         const auto now = std::chrono::steady_clock::now();
         const float dt = _hasLastFrame
             ? std::min(std::chrono::duration<float>(now - _lastFrame).count(), 0.1f) : 0.0f;
-        const bool reset = !_hasLastFrame || frame.post.autoExposure != _lastAutoExposure;
+        const bool reset = !_hasLastFrame || frame.post.autoExposure != _lastAutoExposure || _taaWarmup;
         _lastFrame = now;
         _hasLastFrame = true;
         _lastAutoExposure = frame.post.autoExposure;
-        _post.Record(_cmd, frame.post, sky, dt, reset);
+        if (_taaConverged) {
+            _taaWarmup = false;
+        }
+
+        _taa.Record(_cmd, &reprojection.m[0][0], alpha);
+        _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
+    } else {
+        _taaValid = false;
+        _taaConverged = true;
     }
 
     // Everything that may be read back goes to TRANSFER_SRC (with post on,

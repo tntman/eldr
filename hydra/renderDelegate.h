@@ -16,6 +16,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 #define HDVK_RENDER_SETTING_TOKENS                           \
     ((postProcess, "hdvk:postProcess"))                      \
+    ((taa, "hdvk:taa"))                                      \
     ((autoExposure, "hdvk:autoExposure"))                    \
     ((exposureCompensation, "hdvk:exposureCompensation"))    \
     ((bloomIntensity, "hdvk:bloomIntensity"))
