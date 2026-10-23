@@ -50,7 +50,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeStepSize, "hdvk:volumeStepSize"))                \
     ((volumeMaxSteps, "hdvk:volumeMaxSteps"))                \
     ((volumeShadowSteps, "hdvk:volumeShadowSteps"))          \
-    ((volumeDensity, "hdvk:volumeDensity"))
+    ((volumeDensity, "hdvk:volumeDensity"))                  \
+    ((volumeEmission, "hdvk:volumeEmission"))                \
+    ((volumeAnisotropy, "hdvk:volumeAnisotropy"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

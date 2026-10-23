@@ -22,8 +22,8 @@ const uint32_t kVolumeFrag[] =
 struct VolumeParams {  // mirror of the push block in volume.frag
     float stepSize;
     uint32_t maxSteps, shadowSteps;
-    float density;
-    uint32_t count;
+    float density, emission, anisotropy;
+    uint32_t count, pad;
 };
 
 // y = m (x, 1): three rows of an affine map.
@@ -152,6 +152,8 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
     p.shadowSteps = std::min(s.shadowSteps, 256u);
     p.density = std::max(s.density, 0.0f);
+    p.emission = std::max(s.emission, 0.0f);
+    p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
     p.count = volumeCount;
     DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
                    sizeof(p));

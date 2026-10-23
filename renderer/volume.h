@@ -65,6 +65,8 @@ public:
         uint32_t maxSteps = 256;    // per pixel; longer rays take longer steps
         uint32_t shadowSteps = 8;   // towards each distant light (half as many up to the dome)
         float density = 1.0f;       // extinction multiplier
+        float emission = 1.0f;      // temperature and emission multiplier
+        float anisotropy = 0.2f;    // Henyey-Greenstein g
     };
 
     // Blends the volumes over `color` (COLOR_ATTACHMENT_OPTIMAL, stays so);

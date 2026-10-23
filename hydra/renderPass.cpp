@@ -108,8 +108,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
-                                {t.volumeStepSize, &frame.volume.stepSize},
-                                {t.volumeDensity, &frame.volume.density}}) {
+                                {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
+                                {t.volumeEmission, &frame.volume.emission},
+                                {t.volumeAnisotropy, &frame.volume.anisotropy}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.taaSamples, &frame.taaSamples},

@@ -1283,6 +1283,31 @@ int main()
                    "without shadow steps the ball is lit evenly");
             frame.volume.shadowSteps = vkr::VolumePass::Settings().shadowSteps;
 
+            // Temperature 0.3 (normalized: 1500 K) glows red-orange.
+            ball->temperature = BallGrid(12.0f, 0.3f);
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            const float r = img.At(36, 40, 0), g = img.At(36, 40, 1), bl = img.At(36, 40, 2);
+            Expect(r > 0.2f && r > 1.5f * g && g > bl - 0.5f, "a hot volume glows like a blackbody");
+            std::printf("volume: T %.3f, lit %.3f / %.3f, hot %.3f %.3f %.3f\n", std::exp(-1.5f), near, far, r, g, bl);
+
+            // A uniform dome lights the ball from above: its top (y = 0.27)
+            // scatters more than its bottom. A sphere light at x = 0.6 lights
+            // its near side.
+            vkr::Scene sky(&device);
+            sky.AddVolume()->density = ball->density;
+            sky.AddDome();
+            sky.Commit();
+            img = Render(renderer, sky, frame);
+            Expect(img.At(32, 40, 0) > 0.05f && img.At(32, 40, 0) > 1.2f * img.At(32, 23, 0),
+                   "the dome lights a volume from above");
+            vkr::Scene bulb(&device);
+            bulb.AddVolume()->density = ball->density;
+            AddSphereLight(bulb, 0.6f, 0, 0, 0.05f, 200.0f);
+            bulb.Commit();
+            img = Render(renderer, bulb, frame);
+            Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 0) > 3.0f * img.At(23, 32, 0),
+                   "a sphere light lights a volume's near side");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

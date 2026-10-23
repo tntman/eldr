@@ -163,6 +163,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
         {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
         {"Volume Density Multiplier", t.volumeDensity, VtValue(volume.density)},
+        {"Volume Emission Multiplier (temperature, emission)", t.volumeEmission, VtValue(volume.emission)},
+        {"Volume Phase Anisotropy (-1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
     });
 #endif
     return settings;
