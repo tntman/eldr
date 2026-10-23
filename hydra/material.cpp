@@ -1226,20 +1226,48 @@ float IorToF0(float ior)
     return r * r;
 }
 
-// The lobes beyond the metallic base (shaders/brdf.glsl), as constants:
-// unauthored inputs take the surface's defaults, connected ones too.
-void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
+// The lobes beyond the metallic base (shaders/brdf.glsl): constants
+// (authored, else the surface's defaults), and connected inputs (textures,
+// graphs) computed per pixel by the material program, as the base's on
+// other uv sets. Where a connected input's graph can't be compiled, or
+// programs are off, its constant is the default, except specularColor:
+// 0.04 grey (a dielectric, as the metallic workflow), not black.
+// ponytail: connected IORs, coat colour of UsdPreviewSurface, thin film
+// weight and IOR, and the anisotropy's rotation keep their constants.
+void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &graph)
 {
+    using P = vkr::MaterialProgram;
     auto const &p = surface.parameters;
     const TfToken &id = surface.nodeTypeId;
     auto color = [&](TfToken const &name, float *out) {
         const GfVec3f c = ReadColor(p, name, GfVec3f(out[0], out[1], out[2]));
         std::copy(c.data(), c.data() + 3, out);
     };
+    // Whether `name` is connected; if so the program computes it (times
+    // `scale`) where it can.
+    auto program = [&](TfToken const &name, P::Input target, float scale = 1.0f) {
+        const auto c = surface.inputConnections.find(name);
+        if (c == surface.inputConnections.end() || c->second.empty()) {
+            return false;
+        }
+        if (!graph.Output(surface, name, target, scale)) {
+            static std::mutex mutex;
+            static std::set<std::string> warned;
+            std::lock_guard<std::mutex> lock(mutex);
+            if (warned.insert(graph.Failed()).second) {
+                TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
+                        graph.Failed().c_str());
+            }
+        }
+        return true;
+    };
     if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
         if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
             m->specularWorkflow = true;
             color(_tokens->specularColor, m->specularColor);
+            if (program(_tokens->specularColor, P::kSpecularColor)) {
+                std::fill(m->specularColor, m->specularColor + 3, 0.04f);
+            }
             m->metallic = 0.0f;  // the workflow ignores it
             m->metallicTex = vkr::TextureRef();
         }
@@ -1247,6 +1275,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+        program(_tokens->clearcoat, P::kCoat);
+        program(_tokens->clearcoatRoughness, P::kCoatRoughness);
     } else if (id == _tokens->ND_standard_surface_surfaceshader) {
         m->coat = ReadOr(p, _tokens->coat, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
@@ -1257,10 +1287,18 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         color(_tokens->sheen_color, m->sheenColor);
         // Its thin film is on whenever it has a thickness (nm).
         m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
-        m->thinFilm = m->thinFilmThickness > 0.0f ? 1.0f : 0.0f;
+        const bool textured = program(_tokens->thin_film_thickness, P::kThinFilmThickness);
+        m->thinFilm = m->thinFilmThickness > 0.0f || textured ? 1.0f : 0.0f;
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
         m->anisotropy = ReadOr(p, _tokens->specular_anisotropy, 0.0f);
         m->anisotropyRotation = ReadOr(p, _tokens->specular_rotation, 0.0f);
+        program(_tokens->coat, P::kCoat);
+        program(_tokens->coat_roughness, P::kCoatRoughness);
+        program(_tokens->coat_color, P::kCoatColor);
+        program(_tokens->sheen, P::kSheen);
+        program(_tokens->sheen_color, P::kSheenColor);
+        program(_tokens->sheen_roughness, P::kSheenRoughness);
+        program(_tokens->specular_anisotropy, P::kAnisotropy);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1277,6 +1315,14 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m)
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
         m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
         m->openPbrAnisotropy = true;
+        program(_tokens->coat_weight, P::kCoat);
+        program(_tokens->coat_roughness, P::kCoatRoughness);
+        program(_tokens->coat_color, P::kCoatColor);
+        program(_tokens->fuzz_weight, P::kSheen);
+        program(_tokens->fuzz_color, P::kSheenColor);
+        program(_tokens->fuzz_roughness, P::kSheenRoughness);
+        program(_tokens->thin_film_thickness, P::kThinFilmThickness, 1000.0f);
+        program(_tokens->specular_roughness_anisotropy, P::kAnisotropy);
     }
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
@@ -1452,6 +1498,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // standard_surface's opacity is a colour: its constant stays 1, a
     // texture is read through its first channel.
     input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex, P::kOpacity);
+    ReadLobes(surface, m, graph);
     if (!graph.Finish()) {
         TF_WARN("HdVk: a material's shading graph needs more than %u registers; its inputs keep their constants",
                 P::kRegisters);
@@ -1462,7 +1509,6 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
     }
-    ReadLobes(surface, m);
 }
 
 } // namespace

@@ -143,6 +143,21 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
         return;
     }
     Material m = materials[inMaterial];
+#ifdef GRAPH
+    // Lobe inputs the material program computed (textures, graphs; in
+    // MaterialProgram::Input order) stand in for the constants.
+    if (programLobes != 0u) {
+        m.specularColor.rgb = (programLobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
+        m.coat.x = (programLobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
+        m.coat.y = (programLobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
+        m.coatColor.rgb = (programLobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
+        m.sheen.x = (programLobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
+        m.sheenColor.rgb = (programLobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
+        m.sheen.y = (programLobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
+        m.anisotropy.x = (programLobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
+        m.thinFilm.y = (programLobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
+    }
+#endif
     layers.toonBands = m.toon.x;
     layers.toonSoftness = m.toon.y;
     // UsdPreviewSurface's specular workflow: F0 is specularColor (F90

@@ -115,8 +115,14 @@ struct MaterialProgram {
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
     };  // as shaders/program.glsl numbers them
-    // Material inputs kOutput writes, as GpuMaterial::tex orders them.
-    enum Input : uint32_t { kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity };
+    // Material inputs kOutput writes, as GpuMaterial::tex orders them, then
+    // the lobes' (Material's constants of the same names; brdf.glsl reads
+    // them, in the LAYERS shaders only).
+    enum Input : uint32_t {
+        kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity,
+        kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
+        kThinFilmThickness
+    };
 
     std::vector<uint32_t> code;      // 4 words per op
     std::vector<float> constants;    // 4 per vec4
@@ -186,9 +192,9 @@ struct Material {
     // ponytail: only the shading pass runs it; cutouts and the depth passes
     // use the constants and textures.
     MaterialProgram program;
-    // Lobes beyond the metallic base (shaders/brdf.glsl), constants only.
-    // ponytail: no textures or programs for them; add a TextureRef (or a
-    // MaterialProgram::Input) per input when assets need it.
+    // Lobes beyond the metallic base (shaders/brdf.glsl): constants, which
+    // `program` overrides for the inputs it outputs (MaterialProgram::Input
+    // from kSpecularColor on: textured or graph-driven lobes).
     // UsdPreviewSurface useSpecularWorkflow: F0 is specularColor (F90 white),
     // metallic is ignored.
     bool specularWorkflow = false;
@@ -222,7 +228,15 @@ struct Material {
     // with the renderer's LAYERS pipelines, the others never pay for them.
     bool Layered() const
     {
-        return specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0;
+        if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
+            return true;
+        }
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kThinFilmThickness; ++i) {
+            if (program.Outputs(MaterialProgram::Input(i))) {
+                return true;  // a textured or graph-driven lobe
+            }
+        }
+        return false;
     }
     // Transmission (refraction, transparency.glsl): of the surface opacity
     // leaves, `transmission` lets light through, tinted by
