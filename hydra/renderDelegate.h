@@ -40,6 +40,7 @@ public:
     HdResourceRegistrySharedPtr GetResourceRegistry() const override;
     HdAovDescriptor GetDefaultAovDescriptor(TfToken const &name) const override;
     HdRenderSettingDescriptorList GetRenderSettingDescriptors() const override;
+    TfTokenVector GetMaterialRenderContexts() const override;
 
     HdRenderPassSharedPtr CreateRenderPass(
         HdRenderIndex *index, HdRprimCollection const &collection) override;

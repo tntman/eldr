@@ -53,6 +53,14 @@ const TfTokenVector &HdVkRenderDelegate::GetSupportedRprimTypes() const { return
 const TfTokenVector &HdVkRenderDelegate::GetSupportedSprimTypes() const { return _sprimTypes; }
 const TfTokenVector &HdVkRenderDelegate::GetSupportedBprimTypes() const { return _bprimTypes; }
 
+// Storm's context first: assets made for usdview (Disney's Moana) bind their
+// UsdPreviewSurface only to outputs:glslfx:surface. UsdShade falls back to
+// the universal outputs:surface by itself.
+TfTokenVector HdVkRenderDelegate::GetMaterialRenderContexts() const
+{
+    return {TfToken("glslfx")};
+}
+
 HdResourceRegistrySharedPtr HdVkRenderDelegate::GetResourceRegistry() const
 {
     return _resourceRegistry;
