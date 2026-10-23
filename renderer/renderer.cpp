@@ -309,12 +309,14 @@ Renderer::Renderer(Device &device)
     if (_dev.rayTracing) {
         _rt = std::make_unique<RayTracing>(_dev, _setLayout);
     }
+    _volumePass = std::make_unique<VolumePass>(_dev, _setLayout);
 }
 
 Renderer::~Renderer()
 {
     vkDeviceWaitIdle(_dev.device);
     _rt.reset();
+    _volumePass.reset();
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
@@ -401,6 +403,8 @@ void Renderer::_CreateDescriptors()
     // the shadow maps 4 and 17..19), 49 the sun's cascades without depth
     // compare (soft sun shadows' blocker search), 50 the reflection probe
     // and 51 the planar reflection (Reflections).
+    // 63..65 the volumes (volume.frag): the depth (bound with or without
+    // the prepass), NanoVDB grids and GpuVolumes.
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     // Ray tracing stages read the materials, lights, frame and dome too.
     const VkShaderStageFlags kRt = _dev.rayTracing ? VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
@@ -466,6 +470,9 @@ void Renderer::_CreateDescriptors()
         {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -480,8 +487,8 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
@@ -972,6 +979,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         {nearest, sunTint.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {_clampSampler, atlasTint.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
         {nearest, atlasTint.depth.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
+    const VkDescriptorImageInfo volumeDepth{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+    const VkDescriptorBufferInfo volumeGrids{gpu.volumeGrids, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo volumes{gpu.volumes, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -1034,6 +1044,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorImageInfo planarInfo{_clampSampler, planar, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &probeInfo);
     write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &planarInfo);
+    write(63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &volumeDepth);
+    write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
+    write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -2247,6 +2260,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
         vkCmdCopyBuffer(_cmd, gpu.blendWeights, _prevBlendWeights.buffer, 1, &all);
         _prevBlendSource = gpu.blendWeights;
+    }
+    // Volumes over everything shaded so far (the OIT-resolved translucent
+    // surfaces included), clipped by the opaque depth. Volumetric fog,
+    // already in the image to the surface behind, applies to them once:
+    // volume.frag puts each behind the fog in front of it.
+    // ponytail: glass in front of a volume doesn't dim it (the volume ends
+    // up over the glass). Fading volumes by the OIT revealage would fix that
+    // but dim volumes in front of glass just as wrongly; choosing per pixel
+    // needs the nearest translucent depth from the accumulation pass.
+    if (frame.volumes &&
+        _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume)) {
+        pass("volumes");
     }
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

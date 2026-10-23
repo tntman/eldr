@@ -18,21 +18,23 @@ find_package(pxr CONFIG REQUIRED)
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
+# third_party/nanovdb: PNanoVDB.h of OpenVDB 10.1.0 (MPL-2.0, unmodified),
+# NanoVDB's GPU reader, for volume.frag and the CPU side of the volumes.
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp)
+               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
-                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+                -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
-                renderer/shaders/fog.glsl renderer/shaders/probes.glsl)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -93,9 +95,9 @@ add_library(vkrenderer STATIC
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp
-    renderer/fog.cpp renderer/probes.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp
     ${shader_incs})
-target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
 add_executable(vkrtest renderer/vkrtest.cpp)
@@ -108,6 +110,26 @@ add_library(hdVk SHARED
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp)
 target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
+# OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
+# which installs OpenVDB and its NanoVDB headers beside USD): the volume
+# rprim and openvdbAsset fields, grids converted to NanoVDB on load.
+# Without, HdVk has no volume prims.
+find_path(HDVK_NANOVDB_INCLUDE nanovdb/util/OpenToNanoVDB.h)
+if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
+    message(STATUS "HdVk: volumes (OpenVDB) on")
+    target_sources(hdVk PRIVATE hydra/volume.cpp hydra/field.cpp)
+    # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
+    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES _USE_MATH_DEFINES)
+    target_include_directories(hdVk PRIVATE ${HDVK_NANOVDB_INCLUDE})
+    target_link_libraries(hdVk PRIVATE hioOpenVDB)
+    # Writes tests/scenes/volume.vdb.
+    add_executable(make_volume tests/make_volume.cpp)
+    target_compile_definitions(make_volume PRIVATE _USE_MATH_DEFINES)
+    target_link_libraries(make_volume PRIVATE hioOpenVDB)
+    set(HDVK_VOLUMES ON)
+else()
+    message(STATUS "HdVk: volumes off (USD without OpenVDB)")
+endif()
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in
@@ -157,6 +179,15 @@ if(WIN32)
     set_tests_properties(holdout PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lighting COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lighting.py)
     set_tests_properties(lighting PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    if(HDVK_VOLUMES)
+        add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
+        set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    endif()
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")
+
+# The Python tests run usdenv.cmd against the USD this build uses.
+file(TO_NATIVE_PATH ${pxr_DIR} usdRoot)
+get_property(allTests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "USD_ROOT=${usdRoot}")

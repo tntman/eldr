@@ -9,6 +9,10 @@
 #include "renderBuffer.h"
 #include "renderPass.h"
 #include "renderer.h"
+#ifdef HDVK_VOLUMES
+#include "field.h"
+#include "volume.h"
+#endif
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
@@ -32,13 +36,26 @@ TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 namespace {
 
+#ifdef HDVK_VOLUMES
+// UsdVol's OpenVDB fields (with volumes: built against a USD with OpenVDB).
+const TfToken _openvdbAsset("openvdbAsset");
+#endif
+
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->basisCurves,
-                                   HdPrimTypeTokens->points};
+                                   HdPrimTypeTokens->points,
+#ifdef HDVK_VOLUMES
+                                   HdPrimTypeTokens->volume
+#endif
+};
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
                                    HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
-const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
+const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer,
+#ifdef HDVK_VOLUMES
+                                   _openvdbAsset
+#endif
+};
 
 } // namespace
 
@@ -125,8 +142,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
-    // image.
-    return {
+    // image (volumes last).
+    HdRenderSettingDescriptorList settings = {
         {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
@@ -212,6 +229,19 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
         {"Tonemapper (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
     };
+#ifdef HDVK_VOLUMES
+    const vkr::VolumePass::Settings &volume = frame.volume;
+    settings.insert(settings.end(), {
+        {"Volumes (OpenVDB)", t.volumes, VtValue(frame.volumes)},
+        {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
+        {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
+        {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
+        {"Volume Density Multiplier", t.volumeDensity, VtValue(volume.density)},
+        {"Volume Emission Multiplier (temperature, emission)", t.volumeEmission, VtValue(volume.emission)},
+        {"Volume Phase Anisotropy (-1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+    });
+#endif
+    return settings;
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(
@@ -238,6 +268,11 @@ HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &r
     if (typeId == HdPrimTypeTokens->points) {
         return new HdVkPoints(rprimId, _scene.get());
     }
+#ifdef HDVK_VOLUMES
+    if (typeId == HdPrimTypeTokens->volume) {
+        return new HdVkVolume(rprimId, _scene.get());
+    }
+#endif
     return nullptr;
 }
 
@@ -271,6 +306,11 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
     if (typeId == HdPrimTypeTokens->renderBuffer) {
         return new HdVkRenderBuffer(bprimId);
     }
+#ifdef HDVK_VOLUMES
+    if (typeId == _openvdbAsset) {
+        return new HdVkField(bprimId);
+    }
+#endif
     return nullptr;
 }
 
@@ -298,6 +338,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats[HdPerfTokens->textureMemory.GetString()] = size_t(memory.textures);
     stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
+    stats["volumeMemory"] = size_t(_scene->VolumeBytes());  // NanoVDB grids
     stats["hostMemoryUsed"] = size_t(memory.host);
     stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
     stats["rayTracingSupported"] = _device->rayTracing;  // else the hdvk:rt* settings are ignored
@@ -324,6 +365,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["instancesTotal"] = size_t(gpu.instanceCount);
     stats["meshes"] = size_t(gpu.drawCount);
     stats["drawCalls"] = size_t(frame.drawCalls);
+    stats["volumes"] = size_t(gpu.volumeCount);
     stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;
 
     // Convergence: TAA's average of still frames (usdview's "Samples done").

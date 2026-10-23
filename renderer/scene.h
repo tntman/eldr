@@ -2,6 +2,7 @@
 
 #include "device.h"
 #include "ibl.h"
+#include "volume.h"
 
 #include <map>
 #include <memory>
@@ -490,6 +491,8 @@ public:
     void RemoveLight(Light *light);
     Dome *AddDome();
     void RemoveDome(Dome *dome);
+    Volume *AddVolume();
+    void RemoveVolume(Volume *volume);
 
     // Uploads dirty data. The GPU must be idle.
     void Commit();
@@ -628,6 +631,12 @@ public:
         uint32_t mirrorSlot = kNone;
         float mirrorPlane[4] = {};
         float mirrorMin[3] = {}, mirrorMax[3] = {};
+
+        // Volumes: a GpuVolume per drawn instance, and the NanoVDB grids
+        // they read (both bound even when empty).
+        VkBuffer volumes = VK_NULL_HANDLE;
+        VkBuffer volumeGrids = VK_NULL_HANDLE;
+        uint32_t volumeCount = 0;
     };
     const Gpu &GetGpu() const { return _gpu; }
 
@@ -636,6 +645,7 @@ public:
     // indices.
     VkDeviceSize VertexBytes() const;
     VkDeviceSize IndexBytes() const { return _indices.size; }
+    VkDeviceSize VolumeBytes() const { return _poolGrids.empty() ? 0 : _volumeGrids.size; }  // NanoVDB grids
 
 private:
     // Batched uploads: bytes staged on the CPU, copied/filled in one submit.
@@ -694,6 +704,12 @@ private:
     VkImage _envImage = VK_NULL_HANDLE;
     VkDeviceMemory _envMemory = VK_NULL_HANDLE;
     VkImageView _envView = VK_NULL_HANDLE;
+
+    // Volumes (volume.cpp): the grids in the pool, at the version uploaded.
+    void _CommitVolumes();
+    std::vector<std::unique_ptr<Volume>> _volumes;
+    Buffer _volumeTable, _volumeGrids;
+    std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> _poolGrids;
 
     Gpu _gpu;
 };

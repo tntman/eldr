@@ -149,7 +149,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts},
                                 {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
-                                {t.planarReflections, &frame.planarReflections}}) {
+                                {t.planarReflections, &frame.planarReflections},
+                                {t.volumes, &frame.volumes}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -161,7 +162,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogDensity, &frame.fogDensity}, {t.fogHeight, &frame.fogHeight},
                                 {t.fogHeightFalloff, &frame.fogHeightFalloff},
                                 {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance},
-                                {t.planarScale, &frame.planarScale}}) {
+                                {t.planarScale, &frame.planarScale},
+                                {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
+                                {t.volumeEmission, &frame.volume.emission},
+                                {t.volumeAnisotropy, &frame.volume.anisotropy}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -195,7 +199,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.refractionSamples, &frame.refractionSamples},
                                 {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
                                 {t.subsurfaceSamples, &frame.subsurfaceSamples},
-                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution}}) {
+                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
+                                {t.volumeMaxSteps, &frame.volume.maxSteps},
+                                {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;

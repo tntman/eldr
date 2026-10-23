@@ -94,7 +94,14 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeResolution, "hdvk:probeResolution"))              \
     ((probePosition, "hdvk:probePosition"))                  \
     ((planarReflections, "hdvk:planarReflections"))          \
-    ((planarScale, "hdvk:planarScale"))
+    ((planarScale, "hdvk:planarScale"))                  \
+    ((volumes, "hdvk:volumes"))                              \
+    ((volumeStepSize, "hdvk:volumeStepSize"))                \
+    ((volumeMaxSteps, "hdvk:volumeMaxSteps"))                \
+    ((volumeShadowSteps, "hdvk:volumeShadowSteps"))          \
+    ((volumeDensity, "hdvk:volumeDensity"))                  \
+    ((volumeEmission, "hdvk:volumeEmission"))                \
+    ((volumeAnisotropy, "hdvk:volumeAnisotropy"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

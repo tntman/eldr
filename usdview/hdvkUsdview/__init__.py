@@ -25,6 +25,7 @@ PASSES = [
     ("shading", "Shading"),
     ("subsurface", "Subsurface scattering"),
     ("translucency", "Translucency (refraction, OIT)"),
+    ("volumes", "Volumes"),
     ("depthOfField", "Depth of field"),
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
@@ -65,6 +66,7 @@ def Rows(stats):
              ("  vertices, instances", ReportMetricSize(get("primvar"))),
              ("  indices", ReportMetricSize(get("topology"))),
              ("  acceleration structures", ReportMetricSize(get("accelerationStructureMemory"))),
+             ("  volumes", ReportMetricSize(get("volumeMemory"))),
              ("  peak", ReportMetricSize(get("peakMemory"))),
              ("System memory the GPU reads", ReportMetricSize(get("hostMemoryUsed")))]
     if get("vramSize"):

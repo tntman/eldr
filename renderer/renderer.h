@@ -12,8 +12,10 @@
 #include "subsurface.h"
 #include "taa.h"
 #include "transparency.h"
+#include "volume.h"
 
 #include <chrono>
+#include <memory>
 
 namespace vkr {
 
@@ -171,6 +173,9 @@ public:
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
         bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
+        // OpenVDB volumes, raymarched over the shaded image (VolumePass).
+        bool volumes = true;
+        VolumePass::Settings volume;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -353,6 +358,7 @@ private:
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
+    std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
 };
 
 } // namespace vkr

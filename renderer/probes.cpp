@@ -117,6 +117,9 @@ Renderer::Frame Nested(const Renderer::Frame &frame, uint32_t width, uint32_t he
     // ponytail: reflections are shaded with shadow maps and the dome's
     // light; ray tracing and GI there would need their own TLAS and probes.
     f.rtShadows = f.rtReflections = f.gi = false;
+    // ponytail: no volumes in reflections; their stochastic march needs
+    // TAA, which these renders don't run.
+    f.volumes = false;
     f.skinning = false;
     f.showEnvironment = true;  // reflections see the dome even where the camera doesn't
     std::fill(f.clearColor, f.clearColor + 4, 0.0f);
