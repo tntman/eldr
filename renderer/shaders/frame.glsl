@@ -28,6 +28,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
+// 256: kFeatureProcedurals (program.glsl)
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

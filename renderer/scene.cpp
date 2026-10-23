@@ -858,13 +858,15 @@ void Scene::_Upload(Texture &t)
     });
 }
 
-int32_t Scene::_TextureIndex(Texture *t)
+// A texture read with other wrap modes takes another bindless slot (same
+// view, another sampler).
+int32_t Scene::_TextureIndex(Texture *t, uint32_t wrap)
 {
     if (!t || t->width == 0 || t->height == 0 ||
         t->pixels.size() != size_t(t->width) * t->height * BytesPerPixel(t->format)) {
         return -1;
     }
-    const auto found = _textureSlots.find(t);
+    const auto found = _textureSlots.find({t, wrap});
     if (found != _textureSlots.end()) {
         return found->second;
     }
@@ -877,7 +879,8 @@ int32_t Scene::_TextureIndex(Texture *t)
     }
     const int32_t index = int32_t(_gpu.textures.size());
     _gpu.textures.push_back(t->_view);
-    _textureSlots.emplace(t, index);
+    _gpu.textureWraps.push_back(uint8_t(wrap));
+    _textureSlots.emplace(std::make_pair(t, wrap), index);
     return index;
 }
 
@@ -1044,6 +1047,7 @@ void Scene::Commit()
     // Per-mesh tables, materials and textures are small: rebuilt every
     // commit from what visible meshes use (O(meshes), not O(instances)).
     _gpu.textures.clear();
+    _gpu.textureWraps.clear();
     _textureSlots.clear();
     std::unordered_map<const Material *, uint32_t> materialSlots;
     std::vector<GpuMaterial> materials;
@@ -1053,7 +1057,7 @@ void Scene::Commit()
     auto texRef = [&](const TextureRef &r) {
         GpuTexRef g{};
         if (r.udim.empty()) {
-            g.index = _TextureIndex(r.texture.get());
+            g.index = _TextureIndex(r.texture.get(), uint32_t(r.wrap[0]) + kWrapModes * uint32_t(r.wrap[1]));
         } else {
             g.index = int32_t(udimTiles.size());
             g.udim = 1;
@@ -1159,6 +1163,7 @@ void Scene::Commit()
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
+                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
                                 (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.

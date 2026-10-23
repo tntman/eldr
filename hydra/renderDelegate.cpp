@@ -135,6 +135,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Toon Shading (materials' eldr:toonBands)", t.toon, VtValue(frame.toon)},
         {"Toon Bands for Every Material (0 = off)", t.toonBands, VtValue(int(frame.toonBands))},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
+        {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},

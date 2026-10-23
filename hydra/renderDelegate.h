@@ -46,6 +46,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((aoSlices, "hdvk:aoSlices"))                            \
     ((ssrSteps, "hdvk:ssrSteps"))                            \
     ((anisotropy, "hdvk:anisotropy"))                        \
+    ((proceduralTextures, "hdvk:proceduralTextures"))         \
     ((specularWorkflow, "hdvk:specularWorkflow"))            \
     ((clearcoat, "hdvk:clearcoat"))                          \
     ((sheen, "hdvk:sheen"))                                  \
