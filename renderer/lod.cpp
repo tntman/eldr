@@ -9,13 +9,15 @@ namespace vkr {
 
 namespace {
 
-// Area-weighted sum of plane quadrics (Garland & Heckbert) and its weight:
-// Raw / weight is the weighted mean squared distance to the planes.
+// Area-weighted sum of squared linear functions of a point (plane
+// distances, Garland & Heckbert, and attribute fields) and the area:
+// Raw / weight is the weighted mean.
 struct Quadric {
     double q[10] = {};  // xx xy xz xw yy yz yw zz zw ww
     double weight = 0;
 
-    void AddPlane(const double n[3], double d, double w)
+    // w * (n . p + d)^2
+    void AddSquare(const double n[3], double d, double w)
     {
         const double p[4] = {n[0], n[1], n[2], d};
         int k = 0;
@@ -24,7 +26,6 @@ struct Quadric {
                 q[k++] += w * p[i] * p[j];
             }
         }
-        weight += w;
     }
     void Add(const Quadric &o)
     {
@@ -60,16 +61,17 @@ struct Candidate {
 
 } // namespace
 
-std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t vertexCount,
+std::vector<LodLevel> BuildLods(const float *vertices, size_t stride, size_t vertexCount,
                                 const std::vector<uint32_t> &indices, uint32_t maxLevels, float maxError,
                                 const std::function<float(uint32_t, uint32_t)> &difference)
 {
     std::vector<LodLevel> levels;
     const size_t triangles = indices.size() / 3;
-    if (triangles < 4 || maxLevels == 0) {
+    if (triangles < 4 || maxLevels == 0 || stride < 3) {
         return levels;
     }
-    auto P = [&](uint32_t v) { return positions + size_t(v) * stride; };
+    auto P = [&](uint32_t v) { return vertices + size_t(v) * stride; };
+    const size_t attributes = stride - 3;  // after xyz
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -87,12 +89,16 @@ std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t ve
         return levels;
     }
     const double maxCost = (maxError * radius) * (maxError * radius);
-    const double differenceCost = 0.0625 * radius * radius;  // a difference of 1: a quarter radius
 
     std::vector<uint32_t> tri(indices);
     std::vector<uint8_t> alive(triangles, 1);
     std::vector<std::vector<uint32_t>> vertexTris(vertexCount);
     std::vector<Quadric> quadric(vertexCount);
+    // An attribute a over a triangle is a linear field g . p + d. Collapsing
+    // onto a vertex with position p and value a costs sum w (g . p + d - a)^2:
+    // the squares go into the quadric, the cross terms (sum w g, sum w d per
+    // attribute) here, and a^2 times the weight.
+    std::vector<double> linear(vertexCount * attributes * 4, 0.0);
     std::vector<uint64_t> edges;  // (smaller vertex, larger), once per triangle using it
     edges.reserve(triangles * 3);
     for (size_t t = 0; t < triangles; ++t) {
@@ -105,8 +111,38 @@ std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t ve
                 c /= area2;
             }
             const double d = -(n[0] * P(v[0])[0] + n[1] * P(v[0])[1] + n[2] * P(v[0])[2]);
+            const double w = 0.5 * area2;
             for (int k = 0; k < 3; ++k) {
-                quadric[v[k]].AddPlane(n, d, 0.5 * area2);
+                quadric[v[k]].AddSquare(n, d, w);
+                quadric[v[k]].weight += w;
+            }
+            // Gradients of the barycentric coordinates of v[1] and v[2]
+            // (in the triangle's plane); |e1 x e2|^2 = area2^2.
+            const float *p0 = P(v[0]), *p1 = P(v[1]), *p2 = P(v[2]);
+            const double e1[3] = {double(p1[0]) - p0[0], double(p1[1]) - p0[1], double(p1[2]) - p0[2]};
+            const double e2[3] = {double(p2[0]) - p0[0], double(p2[1]) - p0[1], double(p2[2]) - p0[2]};
+            const double d11 = e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2];
+            const double d12 = e1[0] * e2[0] + e1[1] * e2[1] + e1[2] * e2[2];
+            const double d22 = e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2];
+            const double r = 1.0 / (area2 * area2);
+            double g1[3], g2[3];
+            for (int c = 0; c < 3; ++c) {
+                g1[c] = (d22 * e1[c] - d12 * e2[c]) * r;
+                g2[c] = (d11 * e2[c] - d12 * e1[c]) * r;
+            }
+            for (size_t a = 0; a < attributes; ++a) {
+                const double a0 = p0[3 + a], a1 = p1[3 + a], a2 = p2[3 + a];
+                const double g[3] = {g1[0] * (a1 - a0) + g2[0] * (a2 - a0), g1[1] * (a1 - a0) + g2[1] * (a2 - a0),
+                                     g1[2] * (a1 - a0) + g2[2] * (a2 - a0)};
+                const double ga = a0 - (g[0] * p0[0] + g[1] * p0[1] + g[2] * p0[2]);
+                for (int k = 0; k < 3; ++k) {
+                    quadric[v[k]].AddSquare(g, ga, w);
+                    double *l = &linear[(size_t(v[k]) * attributes + a) * 4];
+                    l[0] += w * g[0];
+                    l[1] += w * g[1];
+                    l[2] += w * g[2];
+                    l[3] += w * ga;
+                }
             }
         }
         for (int k = 0; k < 3; ++k) {
@@ -130,18 +166,44 @@ std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t ve
 
     std::vector<uint8_t> removed(vertexCount, 0);
     std::vector<uint32_t> stamp(vertexCount, 0);
-    // Each vertex's quadric at its own position: a collapse onto it costs
-    // (Q_from(p_to) + this) / both weights.
-    std::vector<double> self(vertexCount);
-    for (uint32_t v = 0; v < vertexCount; ++v) {
-        self[v] = quadric[v].Raw(P(v));
-    }
+    // Moving `from` onto `to`: the mean squared error over the surface
+    // `from` stands for (its own quadric only, so a big flat neighbour
+    // doesn't average a small feature away).
+    auto error = [&](uint32_t from, uint32_t to) {
+        const Quadric &q = quadric[from];
+        if (!(q.weight > 0)) {
+            return 0.0;
+        }
+        const float *p = P(to);
+        double e = q.Raw(p);
+        for (size_t a = 0; a < attributes; ++a) {
+            const double *l = &linear[(size_t(from) * attributes + a) * 4];
+            e += p[3 + a] * (p[3 + a] * q.weight - 2 * (l[0] * p[0] + l[1] * p[1] + l[2] * p[2] + l[3]));
+        }
+        return std::max(e, 0.0) / q.weight;
+    };
     std::priority_queue<Candidate> heap;
     // The cheapest collapse of `from` onto a neighbour, queued.
     auto queue = [&](uint32_t from) {
         ++stamp[from];
         if (locked[from] || removed[from]) {
             return;
+        }
+        // Skinned: the triangles around `from` keep their posed shape only
+        // where their vertices bend alike (a collapse that is exact in the
+        // rest pose cuts a corner next to a joint). A neighbour whose
+        // weights differ by d moves about d * its distance when the joint
+        // between bends a radian.
+        double spread = 0.0;
+        for (const uint32_t t : vertexTris[from]) {
+            for (int k = 0; difference && alive[t] && k < 3; ++k) {
+                const uint32_t n = tri[t * 3 + k];
+                if (n != from) {
+                    const double d[3] = {double(P(n)[0]) - P(from)[0], double(P(n)[1]) - P(from)[1],
+                                         double(P(n)[2]) - P(from)[2]};
+                    spread = std::max(spread, difference(from, n) * std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+                }
+            }
         }
         Candidate best{std::numeric_limits<double>::max(), from, from, stamp[from]};
         for (const uint32_t t : vertexTris[from]) {
@@ -153,12 +215,7 @@ std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t ve
                 if (to == from) {
                     continue;
                 }
-                const double weight = quadric[from].weight + quadric[to].weight;
-                double cost = weight > 0 ? std::max(quadric[from].Raw(P(to)) + self[to], 0.0) / weight : 0.0;
-                if (difference) {
-                    const double d = difference(from, to);
-                    cost += d * d * differenceCost;
-                }
+                const double cost = error(from, to) + spread * spread;
                 if (cost < best.cost) {
                     best.cost = cost;
                     best.to = to;
@@ -226,7 +283,9 @@ std::vector<LodLevel> BuildLods(const float *positions, size_t stride, size_t ve
             removed[c.from] = 1;
             vertexTris[c.from] = std::vector<uint32_t>();
             quadric[c.to].Add(quadric[c.from]);
-            self[c.to] = quadric[c.to].Raw(P(c.to));
+            for (size_t i = 0; i < attributes * 4; ++i) {
+                linear[size_t(c.to) * attributes * 4 + i] += linear[size_t(c.from) * attributes * 4 + i];
+            }
             worst = std::max(worst, c.cost);
             // Everything around `to` has a new neighbourhood.
             std::vector<uint32_t> &around = vertexTris[c.to];

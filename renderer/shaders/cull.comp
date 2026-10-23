@@ -37,7 +37,7 @@ layout(push_constant) uniform CullParams {
 struct Lod {
     uvec4 slots;    // x: level 1's command slot (2 and 3 follow), y: levels
     uvec4 regions;  // visible ranges: x level 1 fills back from; y level 2 fills from, z level 3 back from
-    vec4 errors;    // levels 1..3: how far the surface moved, relative to the bounding radius
+    vec4 errors;    // levels 1..3: how far the surface (or its shading) moved, relative to the bounding radius
 };
 layout(std430, set = 0, binding = 40) readonly buffer Lods { Lod lods[]; };
 // Per instance slot the camera's last level (bits 0..1) and the frame it
@@ -132,8 +132,12 @@ void main()
         return;
     }
     uint command = pc.commandBase + inst.draw;
+    // Levels judge their error where the bounds come nearest the camera (a
+    // wall's near end, not its middle).
+    float nearRadius = pc.orthographic > 0.5 ? radius
+                                             : length(we) * pc.pixelScale / max(depth - length(we), 1e-6);
     uint level = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u
-        ? LodLevel(lods[inst.draw], i, radius) : 0u;
+        ? LodLevel(lods[inst.draw], i, nearRadius) : 0u;
     if (level == 0u) {
         uint slot = atomicAdd(commands[command].instanceCount, 1u);
         visible[pc.listBase + commands[command].firstInstance + slot] = i;
