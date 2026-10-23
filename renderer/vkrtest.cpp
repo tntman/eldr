@@ -1144,6 +1144,103 @@ int main()
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
         }
+
+        if (device.rayTracing) {
+            // Ray-traced sun shadow: the cascade test's scene with a hard sun
+            // (angle 0), traced instead of the cascades.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            sun->angle = 0;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image traced = Render(renderer, scene, frame);
+            const vkr::Renderer::Stats stats = renderer.GetStats();
+            const Image mapped = Render(renderer, scene);
+            const float lit = mapped.At(51, 32, 0);
+            int differ = 0;
+            for (int x = 0; x < 64; ++x) {
+                differ += std::abs(traced.At(x, 32, 0) - mapped.At(x, 32, 0)) > 0.1f * lit;
+            }
+            Expect(traced.At(3, 32, 0) < 0.01f * lit && std::abs(traced.At(51, 32, 0) - lit) < 0.01f * lit &&
+                       differ <= 2,
+                   "ray-traced sun shadow matches the cascades'");
+            Expect(stats.accelerationStructureBytes > 0 &&
+                       std::any_of(stats.passMs.begin(), stats.passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "rayTracing") == 0; }),
+                   "ray tracing pass timed, its memory counted");
+
+            // A cutout with nothing left casts no traced shadow (any-hit).
+            auto cutout = std::make_shared<vkr::Material>();
+            cutout->opacity = 0;
+            cutout->opacityThreshold = 0.5f;
+            occluder->material = cutout;
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(3, 32, 0) > 0.9f * lit, "traced shadows skip cut-out surfaces");
+            occluder->material = nullptr;
+            scene.Commit();
+
+            // The sun's angle softens the traced shadow: TAA-free frames of
+            // one ray each differ, their average has a penumbra.
+            sun->angle = 20;
+            scene.Commit();
+            frame.rtShadowSamples = 16;
+            const Image soft = Render(renderer, scene, frame);
+            int partial = 0;
+            for (int x = 0; x < 32; ++x) {
+                const float v = soft.At(x, 32, 0) / lit;
+                partial += v > 0.05f && v < 0.95f;
+            }
+            Expect(partial >= 3, "the sun's angle gives traced shadows a penumbra");
+
+            // Off again: no tracing, no acceleration structures.
+            Render(renderer, scene);
+            Expect(renderer.GetStats().accelerationStructureBytes == 0, "ray tracing off frees its structures");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced local light shadow (the atlas test's scene).
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            AddQuad(scene, -0.35f, -0.05f, -0.25f, 0.05f, 0.25f)->material = white;
+            AddSphereLight(scene, -0.6f, 0, 0, 0.02f, 400.0f)->castShadows = true;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image img = Render(renderer, scene, frame);
+            Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
+        }
+
+        if (device.rayTracing) {
+            // Ray-traced reflections: the SSR test's mirror over an emitter,
+            // without post (so no SSR): only traced rays see the emitter.
+            vkr::Scene scene(&device);
+            vkr::Mesh *mirror = AddQuad(scene, 0, 0, 0, 0, 0);
+            mirror->points = {-0.8f, 0, 0, 0.8f, 0, 0, 0.8f, 0.8f, -0.8f,
+                              -0.8f, 0, 0, 0.8f, 0.8f, -0.8f, -0.8f, 0.8f, -0.8f};
+            auto chrome = std::make_shared<vkr::Material>();
+            std::fill(chrome->baseColor, chrome->baseColor + 3, 1.0f);
+            chrome->metallic = 1;
+            chrome->roughness = 0;
+            mirror->material = chrome;
+            vkr::Mesh *emitter = AddEmitter(scene, 0, 0, 0, 0, 0, 1.0f);
+            emitter->points = {-0.8f, -0.8f, -0.6f, 0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f,
+                               -0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f, -0.8f, -0.1f, 0.1f};
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const float off = Render(renderer, scene, frame).At(32, 41, 1);
+            frame.rtReflections = true;
+            const float on = Render(renderer, scene, frame).At(32, 41, 1);
+            Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
+        } else {
+            std::puts("no ray tracing on this GPU: its tests skipped");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

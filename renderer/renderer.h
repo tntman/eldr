@@ -4,6 +4,7 @@
 #include "gtao.h"
 #include "lens.h"
 #include "post.h"
+#include "raytracing.h"
 #include "scene.h"
 #include "taa.h"
 
@@ -66,6 +67,17 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Ray tracing (raytracing.cpp), ignored without Device::rayTracing.
+        // With the depth prepass: traced shadows of the sun and the three
+        // lights that matter most (no shadow maps for them; soft from the
+        // sun's angle and the lights' size) and traced reflections (instead
+        // of the dome's and SSR, up to roughness 0.7), both noisy per frame
+        // for TAA to average. Skinned and translucent meshes don't block
+        // rays.
+        bool rtShadows = false;
+        uint32_t rtShadowSamples = 1;      // rays per light and pixel (1..16)
+        bool rtReflections = false;
+        uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -114,6 +126,7 @@ public:
         uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
+        uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
     };
     const Stats &GetStats() const { return _stats; }
 
@@ -127,7 +140,8 @@ private:
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     struct ShadowTile;
-    std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff);
+    std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
+                                              uint32_t *rtLights, uint32_t rtSlots);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles);
 
     Device &_dev;
@@ -178,7 +192,7 @@ private:
     VkCommandBuffer _cmd = VK_NULL_HANDLE;
     VkFence _fence = VK_NULL_HANDLE;
     // GPU timestamps: one at the start, then one closing each pass.
-    static constexpr uint32_t kMaxTimestamps = 16;
+    static constexpr uint32_t kMaxTimestamps = 32;
     VkQueryPool _timestamps = VK_NULL_HANDLE;  // null: the queue has no timestamps
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes
@@ -198,6 +212,7 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
+    std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
 };
 
 } // namespace vkr

@@ -245,6 +245,8 @@ private:
     float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
+    // Ray tracing: unique per geometry upload (a new BLAS when it changes).
+    uint64_t _geometryVersion = 0;
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -269,6 +271,7 @@ struct Light {
     float specular = 1.0f;
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
+    float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced shadows)
 
 private:
     friend class Scene;
@@ -467,6 +470,17 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+
+        // Ray tracing (RayTracing builds a BLAS per slot from these): per mesh
+        // slot its vertices and triangles in the pools, `version` unique per
+        // upload, 0 for slots ray tracing skips (not drawn, translucent or
+        // skinned).
+        struct SlotGeometry {
+            uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
+            uint64_t version;
+            bool cutout;  // alpha-tested: any-hit shaders run
+        };
+        std::vector<SlotGeometry> slotGeometry;
     };
     const Gpu &GetGpu() const { return _gpu; }
 

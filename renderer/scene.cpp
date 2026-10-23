@@ -347,6 +347,9 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
                             VkDeviceSize elementSize, VkBufferUsageFlags usage, bool instances)
 {
     _Flush();  // pending copies/fills target the old buffer
+    if (&buffer == &_vertices || &buffer == &_indices) {
+        usage |= _device->rayTracingInputUsage;  // BLAS inputs
+    }
     const uint32_t old = alloc.Capacity();
     const uint32_t step = VkDeviceSize(old) * elementSize > (VkDeviceSize(256) << 20) ? old / 4 : old;
     const uint32_t capacity = std::max({old + step, old + needed, 1024u});
@@ -384,6 +387,8 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = 0;
     m._jointBounds.clear();
     m.geometryDirty = false;
+    static std::atomic<uint64_t> geometryVersions{0};
+    m._geometryVersion = ++geometryVersions;
 
     // Elements of the per-corner arrays: corners, or vertices with indices.
     const bool indexed = !m.indices.empty();
@@ -1111,6 +1116,7 @@ void Scene::Commit()
     _gpu.translucent.clear();
     _gpu.translucentVariant.clear();
     _gpu.translucentCenters.clear();
+    _gpu.slotGeometry.resize(slots);
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -1192,6 +1198,12 @@ void Scene::Commit()
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
+        // ponytail: ray tracing skips skinned meshes (no per-frame BLAS
+        // refits) and translucent ones (they cast no shadows here either).
+        const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
+        const bool traced = drawable && m._skinCount == 0 && blend != Gpu::kTranslucent;
+        _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
+                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;
@@ -1283,6 +1295,7 @@ void Scene::Commit()
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);
+                g.axis[3] = 0.5f * l->angle * 0.0174532925f;
                 ++lightCount;
                 continue;
             }

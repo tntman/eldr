@@ -116,6 +116,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
+        {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
+         VtValue(int(frame.rtReflectionSamples))},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -124,6 +127,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.localShadowResolution))},
         {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
         {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
+        {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
+        {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
@@ -225,6 +230,8 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
     stats["hostMemoryUsed"] = size_t(memory.host);
+    stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
+    stats["rayTracingSupported"] = _device->rayTracing;  // else the hdvk:rt* settings are ignored
     stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
     stats["peakMemory"] = size_t(memory.peakDeviceLocal);
     stats["vramSize"] = size_t(memory.heapSize);

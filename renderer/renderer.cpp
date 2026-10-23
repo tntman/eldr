@@ -69,6 +69,10 @@ const uint32_t kSkinComp[] =
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
+// Ray tracing's (shaders/gi.glsl).
+constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21;
+// The TLAS's custom index (a mesh slot) has 24 bits, and so has its count.
+constexpr uint32_t kMaxRtInstances = (1u << 24) - 1;
 
 // Materials' sampler: trilinear, `anisotropy` (1: none), repeat.
 // ponytail: one for every texture; UsdUVTexture wrapS/wrapT are ignored.
@@ -251,11 +255,15 @@ Renderer::Renderer(Device &device)
     _CreateDescriptors();
     _CreatePipelines();
     _CreateConstantImages();
+    if (_dev.rayTracing) {
+        _rt = std::make_unique<RayTracing>(_dev, _setLayout);
+    }
 }
 
 Renderer::~Renderer()
 {
     vkDeviceWaitIdle(_dev.device);
+    _rt.reset();
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
@@ -329,18 +337,23 @@ void Renderer::_CreateDescriptors()
     // the local lights' shadow atlas, first tile per light and the tiles, 20
     // the atlas again without depth compare (soft shadows' blocker search),
     // 28..32 material programs: ops, constants, primvar table, primvar values
-    // and vertex-rate primvars.
+    // and vertex-rate primvars; 52..59 ray tracing's (RayTracing; partially
+    // bound, 52 only exists with Device::rayTracing).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[33] = {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
-        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
-        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting},
+    // Ray tracing stages read the materials, lights, frame and dome too.
+    const VkShaderStageFlags kRt = _dev.rayTracing ? VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
+                                                         VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_ANY_HIT_BIT_KHR
+                                                   : 0;
+    const VkDescriptorSetLayoutBinding bindings[41] = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kRt},
+        {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},
+        {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kRt},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
-        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
+        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment | kRt},
         {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -357,7 +370,7 @@ void Renderer::_CreateDescriptors()
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -365,25 +378,39 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        // Ray tracing: TLAS, traced shadows and reflections (storage
+        // images), vertex and index pools, mesh slots, probe atlases, uniforms.
+        {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         _dev.rayTracing ? 1u : 0u, kRt},
+        {53, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        {54, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        {55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {56, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {59, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    const VkDescriptorBindingFlags bindingFlags[33] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    VkDescriptorBindingFlags bindingFlags[41] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    std::fill(bindingFlags + 33, bindingFlags + 41, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 33;
+    flags.bindingCount = 41;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 33;
+    slci.bindingCount = 41;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
-    const VkDescriptorPoolSize sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+    const VkDescriptorPoolSize sizes[5] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 23 + 3},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2},
+        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
-    dpci.poolSizeCount = 3;
+    dpci.poolSizeCount = _dev.rayTracing ? 5 : 4;
     dpci.pPoolSizes = sizes;
     Check(vkCreateDescriptorPool(_dev.device, &dpci, nullptr, &_descriptorPool),
           "vkCreateDescriptorPool");
@@ -942,8 +969,10 @@ struct Renderer::ShadowTile {
 // Gives atlas tiles to the shadow-casting lights whose range reaches into
 // the view, brightest at the camera first, until the atlas is full; the
 // rest stay unshadowed. Writes each light's first tile (or kNone).
+// The first rtSlots lights by priority are ray-traced instead (written to
+// rtLights, no tiles).
 std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
-                                                              float cutoff)
+                                                              float cutoff, uint32_t *rtLights, uint32_t rtSlots)
 {
     const uint32_t lights = gpu.lightCount + gpu.localLightCount;
     _dev.Reserve(_lightShadows, std::max(lights, 1u) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -987,6 +1016,11 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     std::vector<Candidate> chosen;
     uint32_t used = 0;
     for (const Candidate &cand : candidates) {
+        if (rtSlots > 0) {
+            *rtLights++ = cand.caster->light;
+            --rtSlots;
+            continue;
+        }
         const uint32_t need = cand.caster->coneAngle <= kSpotShadowCone ? 1 : 6;
         if (used + need <= capacity) {
             chosen.push_back(cand);
@@ -1235,7 +1269,20 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
     fd.viewport[0] = float(_width);
     fd.viewport[1] = float(_height);
-    const bool shadows = frame.shadows && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
+    // Ray tracing (raytracing.cpp): with the prepass (mesh.frag tells the
+    // opaque surface the rays started from by its depth) traced shadows
+    // take over the sun's cascades and the first local lights' atlas tiles.
+    RayTracing::Work rt;
+    const bool rtScene = _rt && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
+                         gpu.instanceCapacity <= kMaxRtInstances;
+    rt.shadows = rtScene && frame.depthPrepass && frame.rtShadows;
+    rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
+    rt.shadowSamples = frame.rtShadowSamples;
+    rt.reflectionSamples = frame.rtReflectionSamples;
+    rt.sun = gpu.shadowLight;
+    const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
+    rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
+    const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          _FitCascades(gpu, frame, &fd);
     const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
     const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
@@ -1245,8 +1292,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
     }
-    const std::vector<ShadowTile> shadowTiles = _PlanLocalShadows(gpu, frame, fd.clusters[3]);
-    fd.counts[1] = shadows ? gpu.shadowLight : kNone;
+    const std::vector<ShadowTile> shadowTiles =
+        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0);
+    rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
+    fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0);
+    fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     fd.counts[2] = gpu.environmentLevels;
     fd.counts[3] = gpu.environmentLatlong;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
@@ -1276,7 +1326,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                               VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     _prevJointsSource = gpu.joints;
+    const bool rayTracing = rt.shadows || rt.reflections;
+    if (rayTracing) {
+        _rt->Prepare(gpu, rt, _width, _height);
+    } else if (_rt) {
+        _rt->Release();  // nothing traced: no acceleration structures either
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass);
+    if (_rt) {
+        _rt->UpdateDescriptors(_set, gpu);
+    }
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
@@ -1503,6 +1562,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>());
     if (!shadowTiles.empty()) {
         pass("localShadows");
+    }
+    if (rayTracing) {
+        _rt->Record(_cmd, _set, gpu, pass);
     }
 
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
@@ -1803,6 +1865,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
     _stats.exposure = frame.postProcess ? _post.Exposure() : 1.0;
+    _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
     _stats.passMs.clear();
     _stats.gpuMs = 0;
     if (_timestamps && !_passes.empty()) {

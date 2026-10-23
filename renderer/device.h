@@ -94,6 +94,14 @@ public:
     uint32_t queueFamily = 0;
     VkQueue queue = VK_NULL_HANDLE;
     bool memoryBudget = false;  // VK_EXT_memory_budget is enabled
+    // VK_KHR_ray_tracing_pipeline and VK_KHR_acceleration_structure are
+    // enabled (with bufferDeviceAddress; every allocation can back a
+    // device address): see RayTracing. HDVK_NO_RAY_TRACING=1 leaves them
+    // off, as on GPUs without them.
+    bool rayTracing = false;
+    // What buffers acceleration structures are built from (and ray tracing
+    // shaders read) add to their usage; 0 without rayTracing.
+    VkBufferUsageFlags rayTracingInputUsage = 0;
 
 private:
     void _Release();
