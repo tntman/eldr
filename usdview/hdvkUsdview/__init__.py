@@ -5,7 +5,7 @@ usdenv.cmd puts it on the plugin and Python paths (plugInfo.json beside it)."""
 from pxr import Tf
 from pxr.Usdviewq.common import ReportMetricSize
 from pxr.Usdviewq.plugin import PluginContainer
-from pxr.Usdviewq.qt import QtCore, QtGui, QtWidgets
+from pxr.Usdviewq.qt import QtCore, QtWidgets
 
 # GPU passes in the order HdVk runs them (renderer.cpp's pass names).
 PASSES = [
@@ -60,13 +60,30 @@ def Rows(stats):
     return rows
 
 
+def Html(rows):
+    """Rows as a two-column table, headings bold, values right-aligned.
+    usdview's style sheet replaces the font, so spaces can't line them up."""
+    from html import escape
+    out = ['<table cellspacing="0" cellpadding="1">']
+    for i, (label, value) in enumerate(rows):
+        if value is None:
+            gap = "" if i == 0 else '<tr><td colspan="2" style="font-size:4px">&nbsp;</td></tr>'
+            out.append('%s<tr><td colspan="2"><b>%s</b></td></tr>' % (gap, escape(label)))
+        else:
+            indent = "&nbsp;" * (8 if label.startswith("  ") else 4)
+            out.append('<tr><td>%s%s&nbsp;&nbsp;&nbsp;&nbsp;</td><td align="right">%s</td></tr>'
+                       % (indent, escape(label.strip()), escape(value)))
+    out.append("</table>")
+    return "".join(out)
+
+
 class _StatsWindow(QtWidgets.QWidget):
     def __init__(self, usdviewApi):
         super().__init__(usdviewApi.qMainWindow, QtCore.Qt.Tool)
         self.setWindowTitle("Eldr Render Statistics")
         self._api = usdviewApi
         self._label = QtWidgets.QLabel()
-        self._label.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+        self._label.setTextFormat(QtCore.Qt.RichText)
         self._label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self._label)
@@ -80,10 +97,7 @@ class _StatsWindow(QtWidgets.QWidget):
         from pxr.Usdviewq.stageView import StageView
         view = self._api.qMainWindow.findChild(StageView)
         engine = view._getRenderer() if view else None
-        rows = Rows(engine.GetRenderStats() if engine else {})
-        width = max(len(label) for label, _ in rows)
-        self._label.setText("\n".join(label if value is None else "  %-*s  %s" % (width, label, value)
-                                      for label, value in rows))
+        self._label.setText(Html(Rows(engine.GetRenderStats() if engine else {})))
 
 
 _window = None
