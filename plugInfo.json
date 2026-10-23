@@ -8,7 +8,7 @@
                         "displayName": "HdVk",
                         "priority": 99
                     },
-                    "HdVk_ImplicitSurfaceSceneIndexPlugin": {
+                    "HdVk_SceneIndexPlugin": {
                         "bases": ["HdSceneIndexPlugin"],
                         "loadWithRenderer": "HdVk",
                         "priority": 0,

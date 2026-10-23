@@ -250,6 +250,52 @@ int main()
         }
 
         {
+            // GPU skinning: a quad whose top corners follow joint 1 and bottom
+            // corners are split 50/50 between joints 0 and 1. Joint 0 stays,
+            // joint 1 lifts by 0.4: the top edge rises 0.4, the bottom 0.2.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -0.5f, -0.5f, 0.5f, 0.5f, 0);
+            quad->primId = 3;
+            quad->jointCount = 2;
+            for (size_t c = 0; c < quad->points.size() / 3; ++c) {
+                const bool top = quad->points[c * 3 + 1] > 0;
+                quad->jointIndices.insert(quad->jointIndices.end(), {0, 1, 0, 0});
+                quad->jointWeights.insert(quad->jointWeights.end(), {top ? 0.0f : 0.5f, top ? 1.0f : 0.5f, 0, 0});
+            }
+            auto agent = [](float dx, float lift) {
+                return std::vector<float>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, 0, 0, 1,
+                                          1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, dx, lift, 0, 1};
+            };
+            quad->jointMatrices = agent(0, 0.4f);
+            scene.Commit();
+            Image img = Render(renderer, scene);
+            // Rows: y = -0.3 + 0.2 (bottom edge) .. 0.5 + 0.4 (top edge).
+            Expect(img.Prim(32, 58) == 3 && img.Prim(32, 62) == -1, "skinned top edge follows joint 1 (y 0.9)");
+            Expect(img.Prim(32, 17) == -1 && img.Prim(32, 22) == 3, "skinned bottom edge halfway (y -0.3)");
+
+            // Two agents with their own matrices (one per instance), one far
+            // off screen: culled by the bounds its joints imply.
+            std::vector<float> both = agent(-0.5f, 0.0f), far = agent(50.0f, 0.0f);
+            both.insert(both.end(), far.begin(), far.end());
+            quad->jointMatrices = both;
+            quad->jointsDirty = true;
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(img.Prim(4, 32) == 3 && img.Inst(4, 32) == 0 && img.Prim(40, 32) == -1, "agent 0 moved left");
+            Expect(renderer.VisibleInstances() == 1, "agent 1 culled from its joint bounds");
+
+            // An agent scaled down to a fraction of a pixel is culled too.
+            const float s = 0.005f;
+            quad->jointMatrices = {s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1,
+                                   s, 0, 0, 0, 0, s, 0, 0, 0, 0, s, 0, 0, 0, 0, 1};
+            quad->jointsDirty = true;
+            scene.Commit();
+            Render(renderer, scene);
+            Expect(renderer.VisibleInstances() == 0, "sub-pixel agent culled");
+        }
+
+        {
             // Many meshes and instances: forces the pools to grow past their
             // first capacity (1024) while earlier contents must survive.
             vkr::Scene scene(&device);

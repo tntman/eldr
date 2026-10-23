@@ -3,9 +3,11 @@
 #define SCENE_WRITABLE
 #include "scene.glsl"
 
-// Frustum culling, one invocation per instance slot: survivors are appended
-// to their mesh's visible list and counted into its indirect command.
-// ponytail: frustum only; Hi-Z occlusion and LOD selection come later.
+// Frustum and small-object culling, one invocation per instance slot:
+// survivors are appended to their mesh's visible list and counted into its
+// indirect command. Instances under half a pixel in radius are dropped (the
+// coarsest level of detail, e.g. distant crowd agents).
+// ponytail: no Hi-Z occlusion, and no mesh LODs to pick from yet.
 
 struct DrawCommand {  // VkDrawIndexedIndirectCommand
     uint indexCount;
@@ -17,9 +19,13 @@ struct DrawCommand {  // VkDrawIndexedIndirectCommand
 layout(std430, set = 0, binding = 10) buffer Commands { DrawCommand commands[]; };
 
 layout(push_constant) uniform CullParams {
-    vec4 planes[6];  // xyz . p + w >= 0 inside, world space
+    vec4 planes[6];  // xyz . p + w >= 0 inside, world space; [4] is the near plane
     uint instanceCapacity;
     uint drawCount;
+    float pixelScale;    // perspective: pixels per world unit at view depth 1; ortho: per unit
+    float nearDistance;  // view depth of the near plane
+    float minRadius;     // pixels
+    float orthographic;
 } pc;
 
 layout(local_size_x = 64) in;
@@ -47,6 +53,11 @@ void main()
         if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
             return;
         }
+    }
+    float depth = dot(pc.planes[4].xyz, wc) + pc.planes[4].w + pc.nearDistance;
+    float radius = length(we) * pc.pixelScale / (pc.orthographic > 0.5 ? 1.0 : max(depth, 1e-6));
+    if (radius < pc.minRadius) {
+        return;
     }
     uint slot = atomicAdd(commands[inst.draw].instanceCount, 1u);
     visible[commands[inst.draw].firstInstance + slot] = i;

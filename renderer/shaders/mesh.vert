@@ -30,12 +30,25 @@ void main()
 {
     Instance inst = instances[visible[gl_InstanceIndex]];
     DrawInfo d = draws[inst.draw];
-    vec4 world = inst.transform * vec4(inPosition, 1.0);
+    mat4 model = inst.transform;
+    mat3 normalMatrix;
+    if (d.skin != kFreeSlot) {
+        // Linear blend skinning: the weighted sum of this vertex's joint matrices.
+        uvec4 s = skin[d.skin + uint(gl_VertexIndex) - d.vertexBase];
+        vec4 w = vec4(unpackUnorm2x16(s.z), unpackUnorm2x16(s.w));
+        model = (w.x * joints[inst.joints + (s.x & 0xFFFFu)] + w.y * joints[inst.joints + (s.x >> 16)] +
+                 w.z * joints[inst.joints + (s.y & 0xFFFFu)] + w.w * joints[inst.joints + (s.y >> 16)]) /
+                max(w.x + w.y + w.z + w.w, 1e-6);
+        normalMatrix = mat3(model);  // ponytail: no inverse-transpose for scaled joints
+    } else {
+        normalMatrix = transpose(inverse(mat3(model)));
+    }
+    vec4 world = model * vec4(inPosition, 1.0);
     gl_Position = pc.viewProj * world;
     // Hydra hands us GL clip space (z in [-w, w]); Vulkan clips z to [0, w].
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
     outWorldPos = world.xyz;
-    outNormal = transpose(inverse(mat3(inst.transform))) * inNormal;
+    outNormal = normalMatrix * inNormal;
     outUv = inUv;
     outColor = d.color.rgb;
     outMaterial = d.material;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/matrix4d.h"
 #include "pxr/imaging/hd/mesh.h"
 
 namespace vkr {
@@ -27,6 +28,8 @@ protected:
 
 private:
     void _Flatten();
+    void _UpdateJoints();
+    bool _Skinned() const;
 
     vkr::Scene *_scene;
     vkr::Mesh *_mesh;
@@ -39,6 +42,16 @@ private:
     VtValue _normals, _uvs;
     HdInterpolation _normalsInterp = HdInterpolationVertex;
     HdInterpolation _uvsInterp = HdInterpolationVertex;
+
+    // GPU skinning inputs, the hydra:* primvars (see sceneIndexPlugin.cpp).
+    VtVec2fArray _influences;        // (joint, weight) per point, or once if constant
+    int _influencesPerPoint = 0;
+    bool _constantInfluences = false;
+    GfMatrix4d _geomBind{1.0};
+    VtMatrix4fArray _skinningXforms; // per joint, or per instance and joint
+    int _numJoints = 0;              // > 0: _skinningXforms holds every instance
+    GfMatrix4d _skelToPrim{1.0};     // skelLocalToWorld * primWorldToLocal
+    VtMatrix4dArray _instanceXforms; // world transform per instance (mesh xform first)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

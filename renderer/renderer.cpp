@@ -61,7 +61,10 @@ struct CullParams {
     float planes[6][4];
     uint32_t instanceCapacity;
     uint32_t drawCount;
-    uint32_t pad[2];
+    float pixelScale;    // perspective: pixels per world unit at view depth 1; ortho: per unit
+    float nearDistance;  // view depth of the near plane
+    float minRadius;     // in pixels: smaller instances are dropped
+    float orthographic;
 };
 constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -209,9 +212,10 @@ void Renderer::_CreateDescriptors()
     // data. 7..10 are the GPU-driven scene: instances, draw infos, visible
     // lists and the culled indirect commands; 11 is the GTAO result, 12
     // and 13 last frame's color and this frame's depth for reflections, 14
-    // the light clusters (written by lights.comp, which also reads 2 and 3).
+    // the light clusters (written by lights.comp, which also reads 2 and 3),
+    // 15 and 16 the skinning pools (SkinVertex, joint matrices).
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[15] = {
+    const VkDescriptorSetLayoutBinding bindings[17] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
@@ -227,20 +231,22 @@ void Renderer::_CreateDescriptors()
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
+        {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
+        {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
     };
-    const VkDescriptorBindingFlags bindingFlags[15] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags bindingFlags[17] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 15;
+    flags.bindingCount = 17;
     flags.pBindingFlags = bindingFlags;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 15;
+    slci.bindingCount = 17;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[3] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 6},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 9},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -472,7 +478,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                                   VK_IMAGE_USAGE_SAMPLED_BIT,
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4),
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _gtao.Resize(width, height, _depth.view);
     _taa.Resize(width, height, _color.view, _depth.view);
     _post.Resize(width, height, _taa.Output());
@@ -504,6 +510,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     const VkDescriptorImageInfo previous{_clampSampler, _taa.History(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo depth{_clampSampler, _depth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
     const VkDescriptorBufferInfo clusters{_clusters.buffer, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo skin{gpu.skin, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo joints{gpu.joints, 0, VK_WHOLE_SIZE};
 
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -531,6 +539,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu)
     write(12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &previous);
     write(13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &depth);
     write(14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &clusters, nullptr);
+    write(15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &skin, nullptr);
+    write(16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &joints, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -773,6 +783,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         FrustumPlanes(frame.viewProj, cull.planes);
         cull.instanceCapacity = gpu.instanceCapacity;
         cull.drawCount = gpu.drawCount;
+        // Screen size of an instance: its world radius over the size of a
+        // pixel at its depth (which grows linearly with depth unless ortho).
+        const Mat4 inv = ToMat4(frame.invViewProj);
+        const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+        const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1}), mid = TransformPoint(inv, {0, 0, 0});
+        const Vec3 forward = Normalize(mid - nearCenter);
+        const float pixel = Length(TransformPoint(inv, {0, 2.0f / float(_height), 0}) - mid);
+        cull.orthographic = std::abs(frame.viewProj[3]) + std::abs(frame.viewProj[7]) +
+                            std::abs(frame.viewProj[11]) < 1e-9f ? 1.0f : 0.0f;
+        cull.pixelScale = (cull.orthographic > 0 ? 1.0f : Dot(mid - eye, forward)) / std::max(pixel, 1e-30f);
+        cull.nearDistance = Dot(nearCenter - eye, forward);
+        cull.minRadius = 0.5f;
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);

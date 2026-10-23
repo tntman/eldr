@@ -71,8 +71,20 @@ struct Mesh {
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
-    bool geometryDirty = true;   // set after changing points/normals/uvs
+    bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
+
+    // Linear blend skinning (UsdSkel), skinned on the GPU. Up to 4 joints
+    // per corner with weights summing to 1; per instance, jointCount
+    // matrices (USD row-vector order) that take `points` straight to world
+    // space, so `transforms` is ignored and the instance count is
+    // jointMatrices.size() / (16 * jointCount). Only the matrices change per
+    // frame: set jointsDirty alone.
+    std::vector<uint16_t> jointIndices;  // 4 per corner; empty: rigid mesh
+    std::vector<float> jointWeights;     // 4 per corner
+    uint32_t jointCount = 0;
+    std::vector<float> jointMatrices;
+    bool jointsDirty = false;
 
 private:
     friend class Scene;
@@ -81,12 +93,14 @@ private:
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
     uint32_t _instanceBase = 0, _instanceCount = 0;
+    uint32_t _skinOffset = 0, _skinCount = 0;    // SkinVertex pool, one per vertex
+    uint32_t _jointBase = 0, _jointSlots = 0;    // joint matrix pool, instances * jointCount
+    std::vector<float> _jointBounds;             // per joint: rest bounds of the vertices it moves
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
 };
 
-// Distant light. Same threading rules as Mesh.
-// Lights in world space. The Hydra layer resolves the UsdLux inputs
+// Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
 // (intensity, exposure, color, temperature, normalize) into irradiance for
 // distant lights and the emitting surface's radiance for sphere/rect lights.
 struct Light {
@@ -136,7 +150,8 @@ struct Instance {
     float transform[16];
     uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
     int32_t index;       // index into Mesh::transforms (instanceId AOV)
-    uint32_t pad[2];
+    uint32_t joints;     // skinned: first joint matrix; transform then only bounds culling
+    uint32_t pad;
 };
 struct DrawInfo {
     float boundsMin[4];  // object space
@@ -145,7 +160,15 @@ struct DrawInfo {
     uint32_t material;   // kNoMaterial: color + default material
     int32_t primId;
     uint32_t visible;
-    uint32_t pad;
+    uint32_t skin;        // first SkinVertex of the mesh, kNone if rigid
+    uint32_t vertexBase;  // the mesh's first vertex in the vertex pool
+    uint32_t pad[3];
+};
+// Joint influences of one skinned vertex: four 16-bit joint indices and
+// four unorm16 weights.
+struct SkinVertex {
+    uint32_t joints[2];
+    uint32_t weights[2];
 };
 constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 constexpr uint32_t kNone = 0xFFFFFFFFu;
@@ -196,6 +219,8 @@ public:
         VkBuffer shadowCommands = VK_NULL_HANDLE;  // per slot, all instances
         VkBuffer materials = VK_NULL_HANDLE;
         VkBuffer lights = VK_NULL_HANDLE;      // distant lights, then sphere/rect lights
+        VkBuffer skin = VK_NULL_HANDLE;        // SkinVertex pool
+        VkBuffer joints = VK_NULL_HANDLE;      // joint matrix pool (mat4)
         uint32_t drawCount = 0;         // mesh slots (some may draw nothing)
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
@@ -232,6 +257,7 @@ private:
                          VkDeviceSize elementSize, VkBufferUsageFlags usage, bool invalidateNew);
     void _UploadGeometry(Mesh &mesh);
     void _UploadInstances(Mesh &mesh);
+    void _UploadJoints(Mesh &mesh);
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
     void _Upload(Texture &texture);
@@ -246,8 +272,8 @@ private:
     std::vector<std::unique_ptr<Light>> _lights;
     std::vector<std::unique_ptr<Dome>> _domes;
     // Device-local pools and their allocators.
-    Buffer _vertices, _indices, _instances, _visible;
-    RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc;
+    Buffer _vertices, _indices, _instances, _visible, _skin, _joints;
+    RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc;
     // Host-visible per-commit tables.
     Buffer _draws, _commandTemplate, _shadowCommands, _materials, _lightBuffer, _staging;
     std::vector<uint8_t> _stagingBytes;

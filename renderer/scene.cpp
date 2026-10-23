@@ -74,19 +74,39 @@ void MemoryBarrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccess
 // Hashable bit pattern of one vertex, for deduplicating corners.
 struct VertexKey {
     Vertex v;
-    bool operator==(const VertexKey &o) const { return std::memcmp(&v, &o.v, sizeof(Vertex)) == 0; }
+    SkinVertex skin;
+    bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
     size_t operator()(const VertexKey &k) const
     {
         uint64_t h = 1469598103934665603ull;  // FNV-1a
-        const auto *p = reinterpret_cast<const uint8_t *>(&k.v);
-        for (size_t i = 0; i < sizeof(Vertex); ++i) {
+        const auto *p = reinterpret_cast<const uint8_t *>(&k);
+        for (size_t i = 0; i < sizeof(VertexKey); ++i) {
             h = (h ^ p[i]) * 1099511628211ull;
         }
         return size_t(h);
     }
 };
+
+uint32_t PackUnorm16(float a, float b)
+{
+    auto q = [](float x) { return uint32_t(std::lround(std::clamp(x, 0.0f, 1.0f) * 65535.0f)); };
+    return q(a) | (q(b) << 16);
+}
+
+// World AABB of an object-space box under a row-vector matrix.
+void TransformBounds(const float *lo, const float *hi, const float *x, float *outLo, float *outHi)
+{
+    for (int k = 0; k < 3; ++k) {
+        const float c[3] = {0.5f * (lo[0] + hi[0]), 0.5f * (lo[1] + hi[1]), 0.5f * (lo[2] + hi[2])};
+        const float e[3] = {0.5f * (hi[0] - lo[0]), 0.5f * (hi[1] - lo[1]), 0.5f * (hi[2] - lo[2])};
+        const float wc = c[0] * x[k] + c[1] * x[4 + k] + c[2] * x[8 + k] + x[12 + k];
+        const float we = e[0] * std::abs(x[k]) + e[1] * std::abs(x[4 + k]) + e[2] * std::abs(x[8 + k]);
+        outLo[k] = wc - we;
+        outHi[k] = wc + we;
+    }
+}
 
 } // namespace
 
@@ -168,8 +188,8 @@ Scene::Scene(Device *device)
 Scene::~Scene()
 {
     if (_device) {
-        for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_draws, &_commandTemplate,
-                          &_shadowCommands, &_materials, &_lightBuffer, &_staging}) {
+        for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_draws,
+                          &_commandTemplate, &_shadowCommands, &_materials, &_lightBuffer, &_staging}) {
             _device->Destroy(*b);
         }
         _DestroyEnvironment();
@@ -190,6 +210,8 @@ void Scene::RemoveMesh(Mesh *mesh)
     if (_device) {
         _vertexAlloc.Free(mesh->_vertexOffset, mesh->_vertexCount);
         _indexAlloc.Free(mesh->_firstIndex, mesh->_indexCount);
+        _skinAlloc.Free(mesh->_skinOffset, mesh->_skinCount);
+        _jointAlloc.Free(mesh->_jointBase, mesh->_jointSlots);
         _FreeInstances(*mesh);
     }
     const size_t slot = mesh->_slot;
@@ -305,21 +327,34 @@ void Scene::_UploadGeometry(Mesh &m)
 {
     _vertexAlloc.Free(m._vertexOffset, m._vertexCount);
     _indexAlloc.Free(m._firstIndex, m._indexCount);
-    m._vertexCount = m._indexCount = 0;
+    _skinAlloc.Free(m._skinOffset, m._skinCount);
+    m._vertexCount = m._indexCount = m._skinCount = 0;
+    m._jointBounds.clear();
     m.geometryDirty = false;
 
     const size_t corners = m.points.size() / 3;
+    const bool skinned = !m.jointIndices.empty();
     // Sizes come from scene data: skip a mesh whose arrays disagree rather
     // than read past them.
     const bool valid = m.points.size() % 9 == 0 &&
                        (m.normals.empty() || m.normals.size() == m.points.size()) &&
-                       (m.uvs.empty() || m.uvs.size() == corners * 2);
+                       (m.uvs.empty() || m.uvs.size() == corners * 2) &&
+                       (!skinned || (m.jointIndices.size() == corners * 4 &&
+                                     m.jointWeights.size() == corners * 4 && m.jointCount > 0));
     if (!valid || corners == 0) {
         return;
+    }
+    if (skinned) {
+        m._jointBounds.resize(size_t(m.jointCount) * 6);
+        for (uint32_t j = 0; j < m.jointCount; ++j) {
+            std::fill_n(&m._jointBounds[j * 6], 3, std::numeric_limits<float>::max());
+            std::fill_n(&m._jointBounds[j * 6 + 3], 3, std::numeric_limits<float>::lowest());
+        }
     }
 
     // Corners sharing position, normal and uv become one indexed vertex.
     std::vector<Vertex> vertices;
+    std::vector<SkinVertex> skin;
     std::vector<uint32_t> indices(corners);
     std::unordered_map<VertexKey, uint32_t, VertexKeyHash> unique;
     unique.reserve(corners);
@@ -334,9 +369,29 @@ void Scene::_UploadGeometry(Mesh &m)
         if (!m.uvs.empty()) {
             std::memcpy(key.v.uv, &m.uvs[i * 2], sizeof(key.v.uv));
         }
+        if (skinned) {
+            const uint16_t *j = &m.jointIndices[i * 4];
+            const float *w = &m.jointWeights[i * 4];
+            key.skin.joints[0] = j[0] | (uint32_t(j[1]) << 16);
+            key.skin.joints[1] = j[2] | (uint32_t(j[3]) << 16);
+            key.skin.weights[0] = PackUnorm16(w[0], w[1]);
+            key.skin.weights[1] = PackUnorm16(w[2], w[3]);
+            for (int k = 0; k < 4; ++k) {
+                if (w[k] > 0.0f && j[k] < m.jointCount) {
+                    float *b = &m._jointBounds[size_t(j[k]) * 6];
+                    for (int c = 0; c < 3; ++c) {
+                        b[c] = std::min(b[c], key.v.position[c]);
+                        b[3 + c] = std::max(b[3 + c], key.v.position[c]);
+                    }
+                }
+            }
+        }
         const auto [it, inserted] = unique.emplace(key, uint32_t(vertices.size()));
         if (inserted) {
             vertices.push_back(key.v);
+            if (skinned) {
+                skin.push_back(key.skin);
+            }
             for (int k = 0; k < 3; ++k) {
                 m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k]);
                 m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k]);
@@ -365,6 +420,18 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = vertexCount;
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
+    if (skinned) {
+        uint32_t skinOffset;
+        while (!_skinAlloc.Allocate(vertexCount, &skinOffset)) {
+            _EnsureCapacity(_skin, _skinAlloc, vertexCount, sizeof(SkinVertex),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        }
+        _copies.push_back({_skin.buffer, VkDeviceSize(skinOffset) * sizeof(SkinVertex),
+                           _Stage(skin.data(), skin.size() * sizeof(SkinVertex)),
+                           skin.size() * sizeof(SkinVertex)});
+        m._skinOffset = skinOffset;
+        m._skinCount = vertexCount;
+    }
 }
 
 void Scene::_FreeInstances(Mesh &m)
@@ -382,7 +449,10 @@ void Scene::_FreeInstances(Mesh &m)
 void Scene::_UploadInstances(Mesh &m)
 {
     m.transformsDirty = false;
-    const uint32_t count = m.transforms.size() % 16 == 0 ? uint32_t(m.transforms.size() / 16) : 0;
+    const bool skinned = !m._jointBounds.empty();
+    const size_t perInstance = skinned ? size_t(m.jointCount) * 16 : 16;
+    const std::vector<float> &source = skinned ? m.jointMatrices : m.transforms;
+    const uint32_t count = source.size() % perInstance == 0 ? uint32_t(source.size() / perInstance) : 0;
     if (count != m._instanceCount) {
         _FreeInstances(m);
         uint32_t base;
@@ -396,19 +466,81 @@ void Scene::_UploadInstances(Mesh &m)
     if (count == 0) {
         return;
     }
+    if (skinned) {
+        _UploadJoints(m);
+        std::fill(m._worldMin, m._worldMin + 3, std::numeric_limits<float>::max());
+        std::fill(m._worldMax, m._worldMax + 3, std::numeric_limits<float>::lowest());
+    }
     std::vector<Instance> instances(count);
     for (uint32_t i = 0; i < count; ++i) {
-        std::memcpy(instances[i].transform, &m.transforms[size_t(i) * 16], sizeof(instances[i].transform));
-        instances[i].draw = uint32_t(m._slot);
-        instances[i].index = int32_t(i);
+        Instance &inst = instances[i];
+        inst.draw = uint32_t(m._slot);
+        inst.index = int32_t(i);
+        inst.joints = kNone;
+        if (!skinned) {
+            std::memcpy(inst.transform, &m.transforms[size_t(i) * 16], sizeof(inst.transform));
+            continue;
+        }
+        // Culling reads the transform as object bounds -> world bounds: map
+        // the rest bounds onto the union of each joint's moved vertices.
+        inst.joints = m._jointBase + i * m.jointCount;
+        float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                       std::numeric_limits<float>::max()};
+        float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                       std::numeric_limits<float>::lowest()};
+        for (uint32_t j = 0; j < m.jointCount; ++j) {
+            const float *b = &m._jointBounds[size_t(j) * 6];
+            if (b[0] > b[3]) {
+                continue;  // moves no vertex
+            }
+            float jlo[3], jhi[3];
+            TransformBounds(b, b + 3, &m.jointMatrices[(size_t(i) * m.jointCount + j) * 16], jlo, jhi);
+            for (int k = 0; k < 3; ++k) {
+                lo[k] = std::min(lo[k], jlo[k]);
+                hi[k] = std::max(hi[k], jhi[k]);
+                m._worldMin[k] = std::min(m._worldMin[k], jlo[k]);
+                m._worldMax[k] = std::max(m._worldMax[k], jhi[k]);
+            }
+        }
+        std::fill(inst.transform, inst.transform + 16, 0.0f);
+        inst.transform[15] = 1.0f;
+        for (int k = 0; k < 3; ++k) {
+            const float extent = m._boundsMax[k] - m._boundsMin[k];
+            const float scale = extent > 0.0f ? (hi[k] - lo[k]) / extent : 0.0f;
+            inst.transform[k * 5] = scale;
+            inst.transform[12 + k] = extent > 0.0f ? lo[k] - m._boundsMin[k] * scale : 0.5f * (lo[k] + hi[k]);
+        }
     }
     _copies.push_back({_instances.buffer, VkDeviceSize(m._instanceBase) * sizeof(Instance),
                        _Stage(instances.data(), instances.size() * sizeof(Instance)),
                        instances.size() * sizeof(Instance)});
 }
 
+// The mesh's joint matrices, in a pool range of instances * jointCount.
+void Scene::_UploadJoints(Mesh &m)
+{
+    m.jointsDirty = false;
+    const uint32_t slots = uint32_t(m.jointMatrices.size() / 16);
+    if (slots != m._jointSlots) {
+        _jointAlloc.Free(m._jointBase, m._jointSlots);
+        uint32_t base;
+        while (!_jointAlloc.Allocate(slots, &base)) {
+            _EnsureCapacity(_joints, _jointAlloc, slots, 16 * sizeof(float),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        }
+        m._jointBase = base;
+        m._jointSlots = slots;
+    }
+    _copies.push_back({_joints.buffer, VkDeviceSize(m._jointBase) * 16 * sizeof(float),
+                       _Stage(m.jointMatrices.data(), m.jointMatrices.size() * sizeof(float)),
+                       m.jointMatrices.size() * sizeof(float)});
+}
+
 void Scene::_UpdateWorldBounds(Mesh &m)
 {
+    if (!m._jointBounds.empty()) {
+        return;  // skinned: _UploadInstances accumulates them from the joints
+    }
     std::fill(m._worldMin, m._worldMin + 3, std::numeric_limits<float>::max());
     std::fill(m._worldMax, m._worldMax + 3, std::numeric_limits<float>::lowest());
     if (m._indexCount == 0) {
@@ -620,11 +752,15 @@ void Scene::Commit()
         _EnsureCapacity(_vertices, _vertexAlloc, 0, sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);
         _EnsureCapacity(_indices, _indexAlloc, 0, sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT, false);
         _EnsureCapacity(_instances, _instanceAlloc, 0, sizeof(Instance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true);
+        _EnsureCapacity(_skin, _skinAlloc, 0, sizeof(SkinVertex), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        _EnsureCapacity(_joints, _jointAlloc, 0, 16 * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     }
 
     // Upload only what changed.
     for (const auto &m : _meshes) {
-        const bool geometry = m->geometryDirty, transforms = m->transformsDirty;
+        const bool geometry = m->geometryDirty;
+        // New joint matrices move the culling bounds too.
+        const bool transforms = m->transformsDirty || m->jointsDirty || geometry;
         if (geometry) {
             _UploadGeometry(*m);
         }
@@ -692,6 +828,8 @@ void Scene::Commit()
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.primId = m.primId;
         d.visible = drawable ? 1u : 0u;
+        d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
+        d.vertexBase = m._vertexOffset;
         // Culling fills in instanceCount; shadows draw every instance through
         // the identity half of the visible buffer.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
@@ -779,6 +917,8 @@ void Scene::Commit()
     _gpu.shadowCommands = _shadowCommands.buffer;
     _gpu.materials = _materials.buffer;
     _gpu.lights = _lightBuffer.buffer;
+    _gpu.skin = _skin.buffer;
+    _gpu.joints = _joints.buffer;
     _gpu.drawCount = uint32_t(slots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;

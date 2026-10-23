@@ -220,19 +220,22 @@ void Device::_Release()
     instance = VK_NULL_HANDLE;
 }
 
-VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props)
+VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
+                                VkMemoryPropertyFlags preferred)
 {
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(physical, &mp);
-    for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
-        if ((req.memoryTypeBits & (1u << i)) &&
-            (mp.memoryTypes[i].propertyFlags & props) == props) {
-            VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            ai.allocationSize = req.size;
-            ai.memoryTypeIndex = i;
-            VkDeviceMemory memory = VK_NULL_HANDLE;
-            Check(vkAllocateMemory(device, &ai, nullptr, &memory), "vkAllocateMemory");
-            return memory;
+    for (const VkMemoryPropertyFlags wanted : {props | preferred, props}) {
+        for (uint32_t i = 0; i < mp.memoryTypeCount; ++i) {
+            if ((req.memoryTypeBits & (1u << i)) &&
+                (mp.memoryTypes[i].propertyFlags & wanted) == wanted) {
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+                ai.allocationSize = req.size;
+                ai.memoryTypeIndex = i;
+                VkDeviceMemory memory = VK_NULL_HANDLE;
+                Check(vkAllocateMemory(device, &ai, nullptr, &memory), "vkAllocateMemory");
+                return memory;
+            }
         }
     }
     throw std::runtime_error("no suitable Vulkan memory type");
@@ -240,7 +243,8 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
 
 // ponytail: host-visible memory for everything, GPU reads over PCIe.
 // Device-local + staging ring in step 6 when scenes get big.
-void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage)
+void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage,
+                     VkMemoryPropertyFlags preferred)
 {
     if (b.buffer && b.size >= bytes) {
         return;
@@ -254,8 +258,8 @@ void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage)
     Check(vkCreateBuffer(device, &ci, nullptr, &b.buffer), "vkCreateBuffer");
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(device, b.buffer, &req);
-    b.memory = Allocate(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    b.memory = Allocate(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                        preferred);
     Check(vkBindBufferMemory(device, b.buffer, b.memory, 0), "vkBindBufferMemory");
     Check(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped), "vkMapMemory");
     b.size = size;

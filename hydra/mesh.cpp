@@ -14,6 +14,9 @@
 #include "pxr/imaging/hd/vertexAdjacency.h"
 #include "pxr/imaging/pxOsd/tokens.h"
 
+#include <algorithm>
+#include <array>
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 namespace {
@@ -156,13 +159,43 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                                                   : VtVec3fArray();
         geometryDirty = true;
     }
+    // DirtyPrimvar is all primvars at once, and a skinned mesh gets it every
+    // frame for its skinning transforms: re-flatten only what really changed.
+    bool jointsDirty = false;
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->normals) ||
         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->st)) {
-        _normals = FindPrimvar(sceneDelegate, id, HdTokens->normals, &_normalsInterp)
+        HdInterpolation normalsInterp = _normalsInterp, uvsInterp = _uvsInterp;
+        const VtValue normals = FindPrimvar(sceneDelegate, id, HdTokens->normals, &normalsInterp)
             ? sceneDelegate->Get(id, HdTokens->normals) : VtValue();
-        _uvs = FindPrimvar(sceneDelegate, id, _tokens->st, &_uvsInterp)
+        const VtValue uvs = FindPrimvar(sceneDelegate, id, _tokens->st, &uvsInterp)
             ? sceneDelegate->Get(id, _tokens->st) : VtValue();
-        geometryDirty = true;
+        if (normals != _normals || uvs != _uvs || normalsInterp != _normalsInterp || uvsInterp != _uvsInterp) {
+            _normals = normals;
+            _uvs = uvs;
+            _normalsInterp = normalsInterp;
+            _uvsInterp = uvsInterp;
+            geometryDirty = true;
+        }
+
+        auto get = [&](TfToken const &name) { return sceneDelegate->Get(id, name); };
+        const VtVec2fArray influences = get(HdSkinningInputTokens->influences).GetWithDefault(VtVec2fArray());
+        const int perPoint = get(HdSkinningInputTokens->numInfluencesPerComponent).GetWithDefault(0);
+        const bool constant = get(HdSkinningInputTokens->hasConstantInfluences).GetWithDefault(false);
+        if (influences != _influences || perPoint != _influencesPerPoint || constant != _constantInfluences) {
+            _influences = influences;
+            _influencesPerPoint = perPoint;
+            _constantInfluences = constant;
+            geometryDirty = true;
+        }
+        _geomBind = GfMatrix4d(get(HdSkinningSkelInputTokens->geomBindTransform).GetWithDefault(GfMatrix4f(1.0f)));
+        _skinningXforms = get(HdSkinningInputTokens->skinningXforms).GetWithDefault(VtMatrix4fArray());
+        _numJoints = get(HdSkinningInputTokens->numJoints).GetWithDefault(0);
+        _skelToPrim = get(HdSkinningInputTokens->skelLocalToCommonSpace).GetWithDefault(GfMatrix4d(1.0)) *
+                      get(HdSkinningInputTokens->commonSpaceToPrimLocal).GetWithDefault(GfMatrix4d(1.0));
+        jointsDirty = true;
+        // The joint count is baked into the flattened influences (index range).
+        const size_t joints = _numJoints > 0 ? size_t(_numJoints) : _skinningXforms.size();
+        geometryDirty |= _Skinned() && joints != _mesh->jointCount;
     }
     if (geometryDirty) {
         _Flatten();
@@ -182,12 +215,18 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                 sceneDelegate->GetRenderIndex().GetInstancer(GetInstancerId()));
             instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
         }
+        _instanceXforms.resize(instances.size());
         m.transforms.resize(instances.size() * 16);
         for (size_t i = 0; i < instances.size(); ++i) {
-            const GfMatrix4f world(xf * instances[i]);  // prototype first, then instance
+            _instanceXforms[i] = xf * instances[i];  // prototype first, then instance
+            const GfMatrix4f world(_instanceXforms[i]);
             std::copy(world.data(), world.data() + 16, m.transforms.data() + i * 16);
         }
         m.transformsDirty = true;
+        jointsDirty = true;
+    }
+    if (jointsDirty || geometryDirty) {
+        _UpdateJoints();
     }
 
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
@@ -214,11 +253,82 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }
 
+bool HdVkMesh::_Skinned() const
+{
+    return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
+}
+
+// Joint j of instance i takes a rest point through geomBind, the joint's
+// skinning transform, skeleton to prim space and the instance's world
+// transform: the whole chain of UsdSkelImaging's skinning kernel plus the
+// prim's own transform, in one matrix (USD row-vector order).
+void HdVkMesh::_UpdateJoints()
+{
+    vkr::Mesh &m = *_mesh;
+    if (!_Skinned() || m.jointCount == 0) {
+        if (!m.jointMatrices.empty()) {
+            m.jointMatrices.clear();
+            m.transformsDirty = true;
+        }
+        return;
+    }
+    const size_t joints = m.jointCount, instances = _instanceXforms.size();
+    const bool perInstance = _numJoints > 0 && _skinningXforms.size() == joints * instances;
+    if (!perInstance && _skinningXforms.size() != joints) {
+        m.jointMatrices.clear();  // inconsistent: draw nothing rather than garbage
+        m.jointsDirty = true;
+        return;
+    }
+    const GfMatrix4f geomBind(_geomBind);
+    m.jointMatrices.resize(instances * joints * 16);
+    for (size_t i = 0; i < instances; ++i) {
+        const GfMatrix4f toWorld(_skelToPrim * _instanceXforms[i]);
+        for (size_t j = 0; j < joints; ++j) {
+            const GfMatrix4f &skinning = _skinningXforms[perInstance ? i * joints + j : j];
+            const GfMatrix4f joint = geomBind * skinning * toWorld;
+            std::copy(joint.data(), joint.data() + 16, m.jointMatrices.data() + (i * joints + j) * 16);
+        }
+    }
+    m.jointsDirty = true;
+}
+
 void HdVkMesh::_Flatten()
 {
     vkr::Mesh &m = *_mesh;
     m.geometryDirty = true;
     const HdMeshUtil util(&_topology, GetId());
+
+    // Joint influences per corner: the four strongest, renormalized.
+    // ponytail: more than four influences per point are cut to four.
+    m.jointIndices.clear();
+    m.jointWeights.clear();
+    m.jointCount = 0;
+    const size_t perPoint = size_t(std::max(_influencesPerPoint, 0));
+    const uint32_t joints = uint32_t(_numJoints > 0 ? _numJoints : _skinningXforms.size());
+    if (_Skinned() && _influences.size() >= (_constantInfluences ? perPoint : _points.size() * perPoint)) {
+        m.jointCount = joints;
+        m.jointIndices.reserve(_triangles.size() * 12);
+        m.jointWeights.reserve(_triangles.size() * 12);
+        for (const GfVec3i &tri : _triangles) {
+            for (int k = 0; k < 3; ++k) {
+                const size_t base = _constantInfluences ? 0 : size_t(std::max(tri[k], 0)) * perPoint;
+                std::array<std::pair<float, uint16_t>, 4> top{};
+                for (size_t n = 0; n < perPoint && base + n < _influences.size(); ++n) {
+                    const GfVec2f &influence = _influences[base + n];
+                    const int joint = int(influence[0]);
+                    if (influence[1] > top[3].first && joint >= 0 && uint32_t(joint) < joints) {
+                        top[3] = {influence[1], uint16_t(joint)};
+                        std::sort(top.begin(), top.end(), [](auto &a, auto &b) { return a.first > b.first; });
+                    }
+                }
+                const float sum = top[0].first + top[1].first + top[2].first + top[3].first;
+                for (const auto &[weight, joint] : top) {
+                    m.jointIndices.push_back(joint);
+                    m.jointWeights.push_back(sum > 0.0f ? weight / sum : 0.0f);
+                }
+            }
+        }
+    }
 
     if (!FlattenPrimvar<GfVec3f>(VtValue(_points), HdInterpolationVertex, util, _triangles,
                                  _primitiveParams, HdTypeFloatVec3, &m.points)) {

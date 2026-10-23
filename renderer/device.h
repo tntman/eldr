@@ -53,9 +53,14 @@ public:
     Device(const Device &) = delete;
     Device &operator=(const Device &) = delete;
 
-    VkDeviceMemory Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props);
+    // Memory with `props`; a type that also has `preferred` wins if there is one.
+    VkDeviceMemory Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
+                            VkMemoryPropertyFlags preferred = 0);
     // Grows `b` to hold at least `bytes`, discarding its contents. GPU must be idle.
-    void Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage);
+    // Host-visible, coherent and mapped. Pass HOST_CACHED as `preferred` for
+    // buffers the CPU reads: uncached (write-combined) memory reads crawl.
+    void Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage,
+                 VkMemoryPropertyFlags preferred = 0);
     // Device-local, unmapped; fill it through a staging copy.
     Buffer CreateDeviceBuffer(VkDeviceSize bytes, VkBufferUsageFlags usage);
     void Destroy(Buffer &b);
