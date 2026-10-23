@@ -29,12 +29,21 @@ bool HdVkRenderPass::IsConverged() const
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
-// and the collection/render tags. Fine for usdview; revisit for Houdini (step 7).
+// and the collection. Fine for usdview; revisit for Houdini (step 7).
 void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
-                              TfTokenVector const &)
+                              TfTokenVector const &renderTags)
 {
     if (!_renderer) {
         return;
+    }
+
+    // Only the pass's render tags (purposes) are drawn; no tags: all.
+    uint32_t tagMask = renderTags.empty() ? ~0u : 0u;
+    for (const TfToken &tag : renderTags) {
+        tagMask |= HdVkRenderTagBit(tag);
+    }
+    if (_scene.SetTagMask(tagMask)) {
+        _scene.Commit();
     }
 
     vkr::Renderer::Frame frame;

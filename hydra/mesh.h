@@ -21,6 +21,8 @@ public:
     HdDirtyBits GetInitialDirtyBitsMask() const override;
     void Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam,
               HdDirtyBits *dirtyBits, TfToken const &reprToken) override;
+    // Hydra updates the tag (purpose) outside Sync.
+    void UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam) override;
 
 protected:
     HdDirtyBits _PropagateDirtyBits(HdDirtyBits bits) const override { return bits; }

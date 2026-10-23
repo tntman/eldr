@@ -2,6 +2,7 @@
 
 #include "instancer.h"
 #include "material.h"
+#include "renderDelegate.h"
 #include "scene.h"
 
 #include "pxr/base/gf/matrix4f.h"
@@ -138,8 +139,14 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex;
 }
 
+void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
+{
+    HdMesh::UpdateRenderTag(delegate, renderParam);
+    _mesh->tag = HdVkRenderTagBit(GetRenderTag());
+}
+
 // ponytail: renders the subdivision cage, reads only the "st" primvar for
-// texcoords, ignores render tags.
+// texcoords.
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {

@@ -215,6 +215,13 @@ Scene::~Scene()
     }
 }
 
+bool Scene::SetTagMask(uint32_t mask)
+{
+    const bool changed = mask != _tagMask;
+    _tagMask = mask;
+    return changed;
+}
+
 Mesh *Scene::AddMesh()
 {
     _changed = true;
@@ -960,7 +967,7 @@ void Scene::Commit()
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
-        const bool drawable = m.visible && m._indexCount > 0 && m._instanceCount > 0 &&
+        const bool drawable = m.visible && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
                               (m._skinCount == 0 || m._skinXformSlots > 0);
         DrawInfo &d = draws[slot];
         d = DrawInfo{};

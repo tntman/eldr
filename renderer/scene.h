@@ -78,6 +78,7 @@ struct Mesh {
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
+    uint32_t tag = 1;            // caller's render tag bit: drawn when in the scene's tag mask
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
 
@@ -252,6 +253,9 @@ public:
 
     // Uploads dirty data. The GPU must be idle.
     void Commit();
+    // Meshes whose tag has no bit in `mask` are not drawn (from the next
+    // Commit). Returns whether the mask changed.
+    bool SetTagMask(uint32_t mask);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -356,6 +360,7 @@ private:
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
+    uint32_t _tagMask = ~0u;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;

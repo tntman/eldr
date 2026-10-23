@@ -31,6 +31,10 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
+// A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
+// have their own, other tags share one, hidden has none (never drawn).
+uint32_t HdVkRenderTagBit(TfToken const &tag);
+
 class HdVkTextureCache;
 
 class HdVkRenderDelegate final : public HdRenderDelegate

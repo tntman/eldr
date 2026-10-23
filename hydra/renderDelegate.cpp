@@ -49,6 +49,13 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
 
 HdVkRenderDelegate::~HdVkRenderDelegate() = default;
 
+uint32_t HdVkRenderTagBit(TfToken const &tag)
+{
+    return tag == HdRenderTagTokens->geometry ? 1u : tag == HdRenderTagTokens->render ? 2u :
+           tag == HdRenderTagTokens->proxy    ? 4u : tag == HdRenderTagTokens->guide  ? 8u :
+           tag == HdRenderTagTokens->hidden   ? 0u : 16u;
+}
+
 const TfTokenVector &HdVkRenderDelegate::GetSupportedRprimTypes() const { return _rprimTypes; }
 const TfTokenVector &HdVkRenderDelegate::GetSupportedSprimTypes() const { return _sprimTypes; }
 const TfTokenVector &HdVkRenderDelegate::GetSupportedBprimTypes() const { return _bprimTypes; }
