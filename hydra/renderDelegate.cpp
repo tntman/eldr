@@ -137,6 +137,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
         {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
+        {"Tonemapper (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
     };
 }
 

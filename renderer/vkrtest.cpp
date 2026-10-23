@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <tuple>
 #include <vector>
 
 static int failures = 0;
@@ -1143,6 +1144,28 @@ int main()
             const float off = RenderPost(device, scene, 0.0f).At(32, 44, 1);
             const float on = RenderPost(device, scene, 0.04f).At(32, 44, 1);
             Expect(on > 1.5f * off, "bloom brightens pixels around a bright spot");
+        }
+
+        {
+            // AgX tonemapping: auto-exposure puts a uniform screen at middle
+            // gray, which each curve maps to its own value (none: as is).
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0, 1.0f);
+            scene.Commit();
+            using T = vkr::PostProcess::Settings::Tonemapper;
+            for (auto [tonemapper, expected, what] :
+                 {std::tuple{T::Aces, 0.106f, "tonemap: ACES(0.18) = 0.106"},
+                  std::tuple{T::Agx, 0.214f, "tonemap: AgX(0.18) = 0.214"},
+                  std::tuple{T::AgxPunchy, 0.097f, "tonemap: AgX punchy(0.18) = 0.097"},
+                  std::tuple{T::None, 0.18f, "tonemap: none(0.18) = 0.18"}}) {
+                vkr::Renderer post(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.taa = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = tonemapper;
+                Expect(std::abs(Render(post, scene, frame).At(32, 32, 1) - expected) < 0.01f, what);
+            }
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

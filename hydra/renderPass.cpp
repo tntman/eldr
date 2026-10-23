@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <string>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -118,6 +119,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
+    const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
+    frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx
+                          : tonemapper == "agxPunchy" ? Tonemapper::AgxPunchy
+                          : tonemapper == "none"      ? Tonemapper::None
+                                                      : Tonemapper::Aces;
     // The scene camera's lens; usdview's free camera has none.
     const GfMatrix4d projection = state->GetProjectionMatrix();
     if (const HdCamera *camera = state->GetCamera()) {

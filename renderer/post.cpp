@@ -307,7 +307,8 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool 
     ImageBarrier(cmd, _output.image, Mip(0), VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    Params tonemapParams{{s.bloomIntensity, float(levels), 0, 0}, {1.0f / _width, 1.0f / _height, 0, 0}, {}};
+    Params tonemapParams{{s.bloomIntensity, float(levels), float(s.tonemapper), 0},
+                         {1.0f / _width, 1.0f / _height, 0, 0}, {}};
     std::copy(background, background + 4, tonemapParams.c);
     fullscreen(_tonemap, _hdrSet, _output.view, _width, _height, false, tonemapParams);
     ImageBarrier(cmd, _output.image, Mip(0),
