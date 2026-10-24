@@ -221,6 +221,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.translucentShadowDivisor))},
         {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
         {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
+        {"Ray-Traced Skinned Instances (largest on screen, 0-256)", t.rtSkinnedInstances,
+         VtValue(int(frame.rtSkinnedInstances))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
          VtValue(frame.specularWorkflow)},

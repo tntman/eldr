@@ -1445,6 +1445,45 @@ int main()
             std::puts("no ray tracing on this GPU: its tests skipped");
         }
 
+        if (device.rayTracing) {
+            // Skinned instances block rays: the sun test's occluder as a
+            // skinned quad (one joint), its traced shadow on the ground one
+            // unit to the left. Its joint moves it up by 0.5: the shadow
+            // follows (posed and refit on the GPU); with no skinned instance
+            // allowed it casts none.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            sun->angle = 0;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            occluder->jointCount = 1;
+            for (size_t c = 0; c < occluder->points.size() / 3; ++c) {
+                occluder->jointIndices.insert(occluder->jointIndices.end(), {0, 0, 0, 0});
+                occluder->jointWeights.insert(occluder->jointWeights.end(), {1, 0, 0, 0});
+            }
+            auto lift = [&](float y) {
+                occluder->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, y, 0, 1};
+                occluder->jointsDirty = true;
+                scene.Commit();
+            };
+            lift(0);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image rest = Render(renderer, scene, frame);
+            lift(0.5f);
+            const Image lifted = Render(renderer, scene, frame);
+            const float lit = rest.At(51, 32, 0);
+            // Row 32 (y = 0) is in the rest shadow only, row 48 (y = 0.52) in the lifted one only.
+            Expect(rest.At(3, 32, 0) < 0.01f * lit && rest.At(3, 48, 0) > 0.9f * lit,
+                   "a skinned occluder casts a traced shadow");
+            Expect(lifted.At(3, 32, 0) > 0.9f * lit && lifted.At(3, 48, 0) < 0.01f * lit,
+                   "its traced shadow follows a moved joint");
+            frame.rtSkinnedInstances = 0;
+            Expect(Render(renderer, scene, frame).At(3, 48, 0) > 0.9f * lit,
+                   "Frame::rtSkinnedInstances 0: skinned meshes don't block rays");
+        }
+
         {
             // Wrap modes: emissive rows with st (0..2, 0..1) over a 2x1
             // texture (left texel red, right blue), one row per mode, the

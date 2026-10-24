@@ -7,6 +7,7 @@
 #include "scene.glsl"
 #include "material.glsl"
 #include "rt.glsl"
+#include "gi.glsl"
 
 // The surface a ray hit: position, normals and the material's inputs at
 // the hit (constants and textures; material programs are not run).
@@ -21,6 +22,17 @@ void main()
     uint v0 = RtVertex(slot, triangle, 0u), v1 = RtVertex(slot, triangle, 1u), v2 = RtVertex(slot, triangle, 2u);
     vec3 b = vec3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
     vec3 p0 = RtPosition(v0), p1 = RtPosition(v1), p2 = RtPosition(v2);
+    vec3 n0 = RtNormal(v0), n1 = RtNormal(v1), n2 = RtNormal(v2);
+    if (uint(gl_InstanceID) >= rt.skinned.x) {
+        // A skinned instance: its posed vertices, already in world space.
+        uint posed = rtSkinned[uint(gl_InstanceID) - rt.skinned.x].firstVertex - d.vertexBase;
+        p0 = RtSkinnedPosition(posed + v0);
+        p1 = RtSkinnedPosition(posed + v1);
+        p2 = RtSkinnedPosition(posed + v2);
+        n0 = RtSkinnedNormal(posed + v0);
+        n1 = RtSkinnedNormal(posed + v1);
+        n2 = RtSkinnedNormal(posed + v2);
+    }
     vec2 uv0 = RtUv(v0), uv1 = RtUv(v1), uv2 = RtUv(v2);
     vec2 uv = uv0 * b.x + uv1 * b.y + uv2 * b.z;
     vec3 dir = gl_WorldRayDirectionEXT;
@@ -30,7 +42,7 @@ void main()
     // double-sided); kHitBackface remembers the shading normal's side
     // (meshes without normals have no back: their winding means nothing).
     vec3 ng = normalize(vec3(cross(p1 - p0, p2 - p0) * gl_WorldToObjectEXT));
-    vec3 objectN = RtNormal(v0) * b.x + RtNormal(v1) * b.y + RtNormal(v2) * b.z;
+    vec3 objectN = n0 * b.x + n1 * b.y + n2 * b.z;
     bool normals = dot(objectN, objectN) > 1e-12;
     vec3 n = normals ? normalize(vec3(objectN * gl_WorldToObjectEXT)) : ng;
     hit.flags = (normals && dot(n, dir) > 0.0 ? kHitBackface : 0u) |

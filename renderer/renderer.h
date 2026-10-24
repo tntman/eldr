@@ -110,12 +110,14 @@ public:
         // lights that matter most (no shadow maps for them; soft from the
         // sun's angle and the lights' size) and traced reflections (instead
         // of the dome's and SSR, up to roughness 0.7), both noisy per frame
-        // for TAA to average. Skinned and translucent meshes don't block
-        // rays.
+        // for TAA to average. Translucent meshes don't block rays; of the
+        // skinned ones, the rtSkinnedInstances largest on screen do (posed
+        // and refit every frame).
         bool rtShadows = false;
         uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16)
         bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
         // instead of the dome's unoccluded light.
@@ -204,6 +206,7 @@ public:
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr VkFormat kVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr uint32_t kCascades = 4;
+    static constexpr uint32_t kMaxRtSkinned = 256;  // Frame::rtSkinnedInstances
     // Shadow atlas for sphere/rect/disk lights, in square tiles
     // (Frame::localShadowResolution).
     static constexpr uint32_t kShadowAtlasSize = 4096;

@@ -68,6 +68,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtShadowSamples, "hdvk:rtShadowSamples"))              \
     ((rtReflections, "hdvk:rtReflections"))                  \
     ((rtReflectionSamples, "hdvk:rtReflectionSamples"))      \
+    ((rtSkinnedInstances, "hdvk:rtSkinnedInstances"))        \
     ((gi, "hdvk:gi"))                                        \
     ((giProbes, "hdvk:giProbes"))                            \
     ((giRays, "hdvk:giRaysPerProbe"))                        \
