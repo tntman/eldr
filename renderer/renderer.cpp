@@ -47,6 +47,7 @@ struct FrameData {
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
+    float screenTrace[4];    // thickness estimator (SSR) on
 };
 
 namespace {
@@ -1871,6 +1872,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
+    fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
     if (frame.lod) {
         fd.features[0] |= kFeatureLod;
         fd.geometry[1] = frame.lodBias;
@@ -2346,7 +2348,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                          _historyValid,
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
-                         _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0);
+                         _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
+                         frame.ssgiThickness);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,

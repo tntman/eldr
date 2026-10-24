@@ -42,6 +42,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
     vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
+    vec4 screenTrace;    // x: 1 = thickness estimator in SSR (Frame::ssgiThickness)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.

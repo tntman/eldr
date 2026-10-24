@@ -45,7 +45,7 @@ public:
     // neighbourhood clipping would keep the denoised blotches.
     void RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                     const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                    VkImageView history, bool historyValid, float maxRadiance, bool still);
+                    VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness);
 
     VkImageView Output() const { return _ssgiOn ? _ssgi[_current].view : _ao.view; }
 

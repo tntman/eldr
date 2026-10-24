@@ -118,7 +118,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lod, "hdvk:lod"))                                      \
     ((lodBias, "hdvk:lodBias"))                              \
     ((directClamp, "hdvk:directClamp"))                      \
-    ((indirectClamp, "hdvk:indirectClamp"))
+    ((indirectClamp, "hdvk:indirectClamp"))                  \
+    ((ssgiThickness, "hdvk:ssgiThickness"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

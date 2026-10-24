@@ -542,14 +542,53 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
     float uPrev = 0.0;
     vec3 sPrev = s0;
     bool wasBehind = false;
+    // The thickness estimator (Frame::ssgiThickness): every step at least
+    // a pixel on; jumps in depth between steps searched pixel by pixel.
+    // ponytail: EEVEE also spreads the steps quadratically; here that cost
+    // the crowd 1.4 ms for nothing the pixel search doesn't already catch.
+    bool estimator = frame.screenTrace.x > 0.0;
+    float prevScene = 1.0;
+    int budget = 128;  // pixels searched between steps, per ray
+    vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     for (int i = 0; i < steps; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
+        if (estimator) {
+            u = max(u, uPrev + uEnd / pixels);
+            if (u > uEnd) {
+                break;
+            }
+        }
         vec3 s = mix(s0, s1, u);
         float z = s.z * 0.5 + 0.5;
         if (z >= 1.0) {
             break;  // beyond the far plane: only sky, which the dome provides
         }
         float scene = SceneDepth(s.xy);
+        if (estimator && i > 0 && !wasBehind && !(scene < 1.0 && z > scene)) {
+            // Across a jump in depth between two steps (an edge, the end
+            // of a thin strip of surface seen edge-on) a thin feature can
+            // hide in front of the ray: search the pixels in between.
+            float a = 1.0 - prevScene, b = 1.0 - scene;  // ~ 1 / distance
+            if ((prevScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b)) {
+                int between = min(int((u - uPrev) * pixels / uEnd), budget);
+                budget -= between;
+                for (int k = 1; k <= between; ++k) {
+                    float uk = mix(uPrev, u, float(k) / float(between + 1));
+                    vec3 sk = mix(s0, s1, uk);
+                    float dk = SceneDepth(sk.xy);
+                    if (dk < 1.0 && sk.z * 0.5 + 0.5 > dk) {
+                        u = uk;
+                        s = sk;
+                        z = sk.z * 0.5 + 0.5;
+                        scene = dk;
+                        break;
+                    }
+                    uPrev = uk;
+                    sPrev = sk;
+                }
+            }
+        }
+        prevScene = scene;
         // Behind this pixel's surface by about a step: the ray went through
         // it. Further behind, it passes behind a separate object. Surfaces
         // seen at grazing angles put a crossing ray far behind along the
@@ -578,6 +617,22 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             vec3 surface = Unproject(vec3(c.xy, SceneDepth(c.xy) * 2.0 - 1.0));
             float thickness = max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
             crossed = length(ray - surface) <= thickness;
+            if (estimator && !crossed) {
+                // At least the depth one pixel of this surface spans along
+                // the ray (the nearer neighbour: not across an edge), and
+                // a crossing of one continuous surface (no jump in depth
+                // between the refined steps around it) is a hit at any
+                // depth: grazing surfaces aren't porous.
+                vec3 ahead = Unproject(vec3(c.xy + pixelNdc, SceneDepth(c.xy + pixelNdc) * 2.0 - 1.0));
+                vec3 back = Unproject(vec3(c.xy - pixelNdc, SceneDepth(c.xy - pixelNdc) * 2.0 - 1.0));
+                float footprint = min(length(ahead - surface), length(back - surface));
+                crossed = length(ray - surface) <= footprint;
+                if (!wasBehind && !crossed) {
+                    vec3 l = mix(s0, s1, lo);
+                    vec3 before = Unproject(vec3(l.xy, SceneDepth(l.xy) * 2.0 - 1.0));
+                    crossed = length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
+                }
+            }
         }
         wasBehind = behind;
         if (crossed) {

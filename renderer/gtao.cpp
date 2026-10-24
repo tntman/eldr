@@ -231,7 +231,7 @@ void Gtao::_Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, 
 
 void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                       const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                      VkImageView history, bool historyValid, float maxRadiance, bool still)
+                      VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness)
 {
     const VkDescriptorImageInfo images[2] = {{_sampler, history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                              {_sampler, _ssgi[_current ^ 1u].view,
@@ -262,6 +262,7 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
     params.ssgi[2] = historyValid ? 1.0f : 0.0f;
     params.ssgi[3] = maxRadiance;
     params.temporal[0] = 1.0f / float(_accumulated);
+    params.temporal[1] = thickness ? 1.0f : 0.0f;
     _Draw(cmd, _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
           &params);
     _Draw(cmd, _ssgiDenoisePipeline, _ssgiSet, _ssgi[_current], _width, _height, &params);

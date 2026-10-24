@@ -200,6 +200,12 @@ public:
         // to at most this scene-referred radiance. 0: off.
         float directClamp = 0.0f;
         float indirectClamp = 0.0f;
+        // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
+        // quadratically, each at least a pixel on, objects at least a pixel's
+        // footprint thick (deep at grazing angles) and a ray that crosses a
+        // continuous surface hits it whatever its thickness. Off: the ray
+        // steps evenly and any object is 5% of its distance thick.
+        bool ssgiThickness = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

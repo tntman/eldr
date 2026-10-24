@@ -213,6 +213,8 @@ if(WIN32)
     set_tests_properties(displacement PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lod COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lod.py)
     set_tests_properties(lod PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME screenspace COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_screenspace.py)
+    set_tests_properties(screenspace PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

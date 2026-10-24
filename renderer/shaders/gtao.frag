@@ -29,6 +29,7 @@ layout(push_constant) uniform GtaoParams {
     mat4 prevViewProj;  // the camera of the history (last frame's resolved image)
     vec4 ssgi;          // x: pixels of depth per output pixel (1, 2), y: steps per side, z: 1 = history valid,
                         // w: brightest radiance taken (fireflies: highlights a few pixels wide)
+    vec4 temporal;      // (gtao_denoise.frag's); y: 1 = thickness estimator
 #endif
 } pc;
 
@@ -142,6 +143,14 @@ void main()
     float falloffAdd = radius * (1.0 - 0.615) / falloffRange + 1.0;
     float minS = 1.3 / radiusPixels;  // never sample the center pixel
 
+#ifdef SSGI
+    // The thickness estimator (Frame::ssgiThickness): every step at least
+    // a pixel on, and nothing within a pixel's footprint of this surface's
+    // plane occludes it (depth precision at grazing angles).
+    bool estimator = pc.temporal.y > 0.0;
+#else
+    const bool estimator = false;
+#endif
     float sliceNoise = Noise(vec2(q) + 0.5);
     float stepNoise = Noise(vec2(q.yx) + 0.5 + vec2(17.0, 43.0));
     float visibility = 0.0;
@@ -162,10 +171,16 @@ void main()
         float lowCos0 = cos(angleN + HALF_PI), lowCos1 = cos(angleN - HALF_PI);
         float horizonCos0 = lowCos0, horizonCos1 = lowCos1;
         float sliceWeight = mix(projectedLength, 1.0, 0.05);
+        float lastPixels = 0.0;
         for (int s = 0; s < steps; ++s) {
             float t = (float(s) + stepNoise) / float(steps);
             t = t * t + minS;  // denser near the center
-            ivec2 offset = ivec2(round(t * radiusPixels * omega));
+            float stepPixels = t * radiusPixels;
+            if (estimator) {
+                stepPixels = max(stepPixels, lastPixels + 1.0);
+                lastPixels = stepPixels;
+            }
+            ivec2 offset = ivec2(round(stepPixels * omega));
             for (int side = 0; side < 2; ++side) {
                 ivec2 sq = side == 0 ? q + offset : q - offset;
                 if (any(lessThan(sq, ivec2(0))) || any(greaterThanEqual(sq, size))) {
@@ -177,6 +192,9 @@ void main()
                 }
                 vec3 hitPos = WorldPos((vec2(sq) + 0.5) * pc.params.zw, sd);
                 vec3 delta = hitPos - p;
+                if (estimator && dot(delta, n) <= pixelSize * length(hitPos - pc.eye.xyz) / distanceToEye) {
+                    continue;
+                }
                 float len = length(delta);
                 float weight = clamp(len * falloffMul + falloffAdd, 0.0, 1.0);
                 float c = dot(delta / max(len, 1e-20), v);
