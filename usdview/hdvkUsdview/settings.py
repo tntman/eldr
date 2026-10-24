@@ -17,7 +17,7 @@ GROUPS = [
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),
     ("Reflections",
-     "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
+     "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
      "planarReflections planarScale"),
     ("Materials",
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands "

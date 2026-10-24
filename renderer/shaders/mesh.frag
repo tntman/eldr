@@ -744,7 +744,7 @@ void main()
     // reflection probe's captured surroundings instead of the dome.
     bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
     if (Feature(kFeatureProbe) && !mirror) {
-        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual);
+        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular);
     }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from

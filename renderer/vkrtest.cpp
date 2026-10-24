@@ -2466,6 +2466,27 @@ int main()
                                                         std::strcmp(renderer.GetStats().passMs.front().first,
                                                                     "probeCapture") != 0),
                    "reflection probe: captured once for a still scene");
+
+            // Authored probes (primvars:hdvk:reflectionProbe): a box over
+            // the mirror's left half reaching back past the emitter. It is
+            // never drawn; inside it the probe at its centre reflects the
+            // emitter, outside it the (black) dome shows.
+            vkr::Mesh *box = scene.AddMesh();
+            box->points = {-1.3f, -1.2f, -3.2f, 0, 1.2f, 1.2f, 0, -1.2f, 1.2f};
+            box->primId = 9;
+            box->reflectionProbe = true;
+            mirror->primId = 3;
+            scene.Commit();
+            Image authored = Render(renderer, scene, frame);
+            Expect(authored.At(23, 32, 0) > 1.6f && authored.At(40, 32, 0) < 0.01f,
+                   "authored probe: only inside its box");
+            Expect(authored.Prim(16, 20) != 9 && authored.Prim(16, 20) == mirror->primId,
+                   "authored probe: its mesh isn't drawn");
+            frame.authoredProbes = false;  // the automatic probe again: the whole mirror
+            authored = Render(renderer, scene, frame);
+            Expect(authored.At(23, 32, 0) > 1.6f && authored.At(40, 32, 0) < 0.1f && authored.Prim(16, 20) != 9,
+                   "Frame::authoredProbes off: the automatic probe");
+            frame.authoredProbes = true;
             frame.imageBasedLighting = false;
             Expect(Render(renderer, scene, frame).At(23, 32, 0) < 0.01f,
                    "Frame::imageBasedLighting off: no probe either");

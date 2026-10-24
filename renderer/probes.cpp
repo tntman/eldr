@@ -137,7 +137,9 @@ Reflections::Reflections(Device &device)
 Reflections::~Reflections()
 {
     vkDeviceWaitIdle(_dev.device);
-    _dev.Destroy(_probe);
+    for (Probe &probe : _probes) {
+        _dev.Destroy(probe.cube);
+    }
 }
 
 VkImage Reflections::PlanarImage() const
@@ -156,42 +158,85 @@ void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)
     probeMs = planarMs = 0;
     ++_updates;
     _pending = false;
+    // Where the probes go: the authored boxes, else one at the scene's
+    // centre (or Frame::probePosition) for everything; smallest first, as
+    // the shading blends them.
+    std::vector<Probe> placed;
     if (frame.reflectionProbe && frame.imageBasedLighting && gpu.hasBounds) {
-        uint32_t size = 16;
-        while (size < std::min(frame.probeResolution, 512u)) {
-            size *= 2;
+        if (frame.authoredProbes && !gpu.probeBoxes.empty()) {
+            for (const auto &box : gpu.probeBoxes) {
+                Probe p;
+                for (int k = 0; k < 3; ++k) {
+                    p.min[k] = box[k];
+                    p.max[k] = box[3 + k];
+                    p.center[k] = 0.5f * (box[k] + box[3 + k]);
+                }
+                p.blend = 0.1f * std::max(std::min({box[3] - box[0], box[4] - box[1], box[5] - box[2]}), 1e-6f);
+                placed.push_back(p);
+            }
+            std::sort(placed.begin(), placed.end(), [](const Probe &a, const Probe &b) {
+                return (a.max[0] - a.min[0]) * (a.max[1] - a.min[1]) * (a.max[2] - a.min[2]) <
+                       (b.max[0] - b.min[0]) * (b.max[1] - b.min[1]) * (b.max[2] - b.min[2]);
+            });
+            placed.resize(std::min<size_t>(placed.size(), kMaxProbes));  // ponytail: the smallest 8
+        } else {
+            Probe p;
+            std::copy(gpu.boundsMin, gpu.boundsMin + 3, p.min);
+            std::copy(gpu.boundsMax, gpu.boundsMax + 3, p.max);
+            for (int k = 0; k < 3; ++k) {
+                p.center[k] = frame.probePosition[3] == 1.0f ? frame.probePosition[k] : 0.5f * (p.min[k] + p.max[k]);
+            }
+            placed.push_back(p);
         }
-        _stableFrames = gpu.version == _lastVersion ? _stableFrames + 1 : 0;
-        _lastVersion = gpu.version;
-        ++_sinceCapture;
-        // Lights, materials, the dome, the size or the place changed: capture
-        // now; geometry: once it stopped changing, or now and then while it
-        // keeps changing.
-        const Vec3 lo{gpu.boundsMin[0], gpu.boundsMin[1], gpu.boundsMin[2]};
-        const Vec3 hi{gpu.boundsMax[0], gpu.boundsMax[1], gpu.boundsMax[2]};
-        const Vec3 at = frame.probePosition[3] == 1.0f
-            ? Vec3{frame.probePosition[0], frame.probePosition[1], frame.probePosition[2]} : (lo + hi) * 0.5f;
-        auto lit = [&] {
-            return _probe.view && size == _probeSize && gpu.lightingHash == _probeLighting &&
-                   at.x == _probePosition[0] && at.y == _probePosition[1] && at.z == _probePosition[2];
-        };
-        if (!(lit() && gpu.version == _probeVersion) &&
-            (!lit() || _stableFrames >= 2 || _sinceCapture >= kRecaptureFrames)) {
-            _Capture(scene, frame, size, at);
-        }
-        _pending = !(lit() && gpu.version == _probeVersion);
-    } else if (_probe.view) {
-        _dev.Destroy(_probe);
-        _probeSize = 0;
     }
+    uint32_t size = 16;
+    while (size < std::min(frame.probeResolution, 512u)) {
+        size *= 2;
+    }
+    for (size_t i = placed.size(); i < _probes.size(); ++i) {
+        _dev.Destroy(_probes[i].cube);
+    }
+    _probes.resize(placed.size());
+    // Lights, materials, the dome, the size or the place changed: capture
+    // now; geometry: once it stopped changing, or now and then while it
+    // keeps changing.
+    _stableFrames = gpu.version == _lastVersion ? _stableFrames + 1 : 0;
+    _lastVersion = gpu.version;
+    ++_sinceCapture;
+    auto lit = [&](const Probe &have, const Probe &want) {
+        return have.cube.view && have.size == size && have.lighting == gpu.lightingHash &&
+               std::equal(want.center, want.center + 3, have.center) && std::equal(want.min, want.min + 3, have.min) &&
+               std::equal(want.max, want.max + 3, have.max);
+    };
+    bool unlit = false, stale = false;
+    for (size_t i = 0; i < placed.size(); ++i) {
+        unlit = unlit || !lit(_probes[i], placed[i]);
+        stale = stale || !lit(_probes[i], placed[i]) || _probes[i].version != gpu.version;
+    }
+    if (stale && (unlit || _stableFrames >= 2 || _sinceCapture >= kRecaptureFrames)) {
+        for (size_t i = 0; i < placed.size(); ++i) {
+            if (!lit(_probes[i], placed[i]) || _probes[i].version != gpu.version) {
+                Probe &p = _probes[i];
+                std::copy(placed[i].center, placed[i].center + 3, p.center);
+                std::copy(placed[i].min, placed[i].min + 3, p.min);
+                std::copy(placed[i].max, placed[i].max + 3, p.max);
+                p.blend = placed[i].blend;
+                p.size = size;
+                _Capture(scene, frame, p);
+            }
+        }
+        _sinceCapture = 0;
+        stale = false;
+    }
+    _pending = stale;
     const bool mirror = frame.planarReflections && gpu.mirrorSlot != kNone;
     _planar = mirror && _RenderPlanar(scene, frame);
-    if (!frame.reflectionProbe && !mirror) {
+    if (_probes.empty() && !mirror) {
         _renderer.reset();  // its targets and shadow maps are the bulk of the memory
     }
 }
 
-void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, uint32_t size, Vec3 eye)
+void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, Probe &probe)
 {
     const Scene::Gpu &gpu = scene.GetGpu();
     if (!_renderer) {
@@ -199,6 +244,8 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, uin
     }
     const Vec3 lo{gpu.boundsMin[0], gpu.boundsMin[1], gpu.boundsMin[2]};
     const Vec3 hi{gpu.boundsMax[0], gpu.boundsMax[1], gpu.boundsMax[2]};
+    const Vec3 eye{probe.center[0], probe.center[1], probe.center[2]};
+    const uint32_t size = probe.size;
     const float extent = std::max(Length(hi - lo), 1e-3f);
     const float n = extent * 1e-4f, f = extent * 2.0f + Length(eye - (lo + hi) * 0.5f);
     const size_t texels = size_t(size) * size;
@@ -238,8 +285,8 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, uin
 
     // ponytail: prefiltered on the CPU like the dome (~10 ms at 128);
     // a compute prefilter would let it follow animation every frame.
-    _dev.Destroy(_probe);
-    _probe = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, maps.size, maps.size, 6, maps.levels,
+    _dev.Destroy(probe.cube);
+    probe.cube = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, maps.size, maps.size, 6, maps.levels,
                               VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
                               VK_IMAGE_VIEW_TYPE_CUBE, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
     Buffer staging;
@@ -247,7 +294,7 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, uin
     std::memcpy(staging.mapped, maps.data.data(), maps.data.size() * sizeof(float));
     _dev.Submit([&](VkCommandBuffer cmd) {
         const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, maps.levels, 0, 6};
-        ImageBarrier(cmd, _probe.image, all, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+        ImageBarrier(cmd, probe.cube.image, all, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
                      VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         std::vector<VkBufferImageCopy> copies(maps.levels);
         VkDeviceSize offset = 0;
@@ -259,23 +306,19 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, uin
             copies[l].imageExtent = {s, s, 1};
             offset += VkDeviceSize(6) * s * s * 16;
         }
-        vkCmdCopyBufferToImage(cmd, staging.buffer, _probe.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        vkCmdCopyBufferToImage(cmd, staging.buffer, probe.cube.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                uint32_t(copies.size()), copies.data());
-        ImageBarrier(cmd, _probe.image, all, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        ImageBarrier(cmd, probe.cube.image, all, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
     _dev.Destroy(staging);
-    _probeLevels = maps.levels;
-    _probeSize = size;
-    _probePosition[0] = eye.x;
-    _probePosition[1] = eye.y;
-    _probePosition[2] = eye.z;
-    std::copy(gpu.boundsMin, gpu.boundsMin + 3, _probeMin);
-    std::copy(gpu.boundsMax, gpu.boundsMax + 3, _probeMax);
-    _probeVersion = gpu.version;
-    _probeLighting = gpu.lightingHash;
-    _sinceCapture = 0;
+    probe.levels = maps.levels;
+    for (int c = 0; c < 4; ++c) {
+        std::copy(maps.sh[c], maps.sh[c] + 3, probe.sh[c]);
+    }
+    probe.version = gpu.version;
+    probe.lighting = gpu.lightingHash;
 }
 
 bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame)

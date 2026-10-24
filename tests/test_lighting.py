@@ -164,5 +164,17 @@ for settings, what in (({"hdvk:reflectionProbe": True}, "hdvk:reflectionProbe"),
     expect(gray(dark, 16, 32) < 10 and gray(lit, 16, 32) > 150 and gray(lit, 48, 32) < 10,
            what + ": the emitter behind the camera in the chrome wall")
 
+# An authored reflection probe: a Cube flagged with
+# primvars:hdvk:reflectionProbe around the wall's left part and the camera.
+# It isn't drawn (from inside it the camera would see only its faces); the
+# wall's left shows the emitter through it, the right only the black sky.
+probe = UsdGeom.Cube.Define(stage, "/probe")
+probe.AddTranslateOp().Set(Gf.Vec3d(-3.05, 0, 4))
+probe.AddScaleOp().Set(Gf.Vec3f(5.9, 8, 10))
+UsdGeom.PrimvarsAPI(probe).CreatePrimvar("hdvk:reflectionProbe", Sdf.ValueTypeNames.Bool,
+                                         UsdGeom.Tokens.constant).Set(True)
+lit = render(stage, {**linear, "hdvk:reflectionProbe": True})
+expect(gray(lit, 8, 32) > 150 and gray(lit, 48, 32) < 10, "hdvk:authoredProbes: a Cube flagged as a probe")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

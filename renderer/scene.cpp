@@ -1554,7 +1554,7 @@ void Scene::Commit()
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
         const bool drawable = m.visible && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
-                              (m._skinCount == 0 || m._skinXformSlots > 0);
+                              (m._skinCount == 0 || m._skinXformSlots > 0) && !m.reflectionProbe;
         DrawInfo &d = draws[slot];
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
@@ -1735,6 +1735,13 @@ void Scene::Commit()
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
     _gpu.displacements = _displacements.buffer;
+    _gpu.probeBoxes.clear();
+    for (const auto &m : _meshes) {
+        if (m->reflectionProbe && m->_instanceCount > 0 && m->_worldMin[0] <= m->_worldMax[0]) {
+            _gpu.probeBoxes.push_back({m->_worldMin[0], m->_worldMin[1], m->_worldMin[2], m->_worldMax[0],
+                                       m->_worldMax[1], m->_worldMax[2]});
+        }
+    }
     // Planar reflections' mirror: a flagged flat mesh, else the largest
     // glossy one (its world bounds' diagonal) spanning a third of the scene.
     // ponytail: one mirror, from its first instance.

@@ -10,14 +10,18 @@ namespace vkr {
 // Reflections of what the screen doesn't show (SSR's limit), both rendered
 // by a second Renderer before the frame (shaders/probes.glsl reads them):
 //
-// The reflection probe: one cube captured from the centre of the scene's
-// bounds (or Frame::probePosition), prefiltered for roughness like the dome
+// Reflection probes: cubes prefiltered for roughness like the dome
 // (BuildEnvironment), with each texel's distance in level 0's alpha for
-// parallax correction (the scene's bounds, then the distances). It
-// replaces the dome's specular light. There is no USD schema for probes:
-// it is automatic, captured again when the lights, materials or dome
-// change, and when the geometry does once it has stopped changing (or every
-// kRecaptureFrames frames while it keeps changing).
+// parallax correction (the probe's box, then the distances), blended by
+// influence over the dome's specular light. There is no UsdLux schema for
+// probes. Authored ones (Frame::authoredProbes) are meshes flagged with
+// primvars:hdvk:reflectionProbe, typically an invisible Cube: never drawn,
+// their world bounds are the influence and parallax box and its centre the
+// capture point. Without any, one automatic probe at the centre of the
+// scene's bounds (or Frame::probePosition) covers everything. They are
+// captured again when the lights, materials or dome change, and when the
+// geometry does once it has stopped changing (or every kRecaptureFrames
+// frames while it keeps changing).
 //
 // Planar reflections: the scene mirrored in the plane of the mirror mesh
 // (Scene::Gpu::mirrorSlot: flagged by primvars:hdvk:planarReflection, or
@@ -36,14 +40,22 @@ public:
     // view). The GPU is idle on return.
     void Update(const Scene &scene, const Renderer::Frame &frame);
 
-    // The probe: a cube view (null: none), its mip levels, where it was
-    // captured, the scene's bounds then; pending: out of date, keep
-    // rendering frames.
-    VkImageView Probe() const { return _probe.view; }
-    uint32_t ProbeLevels() const { return _probeLevels; }
-    const float *ProbePosition() const { return _probePosition; }
-    const float *ProbeMin() const { return _probeMin; }
-    const float *ProbeMax() const { return _probeMax; }
+    // The probes, the smallest influence box first: each a cube (world
+    // directions; level 0 alpha: distance, 0 for sky) prefiltered by
+    // roughness, its capture point, influence and parallax box, the
+    // distance its influence fades in over from the box's faces (0:
+    // everywhere) and its irradiance in SH L0 and L1 (BuildEnvironment's
+    // basis order); pending: out of date, keep rendering frames.
+    static constexpr uint32_t kMaxProbes = 8;
+    struct Probe {
+        Image cube;
+        uint32_t levels = 0, size = 0;
+        float center[3] = {}, min[3] = {}, max[3] = {};
+        float blend = 0;
+        float sh[4][3] = {};
+        uint64_t version = 0, lighting = 0;  // the scene it shows
+    };
+    const std::vector<Probe> &Probes() const { return _probes; }
     bool ProbePending() const { return _pending; }
 
     // This frame's planar reflection (premultiplied HDR, in
@@ -59,15 +71,12 @@ public:
     static constexpr uint32_t kRecaptureFrames = 120;
 
 private:
-    void _Capture(const Scene &scene, const Renderer::Frame &frame, uint32_t size, Vec3 eye);
+    void _Capture(const Scene &scene, const Renderer::Frame &frame, Probe &probe);
     bool _RenderPlanar(const Scene &scene, const Renderer::Frame &frame);
 
     Device &_dev;
     std::unique_ptr<Renderer> _renderer;  // made on first use
-    Image _probe;
-    uint32_t _probeLevels = 0, _probeSize = 0;
-    float _probePosition[3] = {}, _probeMin[3] = {}, _probeMax[3] = {};
-    uint64_t _probeVersion = 0, _probeLighting = 0;  // the scene it shows
+    std::vector<Probe> _probes;
     uint64_t _lastVersion = 0;                        // last frame's scene version
     uint32_t _stableFrames = 0, _sinceCapture = 0, _updates = 0;
     bool _pending = false;

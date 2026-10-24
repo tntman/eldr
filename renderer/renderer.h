@@ -181,6 +181,7 @@ public:
         float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        bool authoredProbes = true;     // meshes flagged primvars:hdvk:reflectionProbe are the probes (probes.h)
         bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
         // OpenVDB volumes, raymarched over the shaded image (VolumePass).
         bool volumes = true;

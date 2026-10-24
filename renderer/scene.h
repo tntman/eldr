@@ -7,6 +7,7 @@
 
 #include <future>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -343,6 +344,9 @@ struct Mesh {
     // Planar reflections: make this (flat) mesh the mirror
     // (primvars:hdvk:planarReflection), whatever its size and roughness.
     bool planarReflection = false;
+    // Reflection probes: this mesh only marks one (primvars:hdvk:reflectionProbe):
+    // never drawn, its world bounds are the probe's influence box.
+    bool reflectionProbe = false;
 
 private:
     friend class Scene;
@@ -683,6 +687,9 @@ public:
         uint32_t mirrorSlot = kNone;
         float mirrorPlane[4] = {};
         float mirrorMin[3] = {}, mirrorMax[3] = {};
+        // Reflection probes authored as meshes (Mesh::reflectionProbe): their
+        // world bounds, min xyz then max xyz.
+        std::vector<std::array<float, 6>> probeBoxes;
 
         // Volumes: a GpuVolume per drawn instance, and the NanoVDB grids
         // they read (both bound even when empty).

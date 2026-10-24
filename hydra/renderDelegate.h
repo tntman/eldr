@@ -101,6 +101,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((reflectionProbe, "hdvk:reflectionProbe"))              \
     ((probeResolution, "hdvk:probeResolution"))              \
     ((probePosition, "hdvk:probePosition"))                  \
+    ((authoredProbes, "hdvk:authoredProbes"))            \
     ((planarReflections, "hdvk:planarReflections"))          \
     ((planarScale, "hdvk:planarScale"))                      \
     ((volumes, "hdvk:volumes"))                              \

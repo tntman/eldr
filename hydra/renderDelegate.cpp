@@ -199,6 +199,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
         {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
         {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},
+        {"Authored Reflection Probes (primvars:hdvk:reflectionProbe)", t.authoredProbes, VtValue(frame.authoredProbes)},
         {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},

@@ -28,7 +28,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (st)
     ((riMatte, "ri:attributes:Ri:Matte"))
     ((karmaHoldout, "karma:object:holdoutmode"))
-    ((planarReflection, "hdvk:planarReflection")));
+    ((planarReflection, "hdvk:planarReflection"))
+    ((reflectionProbe, "hdvk:reflectionProbe")));
 
 // Finds a primvar's interpolation; false if the prim doesn't have it. An
 // empty name finds the first texture coordinate (float2) primvar.
@@ -332,6 +333,14 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         m.planarReflection = flag.IsHolding<bool>() ? flag.UncheckedGet<bool>()
                            : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
                                                     : false;
+    }
+    // Reflection probes: primvars:hdvk:reflectionProbe (bool or int) makes
+    // this mesh a probe's influence box instead of geometry.
+    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->reflectionProbe)) {
+        const VtValue flag = sceneDelegate->Get(id, _tokens->reflectionProbe);
+        m.reflectionProbe = flag.IsHolding<bool>() ? flag.UncheckedGet<bool>()
+                          : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
+                                                   : false;
     }
     // Subdivision surfaces flatten their refined mesh (subdivision.cpp).
     if (geometryDirty && !_FlattenRefined()) {

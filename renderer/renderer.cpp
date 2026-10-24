@@ -39,9 +39,11 @@ struct FrameData {
     uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
     float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
     // Reflection probe and planar reflections (shaders/probes.glsl).
-    float probe[4];          // capture position, prefiltered levels - 1
-    float probeMin[4];       // the scene's bounds then
-    float probeMax[4];
+    uint32_t reflections[4];     // probes, -, flags (kProbeNormalize)
+    float probeCenter[8][4];     // capture position, prefiltered levels - 1
+    float probeMin[8][4];        // influence box, blend distance (0: everywhere)
+    float probeMax[8][4];
+    float probeSh[8 * 4][4];     // irradiance SH L0, L1 per probe
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
@@ -499,7 +501,7 @@ void Renderer::_CreateDescriptors()
         {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
         {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
-        {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -528,7 +530,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + Reflections::kMaxProbes - 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
@@ -1159,11 +1161,15 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     }
     write(62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, shadowMinLevels, kMaxShadowMinLevels);
     // Without a probe or planar reflection: placeholders the shaders skip.
-    const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
+    VkDescriptorImageInfo probeInfos[Reflections::kMaxProbes];
+    for (uint32_t i = 0; i < Reflections::kMaxProbes; ++i) {
+        const bool probe = _reflections && i < _reflections->Probes().size();
+        probeInfos[i] = {_clampSampler, probe ? _reflections->Probes()[i].cube.view : _blackCube.view,
+                         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    }
     const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
-    const VkDescriptorImageInfo probeInfo{_clampSampler, probe, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     const VkDescriptorImageInfo planarInfo{_clampSampler, planar, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &probeInfo);
+    write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, probeInfos, Reflections::kMaxProbes);
     write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &planarInfo);
     write(63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &volumeDepth);
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
@@ -1965,12 +1971,20 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // (premultiplied: needs post to composite the clear colour behind).
     const bool fog = _SetupFog(gpu, frame, &fd);
     const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
-    if (_reflections && _reflections->Probe()) {
+    if (_reflections && !_reflections->Probes().empty()) {
         fd.features[0] |= kFeatureProbe;
-        std::copy(_reflections->ProbePosition(), _reflections->ProbePosition() + 3, fd.probe);
-        fd.probe[3] = float(_reflections->ProbeLevels() - 1);
-        std::copy(_reflections->ProbeMin(), _reflections->ProbeMin() + 3, fd.probeMin);
-        std::copy(_reflections->ProbeMax(), _reflections->ProbeMax() + 3, fd.probeMax);
+        const auto &probes = _reflections->Probes();
+        fd.reflections[0] = uint32_t(probes.size());
+        for (size_t i = 0; i < probes.size(); ++i) {
+            std::copy(probes[i].center, probes[i].center + 3, fd.probeCenter[i]);
+            fd.probeCenter[i][3] = float(probes[i].levels - 1);
+            std::copy(probes[i].min, probes[i].min + 3, fd.probeMin[i]);
+            fd.probeMin[i][3] = probes[i].blend;
+            std::copy(probes[i].max, probes[i].max + 3, fd.probeMax[i]);
+            for (int c = 0; c < 4; ++c) {
+                std::copy(probes[i].sh[c], probes[i].sh[c] + 3, fd.probeSh[i * 4 + c]);
+            }
+        }
     }
     if (planarImage) {
         fd.features[0] |= kFeaturePlanar;
