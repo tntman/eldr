@@ -1,5 +1,6 @@
 #include "renderPass.h"
 
+#include "camera.h"
 #include "glInterop.h"
 #include "renderBuffer.h"
 #include "renderDelegate.h"
@@ -15,6 +16,7 @@
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprim.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "pxr/imaging/hd/types.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -34,9 +36,11 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 {
 }
 
+// Not while levels of detail build either: the app keeps drawing until
+// they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
-    return !_renderer || _renderer->IsConverged();
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending());
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -59,21 +63,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
 
     vkr::Renderer::Frame frame;
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
-    // Extra AOVs (vkr::Aovs) by their Hydra names.
-    const std::pair<TfToken, vkr::Aovs::Kind> extraNames[] = {
-        {HdAovTokens->normal, vkr::Aovs::kNormal},
-        {HdAovTokens->Neye, vkr::Aovs::kNormalEye},
-        {HdAovTokens->Peye, vkr::Aovs::kPositionEye},
-        {HdAovTokens->cameraDepth, vkr::Aovs::kCameraDepth},
-        {HdAovTokensMakePrimvar(TfToken("st")), vkr::Aovs::kSt},
-        {HdVkAovTokens->albedo, vkr::Aovs::kAlbedo},
-        {HdVkAovTokens->emission, vkr::Aovs::kEmission},
-        {HdVkAovTokens->cryptoObject, vkr::Aovs::kCryptoObject},
-        {HdVkAovTokens->cryptoMaterial, vkr::Aovs::kCryptoMaterial}};
+    // Extra AOVs (vkr::Aovs) by their Hydra names (HdVkExtraAovs).
+    // ponytail: one buffer per kind; of two names for the same (normal and
+    // ray:hitN) bound at once, the last one gets it.
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
-        for (const auto &[name, kind] : extraNames) {
-            extra[kind] = b.aovName == name ? b.renderBuffer : extra[kind];
+        for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+            extra[aov.kind] = b.aovName == aov.name ? b.renderBuffer : extra[aov.kind];
         }
         if (b.aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -116,8 +112,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     instanceId = usable(instanceId, HdFormatInt32);
 
     HdRenderDelegate *delegate = GetRenderIndex()->GetRenderDelegate();
-    for (const auto &[name, kind] : extraNames) {
-        extra[kind] = usable(extra[kind], delegate->GetDefaultAovDescriptor(name).format);
+    // Any float format will do: it gets that many components.
+    uint8_t extraComponents[vkr::Aovs::kCount] = {};
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        const HdFormat format = extra[k] ? extra[k]->GetFormat() : HdFormatInvalid;
+        extra[k] = HdGetComponentFormat(format) == HdFormatFloat32 ? usable(extra[k], format) : nullptr;
+        extraComponents[k] = extra[k] ? uint8_t(HdGetComponentCount(format)) : 0;
     }
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
@@ -142,26 +142,32 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
                                 {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
-                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi},
+                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
                                 {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
                                 {t.refraction, &frame.refraction},
                                 {t.translucentShadows, &frame.translucentShadows},
                                 {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts},
                                 {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
-                                {t.planarReflections, &frame.planarReflections}}) {
+                                {t.planarReflections, &frame.planarReflections},
+                                {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
+                                {t.lod, &frame.lod}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
-                                {t.giHysteresis, &frame.giHysteresis},
+                                {t.giHysteresis, &frame.giHysteresis}, {t.ssgiRadius, &frame.ssgiRadius},
                                 {t.emissiveLightThreshold, &frame.emissiveLightThreshold},
                                 {t.oitDepthWeight, &frame.oitDepthWeight},
                                 {t.fogDensity, &frame.fogDensity}, {t.fogHeight, &frame.fogHeight},
                                 {t.fogHeightFalloff, &frame.fogHeightFalloff},
                                 {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance},
-                                {t.planarScale, &frame.planarScale}}) {
+                                {t.planarScale, &frame.planarScale},
+                                {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
+                                {t.volumeEmission, &frame.volume.emission},
+                                {t.volumeAnisotropy, &frame.volume.anisotropy},
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -192,12 +198,19 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
                                 {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays},
+                                {t.ssgiSteps, &frame.ssgiSteps}, {t.ssgiResolution, &frame.ssgiResolution},
                                 {t.refractionSamples, &frame.refractionSamples},
                                 {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
                                 {t.subsurfaceSamples, &frame.subsurfaceSamples},
-                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution}}) {
+                                {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
+                                {t.volumeMaxSteps, &frame.volume.maxSteps},
+                                {t.volumeShadowSteps, &frame.volume.shadowSteps},
+                                {t.volumeResolution, &frame.volume.resolution}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    // 0 allowed: no skinned instance blocks rays.
+    frame.rtSkinnedInstances =
+        uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx
@@ -215,6 +228,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         d.fisheye = perspective && camera->GetLensDistortionType() == HdCameraTokens->fisheye;
         d.k1 = camera->GetLensDistortionK1();
         d.k2 = camera->GetLensDistortionK2();
+        if (const auto *vkCamera = dynamic_cast<const HdVkCamera *>(camera); vkCamera && !d.fisheye) {
+            const float *t = vkCamera->GetLensDistortionOpenCvTerms();
+            d.k3 = t[0], d.k4 = t[1], d.k5 = t[2], d.k6 = t[3], d.p1 = t[4], d.p2 = t[5];
+        }
         std::copy(camera->GetLensDistortionCenter().data(), camera->GetLensDistortionCenter().data() + 2, d.center);
         d.anaSq = camera->GetLensDistortionAnaSq() > 0.0f ? camera->GetLensDistortionAnaSq() : 1.0f;
         std::copy(camera->GetLensDistortionAsym().data(), camera->GetLensDistortionAsym().data() + 2, d.asym);
@@ -310,6 +327,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        out.aovComponents[k] = extraComponents[k];
     }
     bool shared = false;
     try {

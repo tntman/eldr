@@ -33,7 +33,7 @@ vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual)
 // Whether p of mesh slot `draw` is on the mirror.
 bool OnMirror(uint draw, vec3 p)
 {
-    return (frame.features.x & kFeaturePlanar) != 0u && draw == frame.planarInfo.x &&
+    return Feature(kFeaturePlanar) && draw == frame.planarInfo.x &&
            abs(dot(frame.planarPlane.xyz, p) + frame.planarPlane.w) <= 1e-3 * length(p - frame.cameraPos.xyz);
 }
 

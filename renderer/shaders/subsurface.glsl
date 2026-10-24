@@ -46,7 +46,7 @@ void SubsurfaceLayers()
 // ponytail: the sun only; local lights don't shine through.
 vec3 SubsurfaceTransmission(vec3 p, vec3 n)
 {
-    if ((frame.features.x & kFeatureSubsurface) == 0u || inMaterial == kNoMaterial || frame.counts.y == kNone) {
+    if (!Feature(kFeatureSubsurface) || inMaterial == kNoMaterial || frame.counts.y == kNone) {
         return vec3(0.0);
     }
     Material m = materials[inMaterial];

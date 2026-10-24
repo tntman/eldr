@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 
+#include "camera.h"
 #include "curves.h"
 #include "glInterop.h"
 #include "instancer.h"
@@ -9,6 +10,11 @@
 #include "renderBuffer.h"
 #include "renderPass.h"
 #include "renderer.h"
+#ifdef HDVK_VOLUMES
+#include "field.h"
+#include "volume.h"
+#endif
+#include "subdivision.h"
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
@@ -30,15 +36,55 @@ PXR_NAMESPACE_OPEN_SCOPE
 TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
+const std::vector<HdVkExtraAov> &HdVkExtraAovs()
+{
+    using A = vkr::Aovs;
+    const auto &k = *HdVkAovTokens;
+    static const std::vector<HdVkExtraAov> aovs = {
+        {HdAovTokens->normal, A::kNormal, HdFormatFloat32Vec3},
+        {HdAovTokens->Neye, A::kNormalEye, HdFormatFloat32Vec3},
+        {HdAovTokens->Peye, A::kPositionEye, HdFormatFloat32Vec3},
+        {HdAovTokens->cameraDepth, A::kCameraDepth, HdFormatFloat32},
+        {HdAovTokensMakePrimvar(TfToken("st")), A::kSt, HdFormatFloat32Vec2},
+        // Karma's N is the smooth normal; Eldr's always faces the camera,
+        // which is Karma's N_facing.
+        {k.hitN, A::kNormal, HdFormatFloat32Vec3},
+        {k.hitNFacing, A::kNormal, HdFormatFloat32Vec3},
+        {k.hitNCamera, A::kNormalEye, HdFormatFloat32Vec3},
+        {k.hitP, A::kPositionWorld, HdFormatFloat32Vec3},
+        {k.hitPCamera, A::kPositionEye, HdFormatFloat32Vec3},
+        {k.hitPz, A::kDepth, HdFormatFloat32},
+        {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
+        {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
+        {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
+        {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
+        {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
+    };
+    return aovs;
+}
+
 namespace {
 
+#ifdef HDVK_VOLUMES
+// UsdVol's OpenVDB fields (with volumes: built against a USD with OpenVDB).
+const TfToken _openvdbAsset("openvdbAsset");
+#endif
+
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->basisCurves,
-                                   HdPrimTypeTokens->points};
+                                   HdPrimTypeTokens->points,
+#ifdef HDVK_VOLUMES
+                                   HdPrimTypeTokens->volume
+#endif
+};
 const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeTokens->material,
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
                                    HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
-const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer};
+const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer,
+#ifdef HDVK_VOLUMES
+                                   _openvdbAsset
+#endif
+};
 
 } // namespace
 
@@ -101,19 +147,14 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
-    // Extra AOVs (vkr::Aovs), rendered only when bound.
-    if (name == HdAovTokens->normal || name == HdAovTokens->Neye || name == HdAovTokens->Peye ||
-        name == HdVkAovTokens->albedo || name == HdVkAovTokens->emission) {
-        return HdAovDescriptor(HdFormatFloat32Vec3, false, VtValue(GfVec3f(0.0f)));
-    }
-    if (name == HdAovTokens->cameraDepth) {
-        return HdAovDescriptor(HdFormatFloat32, false, VtValue(0.0f));
-    }
-    if (name == HdAovTokensMakePrimvar(TfToken("st"))) {
-        return HdAovDescriptor(HdFormatFloat32Vec2, false, VtValue(GfVec2f(0.0f)));
-    }
-    if (name == HdVkAovTokens->cryptoObject || name == HdVkAovTokens->cryptoMaterial) {
-        return HdAovDescriptor(HdFormatFloat32Vec4, false, VtValue(GfVec4f(0.0f)));
+    // Extra AOVs (vkr::Aovs), rendered only when bound; cleared to 0.
+    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+        if (name == aov.name) {
+            const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
+                               : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
+                                                                   : VtValue(GfVec3f(0.0f));
+            return HdAovDescriptor(aov.format, false, zero);
+        }
     }
     return HdAovDescriptor();
 }
@@ -125,16 +166,24 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
-    // image.
-    return {
+    // image (volumes last).
+    HdRenderSettingDescriptorList settings = {
         {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
+        {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
+        {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
+        {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
+        {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
         {"GI Rays per Probe per Frame (16-512)", t.giRays, VtValue(int(frame.giRays))},
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
+        {"Screen-Space GI (replaces AO)", t.ssgi, VtValue(frame.ssgi)},
+        {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
+        {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
+        {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
@@ -176,6 +225,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.translucentShadowDivisor))},
         {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
         {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
+        {"Ray-Traced Skinned Instances (largest on screen, 0-256)", t.rtSkinnedInstances,
+         VtValue(int(frame.rtSkinnedInstances))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
         {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
          VtValue(frame.specularWorkflow)},
@@ -191,6 +242,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
+        {"Displacement", t.displacement, VtValue(frame.displacement)},
+        {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
@@ -212,6 +265,37 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
         {"Tonemapper (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
     };
+#ifdef HDVK_VOLUMES
+    const vkr::VolumePass::Settings &volume = frame.volume;
+    settings.insert(settings.end(), {
+        {"Volumes (OpenVDB)", t.volumes, VtValue(frame.volumes)},
+        {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
+        {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
+        {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
+        {"Volume Density Multiplier (on the material's)", t.volumeDensity, VtValue(volume.density)},
+        {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
+        {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+        {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
+    });
+#endif
+    return settings;
+}
+
+void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &value)
+{
+    const auto &t = *HdVkRenderSettingsTokens;
+    const bool geometry = (key == t.subdivision || key == t.maxRefineLevel) && GetRenderSetting(key) != value;
+    HdRenderDelegate::SetRenderSetting(key, value);
+    // Through the scene: a scene index render index's change tracker can't
+    // dirty prims, and nothing may during a sync (this runs between frames).
+    if (geometry && _terminalSceneIndex) {
+        HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+    }
+}
+
+void HdVkRenderDelegate::SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex)
+{
+    _terminalSceneIndex = terminalSceneIndex;
 }
 
 HdRenderPassSharedPtr HdVkRenderDelegate::CreateRenderPass(
@@ -238,6 +322,11 @@ HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &r
     if (typeId == HdPrimTypeTokens->points) {
         return new HdVkPoints(rprimId, _scene.get());
     }
+#ifdef HDVK_VOLUMES
+    if (typeId == HdPrimTypeTokens->volume) {
+        return new HdVkVolume(rprimId, _scene.get());
+    }
+#endif
     return nullptr;
 }
 
@@ -246,7 +335,7 @@ void HdVkRenderDelegate::DestroyRprim(HdRprim *rprim) { delete rprim; }
 HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &sprimId)
 {
     if (typeId == HdPrimTypeTokens->camera) {
-        return new HdCamera(sprimId);
+        return new HdVkCamera(sprimId);
     }
     if (typeId == HdPrimTypeTokens->material) {
         return new HdVkMaterial(sprimId, _textures.get());
@@ -271,6 +360,11 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
     if (typeId == HdPrimTypeTokens->renderBuffer) {
         return new HdVkRenderBuffer(bprimId);
     }
+#ifdef HDVK_VOLUMES
+    if (typeId == _openvdbAsset) {
+        return new HdVkField(bprimId);
+    }
+#endif
     return nullptr;
 }
 
@@ -298,6 +392,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats[HdPerfTokens->textureMemory.GetString()] = size_t(memory.textures);
     stats[HdTokens->primvar.GetString()] = size_t(_scene->VertexBytes());
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
+    stats["volumeMemory"] = size_t(_scene->VolumeBytes());  // NanoVDB grids
     stats["hostMemoryUsed"] = size_t(memory.host);
     stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
     stats["rayTracingSupported"] = _device->rayTracing;  // else the hdvk:rt* settings are ignored
@@ -322,8 +417,9 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["trianglesTotal"] = size_t(gpu.triangleCount);
     stats["instancesDrawn"] = size_t(frame.instances);
     stats["instancesTotal"] = size_t(gpu.instanceCount);
-    stats["meshes"] = size_t(gpu.drawCount);
+    stats["meshes"] = size_t(gpu.meshCount);
     stats["drawCalls"] = size_t(frame.drawCalls);
+    stats["volumes"] = size_t(gpu.volumeCount);
     stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;
 
     // Convergence: TAA's average of still frames (usdview's "Samples done").

@@ -9,8 +9,12 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <memory>
 #include <tuple>
 #include <vector>
+
+#define PNANOVDB_C
+#include "PNanoVDB.h"
 
 static int failures = 0;
 
@@ -178,6 +182,92 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
                                          : "without TAA the first frame is final");
     return img;
+}
+
+// NanoVDB float grid (laid out as PNanoVDB reads it) of a ball: `value`
+// within `radius` voxels of (15.5, 15.5, 15.5), voxels in [0, 32)^3, 32
+// per world unit, centred on the origin. One root tile, upper and lower
+// node, and leaves only where the ball reaches (the rest are empty tiles).
+static std::shared_ptr<vkr::VolumeGrid> BallGrid(float radius, float value)
+{
+    const pnanovdb_grid_type_constants_t &c = pnanovdb_grid_type_constants[PNANOVDB_GRID_TYPE_FLOAT];
+    const size_t tree = PNANOVDB_GRID_SIZE, root = tree + PNANOVDB_TREE_SIZE;
+    const size_t upper = root + c.root_size + c.root_tile_size, lower = upper + c.upper_size;
+    const size_t leaves = lower + c.lower_size;
+    std::vector<std::array<int, 3>> origins;  // leaves the ball reaches
+    for (int x = 0; x < 32; x += 8) {
+        for (int y = 0; y < 32; y += 8) {
+            for (int z = 0; z < 32; z += 8) {
+                const float dx = std::max({float(x) - 15.5f, 0.0f, 15.5f - float(x + 7)});
+                const float dy = std::max({float(y) - 15.5f, 0.0f, 15.5f - float(y + 7)});
+                const float dz = std::max({float(z) - 15.5f, 0.0f, 15.5f - float(z + 7)});
+                if (dx * dx + dy * dy + dz * dz <= radius * radius) {
+                    origins.push_back({x, y, z});
+                }
+            }
+        }
+    }
+    const size_t total = leaves + origins.size() * c.leaf_size;
+    std::vector<uint8_t> b(total, 0);
+    auto put = [&](size_t at, auto v) { std::memcpy(&b[at], &v, sizeof(v)); };
+    auto coord = [&](size_t at, int x, int y, int z) {
+        put(at, int32_t(x));
+        put(at + 4, int32_t(y));
+        put(at + 8, int32_t(z));
+    };
+    put(PNANOVDB_GRID_OFF_MAGIC, uint64_t(PNANOVDB_MAGIC_NUMBER));
+    put(PNANOVDB_GRID_OFF_VERSION, uint32_t(PNANOVDB_MAJOR_VERSION_NUMBER << 21 | PNANOVDB_MINOR_VERSION_NUMBER << 10));
+    put(PNANOVDB_GRID_OFF_GRID_COUNT, uint32_t(1));
+    put(PNANOVDB_GRID_OFF_GRID_SIZE, uint64_t(total));
+    const double voxel = 1.0 / 32.0, offset = -15.5 / 32.0;
+    for (int i = 0; i < 3; ++i) {
+        const size_t map = PNANOVDB_GRID_OFF_MAP;
+        put(map + PNANOVDB_MAP_OFF_MATF + 4 * (i * 4), float(voxel));
+        put(map + PNANOVDB_MAP_OFF_INVMATF + 4 * (i * 4), float(1 / voxel));
+        put(map + PNANOVDB_MAP_OFF_VECF + 4 * i, float(offset));
+        put(map + PNANOVDB_MAP_OFF_MATD + 8 * (i * 4), voxel);
+        put(map + PNANOVDB_MAP_OFF_INVMATD + 8 * (i * 4), 1 / voxel);
+        put(map + PNANOVDB_MAP_OFF_VECD + 8 * i, offset);
+        put(PNANOVDB_GRID_OFF_VOXEL_SIZE + 8 * i, voxel);
+    }
+    put(PNANOVDB_GRID_OFF_GRID_CLASS, uint32_t(PNANOVDB_GRID_CLASS_FOG_VOLUME));
+    put(PNANOVDB_GRID_OFF_GRID_TYPE, uint32_t(PNANOVDB_GRID_TYPE_FLOAT));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_LEAF, uint64_t(leaves - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_LOWER, uint64_t(lower - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_UPPER, uint64_t(upper - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_OFFSET_ROOT, uint64_t(root - tree));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_LEAF, uint32_t(origins.size()));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_LOWER, uint32_t(1));
+    put(tree + PNANOVDB_TREE_OFF_NODE_COUNT_UPPER, uint32_t(1));
+    coord(root + PNANOVDB_ROOT_OFF_BBOX_MIN, 0, 0, 0);
+    coord(root + PNANOVDB_ROOT_OFF_BBOX_MAX, 31, 31, 31);
+    put(root + PNANOVDB_ROOT_OFF_TABLE_SIZE, uint32_t(1));
+    put(root + c.root_off_max, value);
+    put(root + c.root_size + PNANOVDB_ROOT_TILE_OFF_CHILD, int64_t(upper - root));  // key 0: (0, 0, 0)
+    coord(upper + PNANOVDB_UPPER_OFF_BBOX_MAX, 31, 31, 31);
+    put(upper + PNANOVDB_UPPER_OFF_CHILD_MASK, uint32_t(1));
+    put(upper + c.upper_off_table, int64_t(lower - upper));
+    coord(lower + PNANOVDB_LOWER_OFF_BBOX_MAX, 31, 31, 31);
+    for (size_t l = 0; l < origins.size(); ++l) {
+        const auto [x, y, z] = origins[l];
+        const size_t leaf = leaves + l * c.leaf_size;
+        const uint32_t n = uint32_t((x >> 3) << 8 | (y >> 3) << 4 | (z >> 3));
+        const size_t mask = lower + PNANOVDB_LOWER_OFF_CHILD_MASK + 4 * (n >> 5);
+        uint32_t bits;
+        std::memcpy(&bits, &b[mask], 4);
+        put(mask, bits | 1u << (n & 31));
+        put(lower + c.lower_off_table + 8 * n, int64_t(leaf - lower));
+        coord(leaf + PNANOVDB_LEAF_OFF_BBOX_MIN, x, y, z);
+        for (int v = 0; v < 512; ++v) {
+            const float dx = float(x + (v >> 6)) - 15.5f, dy = float(y + ((v >> 3) & 7)) - 15.5f,
+                        dz = float(z + (v & 7)) - 15.5f;
+            put(leaf + c.leaf_off_table + 4 * v, dx * dx + dy * dy + dz * dz <= radius * radius ? value : 0.0f);
+        }
+    }
+    auto grid = std::make_shared<vkr::VolumeGrid>();
+    grid->words.resize(total / 4);
+    std::memcpy(grid->words.data(), b.data(), total);
+    return grid;
 }
 
 int main()
@@ -1289,10 +1379,14 @@ int main()
             red->baseColor[0] = 0.9f;
             red->baseColor[1] = red->baseColor[2] = 0.0f;
             red->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            // Wound counter-clockwise towards the camera and the light: the
+            // GI probes there must see front faces.
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->points = {-1, -1, 0.5f, 1, 1, 0.5f, 1, -1, 0.5f, -1, -1, 0.5f, -1, 1, 0.5f, 1, 1, 0.5f};
+            wall->material = white;
             vkr::Mesh *panel = scene.AddMesh();
-            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, -0.5f, 0, 0.6f, 0.45f,
-                             0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, -0.6f, 0.45f};
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, 0.6f, -0.5f,
+                             0, -0.6f, -0.5f, 0, -0.6f, 0.45f, 0, 0.6f, 0.45f};
             panel->material = red;
             AddLight(scene, -1, 0, -0.2f)->castShadows = true;
             scene.Commit();
@@ -1353,6 +1447,81 @@ int main()
             Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
         } else {
             std::puts("no ray tracing on this GPU: its tests skipped");
+        }
+
+        {
+            // Screen-space GI (no ray tracing needed): a red emitter leaning
+            // from the white wall (x = 0, z = 0.5) towards the camera (x =
+            // 0.4, z = 0) and nothing else lighting it: the wall left of it
+            // stays black, unless SSGI gathers the emitter's light from last
+            // frame's image.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = AddEmitter(scene, 0, 0, 0, 0, 0, 2.0f);
+            panel->points = {0, -0.6f, 0.5f, 0.4f, -0.6f, 0, 0.4f, 0.6f, 0, 0, -0.6f, 0.5f, 0.4f, 0.6f, 0, 0, 0.6f, 0.5f};
+            auto red = std::make_shared<vkr::Material>(*panel->material);
+            red->emissive[1] = red->emissive[2] = 0;
+            panel->material = red;
+            scene.Commit();
+            auto wall = [&](bool ssgi) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.ssgi = ssgi;
+                frame.ssgiRadius = 2.0f;
+                Image img;
+                for (int i = 0; i < 16; ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                return std::array<float, 2>{img.At(29, 32, 0), img.At(29, 32, 1)};
+            };
+            const auto off = wall(false), on = wall(true);
+            Expect(off[0] < 0.005f && on[0] > 0.03f && on[0] > 4.0f * on[1],
+                   "SSGI bleeds the red emitter's light onto the white wall beside it");
+        }
+
+        if (device.rayTracing) {
+            // Skinned instances block rays: the sun test's occluder as a
+            // skinned quad (one joint), its traced shadow on the ground one
+            // unit to the left. Its joint moves it up by 0.5: the shadow
+            // follows (posed and refit on the GPU); with no skinned instance
+            // allowed it casts none.
+            vkr::Scene scene(&device);
+            vkr::Light *sun = AddLight(scene, 1, 0, -1);
+            sun->castShadows = true;
+            sun->angle = 0;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            vkr::Mesh *occluder = AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            occluder->jointCount = 1;
+            for (size_t c = 0; c < occluder->points.size() / 3; ++c) {
+                occluder->jointIndices.insert(occluder->jointIndices.end(), {0, 0, 0, 0});
+                occluder->jointWeights.insert(occluder->jointWeights.end(), {1, 0, 0, 0});
+            }
+            auto lift = [&](float y) {
+                occluder->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, y, 0, 1};
+                occluder->jointsDirty = true;
+                scene.Commit();
+            };
+            lift(0);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image rest = Render(renderer, scene, frame);
+            lift(0.5f);
+            const Image lifted = Render(renderer, scene, frame);
+            const float lit = rest.At(51, 32, 0);
+            // Row 32 (y = 0) is in the rest shadow only, row 48 (y = 0.52) in the lifted one only.
+            Expect(rest.At(3, 32, 0) < 0.01f * lit && rest.At(3, 48, 0) > 0.9f * lit,
+                   "a skinned occluder casts a traced shadow");
+            Expect(lifted.At(3, 32, 0) > 0.9f * lit && lifted.At(3, 48, 0) < 0.01f * lit,
+                   "its traced shadow follows a moved joint");
+            frame.rtSkinnedInstances = 0;
+            Expect(Render(renderer, scene, frame).At(3, 48, 0) > 0.9f * lit,
+                   "Frame::rtSkinnedInstances 0: skinned meshes don't block rays");
         }
 
         {
@@ -1516,6 +1685,19 @@ int main()
             float source[2];
             Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
                    "equidistant fisheye");
+            // OpenCV's model (Karma's lens material): k4 divides, p1 and p2
+            // shift tangentially.
+            p = {};
+            p.k4 = 0.5f;
+            vkr::LensDistortion::Warp(p, 1.0f, edge, source);
+            Expect(std::abs(source[0] - 1.0f / 1.5f) < 1e-5f, "OpenCV k4: 1 / (1 + k4 r^2)");
+            p = {};
+            p.p1 = 0.1f;
+            p.p2 = 0.2f;
+            const float corner[2] = {0.5f, 0.5f};
+            vkr::LensDistortion::Warp(p, 1.0f, corner, source);
+            Expect(std::abs(source[0] - (0.5f + 0.05f + 0.2f)) < 1e-5f && std::abs(source[1] - (0.5f + 0.1f + 0.1f)) < 1e-5f,
+                   "OpenCV p1, p2: tangential");
         }
 
         {
@@ -1565,6 +1747,7 @@ int main()
             const float base[3] = {0.2f, 0.4f, 0.6f}, emissive[3] = {1.0f, 0.5f, 0.25f};
             std::copy(base, base + 3, material->baseColor);
             std::copy(emissive, emissive + 3, material->emissive);
+            material->metallic = 0.25f;
             quad->material = material;
             scene.Commit();
             std::vector<std::vector<float>> aovs(vkr::Aovs::kCount);
@@ -1592,6 +1775,9 @@ int main()
                    "AOV primvars:st");
             Expect(near(at(A::kAlbedo, 32, 32, 1), 0.4f) && near(at(A::kEmission, 32, 32, 2), 0.25f),
                    "AOV albedo and emission");
+            Expect(near(at(A::kPositionWorld, 32, 32, 0), 1.0f / 64.0f) && near(at(A::kPositionWorld, 32, 32, 2), 0.5f) &&
+                       near(at(A::kDepth, 32, 32, 0), -0.5f) && near(at(A::kDiffuseAlbedo, 32, 32, 1), 0.3f),
+                   "AOV P, depth (-camera z) and diffuse albedo (Karma's)");
             float object, matte;
             std::memcpy(&object, &ids[6], 4);
             std::memcpy(&matte, &ids[7], 4);
@@ -1605,6 +1791,16 @@ int main()
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
+
+            // A target may take another number of components: st as three.
+            std::vector<float> st3(64 * 64 * 3, -7.0f);
+            vkr::Renderer::Targets three;
+            three.aovs[A::kSt] = st3.data();
+            three.aovComponents[A::kSt] = 3;
+            renderer.Render(scene, frame, three);
+            const float *texel = &st3[(32 * 64 + 32) * 3];
+            Expect(near(texel[0], 0.5f + 1.0f / 64.0f) && texel[2] == 0.0f && st3[(2 * 64 + 2) * 3 + 2] == 0.0f,
+                   "AOV components as the target asks");
         }
 
         {
@@ -2310,6 +2506,232 @@ int main()
             floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
             scene.Commit();
             Expect(Render(renderer, scene, frame).At(32, 16, 0) > 0.1f, "planar reflection: a flagged mirror");
+        }
+
+        {
+            // Volumes: a ball of density 2 (radius 12 voxels, 0.375) at the
+            // origin, seen along +z. Unlit, the blue background shows
+            // through by the transmittance, exp(-2 * 0.75) in the middle;
+            // the rest of the image is untouched.
+            vkr::Scene scene(&device);
+            vkr::Volume *ball = scene.AddVolume();
+            ball->fields["density"] = BallGrid(12.0f, 2.0f);
+            scene.Commit();
+            vkr::Renderer renderer(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            Image img = Render(renderer, scene, frame);
+            Expect(std::abs(img.At(32, 32, 2) - std::exp(-1.5f)) < 0.03f && img.At(32, 32, 0) == 0.0f,
+                   "a volume's transmittance follows Beer-Lambert");
+            Expect(img.At(60, 32, 2) == 1.0f && img.At(32, 60, 2) == 1.0f, "a volume leaves the rest alone");
+            frame.volumes = false;
+            Expect(Render(renderer, scene, frame).At(32, 32, 2) == 1.0f, "volumes can be switched off");
+            frame.volumes = true;
+
+            // Opaque surfaces: an emitter in front (left half) hides the
+            // ball, one behind (right half) is seen through it.
+            AddEmitter(scene, -1, -1, 0, 1, -0.5f, 0.5f);
+            AddEmitter(scene, 0, -1, 1, 1, 0.5f, 1.0f);
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            Expect(img.At(28, 32, 0) == 0.5f, "a volume behind a surface is hidden");
+            Expect(img.At(36, 32, 0) > 0.1f && img.At(36, 32, 0) < 0.35f, "a surface behind a volume shows through");
+            frame.depthPrepass = false;
+            const Image noPrepass = Render(renderer, scene, frame);
+            Expect(noPrepass.At(28, 32, 0) == 0.5f && noPrepass.At(36, 32, 0) == img.At(36, 32, 0),
+                   "volumes stop at the main pass's depth without the prepass too");
+            frame.depthPrepass = true;
+
+            // A light from +x: the ball's lit side scatters more than the side
+            // its own density shadows; without the shadow march they match.
+            vkr::Scene lit(&device);
+            lit.AddVolume()->fields = ball->fields;
+            AddLight(lit, 1, 0, 0)->castShadows = true;
+            lit.Commit();
+            img = Render(renderer, lit, frame);
+            const float near = img.At(40, 32, 0), far = img.At(23, 32, 0);  // x = +-0.27
+            Expect(near > 0.02f && near > 2.0f * far, "a volume shadows itself");
+            frame.volume.shadowSteps = 0;
+            img = Render(renderer, lit, frame);
+            Expect(std::abs(img.At(40, 32, 0) - img.At(23, 32, 0)) < 0.05f * img.At(40, 32, 0),
+                   "without shadow steps the ball is lit evenly");
+            frame.volume.shadowSteps = vkr::VolumePass::Settings().shadowSteps;
+
+            // Temperature 0.3 (normalized: 1500 K) glows red-orange.
+            ball->fields["temperature"] = BallGrid(12.0f, 0.3f);
+            scene.Commit();
+            img = Render(renderer, scene, frame);
+            const float r = img.At(36, 40, 0), g = img.At(36, 40, 1), bl = img.At(36, 40, 2);
+            Expect(r > 0.2f && r > 1.5f * g && g > bl - 0.5f, "a hot volume glows like a blackbody");
+            std::printf("volume: T %.3f, lit %.3f / %.3f, hot %.3f %.3f %.3f\n", std::exp(-1.5f), near, far, r, g, bl);
+
+            // A uniform dome lights the ball from above: its top (y = 0.27)
+            // scatters more than its bottom. A sphere light at x = 0.6 lights
+            // its near side.
+            vkr::Scene sky(&device);
+            sky.AddVolume()->fields["density"] = ball->fields["density"];
+            sky.AddDome();
+            sky.Commit();
+            img = Render(renderer, sky, frame);
+            Expect(img.At(32, 40, 0) > 0.05f && img.At(32, 40, 0) > 1.2f * img.At(32, 23, 0),
+                   "the dome lights a volume from above");
+            vkr::Scene bulb(&device);
+            bulb.AddVolume()->fields["density"] = ball->fields["density"];
+            AddSphereLight(bulb, 0.6f, 0, 0, 0.05f, 200.0f);
+            bulb.Commit();
+            img = Render(renderer, bulb, frame);
+            Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 0) > 3.0f * img.At(23, 32, 0),
+                   "a sphere light lights a volume's near side");
+
+            // The material (VolumeShading): absorption 1 at half the density
+            // halves the optical depth and scatters nothing; red-only
+            // scattering (grey extinction 1) scatters only red; emission 1 per
+            // unit of density glows. The density setting multiplies.
+            auto shading = std::make_shared<vkr::VolumeShading>();
+            std::fill(shading->scattering, shading->scattering + 3, 0.0f);
+            std::fill(shading->absorption, shading->absorption + 3, 1.0f);
+            shading->densityScale = 0.5f;
+            vkr::Scene absorbing(&device);
+            vkr::Volume *a = absorbing.AddVolume();
+            a->fields["density"] = ball->fields["density"];
+            a->shading = shading;
+            AddLight(absorbing, 1, 0, 0);
+            absorbing.Commit();
+            img = Render(renderer, absorbing, frame);
+            Expect(std::abs(img.At(32, 32, 2) - std::exp(-0.75f)) < 0.03f && img.At(40, 32, 0) == 0.0f,
+                   "a volume material's absorption and density scale");
+            frame.volume.density = 2.0f;
+            Expect(std::abs(Render(renderer, absorbing, frame).At(32, 32, 2) - std::exp(-1.5f)) < 0.03f,
+                   "the density setting multiplies the material's");
+            frame.volume.density = 1.0f;
+            const float red[3] = {1, 0, 0}, rest[3] = {0, 1, 1};
+            std::copy(red, red + 3, shading->scattering);
+            std::copy(rest, rest + 3, shading->absorption);
+            shading->densityScale = 1.0f;
+            absorbing.Commit();  // tables are rebuilt per commit
+            img = Render(renderer, absorbing, frame);
+            Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 1) == 0.0f, "a volume material's scattering colour");
+            std::fill(shading->scattering, shading->scattering + 3, 0.0f);
+            const float green[3] = {0, 1, 0};
+            std::copy(green, green + 3, shading->emission);
+            absorbing.Commit();
+            img = Render(renderer, absorbing, frame);
+            Expect(img.At(32, 32, 1) > 0.2f && img.At(32, 32, 0) == 0.0f, "a volume material's emission");
+
+            // Half resolution: the same transmittance, and surfaces in front
+            // still hide the ball pixel exactly.
+            frame.volume.resolution = 2;
+            img = Render(renderer, scene, frame);
+            const Image full = [&] {
+                vkr::Renderer::Frame f = frame;
+                f.volume.resolution = 1;
+                return Render(renderer, scene, f);
+            }();
+            Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
+                   "half resolution volumes stop at nearer surfaces");
+            frame.volume.resolution = 1;
+        }
+
+        {
+            // Displacement: a quad behind the far plane (z 1.1, culled and
+            // clipped as it is) displaced 0.3 along its normal (-z, towards
+            // the camera) comes into view at z 0.8, depth 0.9, in every pass.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 1.1f);
+            quad->normals.clear();
+            for (int i = 0; i < 6; ++i) {
+                quad->normals.insert(quad->normals.end(), {0, 0, -1});
+            }
+            auto material = std::make_shared<vkr::Material>();
+            material->displacement = 0.3f;
+            material->displacementBound = 0.3f;
+            quad->material = material;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            Expect(std::abs(img.depth[32 * 64 + 16] - 0.9f) < 1e-3f && img.At(16, 32, 0) > 0.1f,
+                   "displacement: the quad moved along its normal into view");
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.depthPrepass = false;
+            Expect(MaxDifference(Render(renderer, scene, frame), img) == 0.0f,
+                   "displacement: the depth prepass sees the same positions");
+            frame = IdentityFrame();
+            frame.displacementScale = 0.5f;
+            Expect(std::abs(Render(renderer, scene, frame).depth[32 * 64 + 16] - 0.975f) < 1e-3f,
+                   "Frame::displacementScale scales the offset");
+            frame.displacement = false;
+            Expect(Render(renderer, scene, frame).depth[32 * 64 + 16] == 1.0f, "Frame::displacement off: not displaced");
+        }
+
+        {
+            // Levels of detail: a bumpy 32 x 32 grid (2048 triangles), one
+            // instance filling the view and one 4 pixels wide. The small one
+            // draws a coarser level; Frame::lod off, or a bias asking for a
+            // thousandth of a pixel, draws both whole.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            vkr::Mesh *grid = scene.AddMesh();
+            const int n = 32;
+            auto point = [&](int i, int j) {
+                const float x = float(i) / n * 2 - 1, y = float(j) / n * 2 - 1;
+                return std::array<float, 3>{x, y, 0.05f * std::sin(x * 9) * std::cos(y * 7)};
+            };
+            for (int j = 0; j < n; ++j) {
+                for (int i = 0; i < n; ++i) {
+                    for (const auto &c : {point(i, j), point(i + 1, j), point(i + 1, j + 1), point(i, j),
+                                          point(i + 1, j + 1), point(i, j + 1)}) {
+                        grid->points.insert(grid->points.end(), c.begin(), c.end());
+                    }
+                }
+            }
+            grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1,
+                                0.06f, 0, 0, 0, 0, 0.06f, 0, 0, 0, 0, 0.06f, 0, 0.5f, 0.5f, 0.2f, 1};
+            do {  // the levels build in the background
+                scene.Commit();
+            } while (scene.LodsPending());
+            Render(renderer, scene);
+            const uint64_t lod = renderer.GetStats().triangles;
+            vkr::Renderer::Frame whole = IdentityFrame();
+            whole.lod = false;
+            Render(renderer, scene, whole);
+            Expect(renderer.GetStats().triangles == 2u * 2048u, "Frame::lod off: every triangle");
+            Expect(lod < 2u * 2048u - 512u, "levels of detail: the small grid draws a coarser level");
+            whole.lod = true;
+            whole.lodBias = -10.0f;
+            Render(renderer, scene, whole);
+            Expect(renderer.GetStats().triangles == 2u * 2048u, "Frame::lodBias -10: every triangle");
+        }
+
+        {
+            // Levels of detail keep the shading: a flat 32 x 32 grid filling
+            // the view collapses to a few triangles with one normal, but
+            // keeps them all with a bumpy surface's normals (a smooth-shaded
+            // panel, whose big triangles would interpolate other normals).
+            uint64_t triangles[2] = {};
+            for (int bumpy = 0; bumpy < 2; ++bumpy) {
+                vkr::Scene scene(&device);
+                AddLight(scene, 0, 0, -1);
+                vkr::Mesh *grid = scene.AddMesh();
+                const int n = 32;
+                for (int j = 0; j < n; ++j) {
+                    for (int i = 0; i < n; ++i) {
+                        for (const auto &[di, dj] : {std::pair{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}}) {
+                            const float x = float(i + di) / n * 2 - 1, y = float(j + dj) / n * 2 - 1;
+                            const float nx = bumpy ? 0.3f * std::cos(x * 9) : 0.0f, ny = bumpy ? 0.3f * std::sin(y * 7) : 0.0f;
+                            const float length = std::sqrt(nx * nx + ny * ny + 1);
+                            grid->points.insert(grid->points.end(), {x, y, 0.0f});
+                            grid->normals.insert(grid->normals.end(), {nx / length, ny / length, -1 / length});
+                        }
+                    }
+                }
+                grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1};
+                do {
+                    scene.Commit();
+                } while (scene.LodsPending());
+                Render(renderer, scene);
+                triangles[bumpy] = renderer.GetStats().triangles;
+            }
+            Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
+            Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

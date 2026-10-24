@@ -40,14 +40,30 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 probeMax;
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
+    vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
 // 256: kFeatureProcedurals (program.glsl)
+const uint kFeatureDisplacement = 1024u;  // a drawn material displaces (displace.glsl)
+const uint kFeatureLod = 2048u;           // levels of detail (cull.comp)
 // Soft sun shadows (PCSS from the distant light's angle), volumetric fog,
 // the reflection probe, planar reflections.
 const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 262144u, kFeaturePlanar = 524288u;
+
+// The optional frame.features.x bits whose code a pipeline has: the
+// shading pipelines are specialized with the ones their frame uses
+// (Renderer::_ShadingSet), as skipped code still costs every pixel
+// registers and occupancy. Other shaders have them all.
+layout(constant_id = 13) const uint kCompiledFeatures = 0xFFFFFFFFu;
+
+// Whether this frame has `feature` (an optional frame.features.x bit) and
+// this pipeline its code.
+bool Feature(uint feature)
+{
+    return (kCompiledFeatures & feature) != 0u && (frame.features.x & feature) != 0u;
+}
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];
 

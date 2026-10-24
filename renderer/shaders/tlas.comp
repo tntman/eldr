@@ -1,11 +1,15 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
 #include "scene.glsl"
+#include "gi.glsl"
 
 // The TLAS's instances (VkAccelerationStructureInstanceKHR), one per
 // instance slot: its transform, its mesh slot as custom index, and that
 // mesh's BLAS. Free slots, hidden meshes and meshes without a BLAS
-// (skinned, translucent) are inactive (no BLAS, mask 0).
+// (skinned, translucent) are inactive (no BLAS, mask 0). Then, from
+// rt.skinned.x on, the skinned instances with BLASes of their own over
+// posed world-space vertices (an identity transform).
 
 struct RtSlot {  // rt.glsl
     uvec2 blas;
@@ -14,6 +18,17 @@ struct RtSlot {  // rt.glsl
 };
 layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]; };
 const uint kRtSlotCutout = 2u;  // alpha-tested: any-hit shaders run, else forced opaque
+
+struct RtSkinned {  // rt.glsl
+    uvec2 blas;
+    uint slot;
+    uint firstVertex;
+    uint instance;
+    uint vertexCount;
+    uint flags;
+    uint pad;
+};
+layout(std430, set = 1, binding = 5) readonly buffer RtSkinnedTable { RtSkinned rtSkinned[]; };
 
 struct TlasInstance {
     vec4 rows[3];
@@ -32,11 +47,23 @@ void main()
         return;
     }
     TlasInstance t;
-    Instance inst = instances[min(i, instances.length() - 1u)];
-    t.rows = inst.rows;
     t.indexMask = 0u;
     t.sbtFlags = 0u;
     t.blas = uvec2(0u);
+    if (i >= rt.skinned.x) {
+        uint k = i - rt.skinned.x;
+        t.rows = vec4[3](vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0));
+        if (k < rt.skinned.y && rtSkinned[k].blas != uvec2(0u)) {
+            uint slot = rtSkinned[k].slot;
+            t.indexMask = slot | (0xFFu << 24);
+            t.sbtFlags = (1u | ((rtSlots[slot].flags & kRtSlotCutout) != 0u ? 8u : 4u)) << 24;
+            t.blas = rtSkinned[k].blas;
+        }
+        tlasInstances[i] = t;
+        return;
+    }
+    Instance inst = instances[min(i, instances.length() - 1u)];
+    t.rows = inst.rows;
     if (i < instances.length() && inst.draw != kFreeSlot && draws[inst.draw].visible != 0u &&
         rtSlots[inst.draw].blas != uvec2(0u)) {
         RtSlot s = rtSlots[inst.draw];

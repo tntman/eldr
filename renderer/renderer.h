@@ -12,8 +12,10 @@
 #include "subsurface.h"
 #include "taa.h"
 #include "transparency.h"
+#include "volume.h"
 
 #include <chrono>
+#include <memory>
 
 namespace vkr {
 
@@ -108,12 +110,14 @@ public:
         // lights that matter most (no shadow maps for them; soft from the
         // sun's angle and the lights' size) and traced reflections (instead
         // of the dome's and SSR, up to roughness 0.7), both noisy per frame
-        // for TAA to average. Skinned and translucent meshes don't block
-        // rays.
+        // for TAA to average. Translucent meshes don't block rays; of the
+        // skinned ones, the rtSkinnedInstances largest on screen do (posed
+        // and refit every frame).
         bool rtShadows = false;
         uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16)
         bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
         // instead of the dome's unoccluded light.
@@ -121,6 +125,13 @@ public:
         uint32_t giProbes = 16;      // along the scene's longest side (2..64; at most 16384 in all)
         uint32_t giRays = 128;       // per probe and frame (16..512)
         float giHysteresis = 0.97f;  // weight of the probes' history (0..0.99): smoother, but slower to react
+        // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
+        // prepass: per-pixel indirect diffuse light from what's on screen,
+        // instead of GTAO; the probes (gi) or the dome light the rest.
+        bool ssgi = false;
+        uint32_t ssgiSteps = 8;        // per direction and side (1..32)
+        float ssgiRadius = 1.0f;       // world units
+        uint32_t ssgiResolution = 2;   // traced at 1 / this (1, 2), denoised and upsampled
         // Emissive surfaces as lights: small meshes emitting at least the
         // threshold also light the scene as sphere lights (with shadows);
         // the caller applies these to the Scene (Scene::SetEmissiveLights).
@@ -171,6 +182,17 @@ public:
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
         bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
+        // OpenVDB volumes, raymarched over the shaded image (VolumePass).
+        bool volumes = true;
+        VolumePass::Settings volume;
+        // Displacement (Material::displacement): off draws the undisplaced
+        // surfaces; the scale multiplies every material's offset.
+        bool displacement = true;
+        float displacementScale = 1.0f;
+        // Levels of detail (Scene builds them for heavy meshes): off draws
+        // every mesh whole; a bias of 1 allows twice the screen error.
+        bool lod = true;
+        float lodBias = 0.0f;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -183,6 +205,7 @@ public:
         uint16_t *velocity = nullptr;   // object motion vectors, two halves per pixel (see mesh.frag)
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
+        uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -190,6 +213,7 @@ public:
     static constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
     static constexpr VkFormat kVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr uint32_t kCascades = 4;
+    static constexpr uint32_t kMaxRtSkinned = 256;  // Frame::rtSkinnedInstances
     // Shadow atlas for sphere/rect/disk lights, in square tiles
     // (Frame::localShadowResolution).
     static constexpr uint32_t kShadowAtlasSize = 4096;
@@ -243,7 +267,8 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines();
+    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    uint32_t _ShadingSet(uint32_t features);
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -286,6 +311,7 @@ private:
     VkSampler _samplers[kWrapModes * kWrapModes] = {};  // materials: trilinear, aniso, per wrap s and t
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare
+    VkSampler _minSampler = VK_NULL_HANDLE;     // minimum of the bilinear footprint (Device::samplerMinmax)
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
@@ -294,18 +320,30 @@ private:
     // skinning influences, bit 1 dual-quaternion skinning (mesh.vert's
     // kWideSkin, kDualQuaternion); the shading ones also bit 2, a material
     // program (the GRAPH shaders), and bit 3 with it, one with noise
-    // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders).
-    VkPipeline _prepassPipeline[4] = {};      // depth only
-    VkPipeline _translucentPipeline[32] = {};  // shading, blended over the opaque
-    VkPipeline _oitPipeline[32] = {};          // shading, OIT accumulation (Transparency)
+    // (program.glsl's kProcedurals); bit 4, lobes (the LAYERS shaders); bit
+    // 5 displaced materials (every pass: displace.glsl's kDisplacement),
+    // made once a scene has some (_displacedPipelines). Depth passes use the
+    // kDepthVariants bits.
+    static constexpr uint32_t kVariants = 64, kDepthVariants = 1 | 2 | 32;
+    // The shading pipelines come in sets, each specialized with the optional
+    // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
+    // variants at set * kVariants + variant; a frame draws with the set of
+    // its own features (_shadingBase), made when a frame first needs it.
+    static constexpr uint32_t kShadingSets = 8;
+    std::vector<uint32_t> _shadingSets;
+    uint32_t _shadingBase = 0;
+    VkPipeline _prepassPipeline[kVariants] = {};      // depth only
+    VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
-    VkPipeline _tintDepthPipeline[4] = {}, _tintColorPipeline[4] = {};
-    VkPipeline _subsurfacePipeline[32] = {};   // shading, the subsurface lobe (Subsurface)
+    VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
-    VkPipeline _prepassCutoutPipeline[4] = {}, _shadowCutoutPipeline[4] = {};
-    VkPipeline _pipeline[32] = {};             // shading, depth read-only
-    VkPipeline _shadowPipeline[4] = {};
+    VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
+    VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
+    VkPipeline _shadowPipeline[kVariants] = {};
+    bool _displacedPipelines = false;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
@@ -315,6 +353,9 @@ private:
     // Last frame's joint matrices for motion vectors, copied before skin.comp
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
+    Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
+    uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
@@ -329,6 +370,12 @@ private:
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
+    // The cascades' nearest depths for soft sun shadows (shadow_min.comp):
+    // level 0 per 4 x 4 texels, mips to 1 x 1, in GENERAL; a view per level.
+    static constexpr uint32_t kMaxShadowMinLevels = 12;
+    Image _shadowMin;
+    std::vector<VkImageView> _shadowMinLevels;
+    VkPipeline _shadowMinPipeline = VK_NULL_HANDLE;
     uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
     float _anisotropy = 0;                      // _samplers' (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows
@@ -353,6 +400,7 @@ private:
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
+    std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
 };
 
 } // namespace vkr

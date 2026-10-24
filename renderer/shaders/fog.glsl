@@ -15,7 +15,7 @@ float FogSliceDepth(float t)
 // at fragCoord (pixels) and view depth; nothing without fog.
 vec4 Fog(vec2 fragCoord, float viewDepth)
 {
-    if ((frame.features.x & kFeatureFog) == 0u) {
+    if (!Feature(kFeatureFog)) {
         return vec4(0.0, 0.0, 0.0, 1.0);
     }
     float slices = float(frame.fogGrid.z);

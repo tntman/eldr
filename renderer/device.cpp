@@ -215,6 +215,12 @@ Device::Device()
         VkPhysicalDeviceVulkan12Features has12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &frt};
         VkPhysicalDeviceFeatures2 hasFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &has12};
         vkGetPhysicalDeviceFeatures2(physical, &hasFeatures);
+        VkFormatProperties r32;
+        vkGetPhysicalDeviceFormatProperties(physical, VK_FORMAT_R32_SFLOAT, &r32);
+        constexpr VkFormatFeatureFlags kMinmax =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        samplerMinmax = has12.samplerFilterMinmax && (r32.optimalTilingFeatures & kMinmax) == kMinmax;
+        f12.samplerFilterMinmax = samplerMinmax ? VK_TRUE : VK_FALSE;
         const char *disable = std::getenv("HDVK_NO_RAY_TRACING");
         rayTracing = !(disable && std::strcmp(disable, "1") == 0) && has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
                      has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&

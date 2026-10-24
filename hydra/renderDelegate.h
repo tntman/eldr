@@ -3,9 +3,12 @@
 #include "pxr/pxr.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
+#include "pxr/imaging/hd/types.h"
+#include "pxr/imaging/hd/sceneIndex.h"
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace vkr {
 class Device;
@@ -65,10 +68,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtShadowSamples, "hdvk:rtShadowSamples"))              \
     ((rtReflections, "hdvk:rtReflections"))                  \
     ((rtReflectionSamples, "hdvk:rtReflectionSamples"))      \
+    ((rtSkinnedInstances, "hdvk:rtSkinnedInstances"))        \
     ((gi, "hdvk:gi"))                                        \
     ((giProbes, "hdvk:giProbes"))                            \
     ((giRays, "hdvk:giRaysPerProbe"))                        \
     ((giHysteresis, "hdvk:giHysteresis"))                    \
+    ((ssgi, "hdvk:ssgi"))                                    \
+    ((ssgiSteps, "hdvk:ssgiSteps"))                          \
+    ((ssgiRadius, "hdvk:ssgiRadius"))                        \
+    ((ssgiResolution, "hdvk:ssgiResolution"))                \
     ((emissiveLights, "hdvk:emissiveLights"))                \
     ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))        \
     ((oit, "hdvk:oit"))                                      \
@@ -94,23 +102,60 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeResolution, "hdvk:probeResolution"))              \
     ((probePosition, "hdvk:probePosition"))                  \
     ((planarReflections, "hdvk:planarReflections"))          \
-    ((planarScale, "hdvk:planarScale"))
+    ((planarScale, "hdvk:planarScale"))                      \
+    ((volumes, "hdvk:volumes"))                              \
+    ((volumeStepSize, "hdvk:volumeStepSize"))                \
+    ((volumeMaxSteps, "hdvk:volumeMaxSteps"))                \
+    ((volumeShadowSteps, "hdvk:volumeShadowSteps"))          \
+    ((volumeDensity, "hdvk:volumeDensity"))                  \
+    ((volumeEmission, "hdvk:volumeEmission"))                \
+    ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
+    ((volumeResolution, "hdvk:volumeResolution"))            \
+    ((subdivision, "hdvk:subdivision"))                      \
+    ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
+    ((displacement, "hdvk:displacement"))                    \
+    ((displacementScale, "hdvk:displacementScale"))          \
+    ((lod, "hdvk:lod"))                                      \
+    ((lodBias, "hdvk:lodBias"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
-// AOVs of HdVk's own beyond HdAovTokens: base colour, emission and
-// Cryptomatte's first layer (ranks 0 and 1) of object and material ids.
-#define HDVK_AOV_TOKENS                           \
-    (albedo)                                                 \
-    (emission)                                               \
-    ((cryptoObject, "CryptoObject00"))                       \
-    ((cryptoMaterial, "CryptoMaterial00"))
+// Karma's names for what Eldr's extra AOVs hold: the source names of the
+// render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
+// hands them to Hydra (raw names, "lpe:" and "primvars:" ones).
+#define HDVK_AOV_TOKENS                                     \
+    ((hitN, "ray:hitN"))                                    \
+    ((hitNFacing, "ray:hitN_facing"))                       \
+    ((hitNCamera, "ray:hitN_camera"))                       \
+    ((hitP, "ray:hitP"))                                    \
+    ((hitPCamera, "ray:hitP_camera"))                       \
+    ((hitPz, "ray:hitPz"))                                  \
+    ((baseColor, "export_basecolor"))                       \
+    ((diffuseAlbedo, "lpe:CDA"))                            \
+    ((directEmission, "lpe:CO"))                            \
+    ((cryptoObject, "primvars:__name"))                     \
+    ((cryptoMaterial, "primvars:__materialname"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
+
+// Extra AOVs (vkr::Aovs::Kind) by the names Hydra binds them with:
+// HdAovTokens' (usdview's AOV menu) and Karma's (HdVkAovTokens). `format` is
+// what GetDefaultAovDescriptor gives; a bound buffer of any float format
+// gets as many components.
+struct HdVkExtraAov {
+    TfToken name;
+    uint32_t kind;
+    HdFormat format;
+};
+const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
+
+// Dirties every mesh's display style in the scene upstream of `terminal` (a
+// render index's), so they sync again (sceneIndexPlugin.cpp).
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
 
 class HdVkTextureCache;
 class HdVkGLInterop;
@@ -153,6 +198,9 @@ public:
     // and HdVk's stats window (usdview/hdvkUsdview) read it, and Houdini's
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
+    // Settings the meshes read when they sync (subdivision) re-sync them.
+    void SetRenderSetting(TfToken const &key, VtValue const &value) override;
+    void SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex) override;
 
     // Cryptomatte manifests of the last frame with those AOVs (JSON: name
     // to hex id), reported in GetRenderStats()["cryptomatte"].
@@ -177,6 +225,7 @@ private:
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.
     Hgi *_hgi = nullptr;

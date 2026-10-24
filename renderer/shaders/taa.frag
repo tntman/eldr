@@ -47,9 +47,21 @@ vec4 FromYCoCg(vec4 c)
     return vec4(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z, c.a);
 }
 
+// NaN/Inf (and negative colour) is cleaned where it enters, so one bad
+// value can neither poison the history nor spread through its filter.
+vec4 Clean(vec4 c)
+{
+    return any(isnan(c)) || any(isinf(c)) ? vec4(0.0) : max(c, vec4(0.0));
+}
+
+vec4 Current(ivec2 p)
+{
+    return Clean(texelFetch(current, p, 0));
+}
+
 vec4 HistoryTap(vec2 uv)
 {
-    return Compress(textureLod(history, uv, 0.0));
+    return Compress(Clean(textureLod(history, uv, 0.0)));
 }
 
 // Catmull-Rom history fetch from 9 bilinear taps (Jimenez/Pettineo):
@@ -83,7 +95,7 @@ vec4 SampleHistory(vec2 uv, vec2 size)
 void main()
 {
     ivec2 p = ivec2(gl_FragCoord.xy);
-    vec4 cur = texelFetch(current, p, 0);
+    vec4 cur = Current(p);
     float alpha = pc.params.x;
     if (alpha >= 1.0) {
         outColor = cur;  // no usable history (first frame, resize, TAA off)
@@ -101,9 +113,12 @@ void main()
 
     ivec2 maxP = textureSize(current, 0) - 1;
     vec4 m1 = vec4(0.0), m2 = vec4(0.0);
+    float brightest = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
-            vec4 c = ToYCoCg(Compress(texelFetch(current, clamp(p + ivec2(x, y), ivec2(0), maxP), 0)));
+            vec4 c = Compress(Current(clamp(p + ivec2(x, y), ivec2(0), maxP)));
+            brightest = max(brightest, Luma(c.rgb));
+            c = ToYCoCg(c);
             m1 += c;
             m2 += c * c;
         }
@@ -113,5 +128,12 @@ void main()
     vec4 hist = ToYCoCg(SampleHistory(prevUv, 1.0 / pc.params.yz));
     hist = FromYCoCg(clamp(hist, mean - 1.25 * sigma, mean + 1.25 * sigma));
 
-    outColor = Expand(mix(hist, Compress(cur), alpha));
+    // The clip box (and Catmull-Rom's overshoot while the camera moves) can
+    // leave the history brighter than any pixel around it; near compressed
+    // luma 1 Expand would multiply it by up to 10^4 and the next frame
+    // would keep it. No brighter than the brightest neighbour, then.
+    vec4 c = max(mix(hist, Compress(cur), alpha), vec4(0.0));
+    float luma = Luma(c.rgb);
+    c.rgb *= luma > brightest ? brightest / luma : 1.0;
+    outColor = Expand(c);
 }

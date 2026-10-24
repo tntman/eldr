@@ -34,6 +34,15 @@ layout(constant_id = 8) const bool kProcedurals = false;
 
 vec4 programRegisters[kProgramRegisters];
 
+#ifdef LAYERS
+// The lobe inputs a program computes (MaterialProgram::Input from
+// kSpecularColor on, in that order), for brdf.glsl's PrepareLayers: their
+// values, and a bit each in programLobes.
+const uint kProgramLobes = 9u;
+vec4 programLobe[kProgramLobes];
+uint programLobes = 0u;
+#endif
+
 vec4 ProgramArg(uint b, uint constants)
 {
     return b < kProgramRegisters ? programRegisters[b] : programConstants[constants + b - kProgramRegisters];
@@ -154,8 +163,13 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             } else if (imm0 == 5u) {
                 tangentNormal = a.xyz;
                 hasNormalMap = true;
-            } else {
+            } else if (imm0 == 6u) {
                 alpha = clamp(a.x, 0.0, 1.0);
+#ifdef LAYERS
+            } else if (imm0 - 7u < kProgramLobes) {
+                programLobe[imm0 - 7u] = a;
+                programLobes |= 1u << (imm0 - 7u);
+#endif
             }
             continue;
         case kOpTexcoord: r = vec4(inUv, 0.0, 0.0); break;

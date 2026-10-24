@@ -74,7 +74,7 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 4, 4};
+    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 4, 4, 3, 1, 3};
     return components[kind];
 }
 
@@ -85,7 +85,8 @@ bool Aovs::Any(float *const targets[kCount])
 
 bool Aovs::NeedsGeometry(float *const targets[kCount])
 {
-    return targets[kNormal] || targets[kNormalEye] || targets[kSt] || targets[kAlbedo] || targets[kEmission];
+    return targets[kNormal] || targets[kNormalEye] || targets[kSt] || targets[kAlbedo] || targets[kEmission] ||
+           targets[kDiffuseAlbedo];
 }
 
 Aovs::Aovs(Device &device)
@@ -211,23 +212,25 @@ const VkPipeline *Aovs::Pipelines(VkPipelineLayout layout)
     rendering.colorAttachmentCount = 3;
     rendering.pColorAttachmentFormats = kGeometryFormats;
     rendering.depthAttachmentFormat = VK_FORMAT_D32_SFLOAT;
-    const VkSpecializationMapEntry entries[2] = {{0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkSpecializationMapEntry entries[3] = {
+        {0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}, {10, 2 * sizeof(VkBool32), sizeof(VkBool32)}};
     const VkSpecializationMapEntry proceduralEntry{8, 0, sizeof(VkBool32)};
     const VkBool32 procedural = VK_TRUE;
     const VkSpecializationInfo proceduralSpec{1, &proceduralEntry, sizeof(procedural), &procedural};
     VkResult r = VK_SUCCESS;
-    for (int v = 0; v < 16 && r == VK_SUCCESS; ++v) {
-        if ((v & 8) && !(v & 4)) {
+    for (uint32_t v = 0; v <= kVariants && r == VK_SUCCESS; ++v) {
+        if ((v & ~kVariants) || ((v & 8) && !(v & 4))) {
             continue;  // procedurals come with a program
         }
-        const VkBool32 flags[2] = {(v & 1) ? VK_TRUE : VK_FALSE, (v & 2) ? VK_TRUE : VK_FALSE};
-        const VkSpecializationInfo spec{2, entries, sizeof(flags), flags};
-        const int graph = v >= 4 ? 2 : 0;
+        const VkBool32 flags[3] = {(v & 1) ? VK_TRUE : VK_FALSE, (v & 2) ? VK_TRUE : VK_FALSE,
+                                   (v & 32) ? VK_TRUE : VK_FALSE};
+        const VkSpecializationInfo spec{3, entries, sizeof(flags), flags};
+        const int graph = v & 4 ? 2 : 0;
         const VkPipelineShaderStageCreateInfo stages[2] = {
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
              modules[graph], "main", &spec},
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
-             modules[graph + 1], "main", v >= 8 ? &proceduralSpec : nullptr},
+             modules[graph + 1], "main", v & 8 ? &proceduralSpec : nullptr},
         };
         VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
         ci.stageCount = 2;
@@ -282,7 +285,8 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     VkDeviceSize floats = 0;
     for (uint32_t k = 0; k < kCount; ++k) {
         _offsets[k] = floats;
-        floats += targets[k] ? VkDeviceSize(Components(Kind(k))) * width * height : 0;
+        _components[k] = p.components[k] ? std::min<uint32_t>(p.components[k], 4) : Components(Kind(k));
+        floats += targets[k] ? VkDeviceSize(_components[k]) * width * height : 0;
     }
     // Shader writes to host memory crawl (~30 ms for a 480 x 270 AOV):
     // they go to device memory and are copied over.
@@ -368,7 +372,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
-            const Push push{k, uint32_t(_offsets[k]), Components(Kind(k)), p.cryptomatteIds};
+            const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }
@@ -402,7 +406,7 @@ void Aovs::Read(float *const targets[kCount]) const
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
             std::memcpy(targets[k], static_cast<const float *>(_readback.mapped) + _offsets[k],
-                        sizeof(float) * Components(Kind(k)) * _width * _height);
+                        sizeof(float) * _components[k] * _width * _height);
         }
     }
 }
