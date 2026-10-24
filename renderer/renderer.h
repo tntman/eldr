@@ -10,6 +10,7 @@
 #include "raytracing.h"
 #include "scene.h"
 #include "subsurface.h"
+#include "ssr.h"
 #include "taa.h"
 #include "transparency.h"
 #include "volume.h"
@@ -262,6 +263,34 @@ public:
         // Translucent holdouts (with holdouts) cut the image's colour and
         // alpha by their opacity; off: they draw nothing.
         bool holdoutAlpha = true;
+        // Brightness clamps against fireflies (EEVEE's light clamps): the
+        // brightest channel of a pixel's direct light (sun, local lights),
+        // and of every bounce light comes in by (SSGI's input, SSR and
+        // traced reflection hits, GI probe rays; not the dome), scaled down
+        // to at most this scene-referred radiance. 0: off.
+        float directClamp = 0.0f;
+        float indirectClamp = 0.0f;
+        // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
+        // quadratically, each at least a pixel on, objects at least a pixel's
+        // footprint thick (deep at grazing angles) and a ray that crosses a
+        // continuous surface hits it whatever its thickness. Off: the ray
+        // steps evenly and any object is 5% of its distance thick.
+        bool ssgiThickness = true;
+        // SSGI with a visibility bitmask (EEVEE's fast GI) instead of the
+        // highest horizon: 32 sectors per slice, objects a quarter of
+        // ssgiRadius thick, light from the sectors nothing nearer hides,
+        // weighted by how much the surface it comes from faces the pixel.
+        bool ssgiBitmask = false;
+        // Ray tracing sees displacement (with displacement on): displaced
+        // meshes' BLASes are built from their displaced vertices (rebuilt
+        // when the scale changes). Off: from their rest vertices.
+        bool rtDisplacement = true;
+        // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
+        // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
+        // through a ratio estimator, temporal reprojection through the
+        // reflected point and a variance-guided bilateral filter. Off: one
+        // mirror ray, faded out from roughness 0.3 to 0.6.
+        bool ssrDenoise = false;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
@@ -384,6 +413,8 @@ private:
     PostProcess _post;
     Transparency _transparency;
     Subsurface _subsurface;
+    SsrDenoise _ssr;
+    bool _ssrHistory = false;  // the denoiser ran last frame
     Fog _fog;
     float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
     uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)

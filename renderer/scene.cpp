@@ -1646,7 +1646,8 @@ void Scene::Commit()
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         const bool traced = drawable && blend != Gpu::kTranslucent;
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
-                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0};
+                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
+                                   (variant & Gpu::kDisplaced) != 0};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;

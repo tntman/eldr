@@ -12,12 +12,14 @@ GROUPS = [
      "displacementScale anisotropy shareFrame extraAovs renderProducts pipelineCache pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution"),
+     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
+     "ssgiThickness ssgiBitmask directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
-     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),
+     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
+     "rtDisplacement"),
     ("Reflections",
-     "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
+     "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
      "planarReflections planarScale"),
     ("Materials",
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "

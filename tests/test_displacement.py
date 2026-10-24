@@ -1,6 +1,6 @@
 """Displacement (tests/scenes/displacement.usda at Complexity High): the
 settings switch it, the depth prepass sees the same displaced positions
-as the shading pass, and the scale scales it.
+as the shading pass, the scale scales it, and ray tracing sees it.
 Run: usdenv.cmd python tests\\test_displacement.py"""
 import os
 import sys
@@ -41,8 +41,13 @@ def render(**settings):
     for _ in range(2):  # textures arrive with the first commit
         engine.Render(stage.GetPseudoRoot(), params)
     image = fbo.toImage()
+    global rayTracing
+    rayTracing = engine.GetRenderStats().get("rayTracingSupported", False)
     del engine  # release GL resources while the context is still current
     return image
+
+
+rayTracing = False
 
 
 def difference(a, b):
@@ -77,6 +82,18 @@ changed, _ = difference(off, render(displacementScale=0.0))
 expect(changed < 0.002, f"scale 0 is no displacement ({changed:.4f} differ)")
 changed, _ = difference(on, render(displacementScale=2.0))
 expect(changed > 0.02, f"the scale scales it ({changed:.3f} differ)")
+# Traced shadows see the displaced surfaces (their bumps shadow each other)
+# with rtDisplacement; without displacement it changes nothing.
+if rayTracing:
+    traced = render(rtShadows=True)
+    changed, _ = difference(traced, render(rtShadows=True, rtDisplacement=False))
+    print(f"traced shadows with and without rtDisplacement: {changed:.4f} of pixels differ")
+    expect(changed > 0.003, f"traced shadows see displacement ({changed:.4f} differ)")
+    changed, _ = difference(render(rtShadows=True, displacement=False),
+                            render(rtShadows=True, displacement=False, rtDisplacement=False))
+    expect(changed < 0.002, f"rtDisplacement without displacement changes nothing ({changed:.4f} differ)")
+else:
+    print("no ray tracing on this GPU: its tests skipped")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

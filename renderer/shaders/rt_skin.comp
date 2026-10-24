@@ -7,7 +7,7 @@
 // skinning with four or eight influences), as world-space positions and
 // normals for their BLASes (refit every frame) and the closest-hit shader.
 // x: vertex, y: the instance's entry in rtSkinned.
-// ponytail: no displacement (rigid BLASes have none either).
+// ponytail: no displacement (rigid ones have it: rt_displace.comp).
 
 layout(std430, set = 0, binding = 55) readonly buffer RtVertices { float rtVertices[]; };  // the rest Vertex pool
 struct RtSkinned {  // rt.glsl
