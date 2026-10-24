@@ -84,6 +84,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((refraction, "hdvk:refraction"))                        \
     ((refractionSamples, "hdvk:refractionSamples"))              \
     ((refractionBackFaces, "hdvk:refractionBackFaces"))              \
+    ((multiRefraction, "hdvk:multiRefraction"))              \
+    ((refractionLayers, "hdvk:refractionLayers"))              \
     ((translucentShadows, "hdvk:translucentShadows"))        \
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \

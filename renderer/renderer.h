@@ -198,6 +198,11 @@ public:
         // the inverted ior and total internal reflection, drawn before their
         // front faces; off: back faces are discarded.
         bool refractionBackFaces = true;
+        // Refraction through several layers (needs refraction): refracting
+        // meshes back to front, the opaque colour copied again after each
+        // (glass behind glass, a ball's far side), up to this many copies.
+        bool multiRefraction = true;
+        uint32_t refractionLayers = 4;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

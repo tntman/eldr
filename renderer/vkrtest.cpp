@@ -2784,6 +2784,38 @@ int main()
                    "refraction from inside: total internal reflection past the critical angle");
             Expect(off.Prim(32, 32) != 7 && off.Prim(44, 32) != 7, "Frame::refractionBackFaces off: not drawn");
         }
+
+        {
+            // Refraction through layers: two thin-walled glass quads over a
+            // white wall, the far one taking out green, the near one blue.
+            // Where they overlap, light passes both (red) with
+            // Frame::multiRefraction; without, the near one refracts the
+            // opaque wall alone and hides the far one (yellow).
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0.5f, 1.0f);
+            auto glass = [&](float x0, float x1, float z, float g, float b) {
+                auto m = std::make_shared<vkr::Material>();
+                m->roughness = 0;
+                m->transmission = 1;
+                m->thinWalled = true;
+                m->transmissionColor[1] = g;
+                m->transmissionColor[2] = b;
+                AddQuad(scene, x0, -1, x1, 1, z)->material = m;
+            };
+            glass(-1, 0.5f, 0.25f, 0, 1);  // far: no green
+            glass(-0.5f, 1, 0, 1, 0);      // near: no blue
+            scene.Commit();
+            const Image both = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.multiRefraction = false;
+            const Image one = Render(renderer, scene, frame);
+            Expect(both.At(32, 32, 0) > 0.8f && both.At(32, 32, 1) < 0.05f && both.At(32, 32, 2) < 0.05f,
+                   "refraction through layers: the overlap passes both glasses");
+            Expect(one.At(32, 32, 1) > 0.8f && one.At(32, 32, 2) < 0.05f,
+                   "Frame::multiRefraction off: the near glass refracts the opaque wall only");
+            Expect(both.At(8, 32, 1) < 0.05f && both.At(56, 32, 2) < 0.05f && both.At(56, 32, 1) > 0.8f,
+                   "refraction through layers: each glass alone as before");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

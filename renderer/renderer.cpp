@@ -1710,18 +1710,43 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
                                  sizeof(VkDrawIndexedIndirectCommand));
     };
 
-    // Refraction layers (Frame::refractionBackFaces): refracting meshes back
-    // to front, each its back faces (seen from inside the medium) and then
-    // its front faces, blended over the colour before the other
-    // translucent meshes.
-    const bool layers = refraction && frame.refractionBackFaces;
+    // Refraction layers (Frame::refractionBackFaces, multiRefraction):
+    // refracting meshes back to front, each its back faces (seen from inside
+    // the medium) and then its front faces, blended over the colour before
+    // the other translucent meshes. With multiRefraction the background is
+    // copied again after each layer drawn (up to Frame::refractionLayers
+    // copies), so glass behind glass, and a ball's far side, show through
+    // the layers in front of them.
+    // ponytail: a copy per layer (about 0.1 ms at 1280x720 each); depth
+    // peeling would also order the triangles within a layer.
+    const bool layers = refraction && (frame.refractionBackFaces || frame.multiRefraction);
     if (layers) {
+        uint32_t copies = frame.multiRefraction ? std::clamp(frame.refractionLayers, 1u, 16u) : 0;
+        bool drawn = false;  // since the last copy
         begin(false);
-        for (const auto &[distance, i] : order) {
-            if (gpu.translucentFlags[i] & Scene::Gpu::kRefracts) {
-                drawSlot(_refractBackPipeline + _shadingBase, i);
-                drawSlot(_translucentPipeline + _shadingBase, i);
+        auto copy = [&]() {
+            if (copies == 0 || !drawn) {
+                return;
             }
+            vkCmdEndRendering(_cmd);
+            _transparency.RecordBackground(_cmd, _color.image);
+            begin(false);
+            bound = VK_NULL_HANDLE;
+            drawn = false;
+            --copies;
+        };
+        for (const auto &[distance, i] : order) {
+            if (!(gpu.translucentFlags[i] & Scene::Gpu::kRefracts)) {
+                continue;
+            }
+            copy();
+            if (frame.refractionBackFaces) {
+                drawSlot(_refractBackPipeline + _shadingBase, i);
+                drawn = true;
+                copy();
+            }
+            drawSlot(_translucentPipeline + _shadingBase, i);
+            drawn = true;
         }
         vkCmdEndRendering(_cmd);
         vkCmdPipelineBarrier2(_cmd, &dep);  // the colour and ids again, for the pass below
