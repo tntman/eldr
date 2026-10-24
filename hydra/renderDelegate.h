@@ -117,6 +117,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((displacementScale, "hdvk:displacementScale"))          \
     ((lod, "hdvk:lod"))                                      \
     ((lodBias, "hdvk:lodBias"))                              \
+    ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);

@@ -2758,6 +2758,29 @@ int main()
             vkr::Renderer secondRenderer(second);
             Expect(second.pipelineCacheBytes == bytes, "pipeline cache: a new device starts with it");
         }
+
+        {
+            // Pipeline prewarm: after a frame a worker compiles the shading
+            // sets one toggle away; turning toon bands on then takes its set
+            // (no compile), which draws as one compiled on the spot.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            scene.Commit();
+            vkr::Renderer warm(device), cold(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.pipelinePrewarm = true;
+            Render(warm, scene, frame);
+            warm.WaitForPrewarm();
+            Expect(warm.GetStats().prewarmedSets == 0, "pipeline prewarm: nothing taken yet");
+            frame.toonBands = 3;
+            const Image prewarmed = Render(warm, scene, frame);
+            Expect(warm.GetStats().prewarmedSets == 1, "pipeline prewarm: the toon set came from the worker");
+            frame.pipelinePrewarm = false;
+            const Image compiled = Render(cold, scene, frame);
+            Expect(cold.GetStats().prewarmedSets == 0 && prewarmed.color == compiled.color,
+                   "pipeline prewarm: the same image as a set compiled when needed");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
