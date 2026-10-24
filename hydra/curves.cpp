@@ -296,9 +296,11 @@ constexpr int kIcosahedronFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {
                                           {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
                                           {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
 
-// Each point as a sphere `widths` across.
+// Each point as a sphere `widths` across, or `facing` a camera-facing disc
+// (vkr::Mesh::facing): an octagon of 8 triangles around a centre vertex,
+// all on the point, their normals the offsets within the disc.
 void Spheres(VtVec3fArray const &points, Primvar<float> const &widths, Primvar<GfVec3f> const &colors,
-             GfVec3f const &color, Builder &out)
+             GfVec3f const &color, bool facing, Builder &out)
 {
     auto at = [](auto const &pv, size_t i, auto const &fallback) {
         return pv.At(pv.interp == HdInterpolationConstant ? 0 : i, fallback);
@@ -307,6 +309,17 @@ void Spheres(VtVec3fArray const &points, Primvar<float> const &widths, Primvar<G
         const float r = 0.5f * at(widths, i, 1.0f);
         const GfVec3f c = at(colors, i, color);
         const uint32_t first = uint32_t(out.m.points.size() / 3);
+        if (facing) {
+            // Corners 1.0539 r out: the octagon's area is the disc's.
+            const float corner = r * 1.0539f;
+            out.Vertex(points[i], GfVec3f(0.0f), c);
+            for (int k = 0; k < 8; ++k) {
+                const float a = 0.7853982f * float(k);
+                out.Vertex(points[i], corner * GfVec3f(std::cos(a), std::sin(a), 0.0f), c);
+                out.Triangle(first, first + 1 + uint32_t(k), first + 1 + uint32_t((k + 1) % 8));
+            }
+            continue;
+        }
         for (const GfVec3f &v : kIcosahedron) {
             out.Vertex(points[i] + r * v, v, c);
         }
@@ -384,7 +397,10 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
             m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
         } else {
-            Spheres(points, widths, colors, color, out);
+            const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites",
+                                            delegate->GetRenderSetting<bool>(t.pointSprites, kHdVkPointSprites));
+            m.facing = facing ? vkr::Mesh::kFacingDisc : vkr::Mesh::kNotFacing;
+            Spheres(points, widths, colors, color, facing, out);
         }
         m.geometryDirty = true;
     }

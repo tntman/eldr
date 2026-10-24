@@ -15,10 +15,10 @@ PXR_NAMESPACE_OPEN_SCOPE
 // as tubes (flat ribbons facing their normals when they have normals),
 // points as spheres, `widths` across. hdvk:curveRibbons (or a curve's
 // primvars:eldr:ribbons) draws curves without normals as camera-facing
-// ribbons instead: 2 triangles per polyline step instead of 12.
-// ponytail: world-space tubes and spheres, 12 triangles per polyline step
-// and 20 per point.
-constexpr bool kHdVkCurveRibbons = false;
+// ribbons instead: 2 triangles per polyline step instead of 12;
+// hdvk:pointSprites (or primvars:eldr:sprites) points as camera-facing
+// discs, 8 triangles instead of 20.
+constexpr bool kHdVkCurveRibbons = false, kHdVkPointSprites = false;
 template <typename Base>
 class HdVkTessellated final : public Base
 {

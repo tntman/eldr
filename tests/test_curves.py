@@ -124,6 +124,18 @@ print(f"triangles: tubes {tubes}, ribbons {ribbons}, ribbons but one tube {oneTu
 if not ribbons * 3 < tubes or not ribbons < oneTube < tubes:
     failures.append("triangles")
     print("FAIL: ribbons should draw far fewer triangles, and the primvar keep a tube")
+# Points as camera-facing discs (hdvk:pointSprites): the point is as wide
+# (the picks above), 8 triangles instead of a sphere's 20; a point's
+# primvars:eldr:sprites = false keeps its sphere.
+sprites = start(curveRibbons=True, pointSprites=True)
+expectAll()
+UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/points")).CreatePrimvar(
+    "eldr:sprites", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
+sphere = start(curveRibbons=True, pointSprites=True)
+print(f"triangles: sphere {oneTube}, disc {sprites}, sprite primvar off {sphere}")
+if sprites != oneTube - 12 or sphere != oneTube:
+    failures.append("sprites")
+    print("FAIL: a disc should draw 8 triangles for a sphere's 20, and the primvar keep the sphere")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

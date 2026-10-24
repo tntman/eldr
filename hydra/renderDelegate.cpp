@@ -176,6 +176,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Curves as Camera-Facing Ribbons (else tubes)", t.curveRibbons, VtValue(kHdVkCurveRibbons)},
+        {"Points as Camera-Facing Discs (else spheres)", t.pointSprites, VtValue(kHdVkPointSprites)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
@@ -294,6 +295,8 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
             HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
         } else if (key == t.curveRibbons) {
             HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->basisCurves);
+        } else if (key == t.pointSprites) {
+            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->points);
         }
     }
 }
