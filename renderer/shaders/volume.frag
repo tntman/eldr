@@ -401,8 +401,7 @@ void main()
         return;
     }
 
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                               vec2(0.06711056, 0.00583715))));
+    float noise = SampleNoise(kDimVolume, gl_FragCoord.xy, float(frame.localLights.y));
     // The dome's pole (its latlong's +y) in world space.
     mat3 toDome = mat3(frame.envWorldToLocal);
     vec3 up = normalize(vec3(toDome[0][1], toDome[1][1], toDome[2][1]));

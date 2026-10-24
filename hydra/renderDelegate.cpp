@@ -260,6 +260,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Film Pixel Filter Radius (Gaussian, pixels, 0-2)", t.filmFilterRadius, VtValue(frame.filmFilterRadius)},
         {"Final Quality (offline: also when enableInteractive is false)", t.finalQuality,
          VtValue(frame.finalQuality)},
+        {"Sample Dimensions (blue noise per effect; off: IGN)", t.sampleDimensions, VtValue(frame.sampleDimensions)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},

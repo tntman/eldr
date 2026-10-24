@@ -94,8 +94,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         ? length((clipSide.xy / clipSide.w - clip.xy / clip.w) * 0.5 * frame.viewport.xy) : 0.0;
     int taps = clamp(int(frame.translucency.x), 1, 16);
     float lod = clamp(log2(max(pixels * inversesqrt(float(taps)), 1e-3)), 0.0, frame.translucency.y - 1.0);
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimRefraction, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     vec4 background = vec4(0.0);
     for (int i = 0; i < taps; ++i) {

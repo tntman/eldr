@@ -208,6 +208,12 @@ public:
         // Changes whenever the app's scene or settings changed (the Hydra
         // layer: change tracker and settings versions): the film starts over.
         uint64_t sceneVersion = 0;
+        // Sample dimensions: every stochastic effect (AO, SSGI, SSR and
+        // traced reflections' filter, soft shadows, refraction blur,
+        // volumes) turns blue noise by a Halton value of its own per sample
+        // (frame.glsl's SampleNoise), so the film converges without screen
+        // patterns; off: interleaved gradient noise shifted per frame.
+        bool sampleDimensions = true;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
@@ -408,6 +414,7 @@ private:
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome
+    Image _blueNoise;                           // RGBA8, frame.glsl's SampleNoise
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
     LensDistortion _distortion{_dev};

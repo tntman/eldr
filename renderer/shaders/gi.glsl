@@ -154,8 +154,7 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
         return sum;
     }
     float weights = 1.0;
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimSsr, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     float tolerance = 0.02 * distance(p, frame.cameraPos.xyz);
     ivec2 size = imageSize(rtReflectionImage);

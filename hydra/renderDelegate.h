@@ -120,7 +120,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((filmAccumulation, "hdvk:filmAccumulation"))            \
     ((filmSamples, "hdvk:filmSamples"))                      \
     ((filmFilterRadius, "hdvk:filmFilterRadius"))            \
-    ((finalQuality, "hdvk:finalQuality"))
+    ((finalQuality, "hdvk:finalQuality"))                    \
+    ((sampleDimensions, "hdvk:sampleDimensions"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstring>
 #include <functional>
+#include <random>
 #include <tuple>
 #include <vector>
 
@@ -45,6 +46,10 @@ struct FrameData {
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
+    // Sample dimensions (frame.glsl's SampleNoise): this sample's value per
+    // stochastic effect (kDim*); x of sampleInfo 1 with them on.
+    float sampleDims[2][4];
+    uint32_t sampleInfo[4];
 };
 
 namespace {
@@ -269,6 +274,121 @@ float Halton(uint32_t index, uint32_t base)
     return r;
 }
 
+// Sample dimensions (frame.glsl's kDim*): a Sobol dimension of its own per
+// stochastic effect (the pixel jitter is Halton 2, 3), so effects never
+// share a pattern and each is stratified at every power of two samples;
+// with the blue noise, fract(noise + value) per pixel.
+constexpr uint32_t kSampleDims = 8, kDimAo = 0, kDimSsgi = 1;
+constexpr uint32_t kBlueNoiseSize = 64;
+
+// Sobol dimensions 2..9 (Joe and Kuo's new-joe-kuo-6.21201: degree s,
+// coefficients a, initial m) at `index`, in [0, 1).
+float Sobol(uint32_t index, uint32_t dim)
+{
+    struct Poly {
+        uint32_t s, a, m[5];
+    };
+    static const Poly kPolys[kSampleDims] = {
+        {1, 0, {1}},        {2, 1, {1, 3}},        {3, 1, {1, 3, 1}},        {3, 2, {1, 1, 1}},
+        {4, 1, {1, 1, 3, 3}}, {4, 4, {1, 3, 5, 13}}, {5, 2, {1, 1, 5, 5, 17}}, {5, 4, {1, 1, 5, 5, 5}},
+    };
+    const Poly &p = kPolys[dim];
+    uint32_t v[32];
+    for (uint32_t i = 0; i < 32; ++i) {
+        if (i < p.s) {
+            v[i] = p.m[i] << (31 - i);
+        } else {
+            v[i] = v[i - p.s] ^ (v[i - p.s] >> p.s);
+            for (uint32_t k = 1; k < p.s; ++k) {
+                v[i] ^= ((p.a >> (p.s - 1 - k)) & 1u) * v[i - k];
+            }
+        }
+    }
+    uint32_t x = 0;
+    for (uint32_t i = 0; index; ++i, index >>= 1) {
+        x ^= (index & 1u) * v[i];
+    }
+    return float(x >> 8) / 16777216.0f;
+}
+
+// Blue noise (Ulichney's void-and-cluster, Gaussian sigma 1.5, toroidal):
+// a rank per texel, 0..255 in 4 independent channels (RGBA8).
+std::vector<uint8_t> BuildBlueNoise()
+{
+    constexpr int N = int(kBlueNoiseSize), kR = 6;
+    std::vector<uint8_t> out(N * N * 4);
+    float kernel[2 * kR + 1][2 * kR + 1];
+    for (int y = -kR; y <= kR; ++y) {
+        for (int x = -kR; x <= kR; ++x) {
+            kernel[y + kR][x + kR] = std::exp(-float(x * x + y * y) / (2.0f * 1.5f * 1.5f));
+        }
+    }
+    for (int channel = 0; channel < 4; ++channel) {
+        std::vector<float> energy(N * N, 0.0f);
+        std::vector<uint8_t> on(N * N, 0);
+        auto splat = [&](int i, float s) {
+            for (int y = -kR; y <= kR; ++y) {
+                for (int x = -kR; x <= kR; ++x) {
+                    energy[((i / N + y) & (N - 1)) * N + ((i % N + x) & (N - 1))] += s * kernel[y + kR][x + kR];
+                }
+            }
+        };
+        auto extreme = [&](uint8_t state, bool most) {  // tightest cluster of ones, largest void of zeros
+            int best = -1;
+            for (int i = 0; i < N * N; ++i) {
+                if (on[i] == state && (best < 0 || (most ? energy[i] > energy[best] : energy[i] < energy[best]))) {
+                    best = i;
+                }
+            }
+            return best;
+        };
+        std::mt19937 rng(1234u + uint32_t(channel));
+        int ones = 0;
+        while (ones < N * N / 10) {
+            const int i = int(rng() % uint32_t(N * N));
+            if (!on[i]) {
+                on[i] = 1;
+                splat(i, 1.0f);
+                ++ones;
+            }
+        }
+        for (;;) {  // spread the initial pattern evenly
+            const int cluster = extreme(1, true);
+            on[cluster] = 0;
+            splat(cluster, -1.0f);
+            const int gap = extreme(0, false);
+            on[gap] = 1;
+            splat(gap, 1.0f);
+            if (gap == cluster) {
+                break;
+            }
+        }
+        std::vector<int> rank(N * N);
+        const std::vector<uint8_t> initial = on;
+        const std::vector<float> initialEnergy = energy;
+        for (int r = ones - 1; r >= 0; --r) {
+            const int cluster = extreme(1, true);
+            on[cluster] = 0;
+            splat(cluster, -1.0f);
+            rank[cluster] = r;
+        }
+        on = initial;
+        energy = initialEnergy;
+        // ponytail: phase 3 keeps filling the largest void (no inversion);
+        // fine for 8-bit ranks.
+        for (int r = ones; r < N * N; ++r) {
+            const int gap = extreme(0, false);
+            on[gap] = 1;
+            splat(gap, 1.0f);
+            rank[gap] = r;
+        }
+        for (int i = 0; i < N * N; ++i) {
+            out[i * 4 + channel] = uint8_t(rank[i] * 256 / (N * N));
+        }
+    }
+    return out;
+}
+
 // While the camera moves the TAA blend weight stays at 1 / (kTaaMoving + 1)
 // = 0.1; a still camera accumulates Frame::taaSamples.
 constexpr uint32_t kTaaMoving = 9;
@@ -334,7 +454,7 @@ Renderer::~Renderer()
         vkDestroyImageView(_dev.device, v, nullptr);
     }
     for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_shadowMap, &_shadowAtlas, &_brdfLut,
-                       &_blackCube}) {
+                       &_blackCube, &_blueNoise}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
@@ -514,6 +634,8 @@ void Renderer::_CreateDescriptors()
         // filtered, written per level by shadow_min.comp.
         {61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
+        // Blue noise for the sample dimensions (frame.glsl's SampleNoise).
+        {90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting | kRt},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -528,7 +650,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
@@ -953,17 +1075,23 @@ void Renderer::_CreateConstantImages()
     _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _blueNoise = _dev.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, kBlueNoiseSize, kBlueNoiseSize, 1, 1,
+                                  VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _blackCube = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1, 6, 1,
                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                   VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_CUBE,
                                   VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT);
 
     const std::vector<float> lut = BuildBrdfLut(kBrdfLutSize);
+    const std::vector<uint8_t> noise = BuildBlueNoise();
     Buffer staging;
-    _dev.Reserve(staging, lut.size() * sizeof(float), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
-    std::memcpy(staging.mapped, lut.data(), lut.size() * sizeof(float));
+    const VkDeviceSize lutBytes = lut.size() * sizeof(float);
+    _dev.Reserve(staging, lutBytes + noise.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(staging.mapped, lut.data(), lutBytes);
+    std::memcpy(static_cast<uint8_t *>(staging.mapped) + lutBytes, noise.data(), noise.size());
     _dev.Submit([&](VkCommandBuffer cmd) {
-        for (const Image *img : {&_brdfLut, &_blackCube}) {
+        for (const Image *img : {&_brdfLut, &_blackCube, &_blueNoise}) {
             ImageBarrier(cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT, img == &_blackCube ? 6 : 1),
                          VK_PIPELINE_STAGE_2_NONE, 0,
                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -974,17 +1102,21 @@ void Renderer::_CreateConstantImages()
         copy.imageExtent = {kBrdfLutSize, kBrdfLutSize, 1};
         vkCmdCopyBufferToImage(cmd, staging.buffer, _brdfLut.image,
                                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        copy.bufferOffset = lutBytes;
+        copy.imageExtent = {kBlueNoiseSize, kBlueNoiseSize, 1};
+        vkCmdCopyBufferToImage(cmd, staging.buffer, _blueNoise.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         const VkClearColorValue black{};
         const VkImageSubresourceRange cube = Range(VK_IMAGE_ASPECT_COLOR_BIT, 6);
         vkCmdClearColorImage(cmd, _blackCube.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &cube);
-        for (const Image *img : {&_brdfLut, &_blackCube}) {
+        for (const Image *img : {&_brdfLut, &_blackCube, &_blueNoise}) {
             ImageBarrier(cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT, img == &_blackCube ? 6 : 1),
                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
     });
     _dev.Destroy(staging);
+    _gtao.SetBlueNoise(_blueNoise.view);
 }
 
 void Renderer::_Resize(uint32_t width, uint32_t height)
@@ -1172,6 +1304,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
+    const VkDescriptorImageInfo blueNoise{_clampSampler, _blueNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &blueNoise);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1961,6 +2095,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.counts[0] = gpu.lightCount;
     fd.localLights[0] = localLights;
     fd.localLights[1] = sample;
+    // Sample dimensions: this sample's value per effect (the TAA cycle's
+    // or the film's sample; 0 without TAA).
+    float dims[kSampleDims] = {};
+    if (frame.sampleDimensions) {
+        fd.sampleInfo[0] = 1;
+        for (uint32_t d = 0; d < kSampleDims; ++d) {
+            dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(sample > 0 ? sample - 1 : 0, d);
+        }
+    }
     if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
     }
@@ -2363,13 +2506,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // AO only darkens the dome lighting, so without a dome it is skipped.
     // SSGI replaces it (its visibility is the AO).
     if (ssgi && draw) {
-        _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius, sample,
+        _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius,
+                         frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
                          std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                          _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
-        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,
+        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,
+                     frame.sampleDimensions ? dims[kDimAo] : float(sample + 1),
                      std::clamp(frame.aoSlices, 1u, 8u));
         pass("ambientOcclusion");
     } else {

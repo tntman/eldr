@@ -858,6 +858,46 @@ int main()
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
             Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
             Expect(penumbra(0.15f, true, 4) >= hard + 3, "Frame::softShadowSamples 4: still a penumbra");
+
+            // Sample dimensions: one PCSS tap per pixel, turned per sample,
+            // averaged by the film. The blue noise turned by its own Halton
+            // value converges on the 512-sample film at least as well as
+            // the per-frame shifted gradient noise, and to the same image.
+            vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, 0.15f, 0.16f / (0.15f * 0.15f));
+            light->castShadows = true;
+            scene.Commit();
+            auto film = [&](uint32_t samples, bool dims) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.softShadowSamples = 1;
+                frame.filmSamples = samples;
+                frame.sampleDimensions = dims;
+                Image img;
+                do {
+                    img = Render(r, scene, frame);
+                } while (!r.IsConverged());
+                return img;
+            };
+            auto error = [](const Image &a, const Image &b) {
+                double sum = 0;
+                for (int y = 16; y < 48; ++y) {
+                    for (int x = 12; x < 44; ++x) {
+                        sum += std::pow(a.At(x, y, 0) - b.At(x, y, 0), 2.0f);
+                    }
+                }
+                return std::sqrt(sum / (32 * 32));
+            };
+            const Image reference = film(512, true);
+            const double on = error(film(16, true), reference), off = error(film(16, false), reference);
+            std::printf("sample dimensions: 16-sample film error %.5f (gradient noise %.5f), vs %.5f\n", on, off,
+                        error(film(512, false), reference));
+            Expect(on <= off && error(film(1, true), film(1, false)) > 0.0, "sample dimensions: blue noise per effect");
+            Expect(error(film(512, false), reference) < 0.5 * off, "sample dimensions: the same converged image");
+            scene.RemoveLight(light);
         }
 
         {

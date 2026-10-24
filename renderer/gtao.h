@@ -25,8 +25,13 @@ public:
     // (jittered) NDC to world space, row-vector order; `radius` is in world
     // units; `noise` picks this frame's sampling pattern; `slices` is the
     // number of directions per pixel.
+    // `noise`: in [0, 1) this sample's offset of the blue noise
+    // (SetBlueNoise; Renderer's sample dimensions), from 1 an index
+    // shifting interleaved gradient noise (+1).
     void Record(VkCommandBuffer cmd, const float invViewProj[16], const float eye[3], float radius,
-                uint32_t noise, uint32_t slices);
+                float noise, uint32_t slices);
+    // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Resize.
+    void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 
     // Output() = 1 (unoccluded) everywhere, same final layout as Record.
     void Clear(VkCommandBuffer cmd);
@@ -44,7 +49,7 @@ public:
     // (up to 16), so its per-frame noise averages out before TAA, whose
     // neighbourhood clipping would keep the denoised blotches.
     void RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
-                    const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
+                    const float eye[3], float radius, float noise, uint32_t slices, uint32_t steps,
                     VkImageView history, bool historyValid, float maxRadiance, bool still);
 
     VkImageView Output() const { return _ssgiOn ? _ssgi[_current].view : _ao.view; }
@@ -71,7 +76,7 @@ private:
     uint32_t _current = 0, _accumulated = 0;  // frames in _ssgi's running average
     bool _ssgiOn = false;
     uint32_t _scale = 1;
-    VkImageView _depth = VK_NULL_HANDLE;
+    VkImageView _depth = VK_NULL_HANDLE, _blueNoise = VK_NULL_HANDLE;
     uint32_t _width = 0, _height = 0;
 };
 

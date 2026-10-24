@@ -28,7 +28,7 @@ GROUPS = [
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution"),
     ("Camera and image",
-     "taa taaSamples filmAccumulation filmSamples filmFilterRadius finalQuality objectMotion blendShapeMotion depthOfField motionBlur lensDistortion postProcess "
+     "taa taaSamples filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions objectMotion blendShapeMotion depthOfField motionBlur lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),
 ]
 
