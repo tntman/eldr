@@ -27,6 +27,21 @@
             "ResourcePath": ".",
             "Root": ".",
             "Type": "library"
+        },
+        {
+            "Info": {
+                "Types": {
+                    "HdVkKarmaLensAdapter": {
+                        "bases": ["UsdImagingAPISchemaAdapter"],
+                        "apiSchemaName": ""
+                    }
+                }
+            },
+            "LibraryPath": "../$<TARGET_FILE_NAME:hdVkUsdImaging>",
+            "Name": "hdVkUsdImaging",
+            "ResourcePath": ".",
+            "Root": "hdVkUsdImaging",
+            "Type": "library"
         }
     ]
 }

@@ -27,7 +27,7 @@ layout(location = 5) in vec4 inPrimvars;
 #endif
 
 layout(location = 0) out vec4 outNormalSt;  // octahedral world normal, st
-layout(location = 1) out vec4 outAlbedo;
+layout(location = 1) out vec4 outAlbedo;    // base colour, metallic
 layout(location = 2) out vec4 outEmission;
 
 // As mesh.frag.
@@ -60,6 +60,7 @@ void main()
         present = Present(m, inUv);
         baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor, 1.0) : m.baseColor, inUv).rgb;
         emissive = Fetch(m.tex[1], m.emissive, inUv).rgb;
+        metallic = Fetch(m.tex[2], m.params.xxxx, inUv).r;
         hasNormalMap = m.tex[5].index >= 0;
         tangentNormal = Fetch(m.tex[5], vec4(0.0, 0.0, 1.0, 0.0), inUv).xyz;
 #ifdef GRAPH
@@ -85,6 +86,6 @@ void main()
         discard;
     }
     outNormalSt = vec4(OctEncode(n), inUv);
-    outAlbedo = vec4(baseColor, 1.0);
+    outAlbedo = vec4(baseColor, clamp(metallic, 0.0, 1.0));
     outEmission = vec4(emissive, 1.0);
 }

@@ -1,6 +1,7 @@
 """Lens distortion through Hydra: a USD camera's lensDistortion:* custom
-attributes reach HdCamera and warp the image; hdvk:lensDistortion off
-renders the plain camera's view.
+attributes reach HdCamera and warp the image; a Karma lens material with
+the same terms warps it the same; hdvk:lensDistortion off renders the
+plain camera's view.
 Run: usdenv.cmd python tests\\test_distortion.py"""
 import os
 import sys
@@ -44,6 +45,7 @@ def Render(camera, distortion=True):
 plain, plainPasses = Render("/plain")
 barrel, barrelPasses = Render("/cam")
 off, _ = Render("/cam", distortion=False)
+karma, karmaPasses = Render("/karma")
 
 failures = []
 
@@ -56,9 +58,12 @@ def expect(ok, what):
 
 expect("lensDistortion" in barrelPasses and "lensDistortion" not in plainPasses, "the warp runs for /cam only")
 expect(sum(a != b for a, b in zip(plain, barrel)) > SIZE * SIZE // 10, "the barrel lens changes the image")
+expect("lensDistortion" in karmaPasses, "Karma's lens material distorts")
 # Within a step of 8 bits: exposure adapts by a hair between runs.
 same = all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(plain, off) for k in (0, 8, 16))
 expect(same, "hdvk:lensDistortion off: the plain view")
+expect(all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(barrel, karma) for k in (0, 8, 16)),
+       "Karma's lens material: the same warp as lensDistortion:k1, k2")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
