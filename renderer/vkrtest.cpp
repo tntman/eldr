@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <tuple>
 #include <vector>
@@ -281,6 +282,16 @@ int main()
                 VK_API_VERSION_MAJOR(info.apiVersion),
                 VK_API_VERSION_MINOR(info.apiVersion),
                 VK_API_VERSION_PATCH(info.apiVersion));
+
+    // Pipelines cache in a folder of this run's (Device::LoadPipelineCache).
+    const std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "eldr_vkrtest_pipelines";
+    std::error_code cacheError;
+    std::filesystem::remove_all(cacheDir, cacheError);
+#ifdef _WIN32
+    _putenv_s("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str());
+#else
+    setenv("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str(), 1);
+#endif
 
     try {
         vkr::Device device;
@@ -2732,6 +2743,20 @@ int main()
             }
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
+        }
+
+        {
+            // Pipeline cache: what this run compiled is on disk, and a new
+            // device starts with it.
+            device.SavePipelineCache();
+            uintmax_t bytes = 0;
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
+                bytes = entry.path().extension() == ".bin" ? entry.file_size() : bytes;
+            }
+            Expect(bytes > 0, "pipeline cache: saved");
+            vkr::Device second;
+            vkr::Renderer secondRenderer(second);
+            Expect(second.pipelineCacheBytes == bytes, "pipeline cache: a new device starts with it");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());

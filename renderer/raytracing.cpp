@@ -246,7 +246,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
                      module, "main"};
         cci.layout = _layout;
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, pipeline);
         vkDestroyShaderModule(device, module, nullptr);
         Check(r, "vkCreateComputePipelines");
     }
@@ -262,7 +262,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         const int32_t texels = i == 0 ? kIrradianceTexels : kVisibilityTexels;
         const VkSpecializationInfo spec{1, &entry, sizeof(texels), &texels};
         cci.stage.pSpecializationInfo = &spec;
-        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_giUpdate[i]);
+        r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_giUpdate[i]);
     }
     vkDestroyShaderModule(device, giModule, nullptr);
     Check(r, "vkCreateComputePipelines");
@@ -315,7 +315,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     rci.pGroups = groups;
     rci.maxPipelineRayRecursionDepth = 1;  // only ray generation shaders trace
     rci.layout = _layout;
-    r = _fn->createPipelines(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rci, nullptr, &_pipeline);
+    r = _fn->createPipelines(device, VK_NULL_HANDLE, _dev.pipelineCache, 1, &rci, nullptr, &_pipeline);
     for (const VkPipelineShaderStageCreateInfo &s : stageInfos) {
         vkDestroyShaderModule(device, s.module, nullptr);
     }

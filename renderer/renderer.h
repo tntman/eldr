@@ -193,6 +193,9 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Shading pipelines a frame compiles are saved to the device's
+        // pipeline cache file (Device::LoadPipelineCache) for later runs.
+        bool pipelineCache = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -344,6 +347,7 @@ private:
     VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
+    bool _savePipelines = true;  // Frame::pipelineCache
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment

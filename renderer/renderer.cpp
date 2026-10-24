@@ -316,6 +316,23 @@ Renderer::Renderer(Device &device)
     _dev.Reserve(_frameData, sizeof(FrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
+    // The shaders here key the device's pipeline cache file.
+    // ponytail: other files' shaders aren't in the key; the driver skips
+    // their stale entries.
+    uint64_t hash = 14695981039346656037ull;  // FNV-1a
+    for (const auto &[words, bytes] :
+         {std::pair{kMeshVert, sizeof(kMeshVert)}, {kMeshDepthVert, sizeof(kMeshDepthVert)},
+          {kMeshFrag, sizeof(kMeshFrag)}, {kMeshGraphVert, sizeof(kMeshGraphVert)},
+          {kMeshGraphFrag, sizeof(kMeshGraphFrag)}, {kMeshLayersFrag, sizeof(kMeshLayersFrag)},
+          {kMeshGraphLayersFrag, sizeof(kMeshGraphLayersFrag)}, {kMaskFrag, sizeof(kMaskFrag)},
+          {kSkyFrag, sizeof(kSkyFrag)}, {kCullComp, sizeof(kCullComp)}, {kLightsComp, sizeof(kLightsComp)},
+          {kSkinComp, sizeof(kSkinComp)}, {kShadowTintFrag, sizeof(kShadowTintFrag)},
+          {kShadowMinComp, sizeof(kShadowMinComp)}}) {
+        for (size_t i = 0; i < bytes / sizeof(uint32_t); ++i) {
+            hash = (hash ^ words[i]) * 1099511628211ull;
+        }
+    }
+    _dev.LoadPipelineCache(hash);
     _CreatePipelines();
     _fog.CreatePipelines(_layout);
     _CreateConstantImages();
@@ -579,7 +596,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                      VK_SHADER_STAGE_COMPUTE_BIT, module, "main"};
         cci.layout = _layout;
-        const VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        const VkResult r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, pipeline);
         vkDestroyShaderModule(device, module, nullptr);
         Check(r, "vkCreateComputePipelines");
     }
@@ -718,7 +735,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
             }
             VkGraphicsPipelineCreateInfo create = info;
             create.pStages = stages;
-            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create, nullptr, &out[v]);
+            res = vkCreateGraphicsPipelines(device, _dev.pipelineCache, 1, &create, nullptr, &out[v]);
         }
         return res;
     };
@@ -860,7 +877,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         VkGraphicsPipelineCreateInfo kci = ci;
         kci.pStages = skyStages;
         kci.pVertexInputState = &noInput;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
+        r = vkCreateGraphicsPipelines(device, _dev.pipelineCache, 1, &kci, nullptr, &_skyPipeline);
     }
 
     for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
@@ -887,6 +904,9 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
         _CreatePipelines(false, set);
         if (_displacedPipelines) {
             _CreatePipelines(true, set);
+        }
+        if (_savePipelines) {
+            _dev.SavePipelineCache();  // the next run starts with them
         }
         return set;
     }
@@ -1819,6 +1839,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
+    _savePipelines = frame.pipelineCache;
     if (gpu.displaced && !_displacedPipelines) {  // the first displaced material
         _CreatePipelines(true);
         for (uint32_t set = 0; set < _shadingSets.size(); ++set) {
