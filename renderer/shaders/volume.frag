@@ -31,7 +31,7 @@ layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 63) uniform sampler2D sceneDepth;  // window [0, 1], prepass or not
 #include "volume.glsl"
 // The nearest translucent surfaces' window depth (VolumePass::Part).
-layout(set = 0, binding = 67) uniform sampler2D translucentDepth;
+layout(set = 0, binding = 68) uniform sampler2D translucentDepth;
 
 layout(push_constant) uniform Params {
     float stepSize;     // density voxels per step

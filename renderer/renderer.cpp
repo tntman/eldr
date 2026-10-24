@@ -537,7 +537,7 @@ void Renderer::_CreateDescriptors()
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {67, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
@@ -1378,7 +1378,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorImageInfo translucentDepth{
         _clampSampler, _volumePass->TranslucentDepth() ? _volumePass->TranslucentDepth() : _brdfLut.view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    write(67, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentDepth);
+    write(68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentDepth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
