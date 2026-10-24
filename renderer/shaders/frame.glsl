@@ -40,8 +40,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 probeMin[8];    // influence and parallax box; w: blend distance (0: everywhere)
     vec4 probeMax[8];
     vec4 probeSh[32];    // per probe its irradiance SH L0, L1 (rgb)
-    vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
-    uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
+    vec4 planarPlane[4]; // the mirrors' planes (unit normal towards the camera, offset)
+    uvec4 planarInfo;    // the mirrors' mesh slots (DrawInfo), kNone: unused
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
 } frame;
 

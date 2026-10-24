@@ -205,6 +205,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Normalize Reflection Probes (by GI/SSGI light)", t.probeNormalize, VtValue(frame.probeNormalize)},
         {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
+        {"Planar Reflection Mirrors (most)", t.planarCount, VtValue(int(frame.planarCount))},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},

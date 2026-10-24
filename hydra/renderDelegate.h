@@ -107,6 +107,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeNormalize, "hdvk:probeNormalize"))            \
     ((planarReflections, "hdvk:planarReflections"))          \
     ((planarScale, "hdvk:planarScale"))                      \
+    ((planarCount, "hdvk:planarCount"))                  \
     ((volumes, "hdvk:volumes"))                              \
     ((volumeStepSize, "hdvk:volumeStepSize"))                \
     ((volumeMaxSteps, "hdvk:volumeMaxSteps"))                \

@@ -44,8 +44,8 @@ struct FrameData {
     float probeMin[8][4];        // influence box, blend distance (0: everywhere)
     float probeMax[8][4];
     float probeSh[8 * 4][4];     // irradiance SH L0, L1 per probe
-    float planarPlane[4];    // the mirror's plane, facing the camera
-    uint32_t planarInfo[4];  // the mirror's mesh slot
+    float planarPlane[4][4]; // the mirrors' planes, facing the camera
+    uint32_t planarInfo[4];  // the mirrors' mesh slots, kNone: unused
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
 };
 
@@ -502,7 +502,7 @@ void Renderer::_CreateDescriptors()
         {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
-        {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Scene::Gpu::kMaxMirrors, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -530,7 +530,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + Reflections::kMaxProbes - 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + Reflections::kMaxProbes - 1 + Scene::Gpu::kMaxMirrors - 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
@@ -1167,10 +1167,14 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         probeInfos[i] = {_clampSampler, probe ? _reflections->Probes()[i].cube.view : _blackCube.view,
                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     }
-    const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
-    const VkDescriptorImageInfo planarInfo{_clampSampler, planar, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo planarInfos[Scene::Gpu::kMaxMirrors];
+    for (uint32_t i = 0; i < Scene::Gpu::kMaxMirrors; ++i) {
+        const bool planar = _reflections && i < _reflections->Planars().size();
+        planarInfos[i] = {_clampSampler, planar ? _reflections->Planars()[i].view : _brdfLut.view,
+                          VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    }
     write(50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, probeInfos, Reflections::kMaxProbes);
-    write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &planarInfo);
+    write(51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, planarInfos, Scene::Gpu::kMaxMirrors);
     write(63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &volumeDepth);
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
     write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
@@ -1970,7 +1974,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     const bool fog = _SetupFog(gpu, frame, &fd);
-    const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
     if (_reflections && !_reflections->Probes().empty()) {
         fd.features[0] |= kFeatureProbe;
         const auto &probes = _reflections->Probes();
@@ -1986,10 +1989,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             }
         }
     }
-    if (planarImage) {
+    std::fill(fd.planarInfo, fd.planarInfo + 4, kNone);
+    if (_reflections && !_reflections->Planars().empty()) {
         fd.features[0] |= kFeaturePlanar;
-        std::copy(_reflections->PlanarPlane(), _reflections->PlanarPlane() + 4, fd.planarPlane);
-        fd.planarInfo[0] = gpu.mirrorSlot;
+        for (size_t i = 0; i < _reflections->Planars().size(); ++i) {
+            const Reflections::Planar &planar = _reflections->Planars()[i];
+            std::copy(planar.plane, planar.plane + 4, fd.planarPlane[i]);
+            fd.planarInfo[i] = planar.slot;
+        }
     }
     // Culling output; host-visible so VisibleInstances() can read it back.
     // One set of commands for the camera, one per cascade, one for atlas tiles.
@@ -2093,9 +2100,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
         }
     };
-    if (planarImage) {
-        // Rendered (and left for readback) by the reflections' renderer.
-        ImageBarrier(_cmd, planarImage, Range(VK_IMAGE_ASPECT_COLOR_BIT),
+    for (const Reflections::Planar &planar : _reflections ? _reflections->Planars() : std::vector<Reflections::Planar>{}) {
+        // Rendered (and left for readback) by the reflections' renderers.
+        ImageBarrier(_cmd, planar.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,

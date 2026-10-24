@@ -2578,7 +2578,19 @@ int main()
             Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflection: only glossy floors");
             floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
             scene.Commit();
-            Expect(Render(renderer, scene, frame).At(32, 16, 0) > 0.1f, "planar reflection: a flagged mirror");
+            const float flagged = Render(renderer, scene, frame).At(32, 16, 0);
+            Expect(flagged > 0.1f, "planar reflection: a flagged mirror");
+            // A second, larger flagged mirror far behind (z = -9): it comes
+            // first, the floor is the second render and image.
+            vkr::Mesh *wall = scene.AddMesh();
+            wall->points = {-15, -15, -9, 15, -15, -9, 15, 15, -9, -15, -15, -9, 15, 15, -9, -15, 15, -9};
+            wall->material = chrome;
+            wall->planarReflection = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene, frame).At(32, 16, 0) - flagged) < 0.02f * flagged,
+                   "planar reflections: two mirrors, each its own");
+            frame.planarCount = 1;
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflections: only the largest");
         }
 
         {

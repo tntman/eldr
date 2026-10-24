@@ -1,7 +1,7 @@
 // Reflection probe and planar reflections (Renderer's Reflections,
 // probes.h); include after frame.glsl.
 layout(set = 0, binding = 50) uniform samplerCube probeCubes[8];  // world directions; level 0 alpha: distance (0: sky)
-layout(set = 0, binding = 51) uniform sampler2D planarReflection;  // the scene mirrored, premultiplied
+layout(set = 0, binding = 51) uniform sampler2D planarReflections[4];  // the scene mirrored, premultiplied
 
 // Probe i's prefiltered light along the reflection ray p + r t, parallax
 // corrected: the direction from its capture point to where the ray meets
@@ -69,23 +69,31 @@ vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome, vec3 n, vec3 loc
     return sum + dome * (1.0 - weight);
 }
 
-// Whether p of mesh slot `draw` is on the mirror.
-bool OnMirror(uint draw, vec3 p)
+// Which mirror p of mesh slot `draw` is on (-1: none).
+int OnMirror(uint draw, vec3 p)
 {
-    return Feature(kFeaturePlanar) && draw == frame.planarInfo.x &&
-           abs(dot(frame.planarPlane.xyz, p) + frame.planarPlane.w) <= 1e-3 * length(p - frame.cameraPos.xyz);
+    if (!Feature(kFeaturePlanar)) {
+        return -1;
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (draw == frame.planarInfo[i] &&
+            abs(dot(frame.planarPlane[i].xyz, p) + frame.planarPlane[i].w) <= 1e-3 * length(p - frame.cameraPos.xyz)) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 // The mirrored scene at this pixel, shifted by the normal's tilt from the
 // plane (normal maps ripple it), over `specular` where it shows nothing;
 // faded out from roughness 0.3 to 0.6 like SSR.
 // ponytail: one sharp reflection, no blur for rougher mirrors.
-vec3 PlanarSpecular(vec3 specular, vec3 p, vec3 n, float perceptual)
+vec3 PlanarSpecular(int i, vec3 specular, vec3 p, vec3 n, float perceptual)
 {
-    vec3 tilt = n - frame.planarPlane.xyz * dot(n, frame.planarPlane.xyz);
+    vec3 tilt = n - frame.planarPlane[i].xyz * dot(n, frame.planarPlane[i].xyz);
     vec4 a = frame.viewProj * vec4(p, 1.0);
     vec4 b = frame.viewProj * vec4(p + tilt * (0.1 * length(p - frame.cameraPos.xyz)), 1.0);
     vec2 uv = gl_FragCoord.xy / frame.viewport.xy + (b.xy / b.w - a.xy / a.w) * 0.5;
-    vec4 hit = textureLod(planarReflection, uv, 0.0);
+    vec4 hit = textureLod(planarReflections[nonuniformEXT(i)], uv, 0.0);
     return mix(specular, hit.rgb + (1.0 - hit.a) * specular, 1.0 - smoothstep(0.3, 0.6, perceptual));
 }

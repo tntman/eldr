@@ -23,11 +23,12 @@ namespace vkr {
 // geometry does once it has stopped changing (or every kRecaptureFrames
 // frames while it keeps changing).
 //
-// Planar reflections: the scene mirrored in the plane of the mirror mesh
-// (Scene::Gpu::mirrorSlot: flagged by primvars:hdvk:planarReflection, or
-// the largest flat glossy surface), clipped at it (an oblique near plane)
-// and rendered at a fraction of the frame's size every frame the mirror is
-// in view; the mirror's pixels take their reflection from it.
+// Planar reflections: for each mirror mesh (Scene::Gpu::mirrors: flagged
+// by primvars:hdvk:planarReflection, or the largest flat glossy surface;
+// up to Frame::planarCount) the scene mirrored in its plane, clipped at it
+// (an oblique near plane) and rendered by a renderer of its own at a
+// fraction of the frame's size every frame the mirror is in view; the
+// mirror's pixels take their reflection from it.
 class Reflections {
 public:
     explicit Reflections(Device &device);
@@ -58,12 +59,16 @@ public:
     const std::vector<Probe> &Probes() const { return _probes; }
     bool ProbePending() const { return _pending; }
 
-    // This frame's planar reflection (premultiplied HDR, in
-    // TRANSFER_SRC_OPTIMAL) and the plane it mirrors (unit normal towards
-    // the camera, offset), or no image.
-    VkImage PlanarImage() const;
-    VkImageView PlanarView() const;
-    const float *PlanarPlane() const { return _plane; }
+    // This frame's planar reflections: each image (premultiplied HDR, in
+    // TRANSFER_SRC_OPTIMAL), the plane it mirrors (unit normal towards the
+    // camera, offset) and the mirror's mesh slot.
+    struct Planar {
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        float plane[4] = {};
+        uint32_t slot = 0;
+    };
+    const std::vector<Planar> &Planars() const { return _planars; }
 
     // GPU milliseconds of this frame's capture and planar render (0: none).
     double probeMs = 0, planarMs = 0;
@@ -72,7 +77,8 @@ public:
 
 private:
     void _Capture(const Scene &scene, const Renderer::Frame &frame, Probe &probe);
-    bool _RenderPlanar(const Scene &scene, const Renderer::Frame &frame);
+    bool _RenderPlanar(const Scene &scene, const Renderer::Frame &frame, const Scene::Gpu::Mirror &mirror,
+                       Renderer &renderer, float plane[4]);
 
     Device &_dev;
     std::unique_ptr<Renderer> _renderer;  // made on first use
@@ -80,8 +86,8 @@ private:
     uint64_t _lastVersion = 0;                        // last frame's scene version
     uint32_t _stableFrames = 0, _sinceCapture = 0, _updates = 0;
     bool _pending = false;
-    bool _planar = false;  // rendered this frame
-    float _plane[4] = {};
+    std::vector<std::unique_ptr<Renderer>> _planarRenderers;  // one per mirror
+    std::vector<Planar> _planars;                             // rendered this frame
 };
 
 } // namespace vkr

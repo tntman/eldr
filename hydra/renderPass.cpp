@@ -209,7 +209,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
-                                {t.volumeResolution, &frame.volume.resolution}}) {
+                                {t.volumeResolution, &frame.volume.resolution},
+                                {t.planarCount, &frame.planarCount}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // 0 allowed: no skinned instance blocks rays.

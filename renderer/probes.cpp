@@ -142,16 +142,6 @@ Reflections::~Reflections()
     }
 }
 
-VkImage Reflections::PlanarImage() const
-{
-    return _planar ? _renderer->HdrColorImage() : VK_NULL_HANDLE;
-}
-
-VkImageView Reflections::PlanarView() const
-{
-    return _planar ? _renderer->HdrColorView() : VK_NULL_HANDLE;
-}
-
 void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)
 {
     const Scene::Gpu &gpu = scene.GetGpu();
@@ -229,9 +219,24 @@ void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)
         stale = false;
     }
     _pending = stale;
-    const bool mirror = frame.planarReflections && gpu.mirrorSlot != kNone;
-    _planar = mirror && _RenderPlanar(scene, frame);
-    if (_probes.empty() && !mirror) {
+    // Renderers for the mirrors, theirs to keep while the mirror stays.
+    const size_t mirrors =
+        frame.planarReflections ? std::min<size_t>(gpu.mirrors.size(), std::max(frame.planarCount, 1u)) : 0;
+    _planarRenderers.resize(mirrors);
+    _planars.clear();
+    for (size_t i = 0; i < mirrors; ++i) {
+        if (!_planarRenderers[i]) {
+            _planarRenderers[i] = std::make_unique<Renderer>(_dev);
+        }
+        Planar planar;
+        if (_RenderPlanar(scene, frame, gpu.mirrors[i], *_planarRenderers[i], planar.plane)) {
+            planar.image = _planarRenderers[i]->HdrColorImage();
+            planar.view = _planarRenderers[i]->HdrColorView();
+            planar.slot = gpu.mirrors[i].slot;
+            _planars.push_back(planar);
+        }
+    }
+    if (_probes.empty()) {
         _renderer.reset();  // its targets and shadow maps are the bulk of the memory
     }
 }
@@ -321,15 +326,16 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, Pro
     probe.lighting = gpu.lightingHash;
 }
 
-bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame)
+bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame, const Scene::Gpu::Mirror &m,
+                                Renderer &renderer, float plane[4])
 {
     const Scene::Gpu &gpu = scene.GetGpu();
     const Mat4 viewProj = ToMat4(frame.viewProj);
     // The mirror's bounds in view: not all corners beyond one clip plane.
     int outside[6] = {};
     for (int k = 0; k < 8; ++k) {
-        const float p[3] = {(k & 1) ? gpu.mirrorMax[0] : gpu.mirrorMin[0], (k & 2) ? gpu.mirrorMax[1] : gpu.mirrorMin[1],
-                            (k & 4) ? gpu.mirrorMax[2] : gpu.mirrorMin[2]};
+        const float p[3] = {(k & 1) ? m.max[0] : m.min[0], (k & 2) ? m.max[1] : m.min[1],
+                            (k & 4) ? m.max[2] : m.min[2]};
         float clip[4];
         for (int j = 0; j < 4; ++j) {
             clip[j] = p[0] * viewProj.m[0][j] + p[1] * viewProj.m[1][j] + p[2] * viewProj.m[2][j] + viewProj.m[3][j];
@@ -340,8 +346,7 @@ bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame
         }
     }
     const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
-    float plane[4];
-    std::copy(gpu.mirrorPlane, gpu.mirrorPlane + 4, plane);
+    std::copy(m.plane, m.plane + 4, plane);
     const Vec3 normal{plane[0], plane[1], plane[2]};
     const float side = Dot(normal, eye) + plane[3];
     const float extent = Length(Vec3{gpu.boundsMax[0] - gpu.boundsMin[0], gpu.boundsMax[1] - gpu.boundsMin[1],
@@ -366,8 +371,8 @@ bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame
     const Mat4 inv = Inverse(mirrored);
     // Clipped just above the mirror, which would otherwise cover its own
     // reflection (and beyond the flatness Scene allows it).
-    const float mirrorSize = Length(Vec3{gpu.mirrorMax[0] - gpu.mirrorMin[0], gpu.mirrorMax[1] - gpu.mirrorMin[1],
-                                         gpu.mirrorMax[2] - gpu.mirrorMin[2]});
+    const float mirrorSize = Length(Vec3{m.max[0] - m.min[0], m.max[1] - m.min[1],
+                                         m.max[2] - m.min[2]});
     const float clip[4] = {plane[0], plane[1], plane[2], plane[3] - 2e-3f * mirrorSize};
     float c[4] = {}, q[4] = {};
     for (int j = 0; j < 4; ++j) {
@@ -386,9 +391,6 @@ bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame
         mirrored.m[i][2] = scale * clip[i] - mirrored.m[i][3];
     }
 
-    if (!_renderer) {
-        _renderer = std::make_unique<Renderer>(_dev);
-    }
     const float fraction = std::clamp(frame.planarScale, 0.1f, 1.0f);
     const uint32_t width = std::max(1u, uint32_t(std::lround(float(frame.width) * fraction)));
     const uint32_t height = std::max(1u, uint32_t(std::lround(float(frame.height) * fraction)));
@@ -400,9 +402,8 @@ bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame
     pf.clusteredLights = false;
     pf.shadowCascades = 1;
     pf.skinning = _updates == 1;  // the first frame: no joints were skinned yet
-    _renderer->Render(scene, pf, Renderer::Targets{});
-    planarMs = _renderer->GetStats().gpuMs;
-    std::copy(plane, plane + 4, _plane);
+    renderer.Render(scene, pf, Renderer::Targets{});
+    planarMs += renderer.GetStats().gpuMs;
     return true;
 }
 

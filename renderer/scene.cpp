@@ -4,6 +4,7 @@
 #include "lod.h"
 
 #include <algorithm>
+#include <tuple>
 #include <chrono>
 #include <atomic>
 #include <cmath>
@@ -1754,12 +1755,12 @@ void Scene::Commit()
                                        m->_worldMax[1], m->_worldMax[2]});
         }
     }
-    // Planar reflections' mirror: a flagged flat mesh, else the largest
-    // glossy one (its world bounds' diagonal) spanning a third of the scene.
-    // ponytail: one mirror, from its first instance.
-    _gpu.mirrorSlot = kNone;
+    // Planar reflections' mirrors: the flagged flat meshes, else the
+    // largest glossy one (its world bounds' diagonal) spanning a third of
+    // the scene. ponytail: each mesh from its first instance, one render
+    // each (coplanar mirrors don't share one).
+    std::vector<std::tuple<bool, float, Gpu::Mirror>> mirrors;  // flagged, size
     const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
-    float mirrorScore = 0.0f;
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
@@ -1771,8 +1772,7 @@ void Scene::Commit()
                             !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
         const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
                                        m._worldMax[2] - m._worldMin[2]});
-        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
-        if (score <= mirrorScore) {
+        if (!m.planarReflection && !(glossy && size >= sceneSize / 3.0f && size > 0.0f)) {
             continue;
         }
         const float *x = m.transforms.data();  // row-vector order
@@ -1786,12 +1786,24 @@ void Scene::Commit()
         if (Dot(n, n) < 0.5f) {
             continue;
         }
-        mirrorScore = score;
-        _gpu.mirrorSlot = uint32_t(slot);
+        Gpu::Mirror mirror;
+        mirror.slot = uint32_t(slot);
         const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
-        std::copy(plane, plane + 4, _gpu.mirrorPlane);
-        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
-        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+        std::copy(plane, plane + 4, mirror.plane);
+        std::copy(m._worldMin, m._worldMin + 3, mirror.min);
+        std::copy(m._worldMax, m._worldMax + 3, mirror.max);
+        mirrors.push_back({m.planarReflection, size, mirror});
+    }
+    std::sort(mirrors.begin(), mirrors.end(), [](const auto &a, const auto &b) {
+        return std::tie(std::get<0>(a), std::get<1>(a)) > std::tie(std::get<0>(b), std::get<1>(b));
+    });
+    const bool flagged = !mirrors.empty() && std::get<0>(mirrors[0]);
+    _gpu.mirrors.clear();
+    for (const auto &[isFlagged, size, mirror] : mirrors) {
+        if (_gpu.mirrors.size() == (flagged ? Gpu::kMaxMirrors : 1u) || isFlagged != flagged) {
+            break;
+        }
+        _gpu.mirrors.push_back(mirror);
     }
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),

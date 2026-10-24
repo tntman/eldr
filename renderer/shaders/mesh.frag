@@ -746,7 +746,8 @@ void main()
     // it (Lagarde 2014), as in Filament.
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
-    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
+    int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
+    bool mirror = mirrorIndex >= 0;
     if (Feature(kFeatureProbe) && !mirror) {
         // The local ambient light probes are normalized by (GI or SSGI's).
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
@@ -758,7 +759,7 @@ void main()
     // they replace the dome (or probe) where they hit something; where the
     // hit is partly background the dome shows through.
     if (mirror) {
-        specular = PlanarSpecular(specular, inWorldPos, n, perceptual);
+        specular = PlanarSpecular(mirrorIndex, specular, inWorldPos, n, perceptual);
     }
     float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
 #ifdef LAYERS
