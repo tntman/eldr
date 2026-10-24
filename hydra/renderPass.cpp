@@ -155,7 +155,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.authoredProbes, &frame.authoredProbes},
                                 {t.probeNormalize, &frame.probeNormalize},
                                 {t.domeSun, &frame.domeSun},
-                                {t.fogGiAmbient, &frame.fogGiAmbient}}) {
+                                {t.fogGiAmbient, &frame.fogGiAmbient},
+                                {t.lightTextures, &frame.lightTextures}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},

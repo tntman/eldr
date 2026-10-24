@@ -49,6 +49,7 @@ public:
         bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
         bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
+        bool lightTextures = true;       // rect and disk lights' inputs:texture:file
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
         bool normalMaps = true;
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs

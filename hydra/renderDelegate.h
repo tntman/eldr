@@ -38,6 +38,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((frustumCulling, "hdvk:frustumCulling"))                \
     ((localLights, "hdvk:localLights"))                      \
     ((clusteredLights, "hdvk:clusteredLights"))              \
+    ((lightTextures, "hdvk:lightTextures"))              \
     ((imageBasedLighting, "hdvk:imageBasedLighting"))        \
     ((normalMaps, "hdvk:normalMaps"))                        \
     ((materialGraphs, "hdvk:materialGraphs"))                \

@@ -421,6 +421,10 @@ struct Light {
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
+    // Rect, disk: an image over the emitting surface (UsdLux
+    // inputs:texture:file) multiplying the radiance; st (0, 0) at the -X -Y
+    // corner (the disk's square around it).
+    std::shared_ptr<Texture> texture;
 
 private:
     friend class Scene;

@@ -1,11 +1,13 @@
 """Headless check of HdVk's lights and lighting effects through Hydra:
-cylinder lights, soft sun shadows, volumetric fog, the reflection probe and
-planar reflections.
+cylinder lights, soft sun shadows, volumetric fog, the reflection probe,
+planar reflections and light textures.
 Run: usdenv.cmd python tests\\test_lighting.py"""
+import os
 import sys
+import tempfile
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+from PySide6.QtGui import QColor, QImage, QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdShade
@@ -175,6 +177,29 @@ UsdGeom.PrimvarsAPI(probe).CreatePrimvar("hdvk:reflectionProbe", Sdf.ValueTypeNa
                                          UsdGeom.Tokens.constant).Set(True)
 lit = render(stage, {**linear, "hdvk:reflectionProbe": True})
 expect(gray(lit, 8, 32) > 150 and gray(lit, 48, 32) < 10, "hdvk:authoredProbes: a Cube flagged as a probe")
+
+# A textured rect light (inputs:texture:file): black over its -X half,
+# white over its +X half, close to the wall: the wall is dark under the
+# black half, lit under the white one; hdvk:lightTextures off: lit evenly.
+pattern = QImage(64, 2, QImage.Format_RGB32)
+pattern.fill(QColor(255, 255, 255))
+for x in range(32):
+    for y in range(2):
+        pattern.setPixelColor(x, y, QColor(0, 0, 0))
+patternFile = os.path.join(tempfile.mkdtemp(), "halves.png")
+pattern.save(patternFile)
+stage = wall_stage()
+panel = UsdLux.RectLight.Define(stage, "/panel")
+panel.CreateWidthAttr(6)
+panel.CreateHeightAttr(2)
+panel.CreateIntensityAttr(4)
+panel.CreateTextureFileAttr(patternFile)
+panel.AddTranslateOp().Set(Gf.Vec3d(0, 0, 0.3))
+image = render(stage, linear)
+expect(gray(image, 12, 32) < 0.2 * gray(image, 52, 32) and gray(image, 52, 32) > 50,
+       "rect light texture: the wall is dark under its black half")
+image = render(stage, {**linear, "hdvk:lightTextures": False})
+expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "hdvk:lightTextures off: lit evenly")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

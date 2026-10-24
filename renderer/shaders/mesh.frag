@@ -312,6 +312,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 r = reflect(-v, n);
     float diffuseE, specularE, sourceRadius;
     vec3 l;
+    vec3 diffuseTint = vec3(1.0), specularTint = vec3(1.0);  // a rect or disk light's texture
     if (uint(light.position.w) == kLightSphere) {
         float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
         diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
@@ -366,12 +367,33 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
         uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
         l = normalize(toLight + hw * uv.x + hh * uv.y);
+        int tex = int(light.focusTint.w);
+        if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
+            // The texture where the specular representative point is, and
+            // above p (its foot on the plane) for diffuse, each at the mip
+            // of what it gathers: the lobe's footprint at the light, and
+            // the light seen from its height over the plane.
+            // ponytail: two taps; no prefiltered form factor (Heitz's
+            // filtered polygon lights would get the wide lobes right).
+            float extent = length(hw) + length(hh);
+            float texels = float(max(textureSize(textures[nonuniformEXT(tex)], 0).x,
+                                     textureSize(textures[nonuniformEXT(tex)], 0).y));
+            float aLobe = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+            float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
+            specularTint = textureLod(textures[nonuniformEXT(tex)], uv * 0.5 + 0.5, lobeLod).rgb;
+            vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
+            foot = rect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
+            float height = abs(dot(toLight, light.axis.xyz));
+            float footLod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
+            diffuseTint = textureLod(textures[nonuniformEXT(tex)], foot * 0.5 + 0.5, footLod).rgb;
+        }
     }
     float aWide = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
-    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
+    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w * diffuseTint;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
     specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
+    specular *= specularTint;
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 

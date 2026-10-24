@@ -67,7 +67,7 @@ struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
-    float focusTint[4];
+    float focusTint[4] = {0, 0, 0, -1};  // w: rect/disk: the texture's bindless index (-1: none)
 };
 
 constexpr VkBufferUsageFlags kPoolUsage =
@@ -1907,6 +1907,9 @@ void Scene::Commit()
             g.shaping[1] = cone;
             g.shaping[2] = l->focus;
             std::copy(l->focusTint, l->focusTint + 3, g.focusTint);
+            const bool flat = l->type == Light::Type::Rect || l->type == Light::Type::Disk;
+            const uint32_t clamp = uint32_t(Wrap::Clamp) * (1 + kWrapModes);
+            g.focusTint[3] = flat ? float(_TextureIndex(l->texture.get(), clamp)) : -1.0f;  // its bindless index
             if (l->castShadows) {
                 // Mirrors LightRange() in shaders/lights.glsl.
                 Scene::Gpu::ShadowCaster c{};

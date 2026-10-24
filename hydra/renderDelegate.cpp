@@ -190,6 +190,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Dome Sun Threshold (radiance)", t.domeSunThreshold, VtValue(frame.domeSunThreshold)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
+        {"Light Textures (rect/disk inputs:texture:file)", t.lightTextures, VtValue(frame.lightTextures)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},

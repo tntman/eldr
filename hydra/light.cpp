@@ -67,8 +67,8 @@ HdVkLight::~HdVkLight()
 
 // UsdLux semantics as in hdEmbree: emitted radiance is color * intensity *
 // 2^exposure (* blackbody), divided by the light's area if normalize.
-// ponytail: ignores dome poleAxis/portals, shadow color/distance, IES
-// profiles and rect textures.
+// ponytail: ignores dome poleAxis/portals, shadow color/distance and IES
+// profiles.
 void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
     if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyResource))) {
@@ -86,19 +86,23 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         color = GfCompMult(color, Blackbody(param(HdLightTokens->colorTemperature, 6500.0f)));
     }
     const bool visible = sceneDelegate->GetVisible(id);
-    const bool normalize = param(HdLightTokens->normalize, false);
-
-    if (_dome) {
-        const GfMatrix4f toLocal(xf.GetInverse());
-        std::copy(toLocal.data(), toLocal.data() + 16, _dome->worldToLocal);
-        std::copy(color.data(), color.data() + 3, _dome->radiance);
+    // inputs:texture:file (domes, rects, disks).
+    auto texture = [&]() -> std::shared_ptr<vkr::Texture> {
         const VtValue file = param(HdLightTokens->textureFile, VtValue());
         std::string path;
         if (file.IsHolding<SdfAssetPath>()) {
             const SdfAssetPath &p = file.UncheckedGet<SdfAssetPath>();
             path = p.GetResolvedPath().empty() ? p.GetAssetPath() : p.GetResolvedPath();
         }
-        _dome->texture = path.empty() ? nullptr : _textures->Get(path, TfToken());
+        return path.empty() ? nullptr : _textures->Get(path, TfToken());
+    };
+    const bool normalize = param(HdLightTokens->normalize, false);
+
+    if (_dome) {
+        const GfMatrix4f toLocal(xf.GetInverse());
+        std::copy(toLocal.data(), toLocal.data() + 16, _dome->worldToLocal);
+        std::copy(color.data(), color.data() + 3, _dome->radiance);
+        _dome->texture = texture();
         _dome->visible = visible;
         *dirtyBits = Clean;
         return;
@@ -155,6 +159,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         const GfVec3d halfWidth = xf.TransformDir(GfVec3d(disk ? radius : 0.5 * param(HdLightTokens->width, 1.0f), 0, 0));
         const GfVec3d halfHeight = xf.TransformDir(GfVec3d(0, disk ? radius : 0.5 * param(HdLightTokens->height, 1.0f), 0));
         light.type = disk ? vkr::Light::Type::Disk : vkr::Light::Type::Rect;
+        light.texture = texture();
         Copy(halfWidth, light.halfWidth);
         Copy(halfHeight, light.halfHeight);
         area = float((disk ? kPi : 4.0) * GfCross(halfWidth, halfHeight).GetLength());
