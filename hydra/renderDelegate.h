@@ -147,7 +147,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssgiThickness, "hdvk:ssgiThickness"))                  \
     ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
     ((rtDisplacement, "hdvk:rtDisplacement"))                \
-    ((ssrDenoise, "hdvk:ssrDenoise"))
+    ((ssrDenoise, "hdvk:ssrDenoise"))                        \
+    ((shadowJitter, "hdvk:shadowJitter"))                    \
+    ((dofJitter, "hdvk:dofJitter"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);

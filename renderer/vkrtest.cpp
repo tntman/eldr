@@ -888,6 +888,7 @@ int main()
                 frame.post.bloomIntensity = 0.0f;
                 frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
                 frame.softShadowSamples = 1;
+                frame.shadowJitter = false;  // PCSS's taps, not the light's shape
                 frame.filmSamples = samples;
                 frame.sampleDimensions = dims;
                 Image img;
@@ -2558,6 +2559,192 @@ int main()
             Expect(std::abs(lit / hardLit - 1.0f) < 0.02f, "soft sun shadows: no self-shadowing on a tilted receiver");
             Expect(penumbra(10.0f, true, false, &unused) <= hard + 1, "Frame::softSunShadows off: hard sun shadows");
             Expect(penumbra(10.0f, false, true, &unused) <= hard + 1, "Frame::softShadows off: hard sun shadows");
+
+            // Jittered light shapes (Frame::shadowJitter): the converged film
+            // of the same scene is the true penumbra of a 10 degree disc. At
+            // ground x the occluder's right edge (x = 0.25, one unit above)
+            // hides the sun's directions up to atan(0.25 - x) from the
+            // vertical, so the lit part of the disc (centre 45 degrees) is
+            // the circular segment beyond t = (atan(0.25 - x) - 45 deg) / 5 deg.
+            // Visibility is the shadowed film over the unshadowed one.
+            sun->angle = 10.0f;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            frame.filmFilterRadius = 0.0f;
+            frame.filmSamples = 128;
+            frame.finalQuality = true;
+            auto film = [&](vkr::Scene &s, const vkr::Renderer::Frame &f) {
+                vkr::Renderer r(device);
+                Image img;
+                for (int i = 0; i < 400; ++i) {
+                    img = Render(r, s, f);
+                    if (r.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto segment = [](float t) {  // part of a unit disc beyond t
+                t = std::clamp(t, -1.0f, 1.0f);
+                return (std::acos(t) - t * std::sqrt(1.0f - t * t)) / 3.14159265f;
+            };
+            sun->castShadows = false;
+            scene.Commit();
+            const Image open = film(scene, frame);
+            sun->castShadows = true;
+            scene.Commit();
+            auto error = [&](const Image &img, float *partial) {
+                float worst = 0.0f;
+                *partial = 0.0f;
+                for (int x = 0; x < 20; ++x) {
+                    const float t = (std::atan(0.25f - PixelNdc(x)) - 0.7853982f) / 0.0872665f;
+                    const float v = img.At(x, 32, 0) / open.At(x, 32, 0);
+                    worst = std::max(worst, std::abs(v - segment(t)));
+                    *partial += v > 0.05f && v < 0.95f ? 1.0f : 0.0f;
+                }
+                return worst;
+            };
+            float jitteredPartial = 0, pcssPartial = 0;
+            const float jittered = error(film(scene, frame), &jitteredPartial);
+            frame.shadowJitter = false;
+            const float pcss = error(film(scene, frame), &pcssPartial);
+            std::printf("shadow jitter: sun penumbra error %.3f over %.0f pixels (PCSS %.3f over %.0f)\n", jittered,
+                        jitteredPartial, pcss, pcssPartial);
+            Expect(jittered < 0.03f && jitteredPartial >= 8, "shadow jitter: the film converges to the sun's penumbra");
+            // Off the film (TAA frames, film off) and for a point sun nothing changes.
+            frame.filmAccumulation = false;
+            const Image taaOff = film(scene, frame);
+            frame.shadowJitter = true;
+            Expect(MaxDifference(film(scene, frame), taaOff) == 0.0f, "shadow jitter: TAA frames keep PCSS");
+            frame.filmAccumulation = true;
+            sun->angle = 0.0f;
+            scene.Commit();
+            const Image pointOn = film(scene, frame);
+            frame.shadowJitter = false;
+            Expect(MaxDifference(film(scene, frame), pointOn) == 0.0f, "shadow jitter: a point sun is unchanged");
+
+            // A sphere light of radius 0.1 at (-0.3, 0, -0.5) behind a
+            // half-plane occluder (x < 0 at z = 0): from ground point g its
+            // disc is cut by the plane through g and the occluder's edge
+            // (the y axis); the lit part is the segment beyond the centre's
+            // angular distance from that plane, over its angular radius.
+            vkr::Scene local(&device);
+            AddQuad(local, -1, -1, 1, 1, 0.5f);
+            AddQuad(local, -4, -4, 0, 4, 0.0f);
+            vkr::Light *sphere = AddSphereLight(local, -0.3f, 0, -0.5f, 0.1f, 50.0f);
+            sphere->castShadows = false;
+            local.Commit();
+            frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            frame.filmFilterRadius = 0.0f;
+            frame.filmSamples = 256;
+            frame.finalQuality = true;
+            const Image localOpen = film(local, frame);
+            sphere->castShadows = true;
+            local.Commit();
+            auto localError = [&](const Image &img, float *partial) {
+                float worst = 0.0f;
+                *partial = 0.0f;
+                for (int x = 34; x < 52; ++x) {
+                    const float gx = PixelNdc(x), len = std::sqrt(0.25f + gx * gx);
+                    const float s = (-0.15f + 0.5f * gx) / len;  // centre to the plane, lit side positive
+                    const float d = std::sqrt((gx + 0.3f) * (gx + 0.3f) + 1.0f);
+                    const float lit = segment(-std::asin(s / d) / std::asin(0.1f / d));
+                    const float v = img.At(x, 32, 0) / localOpen.At(x, 32, 0);
+                    worst = std::max(worst, std::abs(v - lit));
+                    *partial += v > 0.05f && v < 0.95f ? 1.0f : 0.0f;
+                }
+                return worst;
+            };
+            const float localJittered = localError(film(local, frame), &jitteredPartial);
+            frame.shadowJitter = false;
+            const float localPcss = localError(film(local, frame), &pcssPartial);
+            std::printf("shadow jitter: sphere light penumbra error %.3f over %.0f pixels (PCSS %.3f over %.0f)\n",
+                        localJittered, jitteredPartial, localPcss, pcssPartial);
+            Expect(localJittered < 0.03f && jitteredPartial >= 4,
+                   "shadow jitter: the film converges to a sphere light's penumbra");
+            frame.filmAccumulation = false;
+            const Image localTaa = film(local, frame);
+            frame.shadowJitter = true;
+            Expect(MaxDifference(film(local, frame), localTaa) == 0.0f, "shadow jitter: TAA frames keep local PCSS");
+        }
+
+        {
+            // Lens jitter (Frame::dofJitter), through PerspectiveFrame (90
+            // degrees, 64 pixels): f = 1, sensor 2, f/1 focused at 2. A 2 x 2
+            // pixel emitter 4 away spreads over the thin lens's circle of
+            // confusion, 0.5 f^2 / (N (S - f)) * 32 * |D - S| / D = 8 pixels
+            // in radius: its light keeps its sum and its RMS radius is
+            // sqrt(8^2 / 2 + 2^2 / 6). An emitter's edge in the focus plane
+            // stays as sharp as without depth of field. Off the film the
+            // image is the post DOF's, bit for bit.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -0.125f, -0.125f, 0.125f, 0.125f, -4.0f, 1.0f);
+            AddEmitter(scene, -1.0f, 0.75f, 0.25f, 1.5f, -2.0f, 1.0f);  // lower edge at row 44
+            scene.Commit();
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            std::fill(frame.clearColor, frame.clearColor + 4, 0.0f);
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            frame.filmFilterRadius = 0.0f;
+            frame.filmSamples = 256;
+            frame.finalQuality = true;
+            frame.focalLength = 1.0f;
+            frame.sensorWidth = 2.0f;
+            frame.fStop = 1.0f;
+            frame.focusDistance = 2.0f;
+            auto film = [&](const vkr::Renderer::Frame &f) {
+                vkr::Renderer r(device);
+                Image img;
+                for (int i = 0; i < 400; ++i) {
+                    img = Render(r, scene, f);
+                    if (r.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto spot = [](const Image &img, float *rms) {  // the far emitter: rows below 42
+                double sum = 0, moment = 0;
+                for (int y = 0; y < 42; ++y) {
+                    for (int x = 0; x < 64; ++x) {
+                        const double v = img.At(x, y, 1), dx = x + 0.5 - 32.0, dy = y + 0.5 - 32.0;
+                        sum += v;
+                        moment += v * (dx * dx + dy * dy);
+                    }
+                }
+                *rms = float(std::sqrt(moment / std::max(sum, 1e-9)));
+                return float(sum);
+            };
+            const Image jittered = film(frame);
+            frame.depthOfField = false;
+            const Image sharp = film(frame);
+            float rms = 0, sharpRms = 0;
+            const float energy = spot(jittered, &rms), sharpEnergy = spot(sharp, &sharpRms);
+            const float expected = std::sqrt(32.0f + 4.0f / 6.0f);
+            float edge = 0;
+            for (int y = 40; y < 48; ++y) {
+                edge = std::max(edge, std::abs(jittered.At(24, y, 1) - sharp.At(24, y, 1)));
+            }
+            std::printf("dof jitter: spot sum %.2f (sharp %.2f), RMS radius %.2f px (thin lens %.2f), focus edge %.3f\n",
+                        energy, sharpEnergy, rms, expected, edge);
+            Expect(std::abs(energy / sharpEnergy - 1.0f) < 0.05f && std::abs(rms / expected - 1.0f) < 0.08f,
+                   "dof jitter: the film converges to the thin lens's circle of confusion");
+            Expect(edge < 0.1f, "dof jitter: the focus plane stays sharp");
+            frame.depthOfField = true;
+            frame.filmAccumulation = false;
+            const Image post = film(frame);
+            frame.dofJitter = false;
+            Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
         }
 
         {

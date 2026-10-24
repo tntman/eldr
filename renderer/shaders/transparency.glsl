@@ -204,7 +204,7 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
     if (!Feature(kFeatureTranslucentShadows) || tile == kNone) {
         return vec3(1.0);
     }
-    vec3 fromLight = p - light.position.xyz;
+    vec3 fromLight = p - shadowTiles[tile].origin.xyz;
     if (light.shaping.y > kSpotShadowCone) {
         vec3 a = abs(fromLight);
         tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)

@@ -54,6 +54,7 @@ struct FrameData {
     uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
     float screenTrace[4];    // thickness estimator (SSR) on
+    uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
 };
 
 namespace {
@@ -289,8 +290,8 @@ constexpr uint32_t kSampleDims = 8, kDimAo = 0, kDimSsgi = 1;
 constexpr uint32_t kBlueNoiseSize = 64;
 
 // Sobol dimensions 2..9 (Joe and Kuo's new-joe-kuo-6.21201: degree s,
-// coefficients a, initial m) at `index`, in [0, 1).
-float Sobol(uint32_t index, uint32_t dim)
+// coefficients a, initial m) at `index`, all 32 bits.
+uint32_t SobolBits(uint32_t index, uint32_t dim)
 {
     struct Poly {
         uint32_t s, a, m[5];
@@ -315,7 +316,59 @@ float Sobol(uint32_t index, uint32_t dim)
     for (uint32_t i = 0; index; ++i, index >>= 1) {
         x ^= (index & 1u) * v[i];
     }
-    return float(x >> 8) / 16777216.0f;
+    return x;
+}
+
+// The same in [0, 1).
+float Sobol(uint32_t index, uint32_t dim)
+{
+    return float(SobolBits(index, dim) >> 8) / 16777216.0f;
+}
+
+uint32_t ReverseBits(uint32_t x)
+{
+    x = (x << 16) | (x >> 16);
+    x = ((x & 0x00FF00FFu) << 8) | ((x & 0xFF00FF00u) >> 8);
+    x = ((x & 0x0F0F0F0Fu) << 4) | ((x & 0xF0F0F0F0u) >> 4);
+    x = ((x & 0x33333333u) << 2) | ((x & 0xCCCCCCCCu) >> 2);
+    return ((x & 0x55555555u) << 1) | ((x & 0xAAAAAAAAu) >> 1);
+}
+
+uint32_t HashU32(uint32_t x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    return x ^ (x >> 16);
+}
+
+// Owen scrambling of 32-bit fixed point (Burley 2020, "Practical
+// Hash-based Owen Scrambling": the Laine-Karras permutation on reversed bits).
+uint32_t NestedUniformScramble(uint32_t x, uint32_t seed)
+{
+    x = ReverseBits(x) + seed;
+    x ^= x * 0x6c50b47cu;
+    x ^= x * 0xb82f1e52u;
+    x ^= x * 0xc7afe638u;
+    x ^= x * 0x8d22f6e6u;
+    return ReverseBits(x);
+}
+
+// Points of the light shapes and the lens, made on the CPU per sample:
+// Burley's shuffled, Owen-scrambled Sobol (van der Corput, then Sobol
+// dimensions 2 and 3), one sequence per seed. Its first two dimensions are
+// a (0, 2)-sequence: a disc's or sphere's projections converge about twice
+// as fast as through the sample dimensions' unscrambled pairs (measured on
+// 128 samples: 0.02-0.03 worst error in a slab's share, not 0.06-0.08).
+constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2;
+void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
+{
+    index = NestedUniformScramble(index, HashU32(seed));
+    for (uint32_t d = 0; d < dims; ++d) {
+        const uint32_t x = d == 0 ? ReverseBits(index) : SobolBits(index, d - 1);
+        out[d] = float(NestedUniformScramble(x, HashU32(seed * 8 + 1 + d)) >> 8) / 16777216.0f;
+    }
 }
 
 // Blue noise (Ulichney's void-and-cluster, Gaussian sigma 1.5, toroidal):
@@ -1579,7 +1632,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
 // Splits the camera frustum (clamped to the scene) into Frame::shadowCascades
 // slices and fits a stable, texel-snapped orthographic shadow frustum to
 // each. Splits past the last are -1, so Shadow() finds none there.
-bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const
+bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLightDir[3],
+                            FrameData *data) const
 {
     if (gpu.shadowLight == kNone || !gpu.hasBounds) {
         return false;
@@ -1610,7 +1664,7 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
         return false;
     }
 
-    const Vec3 toLight = Normalize({gpu.shadowDirection[0], gpu.shadowDirection[1], gpu.shadowDirection[2]});
+    const Vec3 toLight = Normalize({toLightDir[0], toLightDir[1], toLightDir[2]});
     const Mat4 lightView = LookAlong(toLight * -1.0f);
     float zMin = 1e30f, zMax = -1e30f;  // scene depth range in light view space
     for (const Vec3 &c : corners) {
@@ -1781,6 +1835,7 @@ struct Renderer::ShadowTile {
     float viewProj[16];
     float rect[4];    // atlas uv offset, uv scale
     float params[4];  // shadow texel size per unit of distance from the light, near, far, light size
+    float origin[4];  // where the light is seen from: its centre, or a point of its shape (Frame::shadowJitter)
 };
 
 // Gives atlas tiles to the shadow-casting lights whose range reaches into
@@ -1788,8 +1843,11 @@ struct Renderer::ShadowTile {
 // rest stay unshadowed. Writes each light's first tile (or kNone).
 // The first rtSlots lights by priority are ray-traced instead (written to
 // rtLights, no tiles).
+// With shapeSample (three values in [0, 1), Frame::shadowJitter) each
+// light is seen from that point of its shape, and looked up hard.
 std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
-                                                              float cutoff, uint32_t *rtLights, uint32_t rtSlots)
+                                                              float cutoff, uint32_t *rtLights, uint32_t rtSlots,
+                                                              const float *shapeSample)
 {
     const uint32_t lights = gpu.lightCount + gpu.localLightCount;
     _dev.Reserve(_lightShadows, std::max(lights, 1u) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1853,8 +1911,43 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         const Scene::Gpu::ShadowCaster &c = *cand.caster;
         const bool spot = c.coneAngle <= kSpotShadowCone;
         firstTile[c.light] = uint32_t(tiles.size());
-        const Vec3 position{c.position[0], c.position[1], c.position[2]};
-        const float n = std::max(c.radius * 1.05f, cand.range * 1e-4f), f = std::max(cand.range, n * 2.0f);
+        Vec3 position{c.position[0], c.position[1], c.position[2]};
+        float n = std::max(c.radius * 1.05f, cand.range * 1e-4f);
+        if (shapeSample && frame.softShadows) {
+            // Uniform over a rect's or disk's area, a cylinder's axis; in a
+            // sphere with density 1 / sqrt(1 - r^2), whose projection along
+            // any direction is uniform over the disc it shows a receiver
+            // (the Abel transform of (1 - r^2)^-1/2 is constant).
+            // ponytail: a cylinder only along its axis (across, its radius
+            // stays hard); the near plane clears the sphere from the offset
+            // point, so casters within a radius of a sphere light's surface
+            // drop out of its shadow.
+            using Shape = Scene::Gpu::ShadowCaster::Shape;
+            const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
+            const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
+            const Vec3 hh{c.halfHeight[0], c.halfHeight[1], c.halfHeight[2]};
+            Vec3 offset;
+            if (c.shape == Shape::Sphere) {
+                // Radius sin(t): its CDF is (2t - sin 2t) / pi, inverted by Newton.
+                float t = 0.7853982f;
+                for (int i = 0; i < 8; ++i) {
+                    const float g = (2.0f * t - std::sin(2.0f * t)) / 3.14159265f - shapeSample[2];
+                    t = std::clamp(t - g / std::max((2.0f - 2.0f * std::cos(2.0f * t)) / 3.14159265f, 1e-4f), 0.0f,
+                                   1.5707963f);
+                }
+                const float z = 1.0f - 2.0f * u, r = std::sqrt(std::max(1.0f - z * z, 0.0f));
+                offset = Vec3{r * std::cos(phi), r * std::sin(phi), z} * (std::sin(t) * c.size);
+                n += c.size;
+            } else if (c.shape == Shape::Rect) {
+                offset = hw * (2.0f * u - 1.0f) + hh * (2.0f * v - 1.0f);
+            } else if (c.shape == Shape::Disk) {
+                offset = (hw * std::cos(phi) + hh * std::sin(phi)) * std::sqrt(u);
+            } else {
+                offset = hw * (2.0f * u - 1.0f);
+            }
+            position = position + offset;
+        }
+        const float f = std::max(cand.range, n * 2.0f);
         // A few texels of margin: PCF near a tile's (or cube face's) edge
         // must not read the neighbour.
         const float margin = 1.0f + 6.0f / float(tileSize);
@@ -1870,7 +1963,10 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             t.params[0] = 2.0f * tanHalf / float(tileSize);
             t.params[1] = n;
             t.params[2] = f;
-            t.params[3] = frame.softShadows ? c.size : 0.0f;
+            t.params[3] = frame.softShadows && !shapeSample ? c.size : 0.0f;
+            t.origin[0] = position.x;
+            t.origin[1] = position.y;
+            t.origin[2] = position.z;
             tiles.push_back(t);
         };
         if (spot) {
@@ -2367,8 +2463,13 @@ uint32_t Renderer::VisibleInstances() const
 
 // ponytail: synchronous, one frame in flight. The Hydra layer's GPU sharing
 // (interop.h) skips the readback; frames in flight would come next.
-void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
+void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &out)
 {
+    // The app's camera, or this film sample's through a point of the lens
+    // (Frame::dofJitter, set once the film's state is known below); the
+    // film's and TAA's motion tests compare the app's.
+    Frame lensed = appFrame;
+    const Frame &frame = lensed;
     if (frame.width == 0 || frame.height == 0) {
         return;
     }
@@ -2445,7 +2546,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // matrices used for culling, shadows and reprojection stay unjittered.
     const bool taa = frame.postProcess && frame.taa;
     float jitteredViewProj[16];
-    std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     Mat4 unjitter;          // jittered NDC -> unjittered NDC
     const uint32_t taaSamples = std::clamp(frame.taaSamples, 1u, 256u);
     uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..taaSamples (the film's: its sample)
@@ -2491,6 +2591,54 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                : taa  ? _haltonIndex % std::clamp(frame.interactiveSamples, 1u, 256u) + 1
                                       : 0;
     _stats.sample = noiseSample;
+    const uint32_t sobolIndex = noiseSample > 0 ? noiseSample - 1 : 0;
+    // Depth of field: a thin lens with a circle of confusion
+    // f^2 / (N (S - f)) * |D - S| / D across on the sensor.
+    const bool dofLens = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
+                         frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
+    // Lens jitter (film samples): the camera moves to a point of a disc
+    // whose radius gives that circle of confusion through the pinhole
+    // projection (f S / (2 N (S - f))), sheared so the focus plane stays,
+    // and the post DOF is skipped.
+    const bool lensJitter = film && frame.dofJitter && dofLens;
+    if (lensJitter) {
+        float lens[2];
+        ScrambledSobol(sobolIndex, kSeedLens, lens, 2);
+        const float f = frame.focalLength, focus = frame.focusDistance;
+        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * std::sqrt(lens[0]);
+        const float phi = 6.2831853f * lens[1];
+        const Mat4 inv = ToMat4(appFrame.invViewProj);
+        const Vec3 o = TransformPoint(inv, {0, 0, 0});
+        const Vec3 right = Normalize(TransformPoint(inv, {1, 0, 0}) - o), up = Normalize(TransformPoint(inv, {0, 1, 0}) - o);
+        Vec3 forward = Normalize(Cross(up, right));  // normal of the planes of equal depth
+        if (Dot(forward, TransformPoint(inv, {0, 0, 1}) - TransformPoint(inv, {0, 0, -1})) < 0) {
+            forward = forward * -1.0f;
+        }
+        const Vec3 eye{appFrame.cameraPos[0], appFrame.cameraPos[1], appFrame.cameraPos[2]};
+        // p -> p + d (dot(p - eye, forward) / S - 1): the lens point maps to
+        // the eye, the focus plane to itself; its inverse is the same with -d.
+        auto shear = [&](Vec3 d) {
+            Mat4 m;
+            const float fw[3] = {forward.x, forward.y, forward.z}, dd[3] = {d.x, d.y, d.z};
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    m.m[i][j] += fw[i] * dd[j] / focus;
+                }
+                m.m[3][i] = -dd[i] * (1.0f + Dot(eye, forward) / focus);
+            }
+            return m;
+        };
+        const Vec3 d = (right * std::cos(phi) + up * std::sin(phi)) * r;
+        const Mat4 viewProj = shear(d) * ToMat4(appFrame.viewProj);
+        const Mat4 invViewProj = inv * shear(d * -1.0f);
+        std::memcpy(lensed.viewProj, viewProj.m, sizeof(lensed.viewProj));
+        std::memcpy(lensed.invViewProj, invViewProj.m, sizeof(lensed.invViewProj));
+        lensed.cameraPos[0] = eye.x + d.x;
+        lensed.cameraPos[1] = eye.y + d.y;
+        lensed.cameraPos[2] = eye.z + d.z;
+        std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
+    }
+    std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     if (taa) {
         sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
         ++_haltonIndex;
@@ -2546,8 +2694,26 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
+    // Jittered light shapes (film samples only): this sample's point on
+    // every shape, the sun's direction within its disc.
+    const bool shapeJitter = film && frame.shadowJitter && frame.softShadows;
+    float shapeSample[3];
+    ScrambledSobol(sobolIndex, kSeedLightShape, shapeSample, 3);
+    float toSun[3];
+    std::copy(gpu.shadowDirection, gpu.shadowDirection + 3, toSun);
+    const bool sunJitter = shapeJitter && frame.softSunShadows && gpu.shadowAngle > 0;
+    if (sunJitter) {
+        const Vec3 d = Normalize({toSun[0], toSun[1], toSun[2]});
+        const Vec3 t1 = Normalize(Cross(d, std::abs(d.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0})), t2 = Cross(d, t1);
+        const float r = std::tan(0.5f * gpu.shadowAngle * 0.0174532925f) * std::sqrt(shapeSample[0]);
+        const float phi = 6.2831853f * shapeSample[1];
+        const Vec3 j = Normalize(d + (t1 * std::cos(phi) + t2 * std::sin(phi)) * r);
+        toSun[0] = j.x;
+        toSun[1] = j.y;
+        toSun[2] = j.z;
+    }
     const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
-                         _FitCascades(gpu, frame, &fd);
+                         _FitCascades(gpu, frame, toSun, &fd);
     const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
     const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
     fd.counts[0] = gpu.lightCount;
@@ -2559,23 +2725,27 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.sampleDimensions) {
         fd.sampleInfo[0] = 1;
         for (uint32_t d = 0; d < kSampleDims; ++d) {
-            dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(noiseSample > 0 ? noiseSample - 1 : 0, d);
+            dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(sobolIndex, d);
         }
     }
     if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
     }
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0);
+        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0,
+                          shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     // Soft sun shadows: for a sun with an angle, from its cascades.
+    // Jittered, the cascades are looked up hard (the bit stays: the same
+    // pipelines as the TAA frames).
     if (frame.softShadows && frame.softSunShadows && shadows && gpu.shadowAngle > 0) {
         fd.features[0] |= kFeatureSoftSun;
-        fd.features[3] = _minSampler ? uint32_t(_shadowMinLevels.size()) : 0;  // shadow_min.comp's levels
+        fd.features[3] = _minSampler && !sunJitter ? uint32_t(_shadowMinLevels.size()) : 0;  // shadow_min.comp's levels
     }
+    fd.shadowJitter[0] = shapeJitter ? 1 : 0;
     fd.counts[2] = gpu.environmentLevels;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
     if (ibl) {
@@ -3001,7 +3171,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                          _historyValid,
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
-                         _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
+                         _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
                          frame.ssgiThickness, frame.ssgiBitmask ? 0.25f * frame.ssgiRadius : 0.0f);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
@@ -3015,8 +3185,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
 
     // The atlas draws the camera's levels of detail (cull.comp): it is
     // redrawn when the camera moves while there are levels.
-    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
-        std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
+    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(appFrame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
+        std::memcpy(_lodViewProj, appFrame.viewProj, sizeof(_lodViewProj));
         _atlasVersion = 0;
     }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
@@ -3169,8 +3339,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
     // The camera's lens: depth of field when it has an fStop (motion blur above).
-    const bool dof = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
-                     frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
+    const bool dof = dofLens && !lensJitter;
     Lens::Params lens{};
     if (dof || motionBlur) {
         const Mat4 back = motionBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
@@ -3206,7 +3375,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         float alpha = 1.0f;
         Mat4 reprojection;
         if (taa) {
-            const bool moved = _taaValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+            const bool moved = _taaValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
             if (_taaValid) {
                 reprojection = unjitter * ToMat4(frame.invViewProj) * ToMat4(_prevViewProj);
             }
@@ -3268,7 +3437,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         pass("post");
         _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
         _stats.taaTarget = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
-        std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
+        std::memcpy(_prevViewProj, appFrame.viewProj, sizeof(_prevViewProj));
         _historyValid = true;
     } else {
         _taaValid = false;
