@@ -791,6 +791,10 @@ void main()
         vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
         color = color * fog.a + fog.rgb * alpha;
     }
+    // NaN/Inf here (screen-space or probe input gone bad) would enter the
+    // TAA, SSGI and exposure histories and spread from there; and above
+    // half-float range it turns Inf in the RGBA16F target.
+    color = any(isnan(color)) || any(isinf(color)) ? vec3(0.0) : min(color, vec3(60000.0));
     outColor = vec4(color, alpha);
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;

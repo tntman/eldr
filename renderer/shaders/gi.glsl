@@ -73,6 +73,11 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     ivec3 counts = ivec3(rt.giCounts.xyz);
     // Biased off the surface so it isn't shadowed by itself.
     vec3 biased = p + (n * 0.2 + v * 0.8) * (0.3 * spacing);
+    // At grazing angles the view bias slides along the surface instead of
+    // off it: keep it a fixed distance off, or a wall seen edge-on from the
+    // probes' far side sits right at their visibility depth, and the
+    // Chebyshev test there turns the visibility texels into stripes.
+    biased += n * max(0.15 * spacing - dot(biased - p, n), 0.0);
     vec3 grid = (biased - rt.giOrigin.xyz) / spacing;
     ivec3 base = clamp(ivec3(floor(grid)), ivec3(0), counts - 2);
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);

@@ -34,6 +34,6 @@ void main()
     }
     target = clamp(target, -16.0, 16.0);
     exposure.targetEv = target;
-    exposure.ev = pc.a.w > 0.5 ? target
+    exposure.ev = pc.a.w > 0.5 || isnan(exposure.ev) || isinf(exposure.ev) ? target
                                : exposure.ev + (target - exposure.ev) * (1.0 - exp(-2.0 * pc.a.x));
 }
