@@ -286,6 +286,7 @@ Renderer::Renderer(Device &device)
     , _post(device)
     , _transparency(device)
     , _subsurface(device)
+    , _ssr(device)
     , _fog(device)
 {
     VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
@@ -518,10 +519,17 @@ void Renderer::_CreateDescriptors()
         // filtered, written per level by shadow_min.comp.
         {61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
+        // Denoised SSR (SsrDenoise): what mesh.frag traces for it, bound
+        // once it is on (partially bound, last).
+        {72, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
+        {73, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
+        {74, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
+        {75, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
     std::fill(bindingFlags + 33, bindingFlags + 42, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    std::fill(bindingFlags + kBindings - 4, bindingFlags + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flags.bindingCount = kBindings;
     flags.pBindingFlags = bindingFlags;
@@ -535,7 +543,7 @@ void Renderer::_CreateDescriptors()
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels + 4},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1023,6 +1031,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
     _post.Resize(width, height, _taa.Output());
     _transparency.Resize(width, height);
     _subsurface.Resize(width, height, _depth.view);
+    _ssr.Resize(width, height, _depth.view);
     _taaValid = false;
     _historyValid = false;
 }
@@ -1176,6 +1185,13 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
+    const VkDescriptorImageInfo ssrImages[4] = {{VK_NULL_HANDLE, _ssr.Rays(), VK_IMAGE_LAYOUT_GENERAL},
+                                                {VK_NULL_HANDLE, _ssr.Directions(), VK_IMAGE_LAYOUT_GENERAL},
+                                                {VK_NULL_HANDLE, _ssr.Normals(), VK_IMAGE_LAYOUT_GENERAL},
+                                                {VK_NULL_HANDLE, _ssr.Factor(), VK_IMAGE_LAYOUT_GENERAL}};
+    for (uint32_t i = 0; i < 4 && _ssr.Rays(); ++i) {
+        write(72 + i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &ssrImages[i]);
+    }
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1913,6 +1929,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
+        // Denoised: the shading pass writes its rays (traced reflections
+        // replace SSR where they apply: no denoiser then).
+        if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {
+            fd.ssr[2] = 1.0f;
+            _ssr.Prepare();
+        }
     }
 
     std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
@@ -2379,6 +2401,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _rt->Record(_cmd, _set, gpu, pass);
     }
 
+    const bool ssrDenoise = fd.ssr[2] > 0.0f;
+    if (ssrDenoise) {
+        _ssr.Clear(_cmd);
+    }
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
         ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
@@ -2441,6 +2467,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     vkCmdEndRendering(_cmd);
     pass("shading");
+    if (ssrDenoise) {
+        _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory);
+        pass("ssrDenoise");
+    }
+    _ssrHistory = ssrDenoise;
     if (fd.features[0] & kFeatureSubsurface) {
         _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt);
         pass("subsurface");

@@ -63,6 +63,14 @@ foreach(shader gtao.frag gtao_denoise.frag)
         DEPENDS renderer/shaders/${shader})
     list(APPEND shader_incs ${spv})
 endforeach()
+foreach(pass 0 1 2)  # denoised SSR (ssr.cpp): its three passes
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssr_denoise${pass}.frag.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DPASS=${pass} -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/ssr_denoise.frag
+        DEPENDS renderer/shaders/ssr_denoise.frag)
+    list(APPEND shader_incs ${spv})
+endforeach()
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssgi_bitmask.frag.inc)  # SSGI with a visibility bitmask
 add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
@@ -114,7 +122,7 @@ add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
-    renderer/transparency.cpp renderer/subsurface.cpp
+    renderer/transparency.cpp renderer/subsurface.cpp renderer/ssr.cpp
     renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

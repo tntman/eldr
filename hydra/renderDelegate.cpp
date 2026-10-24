@@ -197,6 +197,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
+        {"Denoised Glossy SSR (GGX rays, ratio estimator)", t.ssrDenoise, VtValue(frame.ssrDenoise)},
         {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
         {"Ray Tracing Sees Displacement", t.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,

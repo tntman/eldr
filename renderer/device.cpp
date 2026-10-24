@@ -66,6 +66,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f.features.samplerAnisotropy, "samplerAnisotropy");
     need(f.features.independentBlend, "independentBlend");  // translucency: blended colour, plain ids
     need(f.features.geometryShader, "geometryShader");  // gl_PrimitiveID in mesh.frag (uniform primvars)
+    need(f.features.fragmentStoresAndAtomics, "fragmentStoresAndAtomics");  // mesh.frag's denoised SSR rays
     need(f12.drawIndirectCount, "drawIndirectCount");
     need(f12.runtimeDescriptorArray, "runtimeDescriptorArray");
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");
@@ -190,6 +191,7 @@ Device::Device()
         f.features.samplerAnisotropy = VK_TRUE;
         f.features.independentBlend = VK_TRUE;
         f.features.geometryShader = VK_TRUE;
+        f.features.fragmentStoresAndAtomics = VK_TRUE;
 
         // Optional: the driver's memory budget (usdview's and Houdini's stats).
         uint32_t extensionCount = 0;

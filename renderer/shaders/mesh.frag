@@ -504,13 +504,21 @@ float SceneDepth(vec2 ndc)
     return texelFetch(sceneDepth, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
 }
 
+// Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
+// GGX-sampled ray per pixel, for the denoiser.
+layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
+layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // octahedral, hit distance, GGX alpha
+layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // octahedral
+layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1
+float ssrHitDistance = -1.0;  // TraceReflection's last hit, world units
+
 // Screen-space reflection: marches the ray linearly through NDC (where
 // it stays a straight line with affine depth) against the prepass depth,
 // refines the first crossing by bisection and shades it with last frame's
 // result reprojected to the hit. Returns the hit's weight (0 = miss) and
 // its premultiplied radiance in `hit`.
-// ponytail: mirror rays only, faded out from roughness 0.3 to 0.6; glossy
-// SSR would jitter the ray by GGX sampling and let TAA average it.
+// Without the denoiser (Frame::ssrDenoise): mirror rays only, faded out
+// from roughness 0.3 to 0.6.
 float TraceReflection(vec3 p, vec3 r, out vec4 hit)
 {
     int steps = int(frame.features.y);
@@ -646,7 +654,9 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                 }
             }
             vec2 ndc = mix(s0.xy, s1.xy, hi);
-            vec4 prev = frame.prevViewProj * vec4(Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0)), 1.0);
+            vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
+            ssrHitDistance = length(hitPos - p);
+            vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
             vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
             if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
                 return 0.0;
@@ -821,7 +831,38 @@ void main()
 #ifdef LAYERS
     ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
 #endif
-    if (ssrWeight > 0.0) {
+    if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
+        // Denoised: one GGX-sampled ray (glossy up to roughness 0.8), its
+        // radiance (the probe's or dome's where it misses) and pdf for the
+        // denoiser, which adds FssEss times the weight times its estimate.
+        ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
+#ifdef LAYERS
+        ssrWeight *= 1.0 - layers.anisotropy;
+#endif
+        vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
+        vec3 ve = vec3(dot(v, tx), dot(v, ty), NoV);
+        // Interleaved gradient noise, two lookups shifted per frame.
+        vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
+        vec2 u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
+                                                dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        vec3 h = SampleGgxVndf(ve, a, u);
+        h = tx * h.x + ty * h.y + n * h.z;
+        vec3 l = reflect(-v, h);
+        if (dot(l, ng) <= 0.0) {
+            h = n;  // below the surface: the mirror direction
+            l = reflect(-v, n);
+        }
+        // The visible normals' pdf: D(h) G1(v) / (4 NoV).
+        float pdf = D_GGX(max(dot(n, h), 0.0), a) * 2.0 / (NoV + sqrt(a * a + (1.0 - a * a) * NoV * NoV)) / 4.0;
+        vec4 hit;
+        float w = TraceReflection(inWorldPos, l, hit);
+        ivec2 px = ivec2(gl_FragCoord.xy);
+        imageStore(ssrRays, px, vec4(mix(specular, hit.rgb + (1.0 - hit.a) * specular, w), pdf));
+        imageStore(ssrDirections, px, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
+        imageStore(ssrNormals, px, vec4(OctEncode(n), 0.0, 0.0));
+        imageStore(ssrFactor, px, vec4(FssEss * ssrWeight, 1.0));
+        specular *= 1.0 - ssrWeight;
+    } else if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);

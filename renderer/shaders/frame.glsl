@@ -16,7 +16,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     mat4 envWorldToLocal;
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
     mat4 prevViewProj;   // unjittered camera of the last frame (previousColor, motion vectors)
-    vec4 ssr;            // x = 1: trace reflections, y = noise index
+    vec4 ssr;            // x = 1: trace reflections, y = noise index, z = 1: denoised (renderer/ssr.h)
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
@@ -66,6 +66,21 @@ vec3 BrightnessClamp(vec3 c, float limit)
 {
     float peak = max(max(c.r, c.g), c.b);
     return limit > 0.0 && peak > limit ? c * (limit / peak) : c;
+}
+
+// GGX visible normal (Heitz 2018), in the frame where n is +z.
+vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
+{
+    vec3 vh = normalize(vec3(a * ve.x, a * ve.y, ve.z));
+    float lensq = vh.x * vh.x + vh.y * vh.y;
+    vec3 t1 = lensq > 0.0 ? vec3(-vh.y, vh.x, 0.0) * inversesqrt(lensq) : vec3(1.0, 0.0, 0.0);
+    vec3 t2 = cross(vh, t1);
+    float r = sqrt(u.x), phi = 2.0 * PI * u.y;
+    float p1 = r * cos(phi), p2 = r * sin(phi);
+    float s = 0.5 * (1.0 + vh.z);
+    p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2;
+    vec3 nh = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * vh;
+    return normalize(vec3(a * nh.x, a * nh.y, max(nh.z, 0.0)));
 }
 
 // Whether this frame has `feature` (an optional frame.features.x bit) and

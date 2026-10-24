@@ -10,6 +10,7 @@
 #include "raytracing.h"
 #include "scene.h"
 #include "subsurface.h"
+#include "ssr.h"
 #include "taa.h"
 #include "transparency.h"
 #include "volume.h"
@@ -215,6 +216,12 @@ public:
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
         bool rtDisplacement = true;
+        // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
+        // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
+        // through a ratio estimator, temporal reprojection through the
+        // reflected point and a variance-guided bilateral filter. Off: one
+        // mirror ray, faded out from roughness 0.3 to 0.6.
+        bool ssrDenoise = false;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -315,6 +322,8 @@ private:
     PostProcess _post;
     Transparency _transparency;
     Subsurface _subsurface;
+    SsrDenoise _ssr;
+    bool _ssrHistory = false;  // the denoiser ran last frame
     Fog _fog;
     float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
     uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)

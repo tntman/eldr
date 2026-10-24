@@ -1,5 +1,6 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
-thickness estimator (SSR at grazing angles) and SSGI's visibility bitmask.
+thickness estimator (SSR at grazing angles), SSGI's visibility bitmask and
+denoised glossy SSR.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -99,6 +100,33 @@ def halo(bitmask):
 horizon, bitmask = halo(False), halo(True)
 print("SSGI halo around a thin pole: %.1f with the highest horizon, %.1f with the bitmask" % (horizon, bitmask))
 expect(horizon > 2 and bitmask < 0.5 * horizon, "SSGI's bitmask doesn't darken a halo around a thin object")
+
+# Denoised glossy SSR: reflections.usda's floor at roughness 0.25. One
+# GGX-sampled ray per pixel and frame, denoised: the columns' glossy
+# reflections show (brighter than the dome's light alone, without SSR),
+# smooth in a single frame (no TAA).
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
+stage.GetPrimAtPath("/mtl/polished/pbr").GetAttribute("inputs:roughness").Set(0.25)
+column = (64, 220, 80, 320)  # the left column's reflection
+
+
+def roughness(image, x0, y0, x1, y1):
+    """Mean absolute 0..255 difference of horizontally adjacent pixels."""
+    total = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            total += abs(image.pixelColor(x + 1, y).green() - image.pixelColor(x, y).green())
+    return total / ((x1 - x0) * (y1 - y0))
+
+
+bright = {"hdvk:exposureCompensation": 2.0}
+dome = mean(render(stage, {"hdvk:ssr": False, **bright}), *column)
+denoised = render(stage, {"hdvk:ssrDenoise": True, **bright}, frames=8)
+glossy = mean(denoised, *column)
+grain = roughness(denoised, 100, 240, 160, 300)
+print("glossy SSR: the column's reflection %.1f (dome alone %.1f), grain %.2f" % (glossy, dome, grain))
+expect(glossy > dome + 5, "denoised SSR shows a glossy floor's reflections")
+expect(grain < 3, "denoised SSR is smooth without TAA")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
