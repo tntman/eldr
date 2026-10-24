@@ -2733,6 +2733,57 @@ int main()
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
         }
+
+        {
+            // Refraction from inside: a water surface (transmission 1, ior
+            // 1.33) at z = -2 with its normal facing away from the camera,
+            // i.e. seen from below, in front of a red (x < 0) and green wall.
+            // Seen head-on it lets the wall through (and is drawn: its ids);
+            // turned 60 degrees, past the critical angle (48.8), it reflects
+            // the inside totally and lets nothing through; with
+            // Frame::refractionBackFaces off it isn't drawn at all.
+            vkr::Scene scene(&device);
+            vkr::Mesh *left = AddEmitter(scene, -6, -6, 0, 6, -5, 1.0f);
+            left->material->emissive[1] = left->material->emissive[2] = 0;
+            vkr::Mesh *right = AddEmitter(scene, 0, -6, 6, 6, -5, 1.0f);
+            right->material->emissive[0] = right->material->emissive[2] = 0;
+            vkr::Mesh *water = AddQuad(scene, -1.5f, -1.5f, 1.5f, 1.5f, -2);
+            water->primId = 7;
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 0;
+            material->transmission = 1;
+            material->ior = 1.33f;
+            water->material = material;
+            auto turn = [&](float degrees) {
+                const float c = std::cos(degrees * 3.14159265f / 180.0f), s = std::sin(degrees * 3.14159265f / 180.0f);
+                water->points.clear();
+                water->normals.clear();
+                const float corners[6][2] = {{-1.5f, -1.5f}, {1.5f, -1.5f}, {1.5f, 1.5f},
+                                             {-1.5f, -1.5f}, {1.5f, 1.5f}, {-1.5f, 1.5f}};
+                for (const auto &q : corners) {
+                    water->points.insert(water->points.end(), {q[0] * c, q[1], -2.0f - q[0] * s});
+                    water->normals.insert(water->normals.end(), {s, 0, -c});  // away from the camera
+                }
+                water->geometryDirty = true;
+                scene.Commit();
+            };
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            turn(0);
+            const Image under = Render(renderer, scene, frame);
+            Expect(under.Prim(44, 32) == 7 && under.At(44, 32, 1) > 0.9f && under.At(44, 32, 0) < 0.05f,
+                   "refraction from inside: water seen from below is drawn and lets the wall through");
+            turn(60);
+            const Image total = Render(renderer, scene, frame);
+            frame.refractionBackFaces = false;
+            const Image off = Render(renderer, scene, frame);
+            // Past the critical angle the centre shows the mirrored inside (the
+            // red half), not the green it would refract towards.
+            Expect(total.Prim(32, 32) == 7 && total.At(32, 32, 0) > 0.9f && total.At(32, 32, 1) < 0.05f &&
+                       off.At(32, 32, 1) > 0.9f,
+                   "refraction from inside: total internal reflection past the critical angle");
+            Expect(off.Prim(32, 32) != 7 && off.Prim(44, 32) != 7, "Frame::refractionBackFaces off: not drawn");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

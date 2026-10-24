@@ -363,6 +363,7 @@ Renderer::~Renderer()
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
+        vkDestroyPipeline(_dev.device, _refractBackPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _subsurfacePipeline[v], nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -741,6 +742,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
         r = createMesh(tci, _translucentPipeline + base, kVariants - 1);
+        if (r == VK_SUCCESS) {
+            r = createMesh(tci, _refractBackPipeline + base, kVariants - 1, 3);
+        }
     }
     // Weighted blended OIT (Transparency): colour and coverage summed,
     // ids as above, location 3 the revealage, multiplied by 1 - coverage.
@@ -1659,44 +1663,44 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
     dep.pMemoryBarriers = &opaque;
     vkCmdPipelineBarrier2(_cmd, &dep);
 
-    if (data->features[0] & kFeatureRefraction) {
+    const bool refraction = data->features[0] & kFeatureRefraction;
+    if (refraction) {
         _transparency.RecordBackground(_cmd, _color.image);
     }
-    const bool oit = frame.oit;
-    if (oit) {
-        _transparency.BeginAccumulation(_cmd);
-    }
-    const VkImageView views[4] = {oit ? _transparency.Accum().view : _color.view, _primId.view, _instanceId.view,
-                                  oit ? _transparency.Revealage().view : _velocity.view};
-    VkRenderingAttachmentInfo atts[4] = {};
-    for (int i = 0; i < 4; ++i) {
-        atts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        atts[i].imageView = views[i];
-        atts[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        atts[i].loadOp = oit && (i == 0 || i == 3) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        atts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    }
-    atts[3].clearValue.color.float32[0] = 1.0f;  // revealage: nothing in front yet
+    // Renders into _color (and the ids), or with `oit` into the
+    // Transparency targets; the depth stays the opaque one's.
     depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     depth.storeOp = frame.depthPrepass ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, {_width, _height}};
-    ri.layerCount = 1;
-    ri.colorAttachmentCount = 4;
-    ri.pColorAttachments = atts;
-    ri.pDepthAttachment = &depth;
-    vkCmdBeginRendering(_cmd, &ri);
-    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
-    vkCmdSetViewport(_cmd, 0, 1, &vp);
-    vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
-    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-    PushDraw(_cmd, _layout, viewProj, 0, motion);
     const VkDeviceSize vertexOffset = 0;
-    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
-    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-    const VkPipeline *pipelines = (oit ? _oitPipeline : _translucentPipeline) + _shadingBase;
+    auto begin = [&](bool oit) {
+        const VkImageView views[4] = {oit ? _transparency.Accum().view : _color.view, _primId.view,
+                                      _instanceId.view, oit ? _transparency.Revealage().view : _velocity.view};
+        VkRenderingAttachmentInfo atts[4] = {};
+        for (int i = 0; i < 4; ++i) {
+            atts[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            atts[i].imageView = views[i];
+            atts[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            atts[i].loadOp = oit && (i == 0 || i == 3) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+            atts[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        }
+        atts[3].clearValue.color.float32[0] = 1.0f;  // revealage: nothing in front yet
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {_width, _height}};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 4;
+        ri.pColorAttachments = atts;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(_cmd, &ri);
+        const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+        vkCmdSetViewport(_cmd, 0, 1, &vp);
+        vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+        PushDraw(_cmd, _layout, viewProj, 0, motion);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+    };
     VkPipeline bound = VK_NULL_HANDLE;
-    for (const auto &[distance, i] : order) {
+    auto drawSlot = [&](const VkPipeline *pipelines, size_t i) {
         if (pipelines[gpu.translucentVariant[i]] != bound) {
             bound = pipelines[gpu.translucentVariant[i]];
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
@@ -1704,6 +1708,36 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
                                  VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand), 1,
                                  sizeof(VkDrawIndexedIndirectCommand));
+    };
+
+    // Refraction layers (Frame::refractionBackFaces): refracting meshes back
+    // to front, each its back faces (seen from inside the medium) and then
+    // its front faces, blended over the colour before the other
+    // translucent meshes.
+    const bool layers = refraction && frame.refractionBackFaces;
+    if (layers) {
+        begin(false);
+        for (const auto &[distance, i] : order) {
+            if (gpu.translucentFlags[i] & Scene::Gpu::kRefracts) {
+                drawSlot(_refractBackPipeline + _shadingBase, i);
+                drawSlot(_translucentPipeline + _shadingBase, i);
+            }
+        }
+        vkCmdEndRendering(_cmd);
+        vkCmdPipelineBarrier2(_cmd, &dep);  // the colour and ids again, for the pass below
+        bound = VK_NULL_HANDLE;
+    }
+
+    const bool oit = frame.oit;
+    if (oit) {
+        _transparency.BeginAccumulation(_cmd);
+    }
+    begin(oit);
+    const VkPipeline *pipelines = (oit ? _oitPipeline : _translucentPipeline) + _shadingBase;
+    for (const auto &[distance, i] : order) {
+        if (!layers || !(gpu.translucentFlags[i] & Scene::Gpu::kRefracts)) {
+            drawSlot(pipelines, i);
+        }
     }
     vkCmdEndRendering(_cmd);
     if (oit) {

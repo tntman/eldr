@@ -250,6 +250,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},
         {"Refraction Blur Samples (1-16)", t.refractionSamples, VtValue(int(frame.refractionSamples))},
+        {"Refraction Back Faces (water from below, TIR)", t.refractionBackFaces, VtValue(frame.refractionBackFaces)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},

@@ -193,6 +193,11 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Refracting meshes' back faces (needs refraction): seen from inside
+        // the medium (water from below, the far side of a glass ball) with
+        // the inverted ior and total internal reflection, drawn before their
+        // front faces; off: back faces are discarded.
+        bool refractionBackFaces = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -335,6 +340,9 @@ private:
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
+    // Refracting meshes' back faces, seen from inside (transparency.glsl's
+    // kShadingPass 3), blended as _translucentPipeline.
+    VkPipeline _refractBackPipeline[kShadingSets * kVariants] = {};
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};

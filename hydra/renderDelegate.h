@@ -83,6 +83,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
     ((refraction, "hdvk:refraction"))                        \
     ((refractionSamples, "hdvk:refractionSamples"))              \
+    ((refractionBackFaces, "hdvk:refractionBackFaces"))              \
     ((translucentShadows, "hdvk:translucentShadows"))        \
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
