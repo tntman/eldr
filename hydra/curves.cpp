@@ -262,6 +262,20 @@ void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, P
     }
 }
 
+// Whether curves shade as hair: Eldr's `primvars:eldr:hair` (constant bool
+// or int, as hydra/material.cpp's toon inputs Eldr's own namespace),
+// default true; false shades cables and ropes as ordinary surfaces.
+bool HairPrimvar(HdSceneDelegate *sd, SdfPath const &id)
+{
+    static const TfToken name("eldr:hair");
+    const VtValue v = sd->Get(id, name);
+    if (v.IsHolding<bool>()) {
+        return v.UncheckedGet<bool>();
+    }
+    const VtValue i = VtValue::Cast<int>(v);
+    return i.IsEmpty() || i.UncheckedGet<int>() != 0;
+}
+
 // A unit icosahedron: its vertices (also the normals) and outward faces.
 constexpr float kA = 0.5257311f, kB = 0.8506508f;
 const GfVec3f kIcosahedron[12] = {{-kA, kB, 0}, {kA, kB, 0},  {-kA, -kB, 0}, {kA, -kB, 0},
@@ -348,7 +362,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.indices.clear();
         constexpr bool curves = std::is_same_v<Base, HdBasisCurves>;
         Builder out{m, colors.interp != HdInterpolationConstant, curves};
-        m.hair = curves;  // ponytail: every curve is hair, thick ones too
+        m.hair = curves && HairPrimvar(sceneDelegate, id);
         if constexpr (curves) {
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors,
                    Primvar<GfVec3f>(sceneDelegate, id, HdTokens->normals), color, out);

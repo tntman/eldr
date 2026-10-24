@@ -10,7 +10,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from PySide6.QtWidgets import QApplication
-from pxr import CameraUtil, Gf, Usd, UsdGeom, UsdImagingGL
+from pxr import CameraUtil, Gf, Sdf, Usd, UsdGeom, UsdImagingGL
 
 SIZE = 384
 
@@ -131,6 +131,14 @@ expect(everything > 0.6 and plain < 0.3, "hdvk:toonBands bands every material (%
 on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
 change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
 expect(change > 0.1, "hair: strand highlights (%.2f of the image changes)" % change)
+# primvars:eldr:hair = false: cables and ropes shade as ordinary surfaces,
+# the same with hair shading on and off.
+cables = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/hair"))
+cables.CreatePrimvar("eldr:hair", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
+on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
+cables.RemovePrimvar("eldr:hair")
+change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
+expect(change < 0.001, "primvars:eldr:hair = false: no hair shading (%.4f of the image changes)" % change)
 
 
 def quadrants(image, prim):

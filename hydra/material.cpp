@@ -1327,7 +1327,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
     // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
-    // width, in bands).
+    // width, in bands). On BasisCurves `bool primvars:eldr:hair = 0` turns
+    // hair shading off (hydra/curves.cpp).
     m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
     m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
 }
