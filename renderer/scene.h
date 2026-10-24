@@ -124,7 +124,7 @@ struct MaterialProgram {
     enum Input : uint32_t {
         kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity,
         kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
-        kThinFilmThickness
+        kThinFilmThickness, kCoatIor, kThinFilm, kThinFilmIor, kAnisotropyRotation, kIor
     };
 
     std::vector<uint32_t> code;      // 4 words per op
@@ -234,7 +234,7 @@ struct Material {
         if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
             return true;
         }
-        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kThinFilmThickness; ++i) {
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kIor; ++i) {
             if (program.Outputs(MaterialProgram::Input(i))) {
                 return true;  // a textured or graph-driven lobe
             }

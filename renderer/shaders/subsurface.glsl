@@ -14,7 +14,7 @@ void SubsurfaceBegin(inout vec3 baseColor, inout vec3 emissive, inout float meta
     if (inMaterial == kNoMaterial) {
         return;
     }
-    Material m = materials[inMaterial];
+    Material m = ShadingMaterial();
     if (kShadingPass == 2u) {
         baseColor = m.subsurface.rgb * m.subsurface.w * (1.0 - clamp(metallic, 0.0, 1.0));
         emissive = vec3(0.0);
@@ -49,7 +49,7 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     if (!Feature(kFeatureSubsurface) || inMaterial == kNoMaterial || frame.counts.y == kNone) {
         return vec3(0.0);
     }
-    Material m = materials[inMaterial];
+    Material m = ShadingMaterial();
     Light light = lights[frame.counts.y];
     vec3 l = light.position.xyz;
     float back = dot(-n, l);
