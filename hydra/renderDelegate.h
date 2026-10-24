@@ -96,6 +96,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((fogHeight, "hdvk:fogHeight"))                          \
     ((fogHeightFalloff, "hdvk:fogHeightFalloff"))            \
     ((fogAnisotropy, "hdvk:fogAnisotropy"))                  \
+    ((fogGiAmbient, "hdvk:fogGiAmbient"))                \
     ((fogColor, "hdvk:fogColor"))                            \
     ((fogMaxDistance, "hdvk:fogMaxDistance"))                \
     ((fogGridSize, "hdvk:fogGridSize"))                      \

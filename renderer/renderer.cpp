@@ -39,7 +39,7 @@ struct FrameData {
     uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
     float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
     // Reflection probe and planar reflections (shaders/probes.glsl).
-    uint32_t reflections[4];     // probes, -, flags (kProbeNormalize)
+    uint32_t reflections[4];     // probes, -, flags (kProbeNormalize, kFogGiAmbient)
     float probeCenter[8][4];     // capture position, prefiltered levels - 1
     float probeMin[8][4];        // influence box, blend distance (0: everywhere)
     float probeMax[8][4];
@@ -2070,6 +2070,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.features[0] |= ssgi ? kFeatureSsgi : 0;
     // Probe normalization needs local ambient light: GI's or SSGI's.
     fd.reflections[2] = frame.probeNormalize && (fd.features[0] & (kFeatureGi | kFeatureSsgi)) ? 1u : 0u;
+    fd.reflections[2] |= frame.fogGiAmbient && (fd.features[0] & kFeatureGi) ? 2u : 0u;  // kFogGiAmbient
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);

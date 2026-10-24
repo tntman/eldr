@@ -177,6 +177,7 @@ public:
         float fogHeightFalloff = 0.0f;  // density * exp(-falloff * (height - fogHeight)); 0: uniform
         float fogAnisotropy = 0.6f;     // Henyey-Greenstein g: 0 even, towards 1 forward (shafts towards lights)
         float fogColor[3] = {1, 1, 1};  // scattering albedo
+        bool fogGiAmbient = true;       // with GI: the dome's light in the fog from its probes (interiors: less)
         float fogMaxDistance = 0.0f;    // view depth the froxels reach (then constant); 0: the scene's far end
         uint32_t fogGridSize = 160;     // froxels across (16..512); rows by aspect, 64 slices
         bool fogZUp = false;            // heights along Z (Z-up stages)

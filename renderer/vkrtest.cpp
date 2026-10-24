@@ -2,6 +2,7 @@
 // scenes and checks pixels, depth, row order, PBR normalization, textures,
 // instancing, image-based lighting, shadows and the sky orientation.
 #include "renderer.h"
+#include "vkmath.h"
 
 #include <algorithm>
 #include <array>
@@ -1484,6 +1485,53 @@ int main()
                 }
             }
             Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
+
+        }
+
+        if (device.rayTracing) {
+            // Fog in a closed room (walls facing in, the camera inside)
+            // under a white dome: with GI, the dome's light in the fog comes
+            // from the probes, which see only the dark room.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            const vkr::Vec3 center{0, 0, -0.5f};
+            auto wall = [&](std::array<float, 12> c) {
+                vkr::Mesh *m = scene.AddMesh();
+                const vkr::Vec3 a{c[0], c[1], c[2]}, b{c[3], c[4], c[5]}, d{c[6], c[7], c[8]};
+                if (vkr::Dot(vkr::Cross(b - a, d - a), center - a) < 0.0f) {  // front faces towards the centre
+                    std::swap_ranges(c.begin() + 3, c.begin() + 6, c.begin() + 9);
+                }
+                m->points = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+                             c[0], c[1], c[2], c[6], c[7], c[8], c[9], c[10], c[11]};
+                m->material = white;
+            };
+            wall({-1, -1, 0.5f, 1, -1, 0.5f, 1, 1, 0.5f, -1, 1, 0.5f});
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, 1, -1.5f, -1, 1, -1.5f});
+            wall({-1, -1, -1.5f, -1, -1, 0.5f, -1, 1, 0.5f, -1, 1, -1.5f});
+            wall({1, -1, -1.5f, 1, -1, 0.5f, 1, 1, 0.5f, 1, 1, -1.5f});
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, -1, 0.5f, -1, -1, 0.5f});
+            wall({-1, 1, -1.5f, 1, 1, -1.5f, 1, 1, 0.5f, -1, 1, 0.5f});
+            scene.AddDome();
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.cameraPos[2] = -1.4f;  // inside, the front wall behind it
+            frame.depthToDistance[1] = -1.4f;
+            frame.gi = true;
+            frame.fog = true;
+            frame.fogDensity = 0.5f;
+            frame.fogAnisotropy = 0.0f;
+            auto haze = [&](bool giAmbient) {
+                frame.fogGiAmbient = giAmbient;
+                Image img;
+                for (int i = 0; i < 40; ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                return img.At(32, 32, 0);
+            };
+            const float open = haze(false), closed = haze(true);
+            Expect(open > 0.2f && closed < 0.25f * open, "fog: the GI probes keep the dome's light out of a room");
         } else {
             std::puts("no ray tracing on this GPU: its tests skipped");
         }

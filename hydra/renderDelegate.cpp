@@ -219,6 +219,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Fog Height (base)", t.fogHeight, VtValue(frame.fogHeight)},
         {"Fog Height Falloff (per unit, 0 = even)", t.fogHeightFalloff, VtValue(frame.fogHeightFalloff)},
         {"Fog Anisotropy (phase g, -1..1)", t.fogAnisotropy, VtValue(frame.fogAnisotropy)},
+        {"Fog Ambient from GI Probes (occluded dome light)", t.fogGiAmbient, VtValue(frame.fogGiAmbient)},
         {"Fog Color (r g b)", t.fogColor,
          VtValue(TfStringPrintf("%g %g %g", frame.fogColor[0], frame.fogColor[1], frame.fogColor[2]))},
         {"Fog Max Distance (0 = scene)", t.fogMaxDistance, VtValue(frame.fogMaxDistance)},
