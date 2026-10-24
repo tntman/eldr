@@ -18,20 +18,25 @@ find_package(pxr CONFIG REQUIRED)
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
+# third_party/nanovdb: PNanoVDB.h of OpenVDB 10.1.0 (MPL-2.0, unmodified),
+# NanoVDB's GPU reader, for volume.frag and the CPU side of the volumes.
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag)
+               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
+               volume_upsample.frag shadow_min.comp rt_skin.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
-                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+                -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
-                renderer/shaders/subsurface.glsl)
+                renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
+                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -48,6 +53,16 @@ endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
 # primvars, mesh.frag with the interpreter; other materials never run it.
 # Extra AOVs' G-buffer pass likewise (aov.frag).
+# Screen-space GI (gtao.cpp): the GTAO passes built with SSGI.
+foreach(shader gtao.frag gtao_denoise.frag)
+    string(REPLACE "gtao" "ssgi" variant ${shader})
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/${variant}.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPENDS renderer/shaders/${shader})
+    list(APPEND shader_incs ${spv})
+endforeach()
 foreach(shader mesh.vert mesh.frag aov.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
@@ -57,7 +72,9 @@ foreach(shader mesh.vert mesh.frag aov.frag)
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
-                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl)
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl
+                renderer/shaders/skinning.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
@@ -74,7 +91,8 @@ foreach(variant layers graph_layers)
         DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
-                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl)
+                renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
@@ -82,7 +100,8 @@ set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
-    DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl)
+    DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
+            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
@@ -90,8 +109,9 @@ add_library(vkrenderer STATIC
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp
     ${shader_incs})
-target_include_directories(vkrenderer PUBLIC renderer PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
 add_executable(vkrtest renderer/vkrtest.cpp)
@@ -101,15 +121,43 @@ target_link_libraries(vkrtest PRIVATE vkrenderer)
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
-    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp)
-target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio sdr vkrenderer)
+    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
+    hydra/camera.cpp)
+target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
+# OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
+# which installs OpenVDB and its NanoVDB headers beside USD): the volume
+# rprim and openvdbAsset fields, grids converted to NanoVDB on load.
+# Without, HdVk has no volume prims.
+find_path(HDVK_NANOVDB_INCLUDE nanovdb/util/OpenToNanoVDB.h)
+if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
+    message(STATUS "HdVk: volumes (OpenVDB) on")
+    target_sources(hdVk PRIVATE hydra/volume.cpp hydra/field.cpp)
+    # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
+    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES _USE_MATH_DEFINES)
+    target_include_directories(hdVk PRIVATE ${HDVK_NANOVDB_INCLUDE})
+    target_link_libraries(hdVk PRIVATE hioOpenVDB)
+    # Writes tests/scenes/volume.vdb.
+    add_executable(make_volume tests/make_volume.cpp)
+    target_compile_definitions(make_volume PRIVATE _USE_MATH_DEFINES)
+    target_link_libraries(make_volume PRIVATE hioOpenVDB)
+    set(HDVK_VOLUMES ON)
+else()
+    message(STATUS "HdVk: volumes off (USD without OpenVDB)")
+endif()
+# Karma's lens materials as camera lens distortion: a UsdImaging adapter,
+# in a library of its own so hdVk itself doesn't link UsdImaging.
+add_library(hdVkUsdImaging SHARED hydra/karmaLensAdapter.cpp)
+target_link_libraries(hdVkUsdImaging PRIVATE hd usd usdGeom usdImaging)
+target_compile_definitions(hdVkUsdImaging PRIVATE MFB_PACKAGE_NAME=hdVkUsdImaging
+                           MFB_ALT_PACKAGE_NAME=hdVkUsdImaging)
+add_dependencies(hdVk hdVkUsdImaging)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in
 # <that dir>/usdview: usdenv.cmd adds it to the plugin and Python paths.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/plugInfo.json INPUT usdview/plugInfo.json)
-foreach(py __init__.py attributes.py)
+foreach(py __init__.py attributes.py settings.py)
     file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/${py} INPUT usdview/hdvkUsdview/${py})
 endforeach()
 
@@ -135,6 +183,8 @@ if(WIN32)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME settings COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_settings_window.py)
+    set_tests_properties(settings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lobes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lobes.py)
     set_tests_properties(lobes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME textures COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_textures.py)
@@ -151,6 +201,23 @@ if(WIN32)
     set_tests_properties(transmission PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME holdout COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_holdout.py)
     set_tests_properties(holdout PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lighting COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lighting.py)
+    set_tests_properties(lighting PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    if(HDVK_VOLUMES)
+        add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
+        set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    endif()
+    add_test(NAME subdivision COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_subdivision.py)
+    set_tests_properties(subdivision PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME displacement COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_displacement.py)
+    set_tests_properties(displacement PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME lod COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lod.py)
+    set_tests_properties(lod PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")
+
+# The Python tests run usdenv.cmd against the USD this build uses.
+file(TO_NATIVE_PATH ${pxr_DIR} usdRoot)
+get_property(allTests DIRECTORY PROPERTY TESTS)
+set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "USD_ROOT=${usdRoot}")

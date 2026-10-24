@@ -17,9 +17,20 @@ class LensDistortion {
 public:
     // Screen units: x spans [-1, 1] across the image, y the same scale
     // (square pixels), +y up; aspect = width / height.
+    // "standard" is OpenCV's model, as Karma's lens material has it
+    // (kma_physicallens opencv_k1..k6, opencv_p1, opencv_p2): radial
+    // (1 + k1 r^2 + k2 r^4 + k3 r^6) / (1 + k4 r^2 + k5 r^4 + k6 r^6) and
+    // tangential (2 p1 x y + p2 (r^2 + 2 x^2), p1 (r^2 + 2 y^2) + 2 p2 x y);
+    // positive k1 is barrel, as there. HdCamera's k1 and k2 are its first
+    // two terms.
+    // ponytail: Karma's lens shader works in its NDC, which its docs leave
+    // unclear for wide images; Eldr's r is in the screen units above (x
+    // across the width). Compare with a husk render to settle it.
     struct Params {
         bool fisheye = false;   // lensDistortion:type "fisheye", else "standard"
-        float k1 = 0, k2 = 0;   // radial: standard r * (1 + k1 r^2 + k2 r^4); fisheye: of the angle
+        float k1 = 0, k2 = 0;   // radial; fisheye: of the angle (r * (1 + k1 r^2 + k2 r^4))
+        float k3 = 0, k4 = 0, k5 = 0, k6 = 0;  // standard: radial, as above
+        float p1 = 0, p2 = 0;   // tangential, as above
         float center[2] = {0, 0};
         float anaSq = 1;        // anamorphic squeeze: x scaled by it before the radial terms
         float asym[2] = {0, 0}; // asymmetry: + asym * r^2

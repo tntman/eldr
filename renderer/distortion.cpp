@@ -19,7 +19,7 @@ constexpr VkFormat kIdFormat = VK_FORMAT_R32_SINT;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 
 struct Push {  // mirror of Params in distortion.frag
-    float a[4], b[4], c[4], clearColor[4], d[4];
+    float a[4], b[4], c[4], clearColor[4], d[4], e[4];
 };
 
 VkImageSubresourceRange Range(VkImageAspectFlags aspect)
@@ -31,8 +31,8 @@ VkImageSubresourceRange Range(VkImageAspectFlags aspect)
 
 bool LensDistortion::Params::Active() const
 {
-    return fisheye || k1 != 0 || k2 != 0 || asym[0] != 0 || asym[1] != 0 || anaSq != 1 || scale != 1 ||
-           center[0] != 0 || center[1] != 0;
+    return fisheye || k1 != 0 || k2 != 0 || k3 != 0 || k4 != 0 || k5 != 0 || k6 != 0 || p1 != 0 || p2 != 0 ||
+           asym[0] != 0 || asym[1] != 0 || anaSq != 1 || scale != 1 || center[0] != 0 || center[1] != 0;
 }
 
 bool LensDistortion::Warp(const Params &p, float, const float s[2], float source[2])
@@ -47,10 +47,12 @@ bool LensDistortion::Warp(const Params &p, float, const float s[2], float source
         valid = theta < 1.5707f;
         k = rho > 1e-6f ? std::tan(std::min(theta, 1.5707f)) / rho : 1.0f;
     } else {
-        k = 1 + p.k1 * r2 + p.k2 * r2 * r2;
+        const float r4 = r2 * r2, r6 = r4 * r2;
+        k = (1 + p.k1 * r2 + p.k2 * r4 + p.k3 * r6) / (1 + p.k4 * r2 + p.k5 * r4 + p.k6 * r6);
     }
-    qx = qx * k + p.asym[0] * r2;
-    qy = qy * k + p.asym[1] * r2;
+    const float x = qx, y = qy;
+    qx = x * k + 2 * p.p1 * x * y + p.p2 * (r2 + 2 * x * x) + p.asym[0] * r2;
+    qy = y * k + p.p1 * (r2 + 2 * y * y) + 2 * p.p2 * x * y + p.asym[1] * r2;
     source[0] = p.center[0] + qx / p.anaSq / p.scale;
     source[1] = p.center[1] + qy / p.scale;
     return valid;
@@ -297,7 +299,8 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
                     {p.center[0], p.center[1], p.asym[0], p.asym[1]},
                     {p.tanHalfWidth, p.overscan, float(width) / float(height), p.fisheye ? 1.0f : 0.0f},
                     {clearColor[0], clearColor[1], clearColor[2], clearColor[3]},
-                    {clearDepth, 0, 0, 0}};
+                    {clearDepth, p.p1, p.p2, 0},
+                    {p.k3, p.k4, p.k5, p.k6}};
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);

@@ -2,24 +2,33 @@
 // UsdSkelImaging) for this renderer:
 // - turns implicit prims (UsdGeomCube, Sphere, Cone, Cylinder, Capsule,
 //   Plane) into meshes, same as hdEmbree does;
+// - lets the render delegate re-sync every mesh when a render setting
+//   that shapes them (subdivision) changes (HdVkDirtyMeshes);
 // - skips UsdSkelImaging's CPU skinning: for a skinned mesh it hands the
 //   ExtComputation inputs over as primvars (the same hydra:* primvars
 //   UsdSkelImaging writes itself with HD_ENABLE_DEFERRED_SKINNING), so
 //   HdVkMesh skins on the GPU and per frame only the skinning transforms
 //   change. Authored normals come back the same way (UsdSkelImaging blocks
 //   them on skinned meshes) and are skinned on the GPU too.
+#include "renderDelegate.h"
+
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/extComputationPrimvarsSchema.h"
 #include "pxr/imaging/hd/extComputationSchema.h"
 #include "pxr/imaging/hd/filteringSceneIndex.h"
+#include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
 #include "pxr/imaging/hd/overlayContainerDataSource.h"
 #include "pxr/imaging/hd/primvarSchema.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/retainedDataSource.h"
 #include "pxr/imaging/hd/sceneIndexPlugin.h"
 #include "pxr/imaging/hd/sceneIndexPluginRegistry.h"
+#include "pxr/imaging/hd/sceneIndexPrimView.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hdsi/implicitSurfaceSceneIndex.h"
+
+#include <set>
+#include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -222,7 +231,79 @@ private:
     }
 };
 
+TF_DECLARE_REF_PTRS(_SettingsSceneIndex);
+
+// Passes the scene through; DirtyMeshes dirties every mesh's display style
+// so the meshes sync again and re-read the render settings.
+class _SettingsSceneIndex final : public HdSingleInputFilteringSceneIndexBase
+{
+public:
+    static _SettingsSceneIndexRefPtr New(HdSceneIndexBaseRefPtr const &input)
+    {
+        return TfCreateRefPtr(new _SettingsSceneIndex(input));
+    }
+
+    HdSceneIndexPrim GetPrim(SdfPath const &path) const override { return _GetInputSceneIndex()->GetPrim(path); }
+    SdfPathVector GetChildPrimPaths(SdfPath const &path) const override
+    {
+        return _GetInputSceneIndex()->GetChildPrimPaths(path);
+    }
+
+    void DirtyMeshes()
+    {
+        HdSceneIndexObserver::DirtiedPrimEntries entries;
+        for (const SdfPath &path : HdSceneIndexPrimView(_GetInputSceneIndex())) {
+            if (_GetInputSceneIndex()->GetPrim(path).primType == HdPrimTypeTokens->mesh) {
+                entries.emplace_back(path, HdLegacyDisplayStyleSchema::GetDefaultLocator());
+            }
+        }
+        _SendPrimsDirtied(entries);
+    }
+
+private:
+    explicit _SettingsSceneIndex(HdSceneIndexBaseRefPtr const &input)
+        : HdSingleInputFilteringSceneIndexBase(input)
+    {
+    }
+
+    void _PrimsAdded(HdSceneIndexBase const &, HdSceneIndexObserver::AddedPrimEntries const &entries) override
+    {
+        _SendPrimsAdded(entries);
+    }
+    void _PrimsRemoved(HdSceneIndexBase const &, HdSceneIndexObserver::RemovedPrimEntries const &entries) override
+    {
+        _SendPrimsRemoved(entries);
+    }
+    void _PrimsDirtied(HdSceneIndexBase const &, HdSceneIndexObserver::DirtiedPrimEntries const &entries) override
+    {
+        _SendPrimsDirtied(entries);
+    }
+};
+
 } // namespace
+
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal)
+{
+    // Find this renderer's _SettingsSceneIndex upstream of the terminal.
+    std::vector<HdSceneIndexBaseRefPtr> todo = {terminal};
+    std::set<HdSceneIndexBase *> seen;
+    while (!todo.empty()) {
+        HdSceneIndexBase *sceneIndex = get_pointer(todo.back());
+        todo.pop_back();
+        if (!sceneIndex || !seen.insert(sceneIndex).second) {
+            continue;
+        }
+        if (auto *settings = dynamic_cast<_SettingsSceneIndex *>(sceneIndex)) {
+            settings->DirtyMeshes();
+            return;
+        }
+        if (auto *filtering = dynamic_cast<HdFilteringSceneIndexBase *>(sceneIndex)) {
+            for (const HdSceneIndexBaseRefPtr &input : filtering->GetInputScenes()) {
+                todo.push_back(input);
+            }
+        }
+    }
+}
 
 class HdVk_SceneIndexPlugin final : public HdSceneIndexPlugin
 {
@@ -234,7 +315,7 @@ protected:
         HdDataSourceBaseHandle const toMesh =
             HdRetainedTypedSampledDataSource<TfToken>::New(
                 HdsiImplicitSurfaceSceneIndexTokens->toMesh);
-        return HdsiImplicitSurfaceSceneIndex::New(
+        return _SettingsSceneIndex::New(HdsiImplicitSurfaceSceneIndex::New(
             _SkinningSceneIndex::New(inputScene),
             HdRetainedContainerDataSource::New(
                 HdPrimTypeTokens->sphere, toMesh,
@@ -242,7 +323,7 @@ protected:
                 HdPrimTypeTokens->cone, toMesh,
                 HdPrimTypeTokens->cylinder, toMesh,
                 HdPrimTypeTokens->capsule, toMesh,
-                HdPrimTypeTokens->plane, toMesh));
+                HdPrimTypeTokens->plane, toMesh)));
     }
 };
 

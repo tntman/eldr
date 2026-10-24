@@ -13,6 +13,7 @@
 // frame.features.x bits (renderer.cpp's Frame switches).
 const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
            kFeatureAnisotropy = 128u;
+const uint kFeatureToon = 512u;  // toon bands for every material (frame.styles.y), an optional feature
 // frame.styles.x bits.
 const uint kStyleToon = 1u, kStyleHair = 2u;
 
@@ -129,9 +130,9 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
 {
     layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0), 0.0, 0.0,
                     diffuseColor + f0, false, diffuseColor);
-    // Hair (curves, whose uvs run along each curve; hydra/curves.cpp):
-    // strands along the curve, highlights stretched around it, also without
-    // a material.
+    // Hair (curves, whose uvs run along each curve, unless their
+    // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
+    // curve, highlights stretched around it, also without a material.
     if (draws[instances[inSlot].draw].hair != 0u && (frame.styles.x & kStyleHair) != 0u) {
         vec3 t = UvTangent(n);
         layers.hair = true;
@@ -143,6 +144,21 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
         return;
     }
     Material m = materials[inMaterial];
+#ifdef GRAPH
+    // Lobe inputs the material program computed (textures, graphs; in
+    // MaterialProgram::Input order) stand in for the constants.
+    if (programLobes != 0u) {
+        m.specularColor.rgb = (programLobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
+        m.coat.x = (programLobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
+        m.coat.y = (programLobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
+        m.coatColor.rgb = (programLobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
+        m.sheen.x = (programLobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
+        m.sheenColor.rgb = (programLobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
+        m.sheen.y = (programLobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
+        m.anisotropy.x = (programLobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
+        m.thinFilm.y = (programLobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
+    }
+#endif
     layers.toonBands = m.toon.x;
     layers.toonSoftness = m.toon.y;
     // UsdPreviewSurface's specular workflow: F0 is specularColor (F90
@@ -359,7 +375,7 @@ vec3 Toon(vec3 color, vec3 emissive, vec3 albedo, float bands, float softness)
 // frame's for every material. `albedo`: diffuse colour plus F0.
 vec3 ToonShade(vec3 color, vec3 emissive, vec3 albedo)
 {
-    float bands = float(frame.styles.y), softness = 0.05;
+    float bands = Feature(kFeatureToon) ? float(frame.styles.y) : 0.0, softness = 0.05;
 #ifdef LAYERS
     albedo = layers.albedo;  // sheen and coats would make bands uneven
     if (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u) {

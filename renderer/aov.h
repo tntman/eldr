@@ -35,8 +35,13 @@ public:
         kEmission,        // emitted radiance, rgb
         kCryptoObject,    // Cryptomatte rank 0 and 1: (id, coverage, id, coverage)
         kCryptoMaterial,
+        kPositionWorld,   // world-space position (Karma's P)
+        kDepth,           // distance along the view axis, positive (Karma's depth, ray:hitPz)
+        kDiffuseAlbedo,   // base colour * (1 - metallic), rgb (Karma's albedodiffuse, lpe:CDA)
         kCount
     };
+    // Floats per pixel each kind has (a target may ask for 1..4 instead:
+    // missing ones are 0, extra ones dropped).
     static uint32_t Components(Kind kind);
 
     // Anything asked for; whether that needs the G-buffer pass.
@@ -48,9 +53,11 @@ public:
     Aovs(const Aovs &) = delete;
     Aovs &operator=(const Aovs &) = delete;
 
-    // The G-buffer pass's pipelines in Renderer's 16 mesh variants (bits:
-    // kWideSkin, kDualQuaternion, GRAPH, and with it procedurals:
-    // program.glsl's constant 8), made with `layout` on first use.
+    // The G-buffer pass's pipelines in Renderer's mesh variants of these
+    // bits (kWideSkin, kDualQuaternion, GRAPH, and with it procedurals:
+    // program.glsl's constant 8; displaced materials: displace.glsl's
+    // constant 10), made with `layout` on first use.
+    static constexpr uint32_t kVariants = 1 | 2 | 4 | 8 | 32;
     const VkPipeline *Pipelines(VkPipelineLayout layout);
 
     struct Params {
@@ -58,6 +65,7 @@ public:
         float invViewProj[16];   // window -> world, unjittered
         const uint32_t *cryptomatte = nullptr;  // per primId: object, material
         uint32_t cryptomatteIds = 0;
+        uint8_t components[kCount] = {};  // floats per pixel of each target (0: Components)
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set
@@ -77,7 +85,7 @@ private:
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _resolve = VK_NULL_HANDLE;
-    VkPipeline _geometry[16] = {};  // null: procedurals without GRAPH
+    VkPipeline _geometry[kVariants + 1] = {};  // null: procedurals without GRAPH, other bits
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _normalSt, _albedo, _emission;  // the G-buffer
@@ -85,6 +93,7 @@ private:
     Buffer _output;                       // every AOV asked for, packed (device-local)
     Buffer _readback;                     // its copy the CPU reads
     VkDeviceSize _offsets[kCount] = {};   // each one's place in _output (floats)
+    uint32_t _components[kCount] = {};    // and its floats per pixel
     uint32_t _width = 0, _height = 0;
 };
 

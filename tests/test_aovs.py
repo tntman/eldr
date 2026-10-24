@@ -1,7 +1,8 @@
 """Extra AOVs through Hydra, as usdview's AOV menu shows them: the menu
 lists normal, Neye and primvars:st; the normal AOV alone renders (usdview
-binds only the AOV it shows) and is the cube's facing normal; Cryptomatte's
-manifest names the cube with its MurmurHash3 id.
+binds only the AOV it shows) and is the cube's facing normal, as is Karma's
+ray:hitN (shown raw); Karma's Cryptomatte object AOV (primvars:__name)
+fills the manifests, which name the cube and its material by MurmurHash3.
 Run: usdenv.cmd python tests\\test_aovs.py"""
 import json
 import sys
@@ -76,7 +77,13 @@ expect(all(a in aovs for a in ("normal", "Neye", "primvars:st")), "the AOV menu 
 c = Render("normal")
 expect(abs(c.redF() - 0.5) < 0.03 and abs(c.greenF() - 0.5) < 0.03 and c.blueF() > 0.97, "normal AOV: +z")
 
-Render("CryptoObject00")
+# Karma's names, which usdview shows raw: N (+z) and P (the face at z = 1).
+c = Render("ray:hitN")
+expect(c.redF() < 0.03 and c.greenF() < 0.03 and c.blueF() > 0.97, "Karma's N (ray:hitN): +z")
+c = Render("ray:hitPz")
+expect(c.redF() > 0.97, "Karma's depth (ray:hitPz): 9 units away, shown clamped to 1")
+
+Render("primvars:__name")
 manifests = engine.GetRenderStats().get("cryptomatte", {})
 objects = json.loads(manifests.get("CryptoObject", "{}"))
 materials = json.loads(manifests.get("CryptoMaterial", "{}"))

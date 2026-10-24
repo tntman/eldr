@@ -16,7 +16,9 @@
 # highlights stretch around the up axis), UsdPreviewSurface toon (Eldr's
 # own inputs:eldr:toonBands and inputs:eldr:toonSoftness), a plain
 # UsdPreviewSurface for reference. Third row: a patch of brown hair
-# (BasisCurves without a material, displayColor) for hair shading.
+# (BasisCurves without a material, displayColor) for hair shading; a quad
+# whose specular workflow F0 is a texture (quadrants.png: bottom-left red,
+# bottom-right green, top-left blue, top-right white) over black.
 
 def Camera "cam"
 {
@@ -213,6 +215,33 @@ def Scope "mtl"
             token outputs:surface
         }
     }
+
+    def Material "texturedSpecular"
+    {
+        token outputs:surface.connect = </mtl/texturedSpecular/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            int inputs:useSpecularWorkflow = 1
+            color3f inputs:specularColor.connect = </mtl/texturedSpecular/tex.outputs:rgb>
+            float inputs:roughness = 0.3
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/texturedSpecular/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
 }
 
 def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
@@ -308,5 +337,17 @@ def BasisCurves "hair"
     float[] widths = [0.03] (interpolation = "constant")
     color3f[] primvars:displayColor = [(0.35, 0.17, 0.06)] (interpolation = "constant")
     double3 xformOp:translate = (-6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedSpecular" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/texturedSpecular>
+    double3 xformOp:translate = (-3.6, -3.6, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }

@@ -18,8 +18,9 @@ void main()
     if (p.x < int(pc.b.x) && p.y < int(pc.b.y)) {
         vec4 c = texelFetch(src, p, 0);
         // The app's background colour (coverage 0) must not steer exposure.
-        if (c.a >= 0.5) {
-            float l = Luminance(c.rgb / c.a);
+        // Nor may NaN/Inf: log2/clamp of them pick an undefined bin.
+        float l = Luminance(c.rgb / c.a);
+        if (c.a >= 0.5 && !isnan(l) && !isinf(l)) {
             uint bin = l < 1e-6 ? 0u : uint(clamp((log2(l) - pc.a.x) / pc.a.y, 0.0, 1.0) * 254.0 + 1.0);
             atomicAdd(localBins[bin], 1u);
         }

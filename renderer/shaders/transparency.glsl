@@ -68,7 +68,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float f0 = (ior - 1.0) / (ior + 1.0);
     f0 *= f0;
     float through = gRefracted * (1.0 - (f0 + (1.0 - f0) * pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 5.0)));
-    if ((frame.features.x & kFeatureRefraction) == 0u) {
+    if (!Feature(kFeatureRefraction)) {
         return 1.0 - gStraight - through;  // no background: seen straight through, untinted
     }
 
@@ -148,7 +148,7 @@ vec3 TintLookup(sampler2DArray tint, sampler2DArray tintDepth, sampler2D atlas, 
 // distant light (direction l), looked up as Shadow() does in mesh.frag.
 vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 {
-    if ((frame.features.x & kFeatureTranslucentShadows) == 0u) {
+    if (!Feature(kFeatureTranslucentShadows)) {
         return vec3(1.0);
     }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
@@ -171,7 +171,7 @@ vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 {
     uint tile = lightShadow[index];
-    if ((frame.features.x & kFeatureTranslucentShadows) == 0u || tile == kNone) {
+    if (!Feature(kFeatureTranslucentShadows) || tile == kNone) {
         return vec3(1.0);
     }
     vec3 fromLight = p - light.position.xyz;
@@ -206,7 +206,7 @@ vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 // subsurface pass, and translucent ones leave what's behind them alone.
 void PassOutput(vec3 color, float alpha)
 {
-    if ((frame.features.x & kFeatureHoldouts) != 0u && draws[instances[inSlot].draw].holdout != 0u) {
+    if (Feature(kFeatureHoldouts) && draws[instances[inSlot].draw].holdout != 0u) {
         outColor = vec4(0.0);
         if (kShadingPass == 1u) {
             outVelocity = vec2(0.0);  // revealage unchanged

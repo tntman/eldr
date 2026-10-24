@@ -4,6 +4,7 @@
 
 // frame.features.x bits of these features.
 const uint kFeatureRtShadows = 1048576u, kFeatureRtReflections = 2097152u, kFeatureGi = 4194304u;
+const uint kFeatureSsgi = 8388608u;  // screen-space GI (gtao.frag's SSGI), no ray tracing needed
 
 // std140 mirror of RayTracingData in raytracing.cpp.
 layout(std140, set = 0, binding = 59) uniform RayTracingData {
@@ -13,6 +14,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     uvec4 giCounts;      // probes along x, y, z; w: probe tiles per atlas row
     vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
+    uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
 } rt;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
@@ -63,13 +65,19 @@ vec3 GiRayDirection(uint ray, uint rays)
 // Irradiance / pi at p with normal n, seen from direction v, from the eight
 // probes around it: trilinear weights, a soft backface weight and the
 // Chebyshev test against each probe's visibility (no light through walls).
-// w: 0 where no probe applies (keep the caller's fallback).
+// w: how far the probes apply, from their summed weight (0: none of them
+// sees p, e.g. the outside of a thin wall: the caller's fallback instead).
 vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 {
     float spacing = rt.giOrigin.w;
     ivec3 counts = ivec3(rt.giCounts.xyz);
     // Biased off the surface so it isn't shadowed by itself.
     vec3 biased = p + (n * 0.2 + v * 0.8) * (0.3 * spacing);
+    // At grazing angles the view bias slides along the surface instead of
+    // off it: keep it a fixed distance off, or a wall seen edge-on from the
+    // probes' far side sits right at their visibility depth, and the
+    // Chebyshev test there turns the visibility texels into stripes.
+    biased += n * max(0.15 * spacing - dot(biased - p, n), 0.0);
     vec3 grid = (biased - rt.giOrigin.xyz) / spacing;
     ivec3 base = clamp(ivec3(floor(grid)), ivec3(0), counts - 2);
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);
@@ -107,10 +115,21 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         sum += irradiance.rgb * w;
         weights += w;
     }
-    return weights > 1e-6 ? vec4(sum / weights, 1.0) : vec4(0.0);
+    // Probes the visibility test rejects keep under ~0.005 each after the
+    // crush; a probe that sees p keeps over ~0.2 (times its trilinear share).
+    return weights > 1e-6 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights)) : vec4(0.0);
 }
 
 #ifdef RT_RESULTS
+// Screen-space GI: then the AO texture holds SSGI's visibility (r, used as
+// AO: it hides the probes' or the dome's light, which fills the rest) and
+// the light gathered from what screen-space rays hit (gba, irradiance /
+// pi), which adds to it.
+vec3 SsgiDiffuse()
+{
+    return Feature(kFeatureSsgi) ? texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).gba : vec3(0.0);
+}
+
 // mesh.frag: what the ray tracing pass traced for the opaque surface at
 // this pixel. Translucent surfaces lie in front of it (closer than the
 // prepass depth) and have no rays of their own.
@@ -160,7 +179,7 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
 bool RtShadow(uint light, out float visibility)
 {
     visibility = 1.0;
-    if ((frame.features.x & kFeatureRtShadows) == 0u) {
+    if (!Feature(kFeatureRtShadows)) {
         return false;
     }
     for (int k = 0; k < 4; ++k) {
@@ -179,7 +198,7 @@ bool RtShadow(uint light, out float visibility)
 // 12 pixels around.
 vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 {
-    if ((frame.features.x & kFeatureRtReflections) == 0u || !RtOpaque()) {
+    if (!Feature(kFeatureRtReflections) || !RtOpaque()) {
         return specular;
     }
     float weight = imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;
@@ -190,10 +209,10 @@ vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 // dome's).
 vec3 GiDiffuse(vec3 p, vec3 n, vec3 v, vec3 fallback)
 {
-    if ((frame.features.x & kFeatureGi) == 0u) {
+    if (!Feature(kFeatureGi)) {
         return fallback;
     }
     vec4 gi = GiIrradiance(p, n, v);
-    return gi.a > 0.0 ? gi.rgb : fallback;
+    return mix(fallback, gi.rgb, gi.a);
 }
 #endif
