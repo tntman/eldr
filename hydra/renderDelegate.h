@@ -122,6 +122,16 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((displacementScale, "hdvk:displacementScale"))          \
     ((lod, "hdvk:lod"))                                      \
     ((lodBias, "hdvk:lodBias"))                              \
+    ((filmAccumulation, "hdvk:filmAccumulation"))            \
+    ((filmSamples, "hdvk:filmSamples"))                      \
+    ((filmFilterRadius, "hdvk:filmFilterRadius"))            \
+    ((finalQuality, "hdvk:finalQuality"))                    \
+    ((sampleDimensions, "hdvk:sampleDimensions"))            \
+    ((interactiveSamples, "hdvk:interactiveSamples"))        \
+    ((adaptiveThreshold, "hdvk:adaptiveThreshold"))          \
+    ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
+    ((giPreconverge, "hdvk:giPreconverge"))                  \
+    ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 

@@ -163,8 +163,8 @@ static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, fl
 }
 
 // Post-processed render through a fresh renderer, repeated until converged
-// like usdrecord does: exposure snaps on the first frame, TAA accumulates
-// 16 jittered frames of the still camera.
+// like usdrecord does: exposure snaps on the first frame, the film
+// accumulates Frame::filmSamples jittered frames of the still camera.
 static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f,
                         bool taa = true, bool ssr = true)
 {
@@ -179,9 +179,9 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     do {
         img = Render(renderer, scene, frame);
         ++frames;
-    } while (!renderer.IsConverged() && frames < 64);
-    Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
-                                         : "without TAA the first frame is final");
+    } while (!renderer.IsConverged() && frames < 200);
+    Expect(frames == (taa ? int(frame.filmSamples) : 1), taa ? "the film converges after filmSamples still frames"
+                                                              : "without TAA the first frame is final");
     return img;
 }
 
@@ -869,6 +869,46 @@ int main()
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
             Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
             Expect(penumbra(0.15f, true, 4) >= hard + 3, "Frame::softShadowSamples 4: still a penumbra");
+
+            // Sample dimensions: one PCSS tap per pixel, turned per sample,
+            // averaged by the film. The blue noise turned by its own Halton
+            // value converges on the 512-sample film at least as well as
+            // the per-frame shifted gradient noise, and to the same image.
+            vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, 0.15f, 0.16f / (0.15f * 0.15f));
+            light->castShadows = true;
+            scene.Commit();
+            auto film = [&](uint32_t samples, bool dims) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.softShadowSamples = 1;
+                frame.filmSamples = samples;
+                frame.sampleDimensions = dims;
+                Image img;
+                do {
+                    img = Render(r, scene, frame);
+                } while (!r.IsConverged());
+                return img;
+            };
+            auto error = [](const Image &a, const Image &b) {
+                double sum = 0;
+                for (int y = 16; y < 48; ++y) {
+                    for (int x = 12; x < 44; ++x) {
+                        sum += std::pow(a.At(x, y, 0) - b.At(x, y, 0), 2.0f);
+                    }
+                }
+                return std::sqrt(sum / (32 * 32));
+            };
+            const Image reference = film(512, true);
+            const double on = error(film(16, true), reference), off = error(film(16, false), reference);
+            std::printf("sample dimensions: 16-sample film error %.5f (gradient noise %.5f), vs %.5f\n", on, off,
+                        error(film(512, false), reference));
+            Expect(on <= off && error(film(1, true), film(1, false)) > 0.0, "sample dimensions: blue noise per effect");
+            Expect(error(film(512, false), reference) < 0.5 * off, "sample dimensions: the same converged image");
+            scene.RemoveLight(light);
         }
 
         {
@@ -1012,6 +1052,103 @@ int main()
             const int smooth = partial(RenderPost(device, scene, 0.0f, true));
             const int hard = partial(RenderPost(device, scene, 0.0f, false));
             Expect(smooth > 30 && hard < 5, "TAA turns the hard edge into partial coverage");
+        }
+
+        {
+            // Film accumulation: an emitter over x < 32.3 pixels, exposed
+            // linear over black. The converged film is the edge through
+            // the Gaussian pixel filter (sigma 0.284 * 1.5 pixels):
+            // Phi((32.3 - centre) / 0.426) per pixel; radius 0 is a box,
+            // 0.3 at pixel 32. Any change starts it over: at once in final
+            // quality, after kFilmStillFrames of TAA otherwise.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 32.3f / 32.0f - 1.0f, 1, 0, 1.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            std::fill(frame.clearColor, frame.clearColor + 4, 0.0f);
+            frame.filmSamples = 32;
+            auto converge = [&](vkr::Renderer &renderer, int *frames) {
+                Image img;
+                for (*frames = 0; *frames < 100;) {
+                    img = Render(renderer, scene, frame);
+                    ++*frames;
+                    if (renderer.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto phi = [](float x) { return 0.5f * std::erfc(-x / std::sqrt(2.0f)); };
+            vkr::Renderer renderer(device);
+            int frames = 0;
+            const Image gauss = converge(renderer, &frames);
+            Expect(frames == 32 && renderer.GetStats().taaSamples == 32, "the film converges after filmSamples");
+            bool filtered = true;
+            for (int x = 30; x <= 34; ++x) {
+                filtered = filtered && std::abs(gauss.At(x, 32, 1) - phi((32.3f - (x + 0.5f)) / 0.426f)) < 0.02f;
+            }
+            Expect(filtered, "the film reconstructs the edge with its Gaussian");
+            frame.sceneVersion = 1;  // the app changed something
+            Render(renderer, scene, frame);
+            Expect(!renderer.IsConverged() && renderer.GetStats().taaTarget == frame.taaSamples,
+                   "a change hands the image back to TAA");
+            converge(renderer, &frames);
+            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1, "the film takes over after still frames");
+            frame.finalQuality = true;
+            frame.sceneVersion = 2;
+            Render(renderer, scene, frame);
+            Expect(renderer.GetStats().taaSamples == 1, "final quality starts the film over at once");
+            frame.finalQuality = false;
+            frame.filmFilterRadius = 0.0f;
+            vkr::Renderer box(device);
+            Expect(std::abs(converge(box, &frames).At(32, 32, 1) - 0.3f) < 0.02f, "radius 0: a box filter");
+            frame.filmAccumulation = false;
+            vkr::Renderer taa(device);
+            converge(taa, &frames);
+            Expect(frames == int(frame.taaSamples), "film off: TAA converges after taaSamples");
+
+            // Interactive sample loop: while the camera moves the sample
+            // dimensions loop over their first interactiveSamples; still,
+            // the film's samples run on.
+            frame.filmAccumulation = true;
+            frame.filmFilterRadius = 1.5f;
+            frame.interactiveSamples = 4;
+            vkr::Renderer moving(device);
+            uint32_t seen = 0, most = 0;
+            for (int i = 0; i < 12; ++i) {
+                frame.viewProj[12] = (i % 2 ? 1.0f : -1.0f) * 0.01f;
+                frame.invViewProj[12] = -frame.viewProj[12];
+                Render(moving, scene, frame);
+                seen |= 1u << moving.GetStats().sample;
+                most = std::max(most, moving.GetStats().sample);
+            }
+            frame.viewProj[12] = frame.invViewProj[12] = 0.0f;
+            for (int i = 0; i < 12; ++i) {
+                Render(moving, scene, frame);
+            }
+            Expect(seen == 0x1Eu && most == 4 && moving.GetStats().sample > 4,
+                   "moving: the sample dimensions loop over interactiveSamples; still: the film's run on");
+
+            // Adaptive sampling: away from the edge the pixels have no
+            // noise and stop at the minimum; the edge's keep sampling to
+            // filmSamples. A threshold above their noise stops them all.
+            frame.interactiveSamples = 8;
+            frame.adaptiveThreshold = 0.002f;
+            frame.adaptiveMinSamples = 8;
+            vkr::Renderer adaptive(device);
+            const Image early = converge(adaptive, &frames);
+            const uint32_t active = adaptive.GetStats().filmActivePixels;
+            Expect(frames == 32 && active > 0 && active <= 4 * 64 && MaxDifference(early, gauss) < 0.02f,
+                   "adaptive sampling: only the noisy pixels take more samples");
+            frame.adaptiveThreshold = 0.5f;
+            vkr::Renderer coarse(device);
+            converge(coarse, &frames);
+            Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
+                   "adaptive sampling: done once every pixel's noise is under the threshold");
         }
 
         {
@@ -1165,7 +1302,10 @@ int main()
                 return img.At(33, 32, 0);
             };
             const float sharp = beside(0.0f, 1.0f), blurred = beside(1.0f, 1.0f), focused = beside(1.0f, 4.0f);
-            Expect(sharp < 0.01f && focused < 0.01f && blurred > 0.05f,
+            // Focused, the post blur's gather still leaks ~2% of the edge
+            // into the out-of-focus background beside it (TAA's clipping hid
+            // that; the film's plain average keeps it).
+            Expect(sharp < 0.01f && focused < 0.03f && blurred > 0.05f,
                    "depth of field spreads an out-of-focus edge, not a focused one");
         }
 
@@ -1417,6 +1557,33 @@ int main()
                    "GI bounces the red panel's light onto the white wall");
             Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+
+            // GI preconverge: the film's 8 samples start once the probes
+            // have settled (their first 1 / (1 - 0.97) = 33 updates), so no
+            // sample sees half-filled probes; off, the film starts at once
+            // and averages them in.
+            auto filmFrames = [&](bool preconverge, Image *out) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame f = frame;
+                f.postProcess = true;
+                f.post.autoExposure = false;
+                f.post.bloomIntensity = 0.0f;
+                f.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                f.filmSamples = 8;
+                f.giPreconverge = preconverge;
+                int n = 0;
+                do {
+                    *out = Render(r, scene, f);
+                    ++n;
+                } while (!r.IsConverged() && n < 200);
+                return n;
+            };
+            Image settledFilm, earlyFilm;
+            const int settledFrames = filmFrames(true, &settledFilm), earlyFrames = filmFrames(false, &earlyFilm);
+            Expect(settledFrames >= 33 + 8 - 1 && earlyFrames < settledFrames,
+                   "GI preconverge: the film starts after the probes settled");
+            Expect(settledFilm.At(28, 32, 0) > earlyFilm.At(28, 32, 0),
+                   "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
             Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
         }
@@ -2420,6 +2587,25 @@ int main()
             scene.Commit();
             const float scattered = Render(renderer, scene, frame).At(32, 32, 0);
             Expect(std::abs(scattered - (1.0f - std::exp(-0.8f))) < 0.02f, "fog: in-scattered sunlight");
+            {
+                // Under the film each sample jitters the froxels anew, with
+                // no history; the average is the same medium.
+                vkr::Renderer filmRenderer(device);
+                vkr::Renderer::Frame film = frame;
+                film.postProcess = true;
+                film.post.autoExposure = false;
+                film.post.bloomIntensity = 0.0f;
+                film.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                film.filmSamples = 16;
+                Image first, img;
+                int n = 0;
+                do {
+                    img = Render(filmRenderer, scene, film);
+                    first = n++ == 1 ? img : first;
+                } while (!filmRenderer.IsConverged() && n < 100);
+                Expect(std::abs(img.At(32, 32, 0) - (1.0f - std::exp(-0.8f))) < 0.02f && MaxDifference(first, img) > 0.0f,
+                       "fog under the film: froxels jittered per sample average to the medium");
+            }
 
             // Light from above (+y), a plane at y = 0.5 over x < 0.
             sun->direction[1] = 1;
@@ -2831,7 +3017,7 @@ int main()
                    "light splits: a distant light's light is direct");
             Expect(std::abs(sum - img.At(32, 32, 1)) < 2e-3f, "light splits add up to the colour");
 
-            // With TAA the splits average the still frames' jittered samples:
+            // Under the film the splits average its jittered samples:
             // a slanted edge gets values between none and the inside's.
             vkr::Scene slanted(&device);
             AddLight(slanted, 0, 0, -1);
@@ -2847,14 +3033,15 @@ int main()
             do {
                 taaRenderer.Render(slanted, frame, out);
                 ++frames;
-            } while (!taaRenderer.IsConverged() && frames < 64);
+            } while (!taaRenderer.IsConverged() && frames < 200);
             const float inside = splits[A::kDirectDiffuse][(4 * 64 + 4) * 3 + 1];
             int partial = 0;
             for (int i = 0; i < 64 * 64; ++i) {
                 const float v = splits[A::kDirectDiffuse][i * 3 + 1];
                 partial += v > 0.1f * inside && v < 0.9f * inside;
             }
-            Expect(frames == 16 && inside > 0.3f && partial > 20, "light splits average TAA's frames");
+            Expect(frames == int(frame.filmSamples) && inside > 0.3f && partial > 20,
+                   "light splits average the film's samples");
         }
 
         {

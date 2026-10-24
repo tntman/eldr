@@ -10,6 +10,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
+#include "pxr/imaging/hd/changeTracker.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -155,7 +156,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeUnderTransparency, &frame.volume.underTransparency},
                                 {t.volumeShadows, &frame.volume.shadows},
                                 {t.displacement, &frame.displacement},
-                                {t.lod, &frame.lod}, {t.pipelineCache, &frame.pipelineCache},
+                                {t.lod, &frame.lod}, {t.filmAccumulation, &frame.filmAccumulation},
+                                {t.finalQuality, &frame.finalQuality},
+                                {t.sampleDimensions, &frame.sampleDimensions},
+                                {t.giPreconverge, &frame.giPreconverge}, {t.fogFilmJitter, &frame.fogFilmJitter},
+                                {t.pipelineCache, &frame.pipelineCache},
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
@@ -172,7 +177,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
-                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
+                                {t.filmFilterRadius, &frame.filmFilterRadius},
+                                {t.adaptiveThreshold, &frame.adaptiveThreshold}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -210,7 +217,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
-                                {t.volumeResolution, &frame.volume.resolution}}) {
+                                {t.volumeResolution, &frame.volume.resolution},
+                                {t.filmSamples, &frame.filmSamples},
+                                {t.interactiveSamples, &frame.interactiveSamples},
+                                {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // 0 allowed: no skinned instance blocks rays.
@@ -257,6 +267,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
+    // Final quality: asked for, or an offline renderer's convention (husk,
+    // hdPrman: enableInteractive false). usdrecord sets neither, but its
+    // first frame has no history, so its film starts with the first sample.
+    frame.finalQuality = frame.finalQuality ||
+                         !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
+    // Any edit to the scene or the settings starts the film over.
+    frame.sceneVersion = (uint64_t(GetRenderIndex()->GetChangeTracker().GetSceneStateVersion()) << 32) |
+                         delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     if (_scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold)) {
         _scene.Commit();

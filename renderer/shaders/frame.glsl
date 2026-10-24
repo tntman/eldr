@@ -41,8 +41,31 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    // Sample dimensions (SampleNoise): this sample's value per kDim*;
+    // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.
+    vec4 sampleDims[2];
+    uvec4 sampleInfo;
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them
 } frame;
+
+// Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic
+// effect turns a 64 x 64 blue noise by a low-discrepancy value of its own
+// per sample (Cranley-Patterson rotation), each dimension reading the noise
+// elsewhere, so effects neither share a pattern nor leave one in the film.
+const uint kDimAo = 0u, kDimSsgi = 1u, kDimSsr = 2u, kDimShadow = 3u, kDimSunShadow = 4u, kDimRefraction = 5u,
+           kDimVolume = 6u, kDimFog = 7u;
+layout(set = 0, binding = 90) uniform sampler2D blueNoise;
+
+// In [0, 1): dimension `dim` of this sample at `pixel`. Off: interleaved
+// gradient noise (Jimenez 2014) shifted per frame by `index`.
+float SampleNoise(uint dim, vec2 pixel, float index)
+{
+    if (frame.sampleInfo.x == 0u) {
+        return fract(52.9829189 * fract(dot(pixel + 5.588238 * index, vec2(0.06711056, 0.00583715))));
+    }
+    ivec2 p = (ivec2(pixel) + ivec2(dim * 23u, dim * 41u)) & 63;
+    return fract(texelFetch(blueNoise, p, 0)[dim & 3u] + frame.sampleDims[dim >> 2u][dim & 3u]);
+}
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;

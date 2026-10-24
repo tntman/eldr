@@ -54,10 +54,17 @@ vec3 PixelPos(ivec2 q)
     return WorldPos((vec2(q) + 0.5) * pc.params.zw, texelFetch(sceneDepth, q, 0).r);
 }
 
-// Interleaved gradient noise (Jimenez 2014), shifted per frame for TAA.
+layout(set = 0, binding = 4) uniform sampler2D blueNoise;  // 64 x 64 (Renderer's sample dimensions)
+
+// The blue noise turned by this sample's value (params.y < 1, Renderer's
+// sample dimensions), or interleaved gradient noise (Jimenez 2014) shifted
+// per frame by index params.y - 1.
 float Noise(vec2 p)
 {
-    p += 5.588238 * pc.params.y;
+    if (pc.params.y < 1.0) {
+        return fract(texelFetch(blueNoise, ivec2(p) & 63, 0).r + pc.params.y);
+    }
+    p += 5.588238 * (pc.params.y - 1.0);
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
