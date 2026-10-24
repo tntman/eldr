@@ -343,6 +343,13 @@ struct Mesh {
     // Planar reflections: make this (flat) mesh the mirror
     // (primvars:hdvk:planarReflection), whatever its size and roughness.
     bool planarReflection = false;
+    // Camera-facing primitives, turned towards each pass's eye by mesh.vert
+    // (its Facing): every vertex sits on its curve or point, `normals` hold
+    // the curve's tangent times the half width (ribbons; uvs' v, 0 or 1,
+    // the side) or the offset within the disc times the radius (discs;
+    // zero at the centre). Never skinned or displaced.
+    enum Facing : uint32_t { kNotFacing, kFacingRibbon, kFacingDisc };
+    Facing facing = kNotFacing;
 
 private:
     friend class Scene;
@@ -472,7 +479,8 @@ struct DrawInfo {
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
     uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
     uint32_t holdout;          // 1: Mesh::holdout
-    uint32_t pad[2];
+    uint32_t facing;           // Mesh::facing
+    uint32_t pad;
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -693,6 +701,9 @@ public:
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
         VkBuffer displacements = VK_NULL_HANDLE;
         bool displaced = false;
+        // A drawn mesh is camera-facing (Mesh::facing; drawn by the kDisplaced
+        // pipelines, whose vertex stage turns it).
+        bool facing = false;
         // Levels of detail: per mesh slot its LOD commands and their ranges
         // of the visible lists (shaders/cull.comp's Lod). The LOD commands
         // are slots after the meshes' (drawCount counts both): level 1

@@ -116,7 +116,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((displacement, "hdvk:displacement"))                    \
     ((displacementScale, "hdvk:displacementScale"))          \
     ((lod, "hdvk:lod"))                                      \
-    ((lodBias, "hdvk:lodBias"))
+    ((lodBias, "hdvk:lodBias"))                              \
+    ((curveRibbons, "hdvk:curveRibbons"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
@@ -153,9 +154,10 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
 
-// Dirties every mesh's display style in the scene upstream of `terminal` (a
-// render index's), so they sync again (sceneIndexPlugin.cpp).
-void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
+// Dirties every mesh's display style (or other `type` prims' primvars) in
+// the scene upstream of `terminal` (a render index's), so they sync again
+// (sceneIndexPlugin.cpp).
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type = HdPrimTypeTokens->mesh);
 
 class HdVkTextureCache;
 class HdVkGLInterop;

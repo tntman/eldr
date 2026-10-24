@@ -76,6 +76,44 @@ layout(constant_id = 1) const bool kDualQuaternion = false;
 // The depth prepass and the main pass must produce bit-identical depth.
 invariant gl_Position;
 
+// Camera-facing primitives (DrawInfo::facing, vkr::Mesh::facing), in the
+// kDisplacement pipelines only: the world offset of this vertex from its
+// curve or point (world `p`), turned towards the eye of this pass's
+// viewProj (the camera's, or a light's in shadow passes), and the shading
+// normal. Ribbons: inNormal is the tangent times the half width, inUv.y
+// the side; their normals lean 45 degrees out at the edges, a rounded
+// strand. Discs: inNormal the offset within the disc times the radius
+// (zero at the centre, whose normal faces the eye, the rim's points out:
+// a sphere's shading).
+vec3 Facing(uint kind, vec3 p, mat3 m, out vec3 normal)
+{
+    // The eye: the point viewProj's rows x, y and w all vanish at (a
+    // direction for orthographic views, then away from growing depth).
+    mat4 rows = transpose(pc.viewProj);
+    vec4 a = rows[0], b = rows[1], c = rows[3];
+    vec4 eye = vec4(dot(a.yzw, cross(b.yzw, c.yzw)), -dot(a.xzw, cross(b.xzw, c.xzw)),
+                    dot(a.xyw, cross(b.xyw, c.xyw)), -dot(a.xyz, cross(b.xyz, c.xyz)));
+    vec3 e = abs(eye.w) > 1e-6 * length(eye.xyz) ? eye.xyz / eye.w - p
+                                                  : eye.xyz * -sign(dot(eye.xyz, rows[2].xyz));
+    e = normalize(e);
+    float scale = pow(abs(determinant(m)), 1.0 / 3.0);
+    if (kind == 1u) {
+        vec3 t = m * inNormal;
+        float halfWidth = length(inNormal) * scale;
+        t = dot(t, t) > 1e-30 ? normalize(t) : vec3(0.0, 1.0, 0.0);
+        vec3 side = cross(t, e);
+        side = dot(side, side) > 1e-12 ? normalize(side) : normalize(cross(t, abs(t.x) < 0.9 ? vec3(1, 0, 0)
+                                                                                          : vec3(0, 1, 0)));
+        float s = inUv.y > 0.5 ? 1.0 : -1.0;
+        normal = normalize(cross(side, t) + s * side);
+        return s * halfWidth * side;
+    }
+    vec3 right = normalize(cross(b.xyz, e)), up = cross(e, right);
+    vec3 offset = (inNormal.x * right + inNormal.y * up) * scale;
+    normal = dot(inNormal, inNormal) > 0.0 ? normalize(offset) : e;
+    return offset;
+}
+
 void main()
 {
     uint slot = pc.listBase == kFreeSlot ? uint(gl_InstanceIndex) : visible[pc.listBase + gl_InstanceIndex];
@@ -85,7 +123,8 @@ void main()
     mat3 normalMatrix;
     // Displaced along the rest normal before anything moves it, the same in
     // every pass (displace.glsl).
-    vec3 position = Displace(inPosition, inNormal, d.material, inUv), prevPosition = position;
+    bool facing = kDisplacement && d.facing != 0u;
+    vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d.material, inUv), prevPosition = position;
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {
@@ -119,14 +158,19 @@ void main()
         normalMatrix = transpose(inverse(mat3(model)));
     }
     vec4 world = model * vec4(position, 1.0);
+    vec3 facingOffset = vec3(0.0), facingNormal = vec3(0.0);
+    if (facing) {
+        facingOffset = Facing(d.facing, world.xyz, mat3(model), facingNormal);
+        world.xyz += facingOffset;
+    }
     gl_Position = pc.viewProj * world;
     // Hydra hands us GL clip space (z in [-w, w]); Vulkan clips z to [0, w].
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
     outUv = inUv;
 #ifndef DEPTH_ONLY
-    vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(prevPosition, 1.0)).xyz : world.xyz;
+    vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(prevPosition, 1.0)).xyz + facingOffset : world.xyz;
     outWorldPos = vec4(world.xyz, prevWorld.x);
-    outNormal = vec4(normalMatrix * inNormal, prevWorld.y);
+    outNormal = vec4(facing ? facingNormal : normalMatrix * inNormal, prevWorld.y);
     outColor = vec4(d.vertexColors != 0u ? inVertexColor.rgb : d.color.rgb, prevWorld.z);
     outSlot = slot;
 #ifdef GRAPH

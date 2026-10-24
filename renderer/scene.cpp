@@ -780,9 +780,13 @@ void Scene::_UploadGeometry(Mesh &m)
                     skin.push_back(key.skin2);
                 }
             }
+            // Camera-facing: as far as the half width or radius reaches.
+            const float reach = m.facing == Mesh::kNotFacing
+                                    ? 0.0f
+                                    : Length(Vec3{key.v.normal[0], key.v.normal[1], key.v.normal[2]});
             for (int k = 0; k < 3; ++k) {
-                m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k]);
-                m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k]);
+                m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k] - reach);
+                m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k] + reach);
             }
         }
     }
@@ -809,7 +813,7 @@ void Scene::_UploadGeometry(Mesh &m)
     m._indexCount = indexCount;
     // Levels of detail of heavy meshes (lod.h), built on other threads; a
     // later Commit stores them (the mesh draws whole until then).
-    if (indexCount / 3 >= kLodMinTriangles) {
+    if (indexCount / 3 >= kLodMinTriangles && m.facing == Mesh::kNotFacing) {
         // Position, then the shading attributes as distances (see BuildLods):
         // normals and colours relative to the bounding radius (a turn of
         // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
@@ -1549,7 +1553,7 @@ void Scene::Commit()
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                    std::numeric_limits<float>::lowest()};
-    bool anyDrawable = false;
+    bool anyDrawable = false, facing = false;
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
@@ -1564,13 +1568,18 @@ void Scene::Commit()
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
         d.hair = m.hair ? 1 : 0;
+        d.facing = m.facing;
+        facing = facing || (drawable && m.facing != Mesh::kNotFacing);
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
                                 (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
                                 (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
-                                (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
+                                ((drawable && m.material && m.material->displacementBound > 0) ||
+                                         m.facing != Mesh::kNotFacing
+                                     ? Gpu::kDisplaced
+                                     : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;
@@ -1718,6 +1727,7 @@ void Scene::Commit()
         _lastDrawn = std::move(drawn);
     }
     _gpu.hasBounds = anyDrawable;
+    _gpu.facing = facing;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
 

@@ -1819,7 +1819,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
-    if (gpu.displaced && !_displacedPipelines) {  // the first displaced material
+    if ((gpu.displaced || gpu.facing) && !_displacedPipelines) {  // the first displaced or facing mesh
         _CreatePipelines(true);
         for (uint32_t set = 0; set < _shadingSets.size(); ++set) {
             _CreatePipelines(true, set);

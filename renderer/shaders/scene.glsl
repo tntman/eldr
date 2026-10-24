@@ -48,6 +48,7 @@ struct DrawInfo {
     uint primvarVertices;  // its first vec4 of vertex-rate primvars, kFreeSlot: none
     uint hair;             // 1: shaded as hair (brdf.glsl)
     uint holdout;          // 1: a holdout (transparency.glsl)
+    uint facing;           // camera-facing: 1 ribbons, 2 discs (mesh.vert's Facing)
 };
 
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).
