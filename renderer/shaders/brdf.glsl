@@ -130,9 +130,9 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
 {
     layers = Layers(0.0, 1.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, 0.0, false, vec3(0.0), vec3(0.0), 0.0, 0.0,
                     diffuseColor + f0, false, diffuseColor);
-    // Hair (curves, whose uvs run along each curve; hydra/curves.cpp):
-    // strands along the curve, highlights stretched around it, also without
-    // a material.
+    // Hair (curves, whose uvs run along each curve, unless their
+    // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
+    // curve, highlights stretched around it, also without a material.
     if (draws[instances[inSlot].draw].hair != 0u && (frame.styles.x & kStyleHair) != 0u) {
         vec3 t = UvTangent(n);
         layers.hair = true;

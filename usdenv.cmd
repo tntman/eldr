@@ -3,7 +3,9 @@ rem Runs a USD tool with this build's plugin, e.g.
 rem   usdenv usdview --renderer Eldr tests\scenes\step2.usda
 rem   usdenv usdrecord --renderer Eldr --camera /cam tests\scenes\step2.usda out.png
 rem Set USD_ROOT / USD_VENV / HDVK_BUILD to override the default locations.
-if not defined USD_ROOT set USD_ROOT=C:\dev\usd-26.08
+rem The default USD is built with OpenVDB (volumes); HDVK_BUILD must be
+rem configured against the same USD (-DCMAKE_PREFIX_PATH=%USD_ROOT%).
+if not defined USD_ROOT set USD_ROOT=C:\dev\usd-26.08-vdb
 if not defined USD_VENV set USD_VENV=C:\dev\usd-venv
 if not defined HDVK_BUILD set HDVK_BUILD=%~dp0build
 set PATH=%USD_ROOT%\bin;%USD_ROOT%\lib;%USD_VENV%\Scripts;%PATH%

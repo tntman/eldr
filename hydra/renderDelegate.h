@@ -3,10 +3,12 @@
 #include "pxr/pxr.h"
 #include "pxr/base/tf/staticTokens.h"
 #include "pxr/imaging/hd/renderDelegate.h"
+#include "pxr/imaging/hd/types.h"
 #include "pxr/imaging/hd/sceneIndex.h"
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace vkr {
 class Device;
@@ -104,6 +106,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeDensity, "hdvk:volumeDensity"))                  \
     ((volumeEmission, "hdvk:volumeEmission"))                \
     ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
+    ((volumeResolution, "hdvk:volumeResolution"))            \
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \
@@ -113,15 +116,34 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
-// AOVs of HdVk's own beyond HdAovTokens: base colour, emission and
-// Cryptomatte's first layer (ranks 0 and 1) of object and material ids.
-#define HDVK_AOV_TOKENS                           \
-    (albedo)                                                 \
-    (emission)                                               \
-    ((cryptoObject, "CryptoObject00"))                       \
-    ((cryptoMaterial, "CryptoMaterial00"))
+// Karma's names for what Eldr's extra AOVs hold: the source names of the
+// render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
+// hands them to Hydra (raw names, "lpe:" and "primvars:" ones).
+#define HDVK_AOV_TOKENS                                     \
+    ((hitN, "ray:hitN"))                                    \
+    ((hitNFacing, "ray:hitN_facing"))                       \
+    ((hitNCamera, "ray:hitN_camera"))                       \
+    ((hitP, "ray:hitP"))                                    \
+    ((hitPCamera, "ray:hitP_camera"))                       \
+    ((hitPz, "ray:hitPz"))                                  \
+    ((baseColor, "export_basecolor"))                       \
+    ((diffuseAlbedo, "lpe:CDA"))                            \
+    ((directEmission, "lpe:CO"))                            \
+    ((cryptoObject, "primvars:__name"))                     \
+    ((cryptoMaterial, "primvars:__materialname"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
+
+// Extra AOVs (vkr::Aovs::Kind) by the names Hydra binds them with:
+// HdAovTokens' (usdview's AOV menu) and Karma's (HdVkAovTokens). `format` is
+// what GetDefaultAovDescriptor gives; a bound buffer of any float format
+// gets as many components.
+struct HdVkExtraAov {
+    TfToken name;
+    uint32_t kind;
+    HdFormat format;
+};
+const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).

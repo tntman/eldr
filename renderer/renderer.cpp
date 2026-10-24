@@ -429,8 +429,8 @@ void Renderer::_CreateDescriptors()
     // the shadow maps 4 and 17..19), 49 the sun's cascades without depth
     // compare (soft sun shadows' blocker search), 50 the reflection probe
     // and 51 the planar reflection (Reflections).
-    // 63..65 the volumes (volume.frag): the depth (bound with or without
-    // the prepass), NanoVDB grids and GpuVolumes.
+    // 63..66 the volumes (volume.frag): the depth (bound with or without
+    // the prepass), NanoVDB grids, GpuVolumes and the half resolution march.
     constexpr VkShaderStageFlags kLighting = kFragment | VK_SHADER_STAGE_COMPUTE_BIT;
     // Ray tracing stages read the materials, lights, frame and dome too.
     const VkShaderStageFlags kRt = _dev.rayTracing ? VK_SHADER_STAGE_RAYGEN_BIT_KHR | VK_SHADER_STAGE_MISS_BIT_KHR |
@@ -502,6 +502,7 @@ void Renderer::_CreateDescriptors()
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
@@ -525,7 +526,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
@@ -1165,6 +1166,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &volumeDepth);
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
     write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
+    // Without half resolution volumes yet, the LUT stands in.
+    const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -2033,6 +2038,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty()) {
         fd.features[0] |= kFeatureSubsurface;
     }
+    if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
+        _volumePass->EnsureHalf(_width, _height);
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -2589,6 +2597,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
         params.cryptomatte = frame.cryptomatte;
         params.cryptomatteIds = frame.cryptomatteIds;
+        std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, params.components);
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {

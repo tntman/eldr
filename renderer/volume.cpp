@@ -18,12 +18,18 @@ namespace {
 const uint32_t kVolumeFrag[] =
 #include "volume.frag.inc"
 ;
+const uint32_t kUpsampleFrag[] =
+#include "volume_upsample.frag.inc"
+;
+
+constexpr VkFormat kHalfFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // premultiplied radiance, 1 - transmittance
 
 struct VolumeParams {  // mirror of the push block in volume.frag
     float stepSize;
     uint32_t maxSteps, shadowSteps;
     float density, emission, anisotropy;
-    uint32_t count, pad;
+    uint32_t count;
+    uint32_t scale;  // 1: full resolution, 2: half
 };
 
 // y = m (x, 1): three rows of an affine map.
@@ -121,14 +127,36 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _pipeline = CreateFullscreenPipeline(_dev.device, _layout, kVolumeFrag, sizeof(kVolumeFrag),
-                                         Renderer::kColorFormat, false, true);
+    const VkDevice d = _dev.device;
+    _pipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
+                                         false, true);
+    _halfPipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
+    _upsamplePipeline = CreateFullscreenPipeline(d, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
+                                                 Renderer::kColorFormat, false, true);
 }
 
 VolumePass::~VolumePass()
 {
-    vkDestroyPipeline(_dev.device, _pipeline, nullptr);
+    vkDeviceWaitIdle(_dev.device);
+    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline}) {
+        vkDestroyPipeline(_dev.device, p, nullptr);
+    }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
+    _dev.Destroy(_half);
+}
+
+VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
+{
+    const uint32_t w = (width + 1) / 2, h = (height + 1) / 2;
+    if (w != _halfWidth || h != _halfHeight) {
+        _dev.Destroy(_half);
+        _half = _dev.CreateImage(kHalfFormat, w, h, 1, 1,
+                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        _halfWidth = w;
+        _halfHeight = h;
+    }
+    return _half.view;
 }
 
 bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
@@ -155,8 +183,26 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     p.emission = std::max(s.emission, 0.0f);
     p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
     p.count = volumeCount;
-    DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
-                   sizeof(p));
+    p.scale = s.resolution >= 2 && _half.image ? 2 : 1;
+    if (p.scale == 1) {
+        DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
+                       sizeof(p));
+        return true;
+    }
+    // Half resolution: every pixel of the target is written (zero where
+    // no volume is), then upsampled over the image.
+    const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    ImageBarrier(cmd, _half.image, range, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    DrawFullscreen(cmd, _halfPipeline, _layout, set, _half.view, _halfWidth, _halfHeight, false,
+                   VK_SHADER_STAGE_FRAGMENT_BIT, &p, sizeof(p));
+    ImageBarrier(cmd, _half.image, range, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    DrawFullscreen(cmd, _upsamplePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
+                   &p, sizeof(p));
     return true;
 }
 
@@ -167,23 +213,44 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
 // static ones.
 void Scene::_CommitVolumes()
 {
-    std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> used;
-    auto use = [&](const std::shared_ptr<VolumeGrid> &g) {
-        if (Nano(g.get()).type == 0) {
-            return;
-        }
-        if (std::none_of(used.begin(), used.end(), [&](const auto &u) { return u.first == g; })) {
-            used.push_back({g, g->version});
-        }
+    // Each drawn volume's shading and its fields by role: density,
+    // temperature, colour, emission.
+    struct Drawn {
+        const Volume *volume;
+        VolumeShading shading;
+        std::shared_ptr<VolumeGrid> grids[4];
     };
-    std::vector<const Volume *> drawn;
+    std::vector<Drawn> drawn;
+    std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> used;
     for (const auto &v : _volumes) {
-        if (v->visible && (v->tag & _tagMask) && Nano(v->density.get()).type == PNANOVDB_GRID_TYPE_FLOAT) {
-            drawn.push_back(v.get());
-            for (const auto *g : {&v->density, &v->temperature, &v->color, &v->emission}) {
-                use(*g);
+        if (!v->visible || !(v->tag & _tagMask)) {
+            continue;
+        }
+        Drawn d{v.get(), v->shading ? *v->shading : VolumeShading{}, {}};
+        auto field = [&](const std::string &name) {
+            const auto it = name.empty() ? v->fields.end() : v->fields.find(name);
+            return it == v->fields.end() ? nullptr : it->second;
+        };
+        d.grids[0] = field(d.shading.densityField);
+        if (!d.grids[0] && !v->fields.empty()) {
+            d.grids[0] = v->fields.begin()->second;
+        }
+        d.grids[1] = field(d.shading.temperatureField);
+        d.grids[2] = field(d.shading.colorField);
+        if (!d.grids[2] && d.shading.colorField == "Cd") {
+            d.grids[2] = field("color");
+        }
+        d.grids[3] = field(d.shading.emissionField);
+        if (Nano(d.grids[0].get()).type != PNANOVDB_GRID_TYPE_FLOAT) {
+            continue;
+        }
+        for (const auto &g : d.grids) {
+            if (Nano(g.get()).type != 0 &&
+                std::none_of(used.begin(), used.end(), [&](const auto &u) { return u.first == g; })) {
+                used.push_back({g, g->version});
             }
         }
+        drawn.push_back(std::move(d));
     }
     // Byte offsets in the pool, 32-byte aligned as NanoVDB grids are.
     std::vector<uint32_t> offsets;
@@ -214,8 +281,8 @@ void Scene::_CommitVolumes()
     };
 
     std::vector<GpuVolume> table;
-    for (const Volume *v : drawn) {
-        const Nano density(v->density.get());
+    for (const Drawn &d : drawn) {
+        const Nano density(d.grids[0].get());
         const pnanovdb_coord_t lo = pnanovdb_root_get_bbox_min(density.buf, density.root);
         const pnanovdb_coord_t hi = pnanovdb_root_get_bbox_max(density.buf, density.root);
         if (lo.x > hi.x || lo.y > hi.y || lo.z > hi.z) {
@@ -229,31 +296,50 @@ void Scene::_CommitVolumes()
             g.indexMax[k] = float(upper[k] + 1);
         }
         const Affine indexToObject = density.IndexToObject();
-        const std::shared_ptr<VolumeGrid> *others[3] = {&v->temperature, &v->color, &v->emission};
-        g.grids[0] = offsetOf(v->density);
+        g.grids[0] = offsetOf(d.grids[0]);
         g.types[0] = PNANOVDB_GRID_TYPE_FLOAT;
         for (int k = 0; k < 3; ++k) {
-            const Nano other(others[k]->get());
+            const Nano other(d.grids[1 + k].get());
             Affine toOther;
             const bool usable = other.type != 0 && (k != 0 || other.type == PNANOVDB_GRID_TYPE_FLOAT) &&
                                 Invert(other.IndexToObject(), &toOther);
-            g.grids[1 + k] = usable ? offsetOf(*others[k]) : kNone;
+            g.grids[1 + k] = usable ? offsetOf(d.grids[1 + k]) : kNone;
             g.types[1 + k] = other.type;
             Store(toOther * indexToObject, g.toGrid[k]);
         }
+        // The material's coefficients: extinction is grey (their mean),
+        // the albedo carries the colour.
+        // ponytail: coloured absorption only tints the scattered light, not
+        // what shows through (one transmittance for all channels).
+        const VolumeShading &s = d.shading;
+        float extinction = 0.0f;
+        for (int c = 0; c < 3; ++c) {
+            extinction += (std::max(s.scattering[c], 0.0f) + std::max(s.absorption[c], 0.0f)) / 3.0f;
+        }
+        for (int c = 0; c < 3; ++c) {
+            g.albedo[c] = extinction > 0 ? std::max(s.scattering[c], 0.0f) / extinction : 0.0f;
+            g.emission[c] = s.emission[c] * s.densityScale;
+        }
+        const bool anisotropy = !std::isnan(s.anisotropy);
+        g.albedo[3] = anisotropy ? std::clamp(s.anisotropy, -0.95f, 0.95f) : 0.0f;
+        g.medium[0] = extinction * s.densityScale;
+        g.medium[1] = anisotropy ? 1.0f : 0.0f;
+        g.medium[3] = s.emissionScale;
         // Temperature in Kelvin, or normalized (Houdini's pyro: ~1 burning)
-        // to 5000 K as Arnold's blackbody does.
-        // ponytail: decided by the grid's maximum; a per-volume setting
-        // (material) would be the real thing.
-        g.params[0] = 1.0f;
-        if (g.grids[1] != kNone) {
-            const Nano t(v->temperature.get());
+        // to 5000 K as Arnold's blackbody does, unless the material says.
+        // ponytail: without a material, decided by the grid's maximum.
+        g.params[0] = s.kelvinScale > 0 ? s.kelvinScale : 1.0f;
+        if (g.grids[1] != kNone && !(s.kelvinScale > 0)) {
+            const Nano t(d.grids[1].get());
             const float hottest = pnanovdb_read_float(
                 t.buf, pnanovdb_root_get_max_address(PNANOVDB_GRID_TYPE_FLOAT, t.buf, t.root));
             g.params[0] = hottest > 100.0f ? 1.0f : 5000.0f;
         }
-        for (size_t i = 0; i + 16 <= v->transforms.size(); i += 16) {
-            const float *x = &v->transforms[i];  // row-vector: world = (p, 1) X
+        g.params[1] = s.blackbodyIntensity;
+        g.params[2] = s.physical ? 1.0f : 0.0f;
+        const std::vector<float> &transforms = d.volume->transforms;
+        for (size_t i = 0; i + 16 <= transforms.size(); i += 16) {
+            const float *x = &transforms[i];  // row-vector: world = (p, 1) X
             Affine objectToWorld;
             for (int r = 0; r < 3; ++r) {
                 for (int c = 0; c < 3; ++c) {

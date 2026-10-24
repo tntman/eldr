@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 
+#include "camera.h"
 #include "curves.h"
 #include "glInterop.h"
 #include "instancer.h"
@@ -34,6 +35,33 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
+
+const std::vector<HdVkExtraAov> &HdVkExtraAovs()
+{
+    using A = vkr::Aovs;
+    const auto &k = *HdVkAovTokens;
+    static const std::vector<HdVkExtraAov> aovs = {
+        {HdAovTokens->normal, A::kNormal, HdFormatFloat32Vec3},
+        {HdAovTokens->Neye, A::kNormalEye, HdFormatFloat32Vec3},
+        {HdAovTokens->Peye, A::kPositionEye, HdFormatFloat32Vec3},
+        {HdAovTokens->cameraDepth, A::kCameraDepth, HdFormatFloat32},
+        {HdAovTokensMakePrimvar(TfToken("st")), A::kSt, HdFormatFloat32Vec2},
+        // Karma's N is the smooth normal; Eldr's always faces the camera,
+        // which is Karma's N_facing.
+        {k.hitN, A::kNormal, HdFormatFloat32Vec3},
+        {k.hitNFacing, A::kNormal, HdFormatFloat32Vec3},
+        {k.hitNCamera, A::kNormalEye, HdFormatFloat32Vec3},
+        {k.hitP, A::kPositionWorld, HdFormatFloat32Vec3},
+        {k.hitPCamera, A::kPositionEye, HdFormatFloat32Vec3},
+        {k.hitPz, A::kDepth, HdFormatFloat32},
+        {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
+        {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
+        {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
+        {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
+        {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
+    };
+    return aovs;
+}
 
 namespace {
 
@@ -119,19 +147,14 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
-    // Extra AOVs (vkr::Aovs), rendered only when bound.
-    if (name == HdAovTokens->normal || name == HdAovTokens->Neye || name == HdAovTokens->Peye ||
-        name == HdVkAovTokens->albedo || name == HdVkAovTokens->emission) {
-        return HdAovDescriptor(HdFormatFloat32Vec3, false, VtValue(GfVec3f(0.0f)));
-    }
-    if (name == HdAovTokens->cameraDepth) {
-        return HdAovDescriptor(HdFormatFloat32, false, VtValue(0.0f));
-    }
-    if (name == HdAovTokensMakePrimvar(TfToken("st"))) {
-        return HdAovDescriptor(HdFormatFloat32Vec2, false, VtValue(GfVec2f(0.0f)));
-    }
-    if (name == HdVkAovTokens->cryptoObject || name == HdVkAovTokens->cryptoMaterial) {
-        return HdAovDescriptor(HdFormatFloat32Vec4, false, VtValue(GfVec4f(0.0f)));
+    // Extra AOVs (vkr::Aovs), rendered only when bound; cleared to 0.
+    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+        if (name == aov.name) {
+            const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
+                               : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
+                                                                   : VtValue(GfVec3f(0.0f));
+            return HdAovDescriptor(aov.format, false, zero);
+        }
     }
     return HdAovDescriptor();
 }
@@ -245,9 +268,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
         {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
         {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
-        {"Volume Density Multiplier", t.volumeDensity, VtValue(volume.density)},
-        {"Volume Emission Multiplier (temperature, emission)", t.volumeEmission, VtValue(volume.emission)},
-        {"Volume Phase Anisotropy (-1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+        {"Volume Density Multiplier (on the material's)", t.volumeDensity, VtValue(volume.density)},
+        {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
+        {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+        {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
     });
 #endif
     return settings;
@@ -307,7 +331,7 @@ void HdVkRenderDelegate::DestroyRprim(HdRprim *rprim) { delete rprim; }
 HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &sprimId)
 {
     if (typeId == HdPrimTypeTokens->camera) {
-        return new HdCamera(sprimId);
+        return new HdVkCamera(sprimId);
     }
     if (typeId == HdPrimTypeTokens->material) {
         return new HdVkMaterial(sprimId, _textures.get());

@@ -198,6 +198,7 @@ public:
         uint16_t *velocity = nullptr;   // object motion vectors, two halves per pixel (see mesh.frag)
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
+        uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;

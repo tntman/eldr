@@ -9,7 +9,9 @@
 # attributes of those names reach HdCamera through UsdImaging.
 #   usdenv usdrecord --renderer Eldr --camera /cam distortion.usda out.png
 # /cam is a barrel lens, /pincushion the opposite, /fisheye an equidistant
-# fisheye and /plain the same view undistorted.
+# fisheye and /plain the same view undistorted. /karma is /cam's lens the
+# way Houdini's Karma has it: a lens material (Karma Physical Lens, OpenCV
+# terms) bound to the camera.
 
 def Camera "plain"
 {
@@ -25,6 +27,26 @@ def Camera "cam"
     uniform token[] xformOpOrder = ["xformOp:translate"]
     float lensDistortion:k1 = 0.12
     float lensDistortion:k2 = 0.02
+}
+
+def Camera "karma"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    bool karma:camera:use_lensshader = 1
+    rel karma:camera:material:binding = </lens>
+}
+
+def Material "lens"
+{
+    def Shader "physicallens"
+    {
+        uniform token info:id = "kma_physicallens"
+        int inputs:opencv_enabled = 1
+        float inputs:opencv_k1 = 0.12
+        float inputs:opencv_k2 = 0.02
+    }
 }
 
 def Camera "pincushion"

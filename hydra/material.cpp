@@ -2,6 +2,9 @@
 
 #include "instancer.h"
 #include "scene.h"
+#ifdef HDVK_VOLUMES
+#include "volume.h"
+#endif
 
 #include "pxr/base/gf/color.h"
 #include "pxr/base/gf/colorSpace.h"
@@ -1327,7 +1330,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
     // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
-    // width, in bands).
+    // width, in bands). On BasisCurves `bool primvars:eldr:hair = 0` turns
+    // hair shading off (hydra/curves.cpp).
     m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
     m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
 }
@@ -1632,6 +1636,7 @@ HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
     : HdMaterial(id)
     , _textures(textures)
     , _material(std::make_shared<vkr::Material>())
+    , _volume(std::make_shared<vkr::VolumeShading>())
 {
 }
 
@@ -1640,13 +1645,18 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
 {
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults
+        vkr::VolumeShading volume;
         _uvPrimvar = TfToken();
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
             ReadSurface(net, _textures, &m, &_uvPrimvar);
             ReadDisplacement(net, _textures, &m, &_uvPrimvar);
+#ifdef HDVK_VOLUMES
+            HdVkReadVolumeShading(net, &volume);
+#endif
         }
+        *_volume = std::move(volume);
         _primvars.clear();
         for (const std::string &name : m.program.primvars) {
             _primvars.emplace_back(name);
