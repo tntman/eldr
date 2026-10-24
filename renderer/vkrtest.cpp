@@ -2271,9 +2271,14 @@ int main()
             matte->material = glass;
             scene.Commit();
             const Image translucent = Render(renderer, scene);
-            Expect(std::abs(translucent.At(16, 32, 0) - translucent.At(48, 32, 0)) < 1e-3f &&
-                       translucent.At(16, 32, 3) == 1.0f,
-                   "translucent holdout: what's behind it unchanged");
+            Expect(std::abs(translucent.At(16, 32, 0) - 0.5f * translucent.At(48, 32, 0)) < 0.01f &&
+                       std::abs(translucent.At(16, 32, 3) - 0.5f) < 0.01f,
+                   "translucent holdout (opacity 0.5): cuts colour and alpha by half");
+            frame = IdentityFrame();
+            frame.holdoutAlpha = false;
+            const Image uncut = Render(renderer, scene, frame);
+            Expect(std::abs(uncut.At(16, 32, 0) - uncut.At(48, 32, 0)) < 1e-3f && uncut.At(16, 32, 3) == 1.0f,
+                   "Frame::holdoutAlpha off: a translucent holdout leaves what's behind it alone");
         }
 
         {

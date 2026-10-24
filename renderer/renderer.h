@@ -203,6 +203,9 @@ public:
         // (glass behind glass, a ball's far side), up to this many copies.
         bool multiRefraction = true;
         uint32_t refractionLayers = 4;
+        // Translucent holdouts (with holdouts) cut the image's colour and
+        // alpha by their opacity; off: they draw nothing.
+        bool holdoutAlpha = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -351,6 +354,7 @@ private:
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _mattePipeline[kVariants] = {};  // translucent holdouts' matte (matte.frag)
     VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};

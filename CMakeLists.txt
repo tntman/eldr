@@ -24,7 +24,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
+               shadow_tint.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
                volume_upsample.frag shadow_min.comp rt_skin.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}

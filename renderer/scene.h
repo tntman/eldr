@@ -612,7 +612,8 @@ public:
         std::vector<uint8_t> translucentVariant;
         // Per translucent slot: kRefracts (a material that refracts or
         // tints what's behind it, see refraction).
-        enum : uint8_t { kRefracts = 1 };
+        // kHoldout: Mesh::holdout.
+        enum : uint8_t { kRefracts = 1, kHoldout = 2 };
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;

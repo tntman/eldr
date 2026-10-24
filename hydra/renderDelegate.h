@@ -90,7 +90,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
     ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
-    ((holdouts, "hdvk:holdouts")) \
+    ((holdouts, "hdvk:holdouts"))              \
+    ((holdoutAlpha, "hdvk:holdoutAlpha")) \
     ((softSunShadows, "hdvk:softSunShadows"))                \
     ((fog, "hdvk:fog"))                                      \
     ((fogDensity, "hdvk:fogDensity"))                        \

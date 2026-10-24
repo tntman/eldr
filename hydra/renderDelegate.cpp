@@ -246,6 +246,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
+        {"Translucent Holdouts Cut Alpha (by opacity)", t.holdoutAlpha, VtValue(frame.holdoutAlpha)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},

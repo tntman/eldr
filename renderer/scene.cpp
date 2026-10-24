@@ -1615,7 +1615,8 @@ void Scene::Commit()
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
             _gpu.translucentFlags.push_back(
-                m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0);
+                (m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0) |
+                (m.holdout ? Gpu::kHoldout : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
