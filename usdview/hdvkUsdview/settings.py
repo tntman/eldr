@@ -11,7 +11,7 @@ GROUPS = [
      "depthPrepass frustumCulling cullPixels lod lodBias subdivision maxRefineLevel displacement "
      "displacementScale anisotropy shareFrame extraAovs"),
     ("Lighting",
-     "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "
+     "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis ssgi ssgiSteps ssgiRadius ssgiResolution"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "

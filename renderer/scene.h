@@ -556,6 +556,11 @@ public:
     // lights the scene as a sphere light around it, of the same power
     // (pi x radiance x area), casting shadows. Returns whether it changed.
     bool SetEmissiveLights(bool on, float threshold);
+    // Dome sun extraction: the dome texture's light over `threshold` (scene
+    // radiance, luminance) leaves its image-based lighting and lights the
+    // scene as a distant light with shadows, of the texels' size. Returns
+    // whether it changed (Commit again).
+    bool SetDomeSun(bool on, float threshold);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -776,6 +781,10 @@ private:
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
+    float _envThreshold = 0;          // the sun extraction it was built with (texture units, 0: none)
+    bool _domeSunOn = false;
+    float _domeSunThreshold = 0;
+    ExtractedSun _domeSun;            // of the environment built (dome-local, texture units)
     uint32_t _tagMask = ~0u;
     bool _emissiveLights = true;
     float _emissiveThreshold = 4.0f;

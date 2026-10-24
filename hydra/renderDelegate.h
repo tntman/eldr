@@ -79,6 +79,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssgiResolution, "hdvk:ssgiResolution"))                \
     ((emissiveLights, "hdvk:emissiveLights"))                \
     ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))        \
+    ((domeSun, "hdvk:domeSun"))                          \
+    ((domeSunThreshold, "hdvk:domeSunThreshold"))        \
     ((oit, "hdvk:oit"))                                      \
     ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
     ((refraction, "hdvk:refraction"))                        \

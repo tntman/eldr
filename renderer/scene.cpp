@@ -312,6 +312,14 @@ std::vector<Scene::SkinnedInstance> Scene::LargestSkinned(const float eye[3], ui
     return largest;
 }
 
+bool Scene::SetDomeSun(bool on, float threshold)
+{
+    const bool changed = on != _domeSunOn || (on && threshold != _domeSunThreshold);
+    _domeSunOn = on;
+    _domeSunThreshold = threshold;
+    return changed;
+}
+
 bool Scene::SetEmissiveLights(bool on, float threshold)
 {
     const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
@@ -1275,10 +1283,14 @@ void Scene::_UpdateEnvironment(const Dome *dome)
     const Texture *source = dome->texture.get();
     const bool usable = source && source->width > 0 && source->height > 0 &&
         source->pixels.size() == size_t(source->width) * source->height * BytesPerPixel(source->format);
-    if (_envBuilt && _envSource.get() == (usable ? source : nullptr)) {
+    // The sun's threshold in texture units (the dome multiplies them).
+    const float scale = 0.2126f * dome->radiance[0] + 0.7152f * dome->radiance[1] + 0.0722f * dome->radiance[2];
+    const float threshold = _domeSunOn && usable && scale > 0.0f ? _domeSunThreshold / scale : 0.0f;
+    if (_envBuilt && _envSource.get() == (usable ? source : nullptr) && threshold == _envThreshold) {
         return;
     }
-    const EnvironmentMaps maps = BuildEnvironment(usable ? source : nullptr);
+    const EnvironmentMaps maps = BuildEnvironment(usable ? source : nullptr, threshold, &_domeSun);
+    _envThreshold = threshold;
     _DestroyEnvironment();
 
     const VkDevice device = _device->device;
@@ -1807,7 +1819,40 @@ void Scene::Commit()
     }
 
     const std::vector<Emitter> emitters = _FindEmitters();
-    _device->Reserve(_lightBuffer, (_lights.size() + 2 * emitters.size()) * sizeof(GpuLight),
+    // The dome's environment first: its extracted sun (SetDomeSun) lights
+    // the scene as the last distant light (a scene's own sun keeps the
+    // cascades).
+    const auto dome = std::find_if(_domes.begin(), _domes.end(), [](const auto &d) { return d->visible; });
+    if (dome != _domes.end()) {
+        _UpdateEnvironment(dome->get());
+    }
+    Light domeSun;
+    const bool hasDomeSun = dome != _domes.end() && _envThreshold > 0.0f &&
+                            _domeSun.irradiance[0] + _domeSun.irradiance[1] + _domeSun.irradiance[2] > 0.0f;
+    if (hasDomeSun) {
+        // Dome-local to world: the rotation's transpose (USD row-vector order).
+        const float *m = (*dome)->worldToLocal;
+        const float *d = _domeSun.direction;
+        float w[3];
+        for (int k = 0; k < 3; ++k) {
+            w[k] = m[k * 4 + 0] * d[0] + m[k * 4 + 1] * d[1] + m[k * 4 + 2] * d[2];
+        }
+        const float len = std::max(std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]), 1e-20f);
+        for (int k = 0; k < 3; ++k) {
+            domeSun.direction[k] = w[k] / len;
+            domeSun.irradiance[k] = _domeSun.irradiance[k] * (*dome)->radiance[k];
+        }
+        domeSun.angle = std::max(_domeSun.angle, 0.1f);
+        domeSun.castShadows = true;
+    }
+    std::vector<const Light *> sceneLights;
+    for (const auto &l : _lights) {
+        sceneLights.push_back(l.get());
+    }
+    if (hasDomeSun) {
+        sceneLights.push_back(&domeSun);
+    }
+    _device->Reserve(_lightBuffer, (sceneLights.size() + 2 * emitters.size()) * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
@@ -1815,7 +1860,7 @@ void Scene::Commit()
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     for (const bool distant : {true, false}) {  // distant lights first
-        for (const auto &l : _lights) {
+        for (const Light *l : sceneLights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
                 continue;
             }
@@ -1946,8 +1991,6 @@ void Scene::Commit()
         _gpu.slotGeometry[mesh->_slot].emitter = instances == mesh->_instanceCount;
     }
 
-    const auto dome = std::find_if(_domes.begin(), _domes.end(),
-                                   [](const auto &d) { return d->visible; });
     _gpu.environment = VK_NULL_HANDLE;
     _gpu.environmentLatlong = kNone;
     if (dome != _domes.end()) {

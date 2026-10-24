@@ -153,7 +153,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod},
                                 {t.authoredProbes, &frame.authoredProbes},
-                                {t.probeNormalize, &frame.probeNormalize}}) {
+                                {t.probeNormalize, &frame.probeNormalize},
+                                {t.domeSun, &frame.domeSun}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -169,7 +170,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
-                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
+                                {t.domeSunThreshold, &frame.domeSunThreshold}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -255,7 +257,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
-    if (_scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold)) {
+    // Either may change the light table: commit once.
+    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
+    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
         _scene.Commit();
     }
     // The scene camera's lens; usdview's free camera has none.

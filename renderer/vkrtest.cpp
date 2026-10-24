@@ -938,6 +938,45 @@ int main()
         }
 
         {
+            // Dome sun extraction: the shadow scene lit by a dome whose sun
+            // (2x2 texels of radiance 500 towards (1, 0, -1)) the rest
+            // (0.02) can't outshine. Off: the sun is image-based light, no
+            // shadow. On: a distant light with shadows, as bright.
+            vkr::Scene scene(&device);
+            auto tex = std::make_shared<vkr::Texture>();
+            tex->width = 128;
+            tex->height = 64;
+            tex->format = vkr::Texture::Format::RGBA32F;
+            std::vector<float> texels(128 * 64 * 4, 0.02f);
+            for (uint32_t y : {31u, 32u}) {
+                for (uint32_t x : {15u, 16u}) {
+                    std::fill_n(&texels[(y * 128 + x) * 4], 3, 500.0f);
+                }
+            }
+            tex->pixels.resize(texels.size() * sizeof(float));
+            std::memcpy(tex->pixels.data(), texels.data(), tex->pixels.size());
+            scene.AddDome()->texture = tex;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.showEnvironment = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(off.At(3, 32, 0) > 0.8f * off.At(51, 32, 0), "dome sun off: the sun lights the shadow too");
+            Expect(scene.SetDomeSun(true, 10.0f), "dome sun: setting changed");
+            scene.Commit();
+            const Image on = Render(renderer, scene, frame);
+            const float shadowed = on.At(3, 32, 0), lit = on.At(51, 32, 0);
+            Expect(shadowed < 0.2f * lit, "dome sun: extracted, it casts a shadow");
+            Expect(std::abs(lit - off.At(51, 32, 0)) < 0.25f * lit, "dome sun: as bright as the dome's");
+            Expect(!scene.SetDomeSun(true, 10.0f), "dome sun: unchanged");
+            scene.SetDomeSun(false, 10.0f);
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(51, 32, 0) == off.At(51, 32, 0), "dome sun off again: as before");
+        }
+
+        {
             // Sky orientation (Storm's latlong mapping), 4x2 texture rows
             // bottom-up: bottom row red; top row green for u < 0.5, cyan above.
             vkr::Scene scene(&device);

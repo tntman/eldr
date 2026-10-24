@@ -138,6 +138,11 @@ public:
         // GI picks up every emissive surface's light regardless.
         bool emissiveLights = true;
         float emissiveLightThreshold = 4.0f;  // scene-referred radiance of the brightest channel
+        // The dome's sun (Scene::SetDomeSun, applied by the caller too): its
+        // texels over the threshold (scene radiance, luminance) leave the
+        // image-based light and become a distant light with shadows.
+        bool domeSun = false;
+        float domeSunThreshold = 10.0f;
         // Translucency (transparency.h): weighted blended OIT, its weights
         // falling with distance to this power (0: a plain average); off:
         // sorted per mesh, blended over.
