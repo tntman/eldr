@@ -111,6 +111,9 @@ public:
         // surface is marched before the translucency pass, which then dims
         // and refracts it, and the part in front after it.
         bool underTransparency = true;
+        // Shadows: the sun's light through the volumes onto surfaces
+        // (RecordShadow into Transparency's sun tint map).
+        bool shadows = true;
     };
 
     // Which part of each ray Record marches: all of it, the part behind
@@ -136,11 +139,21 @@ public:
     bool Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
                 uint32_t width, uint32_t height, const Settings &settings, Part part = kAll);
 
+    // Inside rendering into one layer of Transparency's sun tint map (just
+    // cleared, `mapSize` texels square, viewport set) for frame cascade
+    // `cascade`: multiplies the colour by the volumes' transmittance along
+    // the light and writes the depth of their optical depth's mean, before
+    // the translucent casters (which keep the nearer depth). Binds `set`
+    // with its own layout: rebind the renderer's after.
+    void RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
+                      uint32_t mapSize, const Settings &settings);
+
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;   // full resolution, blended over the image
     VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
+    VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map
     Image _half;
     uint32_t _halfWidth = 0, _halfHeight = 0;
     Image _translucentDepth;

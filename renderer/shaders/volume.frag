@@ -19,7 +19,7 @@
 // tiles (and the background) of zero density.
 // ponytail: volumes are composited one after another along the ray (in
 // entry order, not interleaved where they overlap) and don't shadow each
-// other or the surfaces; local lights are unshadowed inside them, the
+// other (surfaces only from the sun: volume_shadow.frag); local lights are unshadowed inside them, the
 // dome's light only comes down from above (half its optical depth, as
 // light also arrives from the sides).
 

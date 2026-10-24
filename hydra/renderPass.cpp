@@ -152,6 +152,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.planarReflections, &frame.planarReflections},
                                 {t.volumes, &frame.volumes},
                                 {t.volumeUnderTransparency, &frame.volume.underTransparency},
+                                {t.volumeShadows, &frame.volume.shadows},
                                 {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);

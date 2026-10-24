@@ -278,6 +278,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
         {"Volumes under Transparency (glass dims and refracts them)", t.volumeUnderTransparency,
          VtValue(volume.underTransparency)},
+        {"Volume Shadows (volumes shadow surfaces from the sun)", t.volumeShadows, VtValue(volume.shadows)},
     });
 #endif
     return settings;

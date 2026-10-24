@@ -1226,6 +1226,17 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
         zMin = std::min(zMin, z);
         zMax = std::max(zMax, z);
     }
+    // Volume shadows: their boxes too (VolumePass::RecordShadow marches
+    // the cascades' depth range).
+    if (frame.volumes && frame.volume.shadows && gpu.volumeCount > 0) {
+        for (int k = 0; k < 8; ++k) {
+            const Vec3 c{(k & 1) ? gpu.volumeMax[0] : gpu.volumeMin[0], (k & 2) ? gpu.volumeMax[1] : gpu.volumeMin[1],
+                         (k & 4) ? gpu.volumeMax[2] : gpu.volumeMin[2]};
+            const float z = TransformPoint(lightView, c).z;
+            zMin = std::min(zMin, z);
+            zMax = std::max(zMax, z);
+        }
+    }
     const float margin = 0.01f * (zMax - zMin) + 1e-3f;
 
     const uint32_t cascades = std::clamp(frame.shadowCascades, 1u, kCascades);
@@ -2079,12 +2090,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // size (1 x 1 while unused); new ones invalidate the cached atlas.
     const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
                                     !gpu.translucent.empty();
+    // Volume shadows: the volumes' transmittance goes into the sun's tint
+    // map as well (VolumePass::RecordShadow), read with the translucent
+    // casters'. ponytail: the sun only, not the local lights' atlas.
+    const bool volumeShadows = shadows && draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
     const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
-    if (_transparency.EnsureTintMaps(translucentShadows ? std::max(_shadowSize / divisor, 1u) : 1u, kCascades,
-                                     translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
+    if (_transparency.EnsureTintMaps(translucentShadows || volumeShadows ? std::max(_shadowSize / divisor, 1u) : 1u,
+                                     kCascades, translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
         _atlasVersion = 0;
     }
-    if (translucentShadows) {
+    if (translucentShadows || volumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
     if (frame.holdouts && gpu.holdouts) {
@@ -2295,8 +2310,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                        _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
             vkCmdEndRendering(_cmd);
         }
-        // Translucent casters into the sun's tint map, cascade by cascade.
-        if (translucentShadows) {
+        // Volumes and translucent casters into the sun's tint map, cascade
+        // by cascade.
+        if (translucentShadows || volumeShadows) {
             const Transparency::TintMap &map = _transparency.SunTint();
             _transparency.BeginTint(_cmd, map, kCascades);
             for (uint32_t c = 0; c < cascades; ++c) {
@@ -2318,8 +2334,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 const VkViewport tvp{0, 0, float(map.size), float(map.size), 0, 1};
                 vkCmdSetViewport(_cmd, 0, 1, &tvp);
                 vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
-                PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
-                _DrawTintCasters(gpu, VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                if (volumeShadows) {
+                    _volumePass->RecordShadow(_cmd, _set, gpu.volumeCount, c, map.size, frame.volume);
+                    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                }
+                if (translucentShadows) {
+                    PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
+                    _DrawTintCasters(gpu,
+                                     VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                }
                 vkCmdEndRendering(_cmd);
             }
             _transparency.EndTint(_cmd, map, kCascades);
