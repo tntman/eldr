@@ -312,6 +312,7 @@ private:
                                               uint32_t *rtLights, uint32_t rtSlots);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
+    void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
                            const float *invViewProj, VkRenderingAttachmentInfo depth);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,

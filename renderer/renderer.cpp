@@ -537,6 +537,7 @@ void Renderer::_CreateDescriptors()
         {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {67, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
@@ -562,7 +563,7 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels + 1},
@@ -1374,6 +1375,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
+    const VkDescriptorImageInfo translucentDepth{
+        _clampSampler, _volumePass->TranslucentDepth() ? _volumePass->TranslucentDepth() : _brdfLut.view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(67, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentDepth);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -1422,6 +1427,17 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData
         const float z = TransformPoint(lightView, c).z;
         zMin = std::min(zMin, z);
         zMax = std::max(zMax, z);
+    }
+    // Volume shadows: their boxes too (VolumePass::RecordShadow marches
+    // the cascades' depth range).
+    if (frame.volumes && frame.volume.shadows && gpu.volumeCount > 0) {
+        for (int k = 0; k < 8; ++k) {
+            const Vec3 c{(k & 1) ? gpu.volumeMax[0] : gpu.volumeMin[0], (k & 2) ? gpu.volumeMax[1] : gpu.volumeMin[1],
+                         (k & 4) ? gpu.volumeMax[2] : gpu.volumeMin[2]};
+            const float z = TransformPoint(lightView, c).z;
+            zMin = std::min(zMin, z);
+            zMax = std::max(zMax, z);
+        }
     }
     const float margin = 0.01f * (zMax - zMin) + 1e-3f;
 
@@ -1933,6 +1949,55 @@ void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
     }
 }
 
+// Volumes under transparency: the nearest translucent surfaces' depth
+// (VolumePass::TranslucentDepth), drawn with the depth prepass's pipelines
+// and the camera's culled commands; left readable by fragment shaders.
+// ponytail: whole meshes, their transparent texels and cutouts included.
+void Renderer::_RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj)
+{
+    const Image &target = _volumePass->EnsureTranslucentDepth(_width, _height);
+    const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
+    ImageBarrier(_cmd, target.image, range, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    att.imageView = target.view;
+    att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    att.clearValue.depthStencil.depth = 1.0f;
+    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    ri.renderArea = {{0, 0}, {_width, _height}};
+    ri.layerCount = 1;
+    ri.pDepthAttachment = &att;
+    vkCmdBeginRendering(_cmd, &ri);
+    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+    vkCmdSetViewport(_cmd, 0, 1, &vp);
+    vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+    PushDraw(_cmd, _layout, viewProj, 0);
+    const VkDeviceSize vertexOffset = 0;
+    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+    VkPipeline bound = VK_NULL_HANDLE;
+    for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+        const VkPipeline pipeline = _prepassPipeline[gpu.translucentVariant[i] & kDepthVariants];
+        if (pipeline != bound) {
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+            bound = pipeline;
+        }
+        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand),
+                                 1, sizeof(VkDrawIndexedIndirectCommand));
+    }
+    vkCmdEndRendering(_cmd);
+    ImageBarrier(_cmd, target.image, range,
+                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 // Subsurface meshes shaded again after the opaque pass, their subsurface
 // lobe only, into Subsurface's targets (testing the opaque depth), which
 // it then blurs into the colour.
@@ -2231,12 +2296,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // size (1 x 1 while unused); new ones invalidate the cached atlas.
     const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
                                     !gpu.translucent.empty();
+    // Volume shadows: the volumes' transmittance goes into the sun's tint
+    // map as well (VolumePass::RecordShadow), read with the translucent
+    // casters'. ponytail: the sun only, not the local lights' atlas.
+    const bool volumeShadows = shadows && draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
     const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
-    if (_transparency.EnsureTintMaps(translucentShadows ? std::max(_shadowSize / divisor, 1u) : 1u, kCascades,
-                                     translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
+    if (_transparency.EnsureTintMaps(translucentShadows || volumeShadows ? std::max(_shadowSize / divisor, 1u) : 1u,
+                                     kCascades, translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
         _atlasVersion = 0;
     }
-    if (translucentShadows) {
+    if (translucentShadows || volumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
     if (frame.holdouts && gpu.holdouts) {
@@ -2248,6 +2317,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
+    }
+    // Volumes under transparency: split around the nearest translucent
+    // surface, which needs its depth (and the prepass's, readable early).
+    const bool volumesUnder = frame.volumes && frame.volume.underTransparency && gpu.volumeCount > 0 && draw &&
+                              frame.translucency && frame.depthPrepass && !gpu.translucent.empty();
+    if (volumesUnder) {
+        _volumePass->EnsureTranslucentDepth(_width, _height);
     }
     // SSGI: in the AO texture (gtao.cpp), sampled by shading.
     const bool ssgi = frame.ssgi && frame.depthPrepass;
@@ -2451,8 +2527,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                        _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
             vkCmdEndRendering(_cmd);
         }
-        // Translucent casters into the sun's tint map, cascade by cascade.
-        if (translucentShadows) {
+        // Volumes and translucent casters into the sun's tint map, cascade
+        // by cascade.
+        if (translucentShadows || volumeShadows) {
             const Transparency::TintMap &map = _transparency.SunTint();
             _transparency.BeginTint(_cmd, map, kCascades);
             for (uint32_t c = 0; c < cascades; ++c) {
@@ -2474,8 +2551,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 const VkViewport tvp{0, 0, float(map.size), float(map.size), 0, 1};
                 vkCmdSetViewport(_cmd, 0, 1, &tvp);
                 vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
-                PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
-                _DrawTintCasters(gpu, VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                if (volumeShadows) {
+                    _volumePass->RecordShadow(_cmd, _set, gpu.volumeCount, c, map.size, frame.volume);
+                    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                }
+                if (translucentShadows) {
+                    PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
+                    _DrawTintCasters(gpu,
+                                     VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
+                }
                 vkCmdEndRendering(_cmd);
             }
             _transparency.EndTint(_cmd, map, kCascades);
@@ -2654,6 +2738,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt);
         pass("subsurface");
     }
+    if (volumesUnder) {
+        _RenderTranslucentDepth(gpu, jitteredViewProj);
+        _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
+                            VolumePass::kBehind);
+        // Their pipelines dropped the dynamic depth write the translucency
+        // pass's rely on.
+        vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
+        pass("volumes");
+    }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
         _RenderTranslucency(gpu, frame, &fd, jitteredViewProj, motion, depthAtt);
         pass("translucency");
@@ -2682,17 +2775,19 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         vkCmdCopyBuffer(_cmd, gpu.blendWeights, _prevBlendWeights.buffer, 1, &all);
         _prevBlendSource = gpu.blendWeights;
     }
-    // Volumes over everything shaded so far (the OIT-resolved translucent
-    // surfaces included), clipped by the opaque depth. Volumetric fog,
-    // already in the image to the surface behind, applies to them once:
-    // volume.frag puts each behind the fog in front of it.
-    // ponytail: glass in front of a volume doesn't dim it (the volume ends
-    // up over the glass). Fading volumes by the OIT revealage would fix that
-    // but dim volumes in front of glass just as wrongly; choosing per pixel
-    // needs the nearest translucent depth from the accumulation pass.
+    // Volumes, clipped by the opaque depth. Under transparency (above) the
+    // part behind the nearest translucent surface went in before the
+    // translucency pass, which dims and refracts it; here the part in front
+    // goes over the composited translucency. Otherwise all of it goes over
+    // everything shaded so far, translucent surfaces included. Volumetric
+    // fog, already in the image to the surface behind, applies to them
+    // once: volume.frag puts each behind the fog in front of it.
+    // ponytail: only the nearest translucent layer splits a ray: volumes
+    // between two layers of glass go behind both.
     if (frame.volumes &&
-        _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume)) {
-        pass("volumes");
+        _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
+                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll)) {
+        pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

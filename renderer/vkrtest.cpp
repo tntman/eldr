@@ -2640,6 +2640,66 @@ int main()
             Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
                    "half resolution volumes stop at nearer surfaces");
             frame.volume.resolution = 1;
+
+            // Under transparency: black glass (opacity 0.5) in front of the
+            // glowing ball's left half dims it to half; glass behind its
+            // right half leaves it alone. Off, the ball goes over the glass.
+            vkr::Scene glassy(&device);
+            vkr::Volume *glow = glassy.AddVolume();
+            glow->fields["density"] = ball->fields["density"];
+            auto emitting = std::make_shared<vkr::VolumeShading>();
+            std::fill(emitting->scattering, emitting->scattering + 3, 0.0f);
+            std::fill(emitting->absorption, emitting->absorption + 3, 0.2f);
+            std::copy(green, green + 3, emitting->emission);
+            glow->shading = emitting;
+            auto glass = std::make_shared<vkr::Material>();
+            std::fill(glass->baseColor, glass->baseColor + 3, 0.0f);
+            glass->opacity = 0.5f;
+            AddQuad(glassy, -1, -1, 0, 1, -0.5f)->material = glass;
+            AddQuad(glassy, 0, -1, 1, 1, 0.5f)->material = glass;
+            glassy.Commit();
+            const Image under = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = false;
+            const Image over = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = true;
+            const float front = under.At(28, 32, 1), back = under.At(36, 32, 1);
+            Expect(back > 0.2f && std::abs(front - 0.5f * back) < 0.05f * back,
+                   "glass in front of a volume dims it, glass behind doesn't");
+            Expect(std::abs(over.At(28, 32, 1) - back) < 0.05f * back && std::abs(over.At(36, 32, 1) - back) < 1e-3f,
+                   "without volumes under transparency they go over the glass");
+            std::printf("volume behind glass %.3f, in front of glass %.3f, over glass %.3f\n", front, back, over.At(28, 32, 1));
+
+            // Volume shadows: the ball at z -0.5 under a sun from (1, 0, -1)
+            // shadows the ground (z 0.5) around x -1, outside the ball's
+            // own pixels, by its transmittance along the light: a chord of
+            // 0.74 at pixel 3, exp(-2 * 0.74). Black glass of opacity 0.5
+            // above (y 0.5..0.9) shadows it by half at the same time.
+            vkr::Scene shadowed(&device);
+            vkr::Volume *smoke = shadowed.AddVolume();
+            smoke->fields["density"] = ball->fields["density"];
+            smoke->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -0.5f, 1};
+            AddLight(shadowed, 1, 0, -1)->castShadows = true;
+            AddQuad(shadowed, -1, -1, 1, 1, 0.5f);
+            AddQuad(shadowed, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            AddQuad(shadowed, 0.0f, 0.5f, 0.25f, 0.9f, -0.5f)->material = glass;
+            shadowed.Commit();
+            const Image cast = Render(renderer, shadowed, frame);
+            frame.volume.shadows = false;
+            const Image uncast = Render(renderer, shadowed, frame);
+            frame.volume.shadows = true;
+            frame.volumes = false;
+            const Image noVolumes = Render(renderer, shadowed, frame);
+            frame.volumes = true;
+            const float ratio = cast.At(3, 32, 0) / uncast.At(3, 32, 0);
+            const float glassRatio = cast.At(3, 52, 0) / uncast.At(3, 52, 0);
+            Expect(uncast.At(3, 32, 0) > 0.1f && std::abs(ratio - std::exp(-1.48f)) < 0.05f,
+                   "a volume shadows surfaces from the sun by its transmittance");
+            Expect(std::abs(glassRatio - 1.0f) < 0.02f && uncast.At(3, 52, 0) < 0.6f * noVolumes.At(3, 20, 0),
+                   "volume and glass shadows together");
+            Expect(uncast.At(3, 32, 0) == noVolumes.At(3, 32, 0),
+                   "without volume shadows the ground is as without volumes");
+            std::printf("volume shadow %.3f (expected %.3f) on ground %.3f, glass beside it %.3f\n", ratio,
+                        std::exp(-1.48f), uncast.At(3, 32, 0), uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
         }
 
         {

@@ -26,7 +26,7 @@ GROUPS = [
     ("Fog and volumes",
      "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
-     "volumeResolution"),
+     "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",
      "taa taaSamples objectMotion blendShapeMotion depthOfField motionBlur lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),

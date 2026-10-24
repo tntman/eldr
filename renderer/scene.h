@@ -695,6 +695,7 @@ public:
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
         VkBuffer displacements = VK_NULL_HANDLE;

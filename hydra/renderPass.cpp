@@ -151,7 +151,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
                                 {t.planarReflections, &frame.planarReflections},
-                                {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
+                                {t.volumes, &frame.volumes},
+                                {t.volumeUnderTransparency, &frame.volume.underTransparency},
+                                {t.volumeShadows, &frame.volume.shadows},
+                                {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod}, {t.pipelineCache, &frame.pipelineCache},
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);

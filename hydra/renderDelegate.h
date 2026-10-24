@@ -114,6 +114,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeEmission, "hdvk:volumeEmission"))                \
     ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
     ((volumeResolution, "hdvk:volumeResolution"))            \
+    ((volumeUnderTransparency, "hdvk:volumeUnderTransparency")) \
+    ((volumeShadows, "hdvk:volumeShadows")) \
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \
