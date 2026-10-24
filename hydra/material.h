@@ -13,6 +13,7 @@
 namespace vkr {
 struct Material;
 struct Texture;
+struct VolumeShading;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -46,6 +47,9 @@ public:
               HdDirtyBits *dirtyBits) override;
 
     std::shared_ptr<vkr::Material> const &Get() const { return _material; }
+    // Its volume terminal, for the volumes bound to it (defaults without
+    // one); updated in place too.
+    std::shared_ptr<vkr::VolumeShading> const &Volume() const { return _volume; }
     // The primvar its textures' coordinates come from; empty: no textures.
     TfToken const &UvPrimvar() const { return _uvPrimvar; }
     // The primvars its program reads (vkr::MaterialProgram::primvars).
@@ -56,6 +60,7 @@ private:
     TfToken _uvPrimvar;
     std::vector<TfToken> _primvars;
     std::shared_ptr<vkr::Material> _material;
+    std::shared_ptr<vkr::VolumeShading> _volume;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

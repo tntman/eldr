@@ -243,9 +243,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
         {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
         {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
-        {"Volume Density Multiplier", t.volumeDensity, VtValue(volume.density)},
-        {"Volume Emission Multiplier (temperature, emission)", t.volumeEmission, VtValue(volume.emission)},
-        {"Volume Phase Anisotropy (-1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+        {"Volume Density Multiplier (on the material's)", t.volumeDensity, VtValue(volume.density)},
+        {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
+        {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
+        {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
     });
 #endif
     return settings;

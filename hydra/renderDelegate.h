@@ -103,6 +103,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeDensity, "hdvk:volumeDensity"))                  \
     ((volumeEmission, "hdvk:volumeEmission"))                \
     ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
+    ((volumeResolution, "hdvk:volumeResolution"))            \
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \

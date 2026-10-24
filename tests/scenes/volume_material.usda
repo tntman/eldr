@@ -1,0 +1,242 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Volume materials (MaterialX volume shading, the mtlx:volume terminal) on
+# volume.vdb's cloud, left to right:
+#   smoke:  anisotropic_vdf, bluish scattering, brownish absorption, forward
+#           scattering (anisotropy 0.6), the density field at 1.5 times
+#           (geompropvalue "density" times a constant);
+#   fire:   uniform_edf of blackbody(temperature field * 4000 K) times 3,
+#           little scattering;
+#   glow:   absorption only and a constant teal emission per unit density.
+# Storm (--renderer GL) doesn't run MaterialX volume shaders: it draws its
+# fallback volume material for all three.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    double3 xformOp:translate = (0, 0.6, 12)
+    float xformOp:rotateX = -4
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-30, 140, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 0.4
+}
+
+def Cube "floor"
+{
+    double size = 1
+    color3f[] primvars:displayColor = [(0.4, 0.4, 0.4)]
+    double3 xformOp:translate = (0, -2.05, 0)
+    float3 xformOp:scale = (16, 0.1, 10)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Scope "mtl"
+{
+    def Material "smoke"
+    {
+        token outputs:mtlx:volume.connect = </mtl/smoke/volume.outputs:out>
+
+        def Shader "volume"
+        {
+            uniform token info:id = "ND_volume"
+            token inputs:vdf.connect = </mtl/smoke/vdf.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "vdf"
+        {
+            uniform token info:id = "ND_anisotropic_vdf"
+            vector3f inputs:absorption.connect = </mtl/smoke/absorption.outputs:out>
+            vector3f inputs:scattering.connect = </mtl/smoke/scattering.outputs:out>
+            float inputs:anisotropy = 0.6
+            token outputs:out
+        }
+
+        def Shader "density"
+        {
+            uniform token info:id = "ND_geompropvalue_float"
+            string inputs:geomprop = "density"
+            float outputs:out
+        }
+
+        def Shader "absorption"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            vector3f inputs:in1 = (0.15, 0.25, 0.35)
+            float inputs:in2.connect = </mtl/smoke/thicker.outputs:out>
+            vector3f outputs:out
+        }
+
+        def Shader "scattering"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            vector3f inputs:in1 = (0.55, 0.7, 0.9)
+            float inputs:in2.connect = </mtl/smoke/thicker.outputs:out>
+            vector3f outputs:out
+        }
+
+        def Shader "thicker"
+        {
+            uniform token info:id = "ND_multiply_float"
+            float inputs:in1.connect = </mtl/smoke/density.outputs:out>
+            float inputs:in2 = 1.5
+            float outputs:out
+        }
+    }
+
+    def Material "fire"
+    {
+        token outputs:mtlx:volume.connect = </mtl/fire/volume.outputs:out>
+
+        def Shader "volume"
+        {
+            uniform token info:id = "ND_volume"
+            token inputs:vdf.connect = </mtl/fire/vdf.outputs:out>
+            token inputs:edf.connect = </mtl/fire/edf.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "vdf"
+        {
+            uniform token info:id = "ND_anisotropic_vdf"
+            vector3f inputs:absorption = (0.5, 0.5, 0.5)
+            vector3f inputs:scattering = (0.3, 0.3, 0.3)
+            token outputs:out
+        }
+
+        def Shader "edf"
+        {
+            uniform token info:id = "ND_uniform_edf"
+            color3f inputs:color.connect = </mtl/fire/bright.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "bright"
+        {
+            uniform token info:id = "ND_multiply_color3FA"
+            color3f inputs:in1.connect = </mtl/fire/blackbody.outputs:out>
+            float inputs:in2 = 3
+            color3f outputs:out
+        }
+
+        def Shader "blackbody"
+        {
+            uniform token info:id = "ND_blackbody"
+            float inputs:temperature.connect = </mtl/fire/kelvin.outputs:out>
+            color3f outputs:out
+        }
+
+        def Shader "kelvin"
+        {
+            uniform token info:id = "ND_multiply_float"
+            float inputs:in1.connect = </mtl/fire/temperature.outputs:out>
+            float inputs:in2 = 4000
+            float outputs:out
+        }
+
+        def Shader "temperature"
+        {
+            uniform token info:id = "ND_geompropvalue_float"
+            string inputs:geomprop = "temperature"
+            float outputs:out
+        }
+    }
+
+    def Material "glow"
+    {
+        token outputs:mtlx:volume.connect = </mtl/glow/volume.outputs:out>
+
+        def Shader "volume"
+        {
+            uniform token info:id = "ND_volume"
+            token inputs:vdf.connect = </mtl/glow/vdf.outputs:out>
+            token inputs:edf.connect = </mtl/glow/edf.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "vdf"
+        {
+            uniform token info:id = "ND_absorption_vdf"
+            vector3f inputs:absorption = (0.6, 0.6, 0.6)
+            token outputs:out
+        }
+
+        def Shader "edf"
+        {
+            uniform token info:id = "ND_uniform_edf"
+            color3f inputs:color = (0.1, 0.8, 0.7)
+            token outputs:out
+        }
+    }
+}
+
+def Volume "smoke" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/smoke>
+    rel field:density = </smoke/density>
+    double3 xformOp:translate = (-3.6, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+    }
+}
+
+def Volume "fire" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/fire>
+    rel field:density = </fire/density>
+    rel field:temperature = </fire/temperature>
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+    }
+
+    def OpenVDBAsset "temperature"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "temperature"
+    }
+}
+
+def Volume "glow" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/glow>
+    rel field:density = </glow/density>
+    double3 xformOp:translate = (3.6, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+    }
+}

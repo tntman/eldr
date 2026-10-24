@@ -2409,7 +2409,7 @@ int main()
             // the rest of the image is untouched.
             vkr::Scene scene(&device);
             vkr::Volume *ball = scene.AddVolume();
-            ball->density = BallGrid(12.0f, 2.0f);
+            ball->fields["density"] = BallGrid(12.0f, 2.0f);
             scene.Commit();
             vkr::Renderer renderer(device);
             vkr::Renderer::Frame frame = IdentityFrame();
@@ -2438,7 +2438,7 @@ int main()
             // A light from +x: the ball's lit side scatters more than the side
             // its own density shadows; without the shadow march they match.
             vkr::Scene lit(&device);
-            lit.AddVolume()->density = ball->density;
+            lit.AddVolume()->fields = ball->fields;
             AddLight(lit, 1, 0, 0)->castShadows = true;
             lit.Commit();
             img = Render(renderer, lit, frame);
@@ -2451,7 +2451,7 @@ int main()
             frame.volume.shadowSteps = vkr::VolumePass::Settings().shadowSteps;
 
             // Temperature 0.3 (normalized: 1500 K) glows red-orange.
-            ball->temperature = BallGrid(12.0f, 0.3f);
+            ball->fields["temperature"] = BallGrid(12.0f, 0.3f);
             scene.Commit();
             img = Render(renderer, scene, frame);
             const float r = img.At(36, 40, 0), g = img.At(36, 40, 1), bl = img.At(36, 40, 2);
@@ -2462,19 +2462,67 @@ int main()
             // scatters more than its bottom. A sphere light at x = 0.6 lights
             // its near side.
             vkr::Scene sky(&device);
-            sky.AddVolume()->density = ball->density;
+            sky.AddVolume()->fields["density"] = ball->fields["density"];
             sky.AddDome();
             sky.Commit();
             img = Render(renderer, sky, frame);
             Expect(img.At(32, 40, 0) > 0.05f && img.At(32, 40, 0) > 1.2f * img.At(32, 23, 0),
                    "the dome lights a volume from above");
             vkr::Scene bulb(&device);
-            bulb.AddVolume()->density = ball->density;
+            bulb.AddVolume()->fields["density"] = ball->fields["density"];
             AddSphereLight(bulb, 0.6f, 0, 0, 0.05f, 200.0f);
             bulb.Commit();
             img = Render(renderer, bulb, frame);
             Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 0) > 3.0f * img.At(23, 32, 0),
                    "a sphere light lights a volume's near side");
+
+            // The material (VolumeShading): absorption 1 at half the density
+            // halves the optical depth and scatters nothing; red-only
+            // scattering (grey extinction 1) scatters only red; emission 1 per
+            // unit of density glows. The density setting multiplies.
+            auto shading = std::make_shared<vkr::VolumeShading>();
+            std::fill(shading->scattering, shading->scattering + 3, 0.0f);
+            std::fill(shading->absorption, shading->absorption + 3, 1.0f);
+            shading->densityScale = 0.5f;
+            vkr::Scene absorbing(&device);
+            vkr::Volume *a = absorbing.AddVolume();
+            a->fields["density"] = ball->fields["density"];
+            a->shading = shading;
+            AddLight(absorbing, 1, 0, 0);
+            absorbing.Commit();
+            img = Render(renderer, absorbing, frame);
+            Expect(std::abs(img.At(32, 32, 2) - std::exp(-0.75f)) < 0.03f && img.At(40, 32, 0) == 0.0f,
+                   "a volume material's absorption and density scale");
+            frame.volume.density = 2.0f;
+            Expect(std::abs(Render(renderer, absorbing, frame).At(32, 32, 2) - std::exp(-1.5f)) < 0.03f,
+                   "the density setting multiplies the material's");
+            frame.volume.density = 1.0f;
+            const float red[3] = {1, 0, 0}, rest[3] = {0, 1, 1};
+            std::copy(red, red + 3, shading->scattering);
+            std::copy(rest, rest + 3, shading->absorption);
+            shading->densityScale = 1.0f;
+            absorbing.Commit();  // tables are rebuilt per commit
+            img = Render(renderer, absorbing, frame);
+            Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 1) == 0.0f, "a volume material's scattering colour");
+            std::fill(shading->scattering, shading->scattering + 3, 0.0f);
+            const float green[3] = {0, 1, 0};
+            std::copy(green, green + 3, shading->emission);
+            absorbing.Commit();
+            img = Render(renderer, absorbing, frame);
+            Expect(img.At(32, 32, 1) > 0.2f && img.At(32, 32, 0) == 0.0f, "a volume material's emission");
+
+            // Half resolution: the same transmittance, and surfaces in front
+            // still hide the ball pixel exactly.
+            frame.volume.resolution = 2;
+            img = Render(renderer, scene, frame);
+            const Image full = [&] {
+                vkr::Renderer::Frame f = frame;
+                f.volume.resolution = 1;
+                return Render(renderer, scene, f);
+            }();
+            Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
+                   "half resolution volumes stop at nearer surfaces");
+            frame.volume.resolution = 1;
         }
 
         {

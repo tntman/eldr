@@ -2,6 +2,9 @@
 
 #include "instancer.h"
 #include "scene.h"
+#ifdef HDVK_VOLUMES
+#include "volume.h"
+#endif
 
 #include "pxr/base/gf/color.h"
 #include "pxr/base/gf/colorSpace.h"
@@ -1632,6 +1635,7 @@ HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
     : HdMaterial(id)
     , _textures(textures)
     , _material(std::make_shared<vkr::Material>())
+    , _volume(std::make_shared<vkr::VolumeShading>())
 {
 }
 
@@ -1640,13 +1644,18 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
 {
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults
+        vkr::VolumeShading volume;
         _uvPrimvar = TfToken();
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
             ReadSurface(net, _textures, &m, &_uvPrimvar);
             ReadDisplacement(net, _textures, &m, &_uvPrimvar);
+#ifdef HDVK_VOLUMES
+            HdVkReadVolumeShading(net, &volume);
+#endif
         }
+        *_volume = std::move(volume);
         _primvars.clear();
         for (const std::string &name : m.program.primvars) {
             _primvars.emplace_back(name);
