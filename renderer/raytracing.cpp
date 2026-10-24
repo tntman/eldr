@@ -139,7 +139,7 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     // stays valid.
     _CreateImages(1, 1);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, 8, 8);
-    _giVisibility = _CreateAtlas(VK_FORMAT_R16G16_SFLOAT, 16, 16);
+    _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, 16, 16);
 }
 
 RayTracing::~RayTracing()
@@ -780,7 +780,7 @@ void RayTracing::_FitProbes(const Scene::Gpu &gpu)
     _dev.Destroy(_giVisibility);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, perRow * (kIrradianceTexels + 2),
                                  rows * (kIrradianceTexels + 2));
-    _giVisibility = _CreateAtlas(VK_FORMAT_R16G16_SFLOAT, perRow * (kVisibilityTexels + 2),
+    _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, perRow * (kVisibilityTexels + 2),
                                  rows * (kVisibilityTexels + 2));
     std::copy(origin, origin + 3, _giOrigin);
     std::copy(counts, counts + 3, _giCounts);

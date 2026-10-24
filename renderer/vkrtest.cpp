@@ -1379,10 +1379,14 @@ int main()
             red->baseColor[0] = 0.9f;
             red->baseColor[1] = red->baseColor[2] = 0.0f;
             red->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            // Wound counter-clockwise towards the camera and the light: the
+            // GI probes there must see front faces.
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->points = {-1, -1, 0.5f, 1, 1, 0.5f, 1, -1, 0.5f, -1, -1, 0.5f, -1, 1, 0.5f, 1, 1, 0.5f};
+            wall->material = white;
             vkr::Mesh *panel = scene.AddMesh();
-            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, -0.5f, 0, 0.6f, 0.45f,
-                             0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, -0.6f, 0.45f};
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, 0.6f, -0.5f,
+                             0, -0.6f, -0.5f, 0, -0.6f, 0.45f, 0, 0.6f, 0.45f};
             panel->material = red;
             AddLight(scene, -1, 0, -0.2f)->castShadows = true;
             scene.Commit();

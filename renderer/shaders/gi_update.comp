@@ -18,7 +18,7 @@ layout(local_size_x = 16, local_size_y = 16) in;  // the larger tile; irradiance
 
 layout(std430, set = 1, binding = 1) readonly buffer GiRays { vec4 giRays[]; };  // radiance, distance
 layout(set = 1, binding = 2, rgba16f) uniform image2D giIrradiance;
-layout(set = 1, binding = 3, rg16f) uniform image2D giVisibility;
+layout(set = 1, binding = 3, rg32f) uniform image2D giVisibility;
 
 const uint kMaxRays = 512u;
 shared vec4 rays[kMaxRays];
