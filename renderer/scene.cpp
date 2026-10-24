@@ -1539,6 +1539,7 @@ void Scene::Commit()
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
     _gpu.translucent.clear();
     _gpu.translucentVariant.clear();
+    _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
     _gpu.slotGeometry.resize(slots);
     _gpu.refraction = false;
@@ -1607,17 +1608,20 @@ void Scene::Commit()
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->transmission > 0 ||
+                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->Transmits() ||
                     (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
-            _gpu.refraction = _gpu.refraction || m.material->transmission > 0 || m.material->opacityRefracts;
+            _gpu.refraction = _gpu.refraction || m.material->Transmits() || m.material->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
+            _gpu.translucentFlags.push_back(
+                (m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0) |
+                (m.holdout ? Gpu::kHoldout : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
-        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->subsurface > 0) {
+        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
             _gpu.subsurfaceVariant.push_back(variant >> 2);
         }

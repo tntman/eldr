@@ -12,7 +12,7 @@ const uint32_t kFullscreenVert[] =
 
 VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
                                     const uint32_t *fragCode, size_t fragBytes, VkFormat format,
-                                    bool additive, bool over)
+                                    bool additive, bool over, bool multiply, VkFormat depthFormat)
 {
     VkShaderModule vert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule frag = VK_NULL_HANDLE;
@@ -50,7 +50,14 @@ VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
         attachment.blendEnable = VK_TRUE;
         attachment.srcColorBlendFactor = attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         attachment.dstColorBlendFactor = attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    } else if (multiply) {
+        attachment.blendEnable = VK_TRUE;
+        attachment.srcColorBlendFactor = attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+        attachment.dstColorBlendFactor = attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
     }
+    VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = depth.depthWriteEnable = depthFormat != VK_FORMAT_UNDEFINED;
+    depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
     VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
     blend.attachmentCount = 1;
     blend.pAttachments = &attachment;
@@ -61,6 +68,7 @@ VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
     VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
     rendering.colorAttachmentCount = 1;
     rendering.pColorAttachmentFormats = &format;
+    rendering.depthAttachmentFormat = depthFormat;
     VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
     ci.stageCount = 2;
     ci.pStages = stages;
@@ -70,6 +78,7 @@ VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
     ci.pRasterizationState = &raster;
     ci.pMultisampleState = &multisample;
     ci.pColorBlendState = &blend;
+    ci.pDepthStencilState = depthFormat != VK_FORMAT_UNDEFINED ? &depth : nullptr;
     ci.pDynamicState = &dynamic;
     ci.layout = layout;
     VkPipeline pipeline = VK_NULL_HANDLE;

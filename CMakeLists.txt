@@ -24,8 +24,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
-               volume_upsample.frag shadow_min.comp rt_skin.comp rt_displace.comp)
+               shadow_tint.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
+               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -36,7 +36,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
-                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
+                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/volume.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -130,13 +130,18 @@ target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
 add_executable(vkrtest renderer/vkrtest.cpp)
 target_link_libraries(vkrtest PRIVATE vkrenderer)
+if(MSVC)
+    # main() holds every test's locals; under the validation layer the 1 MB
+    # default stack overflows.
+    target_link_options(vkrtest PRIVATE /STACK:8388608)
+endif()
 
 # Hydra layer.
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
-    hydra/camera.cpp)
+    hydra/camera.cpp hydra/renderProducts.cpp)
 target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
@@ -166,6 +171,17 @@ target_link_libraries(hdVkUsdImaging PRIVATE hd usd usdGeom usdImaging)
 target_compile_definitions(hdVkUsdImaging PRIVATE MFB_PACKAGE_NAME=hdVkUsdImaging
                            MFB_ALT_PACKAGE_NAME=hdVkUsdImaging)
 add_dependencies(hdVk hdVkUsdImaging)
+# Render products (UsdRender) as EXR files through the OpenImageIO USD was
+# built with; without it they aren't written.
+find_package(OpenImageIO CONFIG QUIET)
+if(TARGET OpenImageIO::OpenImageIO)
+    target_compile_definitions(hdVk PRIVATE HDVK_EXR)
+    target_link_libraries(hdVk PRIVATE OpenImageIO::OpenImageIO)
+    # Prints an image's channels, metadata and pixels (tests/test_exr.py).
+    add_executable(exrinfo tests/exrinfo.cpp)
+    target_link_libraries(exrinfo PRIVATE OpenImageIO::OpenImageIO)
+    set(HDVK_EXR ON)
+endif()
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in
@@ -207,6 +223,10 @@ if(WIN32)
     set_tests_properties(procedural PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME distortion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_distortion.py)
     set_tests_properties(distortion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    if(HDVK_EXR)
+        add_test(NAME exr COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_exr.py $<TARGET_FILE:exrinfo>)
+        set_tests_properties(exr PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    endif()
     add_test(NAME aovs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aovs.py)
     set_tests_properties(aovs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME interop COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_interop.py)

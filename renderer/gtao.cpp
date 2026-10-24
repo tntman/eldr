@@ -55,20 +55,21 @@ Gtao::Gtao(Device &device)
 
     // Binding 0: scene depth (gtao.frag), 1: raw AO (gtao_denoise.frag), 2:
     // last frame's resolved colour, 3: last frame's SSGI (SSGI; partially
-    // bound).
-    const VkDescriptorSetLayoutBinding bindings[4] = {
+    // bound), 4: the blue noise (SetBlueNoise).
+    const VkDescriptorSetLayoutBinding bindings[5] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
-    const VkDescriptorBindingFlags partial[4] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
-                                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags partial[5] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+                                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, 0};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 4;
+    flags.bindingCount = 5;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 4;
+    slci.bindingCount = 5;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GtaoParams)};
@@ -124,7 +125,7 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
                                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
 
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 2;
     pci.poolSizeCount = 1;
@@ -139,6 +140,17 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
     Check(vkAllocateDescriptorSets(_dev.device, &ai, sets), "vkAllocateDescriptorSets");
     _set = sets[0];
     _ssgiSet = sets[1];
+    const VkDescriptorImageInfo noise{_sampler, _blueNoise, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet noiseWrites[2] = {};
+    for (uint32_t i = 0; i < 2; ++i) {
+        noiseWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        noiseWrites[i].dstSet = sets[i];
+        noiseWrites[i].dstBinding = 4;
+        noiseWrites[i].descriptorCount = 1;
+        noiseWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        noiseWrites[i].pImageInfo = &noise;
+    }
+    vkUpdateDescriptorSets(_dev.device, 2, noiseWrites, 0, nullptr);
     _depth = depth;
     const VkDescriptorImageInfo images[2] = {
         {_sampler, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -235,7 +247,7 @@ void Gtao::_Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, 
 }
 
 void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
-                      const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
+                      const float eye[3], float radius, float noise, uint32_t slices, uint32_t steps,
                       VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
                       float objectThickness)
 {
@@ -276,7 +288,7 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
 }
 
 void Gtao::Record(VkCommandBuffer cmd, const float invViewProj[16], const float eye[3], float radius,
-                  uint32_t noise, uint32_t slices)
+                  float noise, uint32_t slices)
 {
     GtaoParams params{};
     std::copy(invViewProj, invViewProj + 16, params.invViewProj);

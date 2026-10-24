@@ -77,6 +77,18 @@ layout(location = 2) out int outInstanceId;
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
 
+// Light splits (aov.h): the visible opaque surface's direct and indirect
+// diffuse and glossy light, layers in Aovs::kSplit* order. Only pipelines
+// compiled with them (kCompiledLightSplits, a bit of the shading set's key
+// that is no optional feature, Renderer::_ShadingSet) have this code.
+layout(set = 0, binding = 67, rgba16f) uniform writeonly image2DArray lightSplits;
+const uint kCompiledLightSplits = 1u;
+bool LightSplits()
+{
+    return (kCompiledFeatures & kCompiledLightSplits) != 0u && frame.aovs.x != 0u;
+}
+vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
+
 #include "brdf.glsl"
 #include "transparency.glsl"
 #include "subsurface.glsl"
@@ -206,8 +218,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float uvPerUnit = 1.0 / (t.params.x * atlasSize);  // atlas uv per unit of the plane at distance 1
     float receiver = clip.w;                           // distance along the tile's axis
     float maxUv = 24.0 / atlasSize;
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimShadow, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
 
     float searchUv = min(size * 3.0 / receiver * uvPerUnit, maxUv);
@@ -372,6 +383,9 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
     specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
+    if (LightSplits()) {
+        splitDirectDiffuse += radiance * diffuse * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+    }
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 
@@ -401,8 +415,7 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
     vec2 grad = -dot(gz, l) / max(dot(ng, l), 0.2) * vec2(dot(ng, gx) / dot(gx, gx), dot(ng, gy) / dot(gy, gy));
     float size = float(textureSize(shadowMap, 0).x);
     float maxUv = 0.05;
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimSunShadow, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     int samples = int(frame.features.z);
 
@@ -545,8 +558,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
         return 0.0;  // heads (almost) straight into or out of the screen
     }
     float uStart = 1.5 * uEnd / pixels;  // past the starting pixel
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * frame.ssr.y,
-                                               vec2(0.06711056, 0.00583715))));
+    float noise = SampleNoise(kDimSsr, gl_FragCoord.xy, frame.ssr.y);
     float uPrev = 0.0;
     vec3 sPrev = s0;
     bool wasBehind = false;
@@ -776,6 +788,11 @@ void main()
             radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
+        if (LightSplits()) {
+            vec3 d = diffuseColor / PI * NoL * light.halfHeight.w * light.color.rgb;
+            splitDirectDiffuse += i == frame.counts.y
+                ? d * Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l) : d;
+        }
     }
 
     // Sphere and rect lights from this pixel's cluster (without clusters:
@@ -795,8 +812,11 @@ void main()
     }
 
     if (frame.lightClamp.x > 0.0) {
-        color = emissive + BrightnessClamp(color - emissive, frame.lightClamp.x);
+        const vec3 lit = color - emissive, clamped = BrightnessClamp(lit, frame.lightClamp.x);
+        splitDirectDiffuse *= dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the split follows
+        color = emissive + clamped;
     }
+    vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
     color += SubsurfaceTransmission(inWorldPos, n);
 
     // Image-based lighting from the dome, if any.
@@ -873,11 +893,16 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     // With SSGI the bounces are traced: the visibility hides the rest alone.
+    vec3 splitAmbient = color;
     color += FssEss * specular + (Fms * Ems + kd) * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
                                                                                                      : diffuseColor) +
                                                     SsgiDiffuse() * occlusion);
+    vec3 splitIndirectGlossy = FssEss * specular;
+    vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
+        splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        splitIndirectGlossy += color - splitAmbient;
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
@@ -896,6 +921,15 @@ void main()
     // half-float range it turns Inf in the RGBA16F target.
     color = any(isnan(color)) || any(isinf(color)) ? vec3(0.0) : min(color, vec3(60000.0));
     outColor = vec4(color, alpha);
+    // ponytail: opaque surfaces only (the translucent pass would overwrite
+    // what is behind); a pixel's last surface at equal depth wins.
+    if (LightSplits() && kShadingPass == 0u && alpha >= 1.0) {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy, 1.0));
+    }
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
