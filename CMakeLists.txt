@@ -116,6 +116,11 @@ target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 
 add_executable(vkrtest renderer/vkrtest.cpp)
 target_link_libraries(vkrtest PRIVATE vkrenderer)
+if(MSVC)
+    # main() holds every test's locals; under the validation layer the 1 MB
+    # default stack overflows.
+    target_link_options(vkrtest PRIVATE /STACK:8388608)
+endif()
 
 # Hydra layer.
 add_library(hdVk SHARED
