@@ -448,7 +448,7 @@ float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
-    if (tanHalf > 0.0 && (frame.features.x & kFeatureSoftSun) != 0u) {
+    if (Feature(kFeatureSoftSun) && tanHalf > 0.0) {
         return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
     }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);
@@ -703,7 +703,7 @@ void main()
     // planar reflection (below, over the dome's sky), other surfaces the
     // reflection probe's captured surroundings instead of the dome.
     bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
-    if ((frame.features.x & kFeatureProbe) != 0u && !mirror) {
+    if (Feature(kFeatureProbe) && !mirror) {
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual);
     }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);

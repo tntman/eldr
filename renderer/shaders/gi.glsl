@@ -160,7 +160,7 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
 bool RtShadow(uint light, out float visibility)
 {
     visibility = 1.0;
-    if ((frame.features.x & kFeatureRtShadows) == 0u) {
+    if (!Feature(kFeatureRtShadows)) {
         return false;
     }
     for (int k = 0; k < 4; ++k) {
@@ -179,7 +179,7 @@ bool RtShadow(uint light, out float visibility)
 // 12 pixels around.
 vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 {
-    if ((frame.features.x & kFeatureRtReflections) == 0u || !RtOpaque()) {
+    if (!Feature(kFeatureRtReflections) || !RtOpaque()) {
         return specular;
     }
     float weight = imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;
@@ -190,7 +190,7 @@ vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 // dome's).
 vec3 GiDiffuse(vec3 p, vec3 n, vec3 v, vec3 fallback)
 {
-    if ((frame.features.x & kFeatureGi) == 0u) {
+    if (!Feature(kFeatureGi)) {
         return fallback;
     }
     vec4 gi = GiIrradiance(p, n, v);

@@ -256,7 +256,8 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines(bool displaced = false);
+    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    uint32_t _ShadingSet(uint32_t features);
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -312,16 +313,23 @@ private:
     // made once a scene has some (_displacedPipelines). Depth passes use the
     // kDepthVariants bits.
     static constexpr uint32_t kVariants = 64, kDepthVariants = 1 | 2 | 32;
+    // The shading pipelines come in sets, each specialized with the optional
+    // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
+    // variants at set * kVariants + variant; a frame draws with the set of
+    // its own features (_shadingBase), made when a frame first needs it.
+    static constexpr uint32_t kShadingSets = 8;
+    std::vector<uint32_t> _shadingSets;
+    uint32_t _shadingBase = 0;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
-    VkPipeline _translucentPipeline[kVariants] = {};  // shading, blended over the opaque
-    VkPipeline _oitPipeline[kVariants] = {};          // shading, OIT accumulation (Transparency)
+    VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
-    VkPipeline _subsurfacePipeline[kVariants] = {};   // shading, the subsurface lobe (Subsurface)
+    VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
-    VkPipeline _pipeline[kVariants] = {};             // shading, depth read-only
+    VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;

@@ -1472,6 +1472,7 @@ void Scene::Commit()
     _gpu.translucentCenters.clear();
     _gpu.slotGeometry.resize(slots);
     _gpu.refraction = false;
+    _gpu.holdouts = false;
     _gpu.subsurface.clear();
     _gpu.subsurfaceVariant.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
@@ -1553,6 +1554,7 @@ void Scene::Commit()
         kind[slot] |= variant;
         d.primId = m.primId;
         d.holdout = m.holdout ? 1u : 0u;
+        _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
@@ -1734,6 +1736,7 @@ void Scene::Commit()
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
     _gpu.shadowLight = kNone;
+    _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     for (const bool distant : {true, false}) {  // distant lights first
         for (const auto &l : _lights) {
@@ -1747,6 +1750,7 @@ void Scene::Commit()
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
                     _gpu.shadowLight = lightCount;
+                    _gpu.shadowAngle = l->angle;
                     std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
