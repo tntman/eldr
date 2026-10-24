@@ -22,8 +22,10 @@ layout(push_constant) uniform GtaoParams {
     vec4 eye;
     vec4 params;  // world radius, noise index, 1/width, 1/height (of the depth)
     mat4 prevViewProj;
-    vec4 ssgi;    // x: depth pixels per raw pixel
+    vec4 ssgi;      // x: depth pixels per raw pixel
+    vec4 temporal;  // x: this frame's weight in the running average (1: none)
 } pc;
+layout(set = 0, binding = 3) uniform sampler2D previousSsgi;  // last frame's result, same pixels (a still camera)
 layout(location = 0) out vec4 outSsgi;  // visibility, gathered irradiance / pi (gba): mesh.frag's AO texture
 
 // World position at a depth pixel; w = 0 for background.
@@ -67,6 +69,9 @@ void main()
     }
     vec4 s = weights > 0.0 && !any(isnan(n)) ? sum / weights : texelFetch(rawAo, rawQ, 0);
     outSsgi = vec4(s.a, s.rgb);
+    if (pc.temporal.x < 1.0) {
+        outSsgi = mix(texelFetch(previousSsgi, q, 0), outSsgi, pc.temporal.x);
+    }
 }
 #else
 layout(location = 0) out float outAo;

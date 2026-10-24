@@ -33,17 +33,21 @@ public:
 
     // SSGI instead of AO from now on: Output() is then RGBA16F, visibility
     // (r, read as AO) and gathered irradiance / pi (gba), traced at
-    // 1 / `scale` resolution (1 or 2). With the GPU idle, before Output()
-    // is bound.
+    // 1 / `scale` resolution (1 or 2). Once per frame, with the GPU idle,
+    // before Output() is bound: with SSGI on it also moves on to this
+    // frame's output (last frame's is its history).
     void SetSsgi(bool on, uint32_t scale);
     // Like Record, gathering light from `history` (last frame's resolved
     // colour, seen by `prevViewProj`; unusable: visibility only) with
     // `steps` steps per side, its radiance clamped to `maxRadiance` (fireflies).
+    // While the camera is `still`, the result accumulates over the frames
+    // (up to 16), so its per-frame noise averages out before TAA, whose
+    // neighbourhood clipping would keep the denoised blotches.
     void RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                     const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                    VkImageView history, bool historyValid, float maxRadiance);
+                    VkImageView history, bool historyValid, float maxRadiance, bool still);
 
-    VkImageView Output() const { return _ssgiOn ? _ssgi.view : _ao.view; }
+    VkImageView Output() const { return _ssgiOn ? _ssgi[_current].view : _ao.view; }
 
 private:
     void _Destroy();
@@ -63,7 +67,8 @@ private:
     Image _ao;   // R8: denoised visibility
     // SSGI: RGBA16F raw (light, visibility) at 1 / _scale, denoised and
     // upsampled (visibility, light).
-    Image _ssgiRaw, _ssgi;
+    Image _ssgiRaw, _ssgi[2];       // _ssgi[_current] this frame's, the other last frame's
+    uint32_t _current = 0, _accumulated = 0;  // frames in _ssgi's running average
     bool _ssgiOn = false;
     uint32_t _scale = 1;
     VkImageView _depth = VK_NULL_HANDLE;
