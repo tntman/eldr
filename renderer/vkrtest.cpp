@@ -1557,6 +1557,33 @@ int main()
                    "GI bounces the red panel's light onto the white wall");
             Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+
+            // GI preconverge: the film's 8 samples start once the probes
+            // have settled (their first 1 / (1 - 0.97) = 33 updates), so no
+            // sample sees half-filled probes; off, the film starts at once
+            // and averages them in.
+            auto filmFrames = [&](bool preconverge, Image *out) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame f = frame;
+                f.postProcess = true;
+                f.post.autoExposure = false;
+                f.post.bloomIntensity = 0.0f;
+                f.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                f.filmSamples = 8;
+                f.giPreconverge = preconverge;
+                int n = 0;
+                do {
+                    *out = Render(r, scene, f);
+                    ++n;
+                } while (!r.IsConverged() && n < 200);
+                return n;
+            };
+            Image settledFilm, earlyFilm;
+            const int settledFrames = filmFrames(true, &settledFilm), earlyFrames = filmFrames(false, &earlyFilm);
+            Expect(settledFrames >= 33 + 8 - 1 && earlyFrames < settledFrames,
+                   "GI preconverge: the film starts after the probes settled");
+            Expect(settledFilm.At(28, 32, 0) > earlyFilm.At(28, 32, 0),
+                   "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
             Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
         }

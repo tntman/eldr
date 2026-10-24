@@ -235,6 +235,9 @@ public:
         // flat areas (try 0.002).
         float adaptiveThreshold = 0.0f;
         uint32_t adaptiveMinSamples = 16;
+        // GI preconverge: with gi, the film waits until fresh probes have
+        // settled (RayTracing::Converged), so no sample sees half-filled ones.
+        bool giPreconverge = true;
         // Shading pipelines a frame compiles are saved to the device's
         // pipeline cache file (Device::LoadPipelineCache) for later runs.
         bool pipelineCache = true;
@@ -376,7 +379,8 @@ private:
     // Film: samples in it (0: TAA resolves), frames the camera and the
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
-    bool _filmAdaptive = false;  // the last frame's film counted its pixels still sampling
+    bool _filmAdaptive = false;
+    bool _freshRun = false;  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;

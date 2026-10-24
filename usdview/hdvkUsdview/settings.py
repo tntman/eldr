@@ -12,7 +12,7 @@ GROUPS = [
      "displacementScale anisotropy shareFrame extraAovs renderProducts pipelineCache pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis ssgi ssgiSteps ssgiRadius ssgiResolution"),
+     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),

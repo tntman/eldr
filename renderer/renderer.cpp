@@ -2240,10 +2240,20 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool changed = !fresh && (cameraMoved || gpu.moved || filmKey != _filmKey);
     _filmKey = filmKey;
     _stillFrames = changed ? 0 : _stillFrames + 1;
-    const bool film = taa && frame.filmAccumulation && !motionBlur &&
+    _freshRun = fresh || (_freshRun && !changed);
+    // DDGI preconverge: fresh GI probes (their first 1 / (1 - hysteresis)
+    // updates, weighted 1 / (n + 1)) would stay in the film's average, so
+    // TAA resolves until they settled and the film starts after.
+    // ponytail: full frames, not probe updates alone; K probe-only
+    // dispatches would need K sets of the probes' uniforms.
+    const bool giSettling = frame.giPreconverge && frame.gi && _rt && !_rt->Converged();
+    const bool film = taa && frame.filmAccumulation && !motionBlur && !giSettling &&
                       (fresh || frame.finalQuality || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
-    const uint32_t filmMode = !film ? 0 : fresh ? 1 : changed || _filmSamples == 0 ? (frame.finalQuality ? 1 : 2) : 0;
+    const uint32_t filmMode = !film                            ? 0
+                              : fresh                          ? 1
+                              : changed || _filmSamples == 0 ? (frame.finalQuality || _freshRun ? 1 : 2)
+                                                               : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
     _filmAdaptive = film && frame.adaptiveThreshold > 0.0f;
     _filmRuns += filmMode != 0 ? 1 : 0;

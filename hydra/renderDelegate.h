@@ -128,6 +128,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((interactiveSamples, "hdvk:interactiveSamples"))        \
     ((adaptiveThreshold, "hdvk:adaptiveThreshold"))          \
     ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
+    ((giPreconverge, "hdvk:giPreconverge"))                  \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 
