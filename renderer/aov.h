@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace vkr {
 
@@ -38,6 +39,11 @@ public:
         kPositionWorld,   // world-space position (Karma's P)
         kDepth,           // distance along the view axis, positive (Karma's depth, ray:hitPz)
         kDiffuseAlbedo,   // base colour * (1 - metallic), rgb (Karma's albedodiffuse, lpe:CDA)
+        // Light splits, stored by the shading pass (mesh.frag): the lights'
+        // (distant, sphere, rect, disk) diffuse and glossy light, and the
+        // rest (dome, probes, reflections, GI) as indirect; combined: both.
+        kDirectDiffuse, kIndirectDiffuse, kCombinedDiffuse,
+        kDirectGlossy, kIndirectGlossy, kCombinedGlossy,
         kCount
     };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:
@@ -47,6 +53,15 @@ public:
     // Anything asked for; whether that needs the G-buffer pass.
     static bool Any(float *const targets[kCount]);
     static bool NeedsGeometry(float *const targets[kCount]);
+    static bool NeedsSplits(float *const targets[kCount]);
+
+    // The light splits' image (RGBA16F, layers direct diffuse, indirect
+    // diffuse, direct glossy, indirect glossy; GENERAL): made at this size
+    // (1 x 1 without splits) before the frame's descriptors are written;
+    // ClearSplits zeroes it before the shading pass stores into it.
+    void EnsureSplits(uint32_t width, uint32_t height);
+    VkImageView SplitsView() const { return _splits.view; }
+    void ClearSplits(VkCommandBuffer cmd);
 
     explicit Aovs(Device &device);
     ~Aovs();
@@ -66,6 +81,11 @@ public:
         const uint32_t *cryptomatte = nullptr;  // per primId: object, material
         uint32_t cryptomatteIds = 0;
         uint8_t components[kCount] = {};  // floats per pixel of each target (0: Components)
+        // Accumulation: frames of a still camera and scene are averaged
+        // (ids, Cryptomatte: the latest), up to maxFrames.
+        float viewProj[16] = {};
+        uint64_t version = 0;      // the scene's (Scene::Gpu::version)
+        uint32_t maxFrames = 1;
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set
@@ -89,6 +109,14 @@ private:
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _normalSt, _albedo, _emission;  // the G-buffer
+    Image _splits;                        // light splits, EnsureSplits
+    uint32_t _splitsWidth = 0, _splitsHeight = 0;
+    // Accumulation state (Record).
+    uint32_t _frames = 0, _accumWidth = 0, _accumHeight = 0;
+    float _viewProj[16] = {};
+    uint64_t _version = 0;
+    std::vector<uint32_t> _accumLayout;
+    VkBuffer _accumBuffer = VK_NULL_HANDLE;
     Buffer _params;                       // view, invViewProj, then the Cryptomatte table
     Buffer _output;                       // every AOV asked for, packed (device-local)
     Buffer _readback;                     // its copy the CPU reads

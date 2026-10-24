@@ -30,7 +30,7 @@ void TransmissionBegin(inout float alpha)
     if (inMaterial == kNoMaterial) {
         return;
     }
-    Material m = materials[inMaterial];
+    Material m = ShadingMaterial();
     gRefracted = alpha * m.transmission.w;
     alpha *= 1.0 - m.transmission.w;
     if (m.refraction.w > 0.0) {
@@ -94,7 +94,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         }
         return 1.0 - gStraight;
     }
-    Material m = materials[inMaterial];
+    Material m = ShadingMaterial();
     float ior = max(m.refraction.x, 1e-3);
     bool thin = m.refraction.y > 0.0;
     bool inside = !thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0;
@@ -247,7 +247,7 @@ void PassOutput(vec3 color, float alpha)
         return;
     }
     if (kShadingPass == 2u) {
-        vec3 radius = inMaterial != kNoMaterial ? max(materials[inMaterial].subsurfaceRadius.xyz, vec3(1e-6))
+        vec3 radius = inMaterial != kNoMaterial ? max(ShadingMaterial().subsurfaceRadius.xyz, vec3(1e-6))
                                                 : vec3(1.0);
         float largest = max(radius.r, max(radius.g, radius.b));
         uvec3 q = uvec3(round(radius / largest * 1023.0));

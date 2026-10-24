@@ -14,8 +14,12 @@
 #include "transparency.h"
 #include "volume.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 namespace vkr {
 
@@ -95,6 +99,9 @@ public:
         // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
         // and depth go to the app's OpenGL on the GPU instead of Targets.
         bool shareFrame = true;
+        // Render products (the Hydra layer's HdVkRenderProducts): the active
+        // UsdRenderSettings' products are written as EXR files once converged.
+        bool renderProducts = true;
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
@@ -105,6 +112,8 @@ public:
         bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
         uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
         bool hairShading = true;       // curves (Mesh::hair) with strand highlights
+        bool texturedLobes = true;     // lobe inputs from textures and graphs (material programs); off: constants
+        bool texturedTransmission = true;  // the same for transmission and subsurface inputs
         // Ray tracing (raytracing.cpp), ignored without Device::rayTracing.
         // With the depth prepass: traced shadows of the sun and the three
         // lights that matter most (no shadow maps for them; soft from the
@@ -193,6 +202,13 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Shading pipelines a frame compiles are saved to the device's
+        // pipeline cache file (Device::LoadPipelineCache) for later runs.
+        bool pipelineCache = true;
+        // Compile the shading sets of this frame's features with one of
+        // them toggled on a worker thread, so turning one on or off later
+        // doesn't stall (Hydra's default: on).
+        bool pipelinePrewarm = false;
         // Refracting meshes' back faces (needs refraction): seen from inside
         // the medium (water from below, the far side of a glass ball) with
         // the inverted ior and total internal reflection, drawn before their
@@ -259,8 +275,11 @@ public:
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
+        uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
     };
     const Stats &GetStats() const { return _stats; }
+    // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
+    void WaitForPrewarm();
 
     // GPU sharing (interop.h): the last frame's images, in
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
@@ -280,8 +299,21 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    // A shading set's pipelines: per pass kVariants of them.
+    struct ShadingTargets {
+        VkPipeline *opaque, *translucent, *oit, *subsurface, *refractBack;
+    };
+    void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
+                          VkPipelineCache cache = VK_NULL_HANDLE);
     uint32_t _ShadingSet(uint32_t features);
+    ShadingTargets _SetTargets(uint32_t set)
+    {
+        const uint32_t base = set * kVariants;
+        return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base,
+                _refractBackPipeline + base};
+    }
+    void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
+    void _PrewarmWorker();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -294,6 +326,7 @@ private:
                                               uint32_t *rtLights, uint32_t rtSlots);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
+    void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
                            const float *invViewProj, VkRenderingAttachmentInfo depth);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
@@ -342,9 +375,31 @@ private:
     // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
     // variants at set * kVariants + variant; a frame draws with the set of
     // its own features (_shadingBase), made when a frame first needs it.
-    static constexpr uint32_t kShadingSets = 8;
+    static constexpr uint32_t kShadingSets = 16;
     std::vector<uint32_t> _shadingSets;
     uint32_t _shadingBase = 0;
+    // Frame::pipelinePrewarm: the worker compiles the queued feature sets
+    // into its own pipeline cache (merged into the device's after each) and
+    // leaves them in _prewarmed for _ShadingSet to take; a set it is on
+    // when a frame needs it is waited for, a queued one is taken back.
+    struct PrewarmJob {
+        uint32_t features;
+        bool displaced;  // with the displaced variants too
+    };
+    struct Prewarmed {
+        PrewarmJob job;
+        std::vector<VkPipeline> pipelines;  // 4 * kVariants: opaque, translucent, OIT, subsurface
+    };
+    std::thread _prewarmThread;
+    std::mutex _prewarmMutex;
+    std::condition_variable _prewarmChanged;
+    std::vector<PrewarmJob> _prewarmQueue;
+    uint32_t _prewarmCurrent = kNone;  // the features being compiled
+    std::vector<Prewarmed> _prewarmed;
+    std::atomic<bool> _prewarmStop{false};
+    bool _prewarmSave = false;         // Frame::pipelineCache when queued
+    uint32_t _prewarmFor = kNone;      // the features the queue was made around
+    VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
@@ -361,6 +416,7 @@ private:
     VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
+    bool _savePipelines = true;  // Frame::pipelineCache
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment

@@ -15,18 +15,23 @@ layout(std430, set = 0, binding = 5) readonly buffer Params {
     mat4 invViewProj;   // GL NDC to world
     uint cryptomatte[]; // per primId: object, material
 };
-layout(std430, set = 0, binding = 6) writeonly buffer Output { float values[]; };
+layout(std430, set = 0, binding = 6) buffer Output { float values[]; };
+// Light splits stored by the shading pass: direct diffuse, indirect diffuse,
+// direct glossy, indirect glossy.
+layout(set = 0, binding = 7) uniform sampler2DArray splits;
 
 layout(push_constant) uniform Push {
     uint kind;        // Aovs::Kind
     uint offset;      // first float in values
     uint components;
     uint cryptomatteIds;
+    float weight;     // this frame's in the running average (1: the first)
 } pc;
 
 const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, kSt = 4u, kAlbedo = 5u,
            kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u, kPositionWorld = 9u, kDepth = 10u,
-           kDiffuseAlbedo = 11u;
+           kDiffuseAlbedo = 11u, kDirectDiffuse = 12u, kIndirectDiffuse = 13u, kCombinedDiffuse = 14u,
+           kDirectGlossy = 15u, kIndirectGlossy = 16u, kCombinedGlossy = 17u;
 
 vec3 OctDecode(vec2 e)
 {
@@ -64,6 +69,20 @@ void main()
         case kEmission: v.xyz = texelFetch(emission, p, 0).rgb; break;
         case kPositionWorld: v.xyz = world.xyz / world.w; break;
         case kDepth: v.x = -eye.z; break;
+        case kDirectDiffuse:
+        case kIndirectDiffuse:
+        case kDirectGlossy:
+        case kIndirectGlossy: {
+            int layer = int(pc.kind - kDirectDiffuse) - (pc.kind >= kDirectGlossy ? 1 : 0);
+            v.xyz = texelFetch(splits, ivec3(p, layer), 0).rgb;
+            break;
+        }
+        case kCombinedDiffuse:
+        case kCombinedGlossy: {
+            int layer = pc.kind == kCombinedDiffuse ? 0 : 2;
+            v.xyz = texelFetch(splits, ivec3(p, layer), 0).rgb + texelFetch(splits, ivec3(p, layer + 1), 0).rgb;
+            break;
+        }
         case kDiffuseAlbedo: {
             vec4 a = texelFetch(albedo, p, 0);  // base colour, metallic
             v.xyz = a.rgb * (1.0 - a.a);
@@ -76,6 +95,8 @@ void main()
     }
     uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
     for (uint c = 0u; c < pc.components; ++c) {
-        values[base + c] = v[c];
+        // Ids (Cryptomatte) aren't averaged: the latest frame's.
+        bool nearest = pc.kind == kCryptoObject || pc.kind == kCryptoMaterial;
+        values[base + c] = nearest || pc.weight >= 1.0 ? v[c] : mix(values[base + c], v[c], pc.weight);
     }
 }

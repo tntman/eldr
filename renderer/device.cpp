@@ -1,8 +1,12 @@
 #include "device.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 
@@ -66,6 +70,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f.features.samplerAnisotropy, "samplerAnisotropy");
     need(f.features.independentBlend, "independentBlend");  // translucency: blended colour, plain ids
     need(f.features.geometryShader, "geometryShader");  // gl_PrimitiveID in mesh.frag (uniform primvars)
+    need(f.features.fragmentStoresAndAtomics, "fragmentStoresAndAtomics");  // mesh.frag's light splits
     need(f12.drawIndirectCount, "drawIndirectCount");
     need(f12.runtimeDescriptorArray, "runtimeDescriptorArray");
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");
@@ -190,6 +195,7 @@ Device::Device()
         f.features.samplerAnisotropy = VK_TRUE;
         f.features.independentBlend = VK_TRUE;
         f.features.geometryShader = VK_TRUE;
+        f.features.fragmentStoresAndAtomics = VK_TRUE;
 
         // Optional: the driver's memory budget (usdview's and Houdini's stats).
         uint32_t extensionCount = 0;
@@ -277,6 +283,8 @@ Device::~Device()
 void Device::_Release()
 {
     if (device) {
+        SavePipelineCache();
+        vkDestroyPipelineCache(device, pipelineCache, nullptr);
         vkDestroyFence(device, _submitFence, nullptr);
         vkDestroyCommandPool(device, _submitPool, nullptr);
         vkDestroyDevice(device, nullptr);
@@ -476,6 +484,73 @@ void Device::Destroy(Buffer &b)
     }
     Free(b.memory);
     b = Buffer();
+}
+
+void Device::LoadPipelineCache(uint64_t shaderHash)
+{
+    if (pipelineCache) {
+        return;
+    }
+    const char *dir = std::getenv("HDVK_PIPELINE_CACHE_DIR");
+    const char *local = std::getenv("LOCALAPPDATA");
+    std::filesystem::path folder = dir ? std::filesystem::path(dir)
+                                 : local ? std::filesystem::path(local) / "Eldr"
+                                         : std::filesystem::temp_directory_path() / "Eldr";
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(physical, &props);
+    char name[96];
+    int n = std::snprintf(name, sizeof(name), "pipelines-");
+    for (uint8_t b : props.pipelineCacheUUID) {
+        n += std::snprintf(name + n, sizeof(name) - n, "%02x", b);
+    }
+    std::snprintf(name + n, sizeof(name) - n, "-%016llx.bin", static_cast<unsigned long long>(shaderHash));
+    _pipelineCachePath = (folder / name).string();
+
+    // The driver checks the header (vendor, device, cache UUID) and starts
+    // empty on data that isn't its own.
+    std::vector<char> data;
+    if (std::ifstream in{_pipelineCachePath, std::ios::binary}) {
+        data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+    ci.initialDataSize = data.size();
+    ci.pInitialData = data.empty() ? nullptr : data.data();
+    if (vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache) != VK_SUCCESS) {
+        ci.initialDataSize = 0;  // unreadable data: start empty
+        ci.pInitialData = nullptr;
+        Check(vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache), "vkCreatePipelineCache");
+        data.clear();
+    }
+    pipelineCacheBytes = data.size();
+}
+
+void Device::SavePipelineCache()
+{
+    if (!pipelineCache) {
+        return;
+    }
+    size_t size = 0;
+    if (vkGetPipelineCacheData(device, pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) {
+        return;
+    }
+    std::vector<char> data(size);
+    if (vkGetPipelineCacheData(device, pipelineCache, &size, data.data()) != VK_SUCCESS) {
+        return;
+    }
+    // Written aside, then moved over the old file: a crash mid-write leaves
+    // the previous cache.
+    std::lock_guard<std::mutex> lock(_pipelineCacheMutex);
+    std::error_code error;
+    const std::filesystem::path path(_pipelineCachePath), temp = path.string() + ".tmp";
+    std::filesystem::create_directories(path.parent_path(), error);
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out.write(data.data(), std::streamsize(size));
+        if (!out) {
+            return;
+        }
+    }
+    std::filesystem::rename(temp, path, error);
 }
 
 } // namespace vkr

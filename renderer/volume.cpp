@@ -3,6 +3,7 @@
 #include "fullscreen.h"
 #include "renderer.h"
 #include "scene.h"
+#include "transparency.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,6 +22,9 @@ const uint32_t kVolumeFrag[] =
 const uint32_t kUpsampleFrag[] =
 #include "volume_upsample.frag.inc"
 ;
+const uint32_t kShadowFrag[] =
+#include "volume_shadow.frag.inc"
+;
 
 constexpr VkFormat kHalfFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // premultiplied radiance, 1 - transmittance
 
@@ -30,7 +34,23 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     float density, emission, anisotropy;
     uint32_t count;
     uint32_t scale;  // 1: full resolution, 2: half
+    uint32_t part;   // VolumePass::Part
+    uint32_t cascade, mapSize;  // RecordShadow's
+    uint32_t pad;
 };
+
+VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
+{
+    VolumeParams p{};
+    p.stepSize = std::max(s.stepSize, 0.05f);
+    p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
+    p.shadowSteps = std::min(s.shadowSteps, 256u);
+    p.density = std::max(s.density, 0.0f);
+    p.emission = std::max(s.emission, 0.0f);
+    p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
+    p.count = count;
+    return p;
+}
 
 // y = m (x, 1): three rows of an affine map.
 struct Affine {
@@ -133,16 +153,33 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     _halfPipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
     _upsamplePipeline = CreateFullscreenPipeline(d, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
+    _shadowPipeline = CreateFullscreenPipeline(d, _layout, kShadowFrag, sizeof(kShadowFrag),
+                                               Transparency::kTintFormat, false, false, true,
+                                               Transparency::kTintDepthFormat);
 }
 
 VolumePass::~VolumePass()
 {
     vkDeviceWaitIdle(_dev.device);
-    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline}) {
+    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     _dev.Destroy(_half);
+    _dev.Destroy(_translucentDepth);
+}
+
+const Image &VolumePass::EnsureTranslucentDepth(uint32_t width, uint32_t height)
+{
+    if (width != _depthWidth || height != _depthHeight) {
+        _dev.Destroy(_translucentDepth);
+        _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                             VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        _depthWidth = width;
+        _depthHeight = height;
+    }
+    return _translucentDepth;
 }
 
 VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
@@ -160,7 +197,7 @@ VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
 }
 
 bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                        uint32_t width, uint32_t height, const Settings &s)
+                        uint32_t width, uint32_t height, const Settings &s, Part part)
 {
     if (volumeCount == 0) {
         return false;
@@ -175,14 +212,8 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     dep.pMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
 
-    VolumeParams p{};
-    p.stepSize = std::max(s.stepSize, 0.05f);
-    p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
-    p.shadowSteps = std::min(s.shadowSteps, 256u);
-    p.density = std::max(s.density, 0.0f);
-    p.emission = std::max(s.emission, 0.0f);
-    p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
-    p.count = volumeCount;
+    VolumeParams p = Params(s, volumeCount);
+    p.part = part;
     p.scale = s.resolution >= 2 && _half.image ? 2 : 1;
     if (p.scale == 1) {
         DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
@@ -204,6 +235,18 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     DrawFullscreen(cmd, _upsamplePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                    &p, sizeof(p));
     return true;
+}
+
+void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
+                              uint32_t mapSize, const Settings &s)
+{
+    VolumeParams p = Params(s, volumeCount);
+    p.cascade = cascade;
+    p.mapSize = mapSize;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
 // Builds the volume table (a GpuVolume per drawn instance) and, when the
@@ -281,6 +324,8 @@ void Scene::_CommitVolumes()
     };
 
     std::vector<GpuVolume> table;
+    std::fill(_gpu.volumeMin, _gpu.volumeMin + 3, std::numeric_limits<float>::max());
+    std::fill(_gpu.volumeMax, _gpu.volumeMax + 3, std::numeric_limits<float>::lowest());
     for (const Drawn &d : drawn) {
         const Nano density(d.grids[0].get());
         const pnanovdb_coord_t lo = pnanovdb_root_get_bbox_min(density.buf, density.root);
@@ -348,9 +393,21 @@ void Scene::_CommitVolumes()
                 objectToWorld.m[r][3] = x[12 + r];
             }
             Affine worldToIndex;
-            if (Invert(objectToWorld * indexToObject, &worldToIndex)) {
+            const Affine indexToWorld = objectToWorld * indexToObject;
+            if (Invert(indexToWorld, &worldToIndex)) {
                 Store(worldToIndex, g.worldToIndex);
                 table.push_back(g);
+                for (int k = 0; k < 8; ++k) {  // the index box's corners
+                    const double p[3] = {(k & 1) ? g.indexMax[0] : g.indexMin[0],
+                                         (k & 2) ? g.indexMax[1] : g.indexMin[1],
+                                         (k & 4) ? g.indexMax[2] : g.indexMin[2]};
+                    for (int r = 0; r < 3; ++r) {
+                        const auto &m = indexToWorld.m[r];
+                        const float w = float(m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3]);
+                        _gpu.volumeMin[r] = std::min(_gpu.volumeMin[r], w);
+                        _gpu.volumeMax[r] = std::max(_gpu.volumeMax[r], w);
+                    }
+                }
             }
         }
     }
