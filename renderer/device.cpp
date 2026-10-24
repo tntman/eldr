@@ -70,7 +70,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f.features.samplerAnisotropy, "samplerAnisotropy");
     need(f.features.independentBlend, "independentBlend");  // translucency: blended colour, plain ids
     need(f.features.geometryShader, "geometryShader");  // gl_PrimitiveID in mesh.frag (uniform primvars)
-    need(f.features.fragmentStoresAndAtomics, "fragmentStoresAndAtomics");  // mesh.frag's light splits
+    need(f.features.fragmentStoresAndAtomics, "fragmentStoresAndAtomics");  // mesh.frag's light splits and denoised SSR rays
     need(f12.drawIndirectCount, "drawIndirectCount");
     need(f12.runtimeDescriptorArray, "runtimeDescriptorArray");
     need(f12.descriptorBindingPartiallyBound, "descriptorBindingPartiallyBound");

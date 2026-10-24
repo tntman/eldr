@@ -136,11 +136,22 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
     ((giPreconverge, "hdvk:giPreconverge"))                  \
     ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
-    ((shadowJitter, "hdvk:shadowJitter"))                    \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 
+// MSVC cannot expand one token list of more than about 140 names (C1009), so the
+// settings of later lanes live in a second one.
+#define HDVK_RENDER_SETTING_TOKENS2                          \
+    ((directClamp, "hdvk:directClamp"))                      \
+    ((indirectClamp, "hdvk:indirectClamp"))                  \
+    ((ssgiThickness, "hdvk:ssgiThickness"))                  \
+    ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
+    ((rtDisplacement, "hdvk:rtDisplacement"))                \
+    ((ssrDenoise, "hdvk:ssrDenoise"))                        \
+    ((shadowJitter, "hdvk:shadowJitter"))
+
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
 
 // Karma's names for what Eldr's extra AOVs hold: the source names of the
 // render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender

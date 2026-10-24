@@ -35,6 +35,7 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
 TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 const std::vector<HdVkExtraAov> &HdVkExtraAovs()
@@ -177,6 +178,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::Renderer::Frame frame{};
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
+    const auto &t2 = *HdVkRenderSettingsTokens2;
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
     // image (volumes last).
     HdRenderSettingDescriptorList settings = {
@@ -198,8 +200,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
         {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
+        {"Screen-Space Thickness Estimator (SSGI, SSR)", t2.ssgiThickness, VtValue(frame.ssgiThickness)},
+        {"SSGI Visibility Bitmask (light behind thin objects)", t2.ssgiBitmask, VtValue(frame.ssgiBitmask)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
+        {"Direct Light Clamp (radiance, 0 = off)", t2.directClamp, VtValue(frame.directClamp)},
+        {"Indirect Light Clamp (radiance, 0 = off)", t2.indirectClamp, VtValue(frame.indirectClamp)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
@@ -207,7 +213,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
+        {"Denoised Glossy SSR (GGX rays, ratio estimator)", t2.ssrDenoise, VtValue(frame.ssrDenoise)},
         {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
@@ -288,7 +296,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.adaptiveMinSamples))},
         {"GI Preconverge (film waits for fresh probes)", t.giPreconverge, VtValue(frame.giPreconverge)},
         {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
-        {"Jittered Light Shape per Sample (film: true soft shadows)", t.shadowJitter, VtValue(frame.shadowJitter)},
+        {"Jittered Light Shape per Sample (film: true soft shadows)", t2.shadowJitter, VtValue(frame.shadowJitter)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
