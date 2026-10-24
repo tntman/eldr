@@ -68,9 +68,12 @@ void main()
         }
     }
     vec4 s = weights > 0.0 && !any(isnan(n)) ? sum / weights : texelFetch(rawAo, rawQ, 0);
-    outSsgi = vec4(s.a, s.rgb);
+    outSsgi = any(isnan(s)) || any(isinf(s)) ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(s.a, s.rgb);
     if (pc.temporal.x < 1.0) {
-        outSsgi = mix(texelFetch(previousSsgi, q, 0), outSsgi, pc.temporal.x);
+        vec4 previous = texelFetch(previousSsgi, q, 0);
+        if (!any(isnan(previous)) && !any(isinf(previous))) {
+            outSsgi = mix(previous, outSsgi, pc.temporal.x);
+        }
     }
 }
 #else

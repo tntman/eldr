@@ -86,9 +86,13 @@ vec3 HistoryAt(vec3 p)
     if (pc.ssgi.z <= 0.0 || clip.w <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
         return vec3(0.0);
     }
+    // NaN/Inf in the history (max() may skip a NaN channel) is no light.
     vec3 c = textureLod(history, uv, 0.0).rgb;
+    if (any(isnan(c)) || any(isinf(c))) {
+        return vec3(0.0);
+    }
     float peak = max(max(c.r, c.g), c.b);
-    return !(peak >= 0.0) ? vec3(0.0) : c * min(1.0, pc.ssgi.w / max(peak, 1e-20));
+    return peak <= 0.0 ? vec3(0.0) : c * min(1.0, pc.ssgi.w / peak);
 }
 
 #define OUTPUT(visibility, distance, light) outSsgi = vec4(light, visibility)
@@ -202,7 +206,9 @@ void main()
         visibility += sliceWeight * (Arc(h0, angleN, cosN) + Arc(h1, angleN, cosN));
     }
 #ifdef SSGI
-    OUTPUT(clamp(visibility / float(slices), 0.0, 1.0), distanceToEye, light / float(slices));
+    light /= float(slices);
+    OUTPUT(clamp(visibility / float(slices), 0.0, 1.0), distanceToEye,
+           any(isnan(light)) || any(isinf(light)) ? vec3(0.0) : light);
 #else
     visibility = max(pow(clamp(visibility / float(slices), 0.0, 1.0), 2.2), 0.03);
     OUTPUT(visibility, distanceToEye, light);

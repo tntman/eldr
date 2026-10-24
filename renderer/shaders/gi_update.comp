@@ -47,7 +47,11 @@ void main()
     uint count = min(uint(rt.giParams.y), kMaxRays);
     uint threads = gl_WorkGroupSize.x * gl_WorkGroupSize.y;
     for (uint r = gl_LocalInvocationIndex; r < count; r += threads) {
-        rays[r] = giRays[probe * count + r];
+        // A bad ray (NaN/Inf from a degenerate hit) is a miss with no light:
+        // one must not poison the probe's history for good.
+        vec4 ray = giRays[probe * count + r];
+        rays[r] = any(isnan(ray)) || any(isinf(ray)) ? vec4(0.0, 0.0, 0.0, rt.giParams.z)
+                                                     : vec4(min(ray.rgb, vec3(60000.0)), ray.w);
         directions[r] = GiRayDirection(r, count);
     }
     barrier();
@@ -81,11 +85,17 @@ void main()
     float hysteresis = rt.giParams.x;
     if (irradiance) {
         vec4 old = imageLoad(giIrradiance, coord);
+        if (any(isnan(old)) || any(isinf(old))) {
+            old = vec4(0.0);
+        }
         vec3 value = sum.w > 1e-6 ? sum.rgb / sum.w : old.rgb;
         float usable = float(backfaces) < 0.25 * float(count) ? 1.0 : 0.0;
         imageStore(giIrradiance, coord, mix(vec4(value, usable), old, hysteresis));
     } else {
         vec2 old = imageLoad(giVisibility, coord).rg;
+        if (any(isnan(old)) || any(isinf(old))) {
+            old = vec2(1.0);
+        }
         vec2 value = sum.w > 1e-6 ? sum.rg / sum.w : old;
         imageStore(giVisibility, coord, vec4(mix(value, old, hysteresis), 0.0, 0.0));
     }
