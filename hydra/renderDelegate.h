@@ -126,6 +126,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((finalQuality, "hdvk:finalQuality"))                    \
     ((sampleDimensions, "hdvk:sampleDimensions"))            \
     ((interactiveSamples, "hdvk:interactiveSamples"))        \
+    ((adaptiveThreshold, "hdvk:adaptiveThreshold"))          \
+    ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 

@@ -7,21 +7,29 @@
 // pixel p gathers the 3x3 samples around it, each at its jittered
 // position, weighted by its distance. The sums (colour * weight, weight)
 // stay in fp32. Colour is premultiplied by coverage, alpha averaged with it.
+// Adaptive sampling: per pixel the samples' mean and variance of their
+// exposed, compressed luma; a pixel whose mean's standard error fell under
+// the threshold (after the minimum samples) takes no more samples, and the
+// pixels still taking them are counted.
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(set = 0, binding = 0) uniform sampler2D current;  // this sample's HDR frame
 layout(set = 0, binding = 1) uniform sampler2D history;  // last frame's resolve (the TAA image a film starts from)
 layout(set = 0, binding = 2, rgba32f) uniform image2D sums;     // colour * weight
-layout(set = 0, binding = 3, rgba32f) uniform image2D weights;  // x: weight
+layout(set = 0, binding = 3, rgba32f) uniform image2D weights;  // weight, samples, sum of luma, of luma^2
 layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D resolved;
+layout(set = 0, binding = 5) buffer Active {
+    uint activePixels;  // pixels still taking samples this frame
+};
 
 layout(push_constant) uniform FilmParams {
     // xy: where this frame's samples are, from their pixel centres (pixels);
     // z: filter radius (pixels); w: 0 add, 1 start over, 2 start over from
     // the history at `seed` times this sample's weight.
     vec4 params;
-    vec4 seed;  // x: weight of the history a film starts from
+    vec4 seed;      // x: weight of the history a film starts from
+    vec4 adaptive;  // x: noise threshold (0: off), y: minimum samples, z: exposure
 } pc;
 
 // NaN/Inf (and negative colour) never enter the sums.
@@ -37,6 +45,17 @@ void main()
     if (any(greaterThanEqual(p, size))) {
         return;
     }
+    uint mode = uint(pc.params.w);
+    vec4 stats = mode == 0u ? imageLoad(weights, p) : vec4(0.0);
+    if (pc.adaptive.x > 0.0 && stats.y >= max(pc.adaptive.y, 2.0)) {
+        float mean = stats.z / stats.y;
+        float variance = max(stats.w / stats.y - mean * mean, 0.0) / (stats.y - 1.0);
+        if (sqrt(variance) < pc.adaptive.x) {
+            imageStore(resolved, p, imageLoad(sums, p) / stats.x);  // converged: no more samples
+            return;
+        }
+    }
+
     // Gaussian with sigma = 0.284 radius (EEVEE's fit), cut at the radius.
     // ponytail: 3x3 gather, enough up to a 1.5 pixel radius (the default);
     // wider filters need a 5x5.
@@ -63,16 +82,20 @@ void main()
 
     vec4 total = sum;
     float totalWeight = weight;
-    uint mode = uint(pc.params.w);
     if (mode == 0u) {
         total += imageLoad(sums, p);
-        totalWeight += imageLoad(weights, p).x;
+        totalWeight += stats.x;
     } else if (mode == 2u) {
         float w = pc.seed.x * weight;
         total += Clean(texelFetch(history, p, 0)) * w;
         totalWeight += w;
     }
+    float luma = dot(sum.rgb / weight, vec3(0.2126, 0.7152, 0.0722)) * pc.adaptive.z;
+    luma /= 1.0 + luma;  // as displayed, roughly: bright noise counts less
     imageStore(sums, p, total);
-    imageStore(weights, p, vec4(totalWeight, 0.0, 0.0, 0.0));
+    imageStore(weights, p, vec4(totalWeight, stats.y + 1.0, stats.z + luma, stats.w + luma * luma));
     imageStore(resolved, p, total / totalWeight);
+    if (pc.adaptive.x > 0.0) {
+        atomicAdd(activePixels, 1u);
+    }
 }

@@ -226,6 +226,15 @@ public:
         // While TAA resolves (the camera or the scene moves), the sample
         // dimensions loop over their first this many samples (1..256).
         uint32_t interactiveSamples = 8;
+        // Adaptive sampling (the film): a pixel whose mean's standard error
+        // (exposed, compressed luma: about the displayed value) is under
+        // adaptiveThreshold after adaptiveMinSamples takes no more samples,
+        // and the film is converged once no pixel is left (or at
+        // filmSamples, the most). 0: off. Edges' anti-aliasing is variance
+        // too, so most scenes still run to filmSamples; worth it for large
+        // flat areas (try 0.002).
+        float adaptiveThreshold = 0.0f;
+        uint32_t adaptiveMinSamples = 16;
         // Shading pipelines a frame compiles are saved to the device's
         // pipeline cache file (Device::LoadPipelineCache) for later runs.
         bool pipelineCache = true;
@@ -287,6 +296,7 @@ public:
         uint32_t drawCalls = 0;   // the camera's indirect calls (each covers many meshes)
         uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
         uint32_t sample = 0;      // the sample dimensions' sample (0: no TAA)
+        uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
@@ -366,6 +376,7 @@ private:
     // Film: samples in it (0: TAA resolves), frames the camera and the
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
+    bool _filmAdaptive = false;  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;

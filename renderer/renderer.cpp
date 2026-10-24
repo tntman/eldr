@@ -2245,6 +2245,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
     const uint32_t filmMode = !film ? 0 : fresh ? 1 : changed || _filmSamples == 0 ? (frame.finalQuality ? 1 : 2) : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
+    _filmAdaptive = film && frame.adaptiveThreshold > 0.0f;
     _filmRuns += filmMode != 0 ? 1 : 0;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
@@ -2964,7 +2965,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         if (film) {
             // From a TAA image: as much as 4 samples, a small bias that keeps
             // the switch from TAA from showing one sample's noise.
-            _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f);
+            _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f,
+                            std::max(frame.adaptiveThreshold, 0.0f), frame.adaptiveMinSamples,
+                            frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation));
             pass("film");
         } else {
             _taa.Record(_cmd, &reprojection.m[0][0], alpha);
@@ -3147,6 +3150,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             _stats.passMs.insert(_stats.passMs.begin(), {name, ms});
             _stats.gpuMs += ms;
         }
+    }
+    // Adaptive film: converged once no pixel took a sample (every pixel
+    // takes the minimum first).
+    _stats.filmActivePixels = _filmAdaptive ? _taa.ActivePixels() : 0;
+    if (_filmAdaptive && _stats.filmActivePixels == 0) {
+        _taaConverged = true;
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
 }

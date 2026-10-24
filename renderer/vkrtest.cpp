@@ -1132,6 +1132,23 @@ int main()
             }
             Expect(seen == 0x1Eu && most == 4 && moving.GetStats().sample > 4,
                    "moving: the sample dimensions loop over interactiveSamples; still: the film's run on");
+
+            // Adaptive sampling: away from the edge the pixels have no
+            // noise and stop at the minimum; the edge's keep sampling to
+            // filmSamples. A threshold above their noise stops them all.
+            frame.interactiveSamples = 8;
+            frame.adaptiveThreshold = 0.002f;
+            frame.adaptiveMinSamples = 8;
+            vkr::Renderer adaptive(device);
+            const Image early = converge(adaptive, &frames);
+            const uint32_t active = adaptive.GetStats().filmActivePixels;
+            Expect(frames == 32 && active > 0 && active <= 4 * 64 && MaxDifference(early, gauss) < 0.02f,
+                   "adaptive sampling: only the noisy pixels take more samples");
+            frame.adaptiveThreshold = 0.5f;
+            vkr::Renderer coarse(device);
+            converge(coarse, &frames);
+            Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
+                   "adaptive sampling: done once every pixel's noise is under the threshold");
         }
 
         {

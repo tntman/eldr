@@ -174,7 +174,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
-                                {t.filmFilterRadius, &frame.filmFilterRadius}}) {
+                                {t.filmFilterRadius, &frame.filmFilterRadius},
+                                {t.adaptiveThreshold, &frame.adaptiveThreshold}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -214,7 +215,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
                                 {t.volumeResolution, &frame.volume.resolution},
                                 {t.filmSamples, &frame.filmSamples},
-                                {t.interactiveSamples, &frame.interactiveSamples}}) {
+                                {t.interactiveSamples, &frame.interactiveSamples},
+                                {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // 0 allowed: no skinned instance blocks rays.
