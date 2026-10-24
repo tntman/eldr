@@ -620,6 +620,7 @@ public:
 
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
+        float shadowAngle = 0;              // its Light::angle (soft sun shadows)
         // Sphere/rect/disk lights that cast shadows; the renderer gives the
         // ones that matter most this frame tiles in its shadow atlas.
         struct ShadowCaster {
@@ -663,6 +664,7 @@ public:
         // (Material::transmission, opacityRefracts): the renderer copies
         // the opaque colour for it.
         bool refraction = false;
+        bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
         // Slots of opaque and cutout meshes with subsurface materials (and
         // their pipeline variants), shaded again by the subsurface pass.
         std::vector<uint32_t> subsurface;

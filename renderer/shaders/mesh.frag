@@ -35,6 +35,9 @@ layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightS
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 layout(set = 0, binding = 20) uniform sampler2D shadowAtlasDepth;  // same atlas, raw depths
 layout(set = 0, binding = 49) uniform sampler2DArray shadowMapDepth;  // the sun's cascades, raw depths
+// Their nearest depths (shadow_min.comp: level 0 per 4 x 4 texels), read
+// with a minimum-reduction sampler: the minimum of the bilinear footprint.
+layout(set = 0, binding = 61) uniform sampler2DArray shadowMin;
 
 const vec2 kPoisson[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870),
@@ -381,7 +384,12 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
 // geometrically from 1.5 texels to as far as the penumbra of one at the
 // light box's near side reaches, and only count where their own penumbra
 // reaches the receiver: every scale gets taps, and a wide search doesn't
-// soften contact shadows. uv/ref are the hard lookup's, c its cascade.
+// soften contact shadows. The search stops where no blocker's penumbra can
+// reach from: shadowMin bounds how near the light the blockers out to the
+// last tap are, so how high above the receiver's plane, so how far their
+// penumbrae reach. The taps up to there are the same, so is the result
+// (for a 0.5 degree sun over a crowd the search is 1-4 taps, not 16).
+// uv/ref are the hard lookup's, c its cascade.
 // ponytail: kernels clamped to 5% of the cascade; no blend between cascades.
 float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
 {
@@ -400,11 +408,25 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
 
     float minUv = 1.5 / size;
     float growth = max(ref * depthRange * tanHalf * uvPerUnit, minUv) / minUv;
+    float reach = min(minUv * growth, maxUv);
+    int levels = int(frame.features.w), base = textureSize(shadowMin, 0).x;
+    if (reach > minUv && levels > 0) {
+        // The level whose bilinear footprint, at least a texel (4 << level
+        // shadow texels) around uv, covers every texel within reach.
+        int level = min(findMSB(int(ceil(reach * size))), levels - 1);
+        float span = float((4 << level) * max(base >> level, 1));  // shadow texels the level's texels span
+        float nearest = textureLod(shadowMin, vec3(uv * size / span, float(c)), float(level)).r;
+        float above = ref + length(grad) * reach - nearest;  // at most, for blockers within reach
+        reach = min(reach, max(above * depthRange * tanHalf * uvPerUnit * 1.001, minUv));
+    }
     // The receiver's own texel first: a blocker right above always counts.
     float above = ref - texelFetch(shadowMapDepth, ivec3(clamp(ivec2(uv * size), ivec2(0), ivec2(size - 1.0)), c), 0).r;
     float blockers = max(above, 0.0), count = above > 0.0 ? 1.0 : 0.0;
     for (int i = 0; i < samples; ++i) {
         float r = minUv * pow(growth, float(i) / float(samples)), a = angle + 2.3999632 * float(i);
+        if (min(r, maxUv) > reach) {
+            break;  // nor any further out
+        }
         vec2 o = min(r, maxUv) * vec2(cos(a), sin(a));
         ivec2 texel = clamp(ivec2((uv + o) * size), ivec2(0), ivec2(size - 1.0));
         above = ref + dot(grad, o) - texelFetch(shadowMapDepth, ivec3(texel, c), 0).r;
@@ -448,7 +470,7 @@ float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
-    if (tanHalf > 0.0 && (frame.features.x & kFeatureSoftSun) != 0u) {
+    if (Feature(kFeatureSoftSun) && tanHalf > 0.0) {
         return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
     }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);
@@ -703,7 +725,7 @@ void main()
     // planar reflection (below, over the dome's sky), other surfaces the
     // reflection probe's captured surroundings instead of the dome.
     bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
-    if ((frame.features.x & kFeatureProbe) != 0u && !mirror) {
+    if (Feature(kFeatureProbe) && !mirror) {
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual);
     }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);

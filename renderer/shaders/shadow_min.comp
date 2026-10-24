@@ -1,0 +1,48 @@
+#version 450
+
+// The sun cascades' nearest depths, for soft sun shadows' blocker search
+// (mesh.frag's SoftSunShadow): level 0 of shadowMinLevels holds the
+// minimum of 4 x 4 shadow map texels, each further level that of 2 x 2
+// texels of the one before (an odd last row or column folded into its
+// neighbour's), one dispatch per level.
+layout(set = 0, binding = 49) uniform sampler2DArray shadowMapDepth;  // clamped to the edge
+layout(set = 0, binding = 61) uniform sampler2DArray shadowMin;
+layout(set = 0, binding = 62, r32f) uniform writeonly image2DArray shadowMinLevels[12];
+
+layout(push_constant) uniform Params {
+    uint level;
+} pc;
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+void main()
+{
+    ivec3 id = ivec3(gl_GlobalInvocationID);
+    ivec2 size = imageSize(shadowMinLevels[pc.level]).xy;
+    if (any(greaterThanEqual(id.xy, size))) {
+        return;
+    }
+    float nearest = 1.0;
+    if (pc.level == 0u) {
+        // Four gathers of 2 x 2 at the block's inner corners; past the
+        // edge they repeat its texels.
+        vec2 texel = 1.0 / vec2(textureSize(shadowMapDepth, 0).xy);
+        for (int k = 0; k < 4; ++k) {
+            vec2 corner = vec2(id.xy * 4 + 1 + 2 * ivec2(k & 1, k >> 1));
+            vec4 d = textureGather(shadowMapDepth, vec3(corner * texel, float(id.z)));
+            nearest = min(nearest, min(min(d.x, d.y), min(d.z, d.w)));
+        }
+    } else {
+        // 2 x 2 of the level before, and the row and column past them
+        // where this is the last of an odd size.
+        ivec2 source = textureSize(shadowMin, int(pc.level) - 1).xy;
+        ivec2 first = id.xy * 2;
+        ivec2 last = min(mix(first + 1, source - 1, equal(id.xy, size - 1)), source - 1);
+        for (int y = first.y; y <= last.y; ++y) {
+            for (int x = first.x; x <= last.x; ++x) {
+                nearest = min(nearest, texelFetch(shadowMin, ivec3(x, y, id.z), int(pc.level) - 1).r);
+            }
+        }
+    }
+    imageStore(shadowMinLevels[pc.level], id, vec4(nearest));
+}

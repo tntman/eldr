@@ -98,6 +98,9 @@ public:
     // GPU sharing: memory and semaphores export as Windows handles
     // (VK_KHR_external_memory_win32, VK_KHR_external_semaphore_win32).
     bool externalWin32 = false;
+    // Minimum-reduction samplers of R32_SFLOAT (samplerFilterMinmax): soft
+    // sun shadows bound their blocker search with them.
+    bool samplerMinmax = false;
     // VK_KHR_ray_tracing_pipeline and VK_KHR_acceleration_structure are
     // enabled (with bufferDeviceAddress; every allocation can back a
     // device address): see RayTracing. HDVK_NO_RAY_TRACING=1 leaves them

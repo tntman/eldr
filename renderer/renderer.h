@@ -256,7 +256,8 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines(bool displaced = false);
+    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    uint32_t _ShadingSet(uint32_t features);
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -299,6 +300,7 @@ private:
     VkSampler _samplers[kWrapModes * kWrapModes] = {};  // materials: trilinear, aniso, per wrap s and t
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare
+    VkSampler _minSampler = VK_NULL_HANDLE;     // minimum of the bilinear footprint (Device::samplerMinmax)
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
@@ -312,16 +314,23 @@ private:
     // made once a scene has some (_displacedPipelines). Depth passes use the
     // kDepthVariants bits.
     static constexpr uint32_t kVariants = 64, kDepthVariants = 1 | 2 | 32;
+    // The shading pipelines come in sets, each specialized with the optional
+    // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
+    // variants at set * kVariants + variant; a frame draws with the set of
+    // its own features (_shadingBase), made when a frame first needs it.
+    static constexpr uint32_t kShadingSets = 8;
+    std::vector<uint32_t> _shadingSets;
+    uint32_t _shadingBase = 0;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
-    VkPipeline _translucentPipeline[kVariants] = {};  // shading, blended over the opaque
-    VkPipeline _oitPipeline[kVariants] = {};          // shading, OIT accumulation (Transparency)
+    VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
+    VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
-    VkPipeline _subsurfacePipeline[kVariants] = {};   // shading, the subsurface lobe (Subsurface)
+    VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
-    VkPipeline _pipeline[kVariants] = {};             // shading, depth read-only
+    VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
@@ -350,6 +359,12 @@ private:
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
+    // The cascades' nearest depths for soft sun shadows (shadow_min.comp):
+    // level 0 per 4 x 4 texels, mips to 1 x 1, in GENERAL; a view per level.
+    static constexpr uint32_t kMaxShadowMinLevels = 12;
+    Image _shadowMin;
+    std::vector<VkImageView> _shadowMinLevels;
+    VkPipeline _shadowMinPipeline = VK_NULL_HANDLE;
     uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
     float _anisotropy = 0;                      // _samplers' (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows

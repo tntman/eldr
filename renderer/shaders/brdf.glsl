@@ -13,6 +13,7 @@
 // frame.features.x bits (renderer.cpp's Frame switches).
 const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
            kFeatureAnisotropy = 128u;
+const uint kFeatureToon = 512u;  // toon bands for every material (frame.styles.y), an optional feature
 // frame.styles.x bits.
 const uint kStyleToon = 1u, kStyleHair = 2u;
 
@@ -374,7 +375,7 @@ vec3 Toon(vec3 color, vec3 emissive, vec3 albedo, float bands, float softness)
 // frame's for every material. `albedo`: diffuse colour plus F0.
 vec3 ToonShade(vec3 color, vec3 emissive, vec3 albedo)
 {
-    float bands = float(frame.styles.y), softness = 0.05;
+    float bands = Feature(kFeatureToon) ? float(frame.styles.y) : 0.0, softness = 0.05;
 #ifdef LAYERS
     albedo = layers.albedo;  // sheen and coats would make bands uneven
     if (layers.toonBands > 0.0 && (frame.styles.x & kStyleToon) != 0u) {

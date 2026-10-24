@@ -91,6 +91,9 @@ const uint32_t kSkinComp[] =
 const uint32_t kShadowTintFrag[] =
 #include "shadow_tint.frag.inc"
 ;
+const uint32_t kShadowMinComp[] =
+#include "shadow_min.comp.inc"
+;
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
@@ -101,6 +104,7 @@ constexpr uint32_t kFeatureSpecularWorkflow = 8, kFeatureClearcoat = 16, kFeatur
                    kFeatureAnisotropy = 128;
 // FrameData::styles[0], as brdf.glsl.
 constexpr uint32_t kStyleToon = 1, kStyleHair = 2;
+constexpr uint32_t kFeatureToon = 512;  // FrameData::styles[1] > 0
 // Ray tracing's (shaders/gi.glsl).
 constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21, kFeatureGi = 1u << 22;
 // The TLAS's custom index (a mesh slot) has 24 bits, and so has its count.
@@ -112,6 +116,11 @@ constexpr uint32_t kFeatureSubsurface = 16384;
 // Holdouts (transparency.glsl).
 constexpr uint32_t kFeatureHoldouts = 32768;
 constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
+// The ones only the shading pipelines with their code have (frame.glsl's
+// kCompiledFeatures, Renderer::_ShadingSet).
+constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureRefraction |
+                                       kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
+                                       kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -335,16 +344,20 @@ Renderer::~Renderer()
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
-    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
+    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline, _shadowMinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
+    for (VkImageView v : _shadowMinLevels) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+    }
+    _dev.Destroy(_shadowMin);
     for (uint32_t v = 0; v < kVariants; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
                              _shadowCutoutPipeline[v], _tintDepthPipeline[v], _tintColorPipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
-    for (uint32_t v = 0; v < kVariants; ++v) {
+    for (uint32_t v = 0; v < kShadingSets * kVariants; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _oitPipeline[v], nullptr);
@@ -356,7 +369,7 @@ Renderer::~Renderer()
     for (VkSampler s : _samplers) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
-    for (VkSampler s : {_clampSampler, _shadowSampler}) {
+    for (VkSampler s : {_clampSampler, _shadowSampler, _minSampler}) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
     vkDestroyFence(_dev.device, _fence, nullptr);
@@ -384,6 +397,16 @@ void Renderer::_CreateDescriptors()
     sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     sci.maxLod = 0.0f;
     Check(vkCreateSampler(_dev.device, &sci, nullptr, &_shadowSampler), "vkCreateSampler");
+    if (_dev.samplerMinmax) {
+        VkSamplerReductionModeCreateInfo reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO};
+        reduction.reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN;
+        VkSamplerCreateInfo mci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, &reduction};
+        mci.magFilter = mci.minFilter = VK_FILTER_LINEAR;
+        mci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        mci.maxLod = VK_LOD_CLAMP_NONE;
+        mci.addressModeU = mci.addressModeV = mci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        Check(vkCreateSampler(_dev.device, &mci, nullptr, &_minSampler), "vkCreateSampler");
+    }
 
     constexpr VkShaderStageFlags kFragment = VK_SHADER_STAGE_FRAGMENT_BIT;
     constexpr VkShaderStageFlags kGeometry = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
@@ -473,7 +496,7 @@ void Renderer::_CreateDescriptors()
         // probe, the planar reflection.
         {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
         {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -484,6 +507,10 @@ void Renderer::_CreateDescriptors()
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        // The cascades' nearest depths (soft sun shadows): read minimum
+        // filtered, written per level by shadow_min.comp.
+        {61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
+        {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -498,10 +525,10 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -519,9 +546,13 @@ void Renderer::_CreateDescriptors()
 
 // `displaced`: only the mesh pipelines of displaced materials (variant
 // bit 5), made once a scene has some, so others never compile them.
-void Renderer::_CreatePipelines(bool displaced)
+// Without a shading `set` the depth, compute and sky pipelines, with one
+// only that set's shading pipelines.
+void Renderer::_CreatePipelines(bool displaced, uint32_t set)
 {
     const VkDevice device = _dev.device;
+    const bool shading = set != kNone, first = !displaced && !shading;
+
     // One range for both users (vertex: mat4 viewProj; cull: CullParams), so
     // every push names the same stages and the ranges never partly overlap.
     VkPushConstantRange range{kPushStages, 0, sizeof(CullParams)};
@@ -530,13 +561,14 @@ void Renderer::_CreatePipelines(bool displaced)
     lci.pSetLayouts = &_setLayout;
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
-    if (!displaced) {
+    if (first) {
         Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
     }
     for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
                                          std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline},
-                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
-        if (displaced) {
+                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline},
+                                         std::tuple{kShadowMinComp, sizeof(kShadowMinComp), &_shadowMinPipeline}}) {
+        if (!first) {
             break;
         }
         VkShaderModule module = CreateShaderModule(device, code, bytes);
@@ -652,9 +684,13 @@ void Renderer::_CreatePipelines(bool displaced)
     const VkSpecializationMapEntry vertexEntries[3] = {
         {0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}, {10, 2 * sizeof(VkBool32), sizeof(VkBool32)}};
     // The fragment constants: transparency.glsl's kShadingPass (`pass`: 1
-    // OIT, 2 subsurface), program.glsl's kProcedurals, kDisplacement.
-    const VkSpecializationMapEntry fragmentEntries[3] = {
-        {12, 0, sizeof(uint32_t)}, {8, sizeof(uint32_t), sizeof(VkBool32)}, {10, 2 * sizeof(uint32_t), sizeof(VkBool32)}};
+    // OIT, 2 subsurface), program.glsl's kProcedurals, kDisplacement,
+    // frame.glsl's kCompiledFeatures (the shading set's; others all).
+    const VkSpecializationMapEntry fragmentEntries[4] = {{12, 0, sizeof(uint32_t)},
+                                                         {8, sizeof(uint32_t), sizeof(VkBool32)},
+                                                         {10, 2 * sizeof(uint32_t), sizeof(VkBool32)},
+                                                         {13, 3 * sizeof(uint32_t), sizeof(uint32_t)}};
+    const uint32_t features = shading ? _shadingSets[set] : kNone;
     auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, uint32_t variants, uint32_t pass = 0) {
         VkResult res = VK_SUCCESS;
         for (uint32_t v = 0; v < kVariants && res == VK_SUCCESS; ++v) {
@@ -663,9 +699,10 @@ void Renderer::_CreatePipelines(bool displaced)
             }
             const VkBool32 vertexData[3] = {v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE,
                                             v & 32 ? VK_TRUE : VK_FALSE};
-            const uint32_t fragmentData[3] = {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE};
+            const uint32_t fragmentData[4] = {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE,
+                                              features};
             const VkSpecializationInfo vertexSpec{3, vertexEntries, sizeof(vertexData), vertexData};
-            const VkSpecializationInfo fragmentSpec{3, fragmentEntries, sizeof(fragmentData), fragmentData};
+            const VkSpecializationInfo fragmentSpec{4, fragmentEntries, sizeof(fragmentData), fragmentData};
             VkPipelineShaderStageCreateInfo stages[2] = {};
             std::copy(info.pStages, info.pStages + info.stageCount, stages);
             stages[0].pSpecializationInfo = &vertexSpec;  // the vertex stage comes first
@@ -682,12 +719,13 @@ void Renderer::_CreatePipelines(bool displaced)
         }
         return res;
     };
-    VkResult r = createMesh(ci, _pipeline, kVariants - 1);
+    const uint32_t base = shading ? set * kVariants : 0;
+    VkResult r = shading ? createMesh(ci, _pipeline + base, kVariants - 1) : VK_SUCCESS;
 
     // Translucent: premultiplied blending over the opaque colour (and its
     // coverage alpha); ids are written (picking), motion vectors stay the
     // opaque surface's.
-    if (r == VK_SUCCESS) {
+    if (shading && r == VK_SUCCESS) {
         VkPipelineColorBlendAttachmentState over[4] = {attachments[0], attachments[1], attachments[2],
                                                        attachments[3]};
         over[0].blendEnable = VK_TRUE;
@@ -699,11 +737,11 @@ void Renderer::_CreatePipelines(bool displaced)
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline, kVariants - 1);
+        r = createMesh(tci, _translucentPipeline + base, kVariants - 1);
     }
     // Weighted blended OIT (Transparency): colour and coverage summed,
     // ids as above, location 3 the revealage, multiplied by 1 - coverage.
-    if (r == VK_SUCCESS) {
+    if (shading && r == VK_SUCCESS) {
         VkPipelineColorBlendAttachmentState oit[4] = {attachments[0], attachments[1], attachments[2],
                                                       attachments[3]};
         oit[0].blendEnable = VK_TRUE;
@@ -721,11 +759,11 @@ void Renderer::_CreatePipelines(bool displaced)
         VkGraphicsPipelineCreateInfo oci = ci;
         oci.pNext = &oitRendering;
         oci.pColorBlendState = &oitBlend;
-        r = createMesh(oci, _oitPipeline, kVariants - 1, 1);
+        r = createMesh(oci, _oitPipeline + base, kVariants - 1, 1);
     }
     // Subsurface pass (Subsurface): the subsurface lobe's light and the
     // radii (locations 0 and 1), nothing else written.
-    if (r == VK_SUCCESS) {
+    if (shading && r == VK_SUCCESS) {
         VkPipelineColorBlendAttachmentState sss[4] = {attachments[0], attachments[1], attachments[2],
                                                       attachments[3]};
         sss[2].colorWriteMask = sss[3].colorWriteMask = 0;
@@ -737,12 +775,12 @@ void Renderer::_CreatePipelines(bool displaced)
         VkGraphicsPipelineCreateInfo sci = ci;
         sci.pNext = &sssRendering;
         sci.pColorBlendState = &sssBlend;
-        r = createMesh(sci, _subsurfacePipeline, kVariants - 1, 2);
+        r = createMesh(sci, _subsurfacePipeline + base, kVariants - 1, 2);
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
     // positions, invariant). Shadow: plus slope-scaled bias.
-    if (r == VK_SUCCESS) {
+    if (!shading && r == VK_SUCCESS) {
         const VkPipelineShaderStageCreateInfo depthStages[1] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert)};
         VkPipelineRenderingCreateInfo depthRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         depthRendering.depthAttachmentFormat = kDepthFormat;
@@ -813,7 +851,7 @@ void Renderer::_CreatePipelines(bool displaced)
     }
 
     // Sky: full-screen triangle at depth 1, drawn after geometry.
-    if (r == VK_SUCCESS && !displaced) {
+    if (r == VK_SUCCESS && first) {
         VkPipelineShaderStageCreateInfo skyStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, skyVert),
                                                         stage(VK_SHADER_STAGE_FRAGMENT_BIT, skyFrag)};
         VkGraphicsPipelineCreateInfo kci = ci;
@@ -829,6 +867,29 @@ void Renderer::_CreatePipelines(bool displaced)
     Check(r, "vkCreateGraphicsPipelines");
 }
 
+// The set of shading pipelines specialized with `features` (optional
+// frame.glsl features), made when first asked for.
+// ponytail: past kShadingSets - 1 sets every new mask shares one with all
+// of them; evict unused sets if sessions switch features that often.
+uint32_t Renderer::_ShadingSet(uint32_t features)
+{
+    auto it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
+    if (it == _shadingSets.end() && _shadingSets.size() + 1 >= kShadingSets) {
+        features = kOptionalFeatures;
+        it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
+    }
+    if (it == _shadingSets.end()) {
+        _shadingSets.push_back(features);
+        const uint32_t set = uint32_t(_shadingSets.size() - 1);
+        _CreatePipelines(false, set);
+        if (_displacedPipelines) {
+            _CreatePipelines(true, set);
+        }
+        return set;
+    }
+    return uint32_t(it - _shadingSets.begin());
+}
+
 // The sun's cascades, `size` texels square; Render makes them (again) when
 // Frame::shadowResolution changes. The GPU is idle there.
 void Renderer::_CreateShadowMap(uint32_t size)
@@ -837,6 +898,32 @@ void Renderer::_CreateShadowMap(uint32_t size)
         vkDestroyImageView(_dev.device, v, nullptr);
         v = VK_NULL_HANDLE;
     }
+    for (VkImageView v : _shadowMinLevels) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+    }
+    _shadowMinLevels.clear();
+    _dev.Destroy(_shadowMin);
+    const uint32_t minSize = (size + 3) / 4;
+    uint32_t minLevels = 1;
+    while (minSize >> minLevels) {
+        ++minLevels;
+    }
+    _shadowMin = _dev.CreateImage(VK_FORMAT_R32_SFLOAT, minSize, minSize, kCascades, minLevels,
+                                  VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                  VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    for (uint32_t level = 0; level < minLevels; ++level) {
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = _shadowMin.image;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        vci.format = VK_FORMAT_R32_SFLOAT;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, kCascades};
+        Check(vkCreateImageView(_dev.device, &vci, nullptr, &_shadowMinLevels.emplace_back()), "vkCreateImageView");
+    }
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        ImageBarrier(cmd, _shadowMin.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, minLevels, 0, kCascades},
+                     VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    });
     _dev.Destroy(_shadowMap);
     _shadowMap = _dev.CreateImage(kDepthFormat, size, size, kCascades, 1,
                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -1059,6 +1146,15 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
     write(48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &fogVolume);
     write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
+    const VkDescriptorImageInfo shadowMin{_minSampler ? _minSampler : _clampSampler, _shadowMin.view,
+                                          VK_IMAGE_LAYOUT_GENERAL};
+    write(61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowMin);
+    VkDescriptorImageInfo shadowMinLevels[kMaxShadowMinLevels];
+    for (uint32_t i = 0; i < kMaxShadowMinLevels; ++i) {  // levels past the last: the last again
+        shadowMinLevels[i] = {VK_NULL_HANDLE, _shadowMinLevels[std::min<size_t>(i, _shadowMinLevels.size() - 1)],
+                              VK_IMAGE_LAYOUT_GENERAL};
+    }
+    write(62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, shadowMinLevels, kMaxShadowMinLevels);
     // Without a probe or planar reflection: placeholders the shaders skip.
     const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
     const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
@@ -1591,7 +1687,7 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
     const VkDeviceSize vertexOffset = 0;
     vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
     vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-    const VkPipeline *pipelines = oit ? _oitPipeline : _translucentPipeline;
+    const VkPipeline *pipelines = (oit ? _oitPipeline : _translucentPipeline) + _shadingBase;
     VkPipeline bound = VK_NULL_HANDLE;
     for (const auto &[distance, i] : order) {
         if (pipelines[gpu.translucentVariant[i]] != bound) {
@@ -1675,8 +1771,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
     vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
     VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i < gpu.subsurface.size(); ++i) {
-        if (_subsurfacePipeline[gpu.subsurfaceVariant[i]] != bound) {
-            bound = _subsurfacePipeline[gpu.subsurfaceVariant[i]];
+        if (_subsurfacePipeline[_shadingBase + gpu.subsurfaceVariant[i]] != bound) {
+            bound = _subsurfacePipeline[_shadingBase + gpu.subsurfaceVariant[i]];
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
         }
         vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
@@ -1718,6 +1814,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const Scene::Gpu &gpu = scene.GetGpu();
     if (gpu.displaced && !_displacedPipelines) {  // the first displaced material
         _CreatePipelines(true);
+        for (uint32_t set = 0; set < _shadingSets.size(); ++set) {
+            _CreatePipelines(true, set);
+        }
         _displacedPipelines = true;
     }
     const uint32_t shadowSize = std::clamp(frame.shadowResolution, 256u, 8192u);
@@ -1747,14 +1846,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
-                     (frame.clusteredLights ? kFeatureClusters : 0) |
-                     (frame.softShadows && frame.softSunShadows ? kFeatureSoftSun : 0);
+                     (frame.clusteredLights ? kFeatureClusters : 0);
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
     fd.features[0] |= (frame.specularWorkflow ? kFeatureSpecularWorkflow : 0) | (frame.clearcoat ? kFeatureClearcoat : 0) |
                       (frame.sheen ? kFeatureSheen : 0) | (frame.thinFilm ? kFeatureThinFilm : 0) |
                       (frame.anisotropicSpecular ? kFeatureAnisotropy : 0);
     fd.styles[0] = (frame.toon ? kStyleToon : 0) | (frame.hairShading ? kStyleHair : 0);
     fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
+    fd.features[0] |= fd.styles[1] > 0 ? kFeatureToon : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     if (frame.displacement && gpu.displaced) {
@@ -1838,6 +1937,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
+    // Soft sun shadows: for a sun with an angle, from its cascades.
+    if (frame.softShadows && frame.softSunShadows && shadows && gpu.shadowAngle > 0) {
+        fd.features[0] |= kFeatureSoftSun;
+        fd.features[3] = _minSampler ? uint32_t(_shadowMinLevels.size()) : 0;  // shadow_min.comp's levels
+    }
     fd.counts[2] = gpu.environmentLevels;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
     if (ibl) {
@@ -1920,7 +2024,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (translucentShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
-    if (frame.holdouts) {
+    if (frame.holdouts && gpu.holdouts) {
         fd.features[0] |= kFeatureHoldouts;
     }
     // Subsurface scattering blurs by the prepass depth.
@@ -1936,6 +2040,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.translucency[0] = float(std::clamp(frame.refractionSamples, 1u, 16u));
         fd.translucency[1] = float(_transparency.BackgroundLevels());
     }
+    // The shading pipelines with the code of this frame's optional features.
+    _shadingBase = _ShadingSet(fd.features[0] & kOptionalFeatures) * kVariants;
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
@@ -2146,6 +2252,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         pass("sunShadows");
+        // Soft sun shadows: the cascades' nearest depths, level by level.
+        if (fd.features[3] > 0) {
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, fd.features[3], 0, kCascades};
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _shadowMinPipeline);
+            vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+            const uint32_t minSize = (_shadowSize + 3) / 4;
+            for (uint32_t level = 0; level < fd.features[3]; ++level) {
+                vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(level), &level);
+                const uint32_t n = std::max(minSize >> level, 1u);
+                vkCmdDispatch(_cmd, (n + 7) / 8, (n + 7) / 8, cascades);
+                ImageBarrier(_cmd, _shadowMin.image, all, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+            }
+            pass("sunShadowMin");
+        }
     } else {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
                      kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -2271,11 +2394,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const uint32_t motion = !frame.objectMotion ? 0 : (prevJoints ? 1 : 2) | (prevBlend ? 4 : 0);
     vkCmdSetDepthWriteEnable(_cmd, frame.depthPrepass ? VK_FALSE : VK_TRUE);
     if (draw) {
-        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline[0]);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline[_shadingBase]);
         PushDraw(_cmd, _layout, jitteredViewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline, _pipeline, kVariants - 1);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _pipeline + _shadingBase, _pipeline + _shadingBase, kVariants - 1);
     }
     vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
     if (sky || (fog && frame.postProcess)) {
