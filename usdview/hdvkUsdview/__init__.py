@@ -1,6 +1,7 @@
 """usdview plugin: Eldr > Render Statistics opens a window of what Eldr's
 GetRenderStats() reports about the last frame, refreshed twice a second;
-Eldr > Attribute Editor edits the selected prim's attributes (attributes.py).
+Eldr > Attribute Editor edits the selected prim's attributes (attributes.py);
+Eldr > Render Settings shows every setting in groups (settings.py).
 usdenv.cmd puts it on the plugin and Python paths (plugInfo.json beside it)."""
 
 from pxr import Tf
@@ -118,6 +119,7 @@ class _StatsWindow(QtWidgets.QWidget):
 
 _window = None
 _attributeWindow = None
+_settingsWindow = None
 
 
 def _ShowStats(usdviewApi):
@@ -138,6 +140,16 @@ def _ShowAttributes(usdviewApi):
     _attributeWindow.Rebuild()
 
 
+def _ShowSettings(usdviewApi):
+    global _settingsWindow
+    if _settingsWindow is None:
+        from .settings import _SettingsWindow
+        _settingsWindow = _SettingsWindow(usdviewApi)
+    _settingsWindow.Rebuild()
+    _settingsWindow.show()
+    _settingsWindow.raise_()
+
+
 class HdVkContainer(PluginContainer):
     def registerPlugins(self, plugRegistry, usdviewApi):
         self._stats = plugRegistry.registerCommandPlugin(
@@ -146,9 +158,13 @@ class HdVkContainer(PluginContainer):
         self._attributes = plugRegistry.registerCommandPlugin(
             "HdVkContainer.attributeEditor", "Attribute Editor", _ShowAttributes,
             "Edit the selected prim's attribute values (in the session layer)")
+        self._settings = plugRegistry.registerCommandPlugin(
+            "HdVkContainer.renderSettings", "Render Settings", _ShowSettings,
+            "Every Eldr render setting, grouped, with a filter")
 
     def configureView(self, plugRegistry, plugUIBuilder):
         menu = plugUIBuilder.findOrCreateMenu("Eldr")
+        menu.addItem(self._settings)
         menu.addItem(self._stats)
         menu.addItem(self._attributes)
 
