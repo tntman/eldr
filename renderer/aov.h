@@ -35,8 +35,13 @@ public:
         kEmission,        // emitted radiance, rgb
         kCryptoObject,    // Cryptomatte rank 0 and 1: (id, coverage, id, coverage)
         kCryptoMaterial,
+        kPositionWorld,   // world-space position (Karma's P)
+        kDepth,           // distance along the view axis, positive (Karma's depth, ray:hitPz)
+        kDiffuseAlbedo,   // base colour * (1 - metallic), rgb (Karma's albedodiffuse, lpe:CDA)
         kCount
     };
+    // Floats per pixel each kind has (a target may ask for 1..4 instead:
+    // missing ones are 0, extra ones dropped).
     static uint32_t Components(Kind kind);
 
     // Anything asked for; whether that needs the G-buffer pass.
@@ -60,6 +65,7 @@ public:
         float invViewProj[16];   // window -> world, unjittered
         const uint32_t *cryptomatte = nullptr;  // per primId: object, material
         uint32_t cryptomatteIds = 0;
+        uint8_t components[kCount] = {};  // floats per pixel of each target (0: Components)
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set
@@ -87,6 +93,7 @@ private:
     Buffer _output;                       // every AOV asked for, packed (device-local)
     Buffer _readback;                     // its copy the CPU reads
     VkDeviceSize _offsets[kCount] = {};   // each one's place in _output (floats)
+    uint32_t _components[kCount] = {};    // and its floats per pixel
     uint32_t _width = 0, _height = 0;
 };
 

@@ -1606,6 +1606,19 @@ int main()
             float source[2];
             Expect(vkr::LensDistortion::Warp(p, 1.0f, edge, source) && std::abs(source[0] - std::tan(1.0f)) < 1e-4f,
                    "equidistant fisheye");
+            // OpenCV's model (Karma's lens material): k4 divides, p1 and p2
+            // shift tangentially.
+            p = {};
+            p.k4 = 0.5f;
+            vkr::LensDistortion::Warp(p, 1.0f, edge, source);
+            Expect(std::abs(source[0] - 1.0f / 1.5f) < 1e-5f, "OpenCV k4: 1 / (1 + k4 r^2)");
+            p = {};
+            p.p1 = 0.1f;
+            p.p2 = 0.2f;
+            const float corner[2] = {0.5f, 0.5f};
+            vkr::LensDistortion::Warp(p, 1.0f, corner, source);
+            Expect(std::abs(source[0] - (0.5f + 0.05f + 0.2f)) < 1e-5f && std::abs(source[1] - (0.5f + 0.1f + 0.1f)) < 1e-5f,
+                   "OpenCV p1, p2: tangential");
         }
 
         {
@@ -1655,6 +1668,7 @@ int main()
             const float base[3] = {0.2f, 0.4f, 0.6f}, emissive[3] = {1.0f, 0.5f, 0.25f};
             std::copy(base, base + 3, material->baseColor);
             std::copy(emissive, emissive + 3, material->emissive);
+            material->metallic = 0.25f;
             quad->material = material;
             scene.Commit();
             std::vector<std::vector<float>> aovs(vkr::Aovs::kCount);
@@ -1682,6 +1696,9 @@ int main()
                    "AOV primvars:st");
             Expect(near(at(A::kAlbedo, 32, 32, 1), 0.4f) && near(at(A::kEmission, 32, 32, 2), 0.25f),
                    "AOV albedo and emission");
+            Expect(near(at(A::kPositionWorld, 32, 32, 0), 1.0f / 64.0f) && near(at(A::kPositionWorld, 32, 32, 2), 0.5f) &&
+                       near(at(A::kDepth, 32, 32, 0), -0.5f) && near(at(A::kDiffuseAlbedo, 32, 32, 1), 0.3f),
+                   "AOV P, depth (-camera z) and diffuse albedo (Karma's)");
             float object, matte;
             std::memcpy(&object, &ids[6], 4);
             std::memcpy(&matte, &ids[7], 4);
@@ -1695,6 +1712,16 @@ int main()
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
+
+            // A target may take another number of components: st as three.
+            std::vector<float> st3(64 * 64 * 3, -7.0f);
+            vkr::Renderer::Targets three;
+            three.aovs[A::kSt] = st3.data();
+            three.aovComponents[A::kSt] = 3;
+            renderer.Render(scene, frame, three);
+            const float *texel = &st3[(32 * 64 + 32) * 3];
+            Expect(near(texel[0], 0.5f + 1.0f / 64.0f) && texel[2] == 0.0f && st3[(2 * 64 + 2) * 3 + 2] == 0.0f,
+                   "AOV components as the target asks");
         }
 
         {

@@ -2587,6 +2587,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
         params.cryptomatte = frame.cryptomatte;
         params.cryptomatteIds = frame.cryptomatteIds;
+        std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, params.components);
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {

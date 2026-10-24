@@ -13,7 +13,8 @@ layout(push_constant) uniform Params {
     vec4 b;           // center xy, asym xy
     vec4 c;           // tan of half the camera's horizontal view, overscan, aspect, fisheye
     vec4 clearColor;
-    vec4 d;           // clear depth
+    vec4 d;           // clear depth, p1, p2
+    vec4 e;           // k3, k4, k5, k6
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -36,8 +37,14 @@ bool Warp(vec2 s, out vec2 source)
         valid = theta < 1.5707;
         q *= rho > 1e-6 ? tan(min(theta, 1.5707)) / rho : 1.0;
     } else {
-        q *= 1.0 + pc.a.x * r2 + pc.a.y * r2 * r2;
+        float r4 = r2 * r2, r6 = r4 * r2;
+        q *= (1.0 + pc.a.x * r2 + pc.a.y * r4 + pc.e.x * r6) / (1.0 + pc.e.y * r2 + pc.e.z * r4 + pc.e.w * r6);
     }
+    // Tangential (OpenCV p1, p2), of the point before the radial terms.
+    vec2 t = s - pc.b.xy;
+    t.x *= pc.a.z;
+    q += vec2(2.0 * pc.d.y * t.x * t.y + pc.d.z * (r2 + 2.0 * t.x * t.x),
+              pc.d.y * (r2 + 2.0 * t.y * t.y) + 2.0 * pc.d.z * t.x * t.y);
     q += pc.b.zw * r2;
     q.x /= pc.a.z;
     source = pc.b.xy + q / pc.a.w;

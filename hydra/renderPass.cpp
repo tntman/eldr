@@ -1,5 +1,6 @@
 #include "renderPass.h"
 
+#include "camera.h"
 #include "glInterop.h"
 #include "renderBuffer.h"
 #include "renderDelegate.h"
@@ -15,6 +16,7 @@
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprim.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "pxr/imaging/hd/types.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -61,21 +63,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
 
     vkr::Renderer::Frame frame;
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
-    // Extra AOVs (vkr::Aovs) by their Hydra names.
-    const std::pair<TfToken, vkr::Aovs::Kind> extraNames[] = {
-        {HdAovTokens->normal, vkr::Aovs::kNormal},
-        {HdAovTokens->Neye, vkr::Aovs::kNormalEye},
-        {HdAovTokens->Peye, vkr::Aovs::kPositionEye},
-        {HdAovTokens->cameraDepth, vkr::Aovs::kCameraDepth},
-        {HdAovTokensMakePrimvar(TfToken("st")), vkr::Aovs::kSt},
-        {HdVkAovTokens->albedo, vkr::Aovs::kAlbedo},
-        {HdVkAovTokens->emission, vkr::Aovs::kEmission},
-        {HdVkAovTokens->cryptoObject, vkr::Aovs::kCryptoObject},
-        {HdVkAovTokens->cryptoMaterial, vkr::Aovs::kCryptoMaterial}};
+    // Extra AOVs (vkr::Aovs) by their Hydra names (HdVkExtraAovs).
+    // ponytail: one buffer per kind; of two names for the same (normal and
+    // ray:hitN) bound at once, the last one gets it.
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
-        for (const auto &[name, kind] : extraNames) {
-            extra[kind] = b.aovName == name ? b.renderBuffer : extra[kind];
+        for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+            extra[aov.kind] = b.aovName == aov.name ? b.renderBuffer : extra[aov.kind];
         }
         if (b.aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -118,8 +112,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     instanceId = usable(instanceId, HdFormatInt32);
 
     HdRenderDelegate *delegate = GetRenderIndex()->GetRenderDelegate();
-    for (const auto &[name, kind] : extraNames) {
-        extra[kind] = usable(extra[kind], delegate->GetDefaultAovDescriptor(name).format);
+    // Any float format will do: it gets that many components.
+    uint8_t extraComponents[vkr::Aovs::kCount] = {};
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        const HdFormat format = extra[k] ? extra[k]->GetFormat() : HdFormatInvalid;
+        extra[k] = HdGetComponentFormat(format) == HdFormatFloat32 ? usable(extra[k], format) : nullptr;
+        extraComponents[k] = extra[k] ? uint8_t(HdGetComponentCount(format)) : 0;
     }
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
@@ -225,6 +223,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         d.fisheye = perspective && camera->GetLensDistortionType() == HdCameraTokens->fisheye;
         d.k1 = camera->GetLensDistortionK1();
         d.k2 = camera->GetLensDistortionK2();
+        if (const auto *vkCamera = dynamic_cast<const HdVkCamera *>(camera); vkCamera && !d.fisheye) {
+            const float *t = vkCamera->GetLensDistortionOpenCvTerms();
+            d.k3 = t[0], d.k4 = t[1], d.k5 = t[2], d.k6 = t[3], d.p1 = t[4], d.p2 = t[5];
+        }
         std::copy(camera->GetLensDistortionCenter().data(), camera->GetLensDistortionCenter().data() + 2, d.center);
         d.anaSq = camera->GetLensDistortionAnaSq() > 0.0f ? camera->GetLensDistortionAnaSq() : 1.0f;
         std::copy(camera->GetLensDistortionAsym().data(), camera->GetLensDistortionAsym().data() + 2, d.asym);
@@ -320,6 +322,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        out.aovComponents[k] = extraComponents[k];
     }
     bool shared = false;
     try {

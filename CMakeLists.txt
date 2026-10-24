@@ -109,7 +109,8 @@ target_link_libraries(vkrtest PRIVATE vkrenderer)
 add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
-    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp)
+    hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
+    hydra/camera.cpp)
 target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
@@ -132,6 +133,13 @@ if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
 else()
     message(STATUS "HdVk: volumes off (USD without OpenVDB)")
 endif()
+# Karma's lens materials as camera lens distortion: a UsdImaging adapter,
+# in a library of its own so hdVk itself doesn't link UsdImaging.
+add_library(hdVkUsdImaging SHARED hydra/karmaLensAdapter.cpp)
+target_link_libraries(hdVkUsdImaging PRIVATE hd usd usdGeom usdImaging)
+target_compile_definitions(hdVkUsdImaging PRIVATE MFB_PACKAGE_NAME=hdVkUsdImaging
+                           MFB_ALT_PACKAGE_NAME=hdVkUsdImaging)
+add_dependencies(hdVk hdVkUsdImaging)
 # plugInfo.json goes next to the dll; PXR_PLUGINPATH_NAME=<that dir>/ finds it.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in

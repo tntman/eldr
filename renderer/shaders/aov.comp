@@ -25,7 +25,8 @@ layout(push_constant) uniform Push {
 } pc;
 
 const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, kSt = 4u, kAlbedo = 5u,
-           kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u;
+           kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u, kPositionWorld = 9u, kDepth = 10u,
+           kDiffuseAlbedo = 11u;
 
 vec3 OctDecode(vec2 e)
 {
@@ -61,7 +62,16 @@ void main()
         case kSt: v.xy = g.zw; break;
         case kAlbedo: v.xyz = texelFetch(albedo, p, 0).rgb; break;
         case kEmission: v.xyz = texelFetch(emission, p, 0).rgb; break;
-        default: v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;
+        case kPositionWorld: v.xyz = world.xyz / world.w; break;
+        case kDepth: v.x = -eye.z; break;
+        case kDiffuseAlbedo: {
+            vec4 a = texelFetch(albedo, p, 0);  // base colour, metallic
+            v.xyz = a.rgb * (1.0 - a.a);
+            break;
+        }
+        case kCryptoObject:
+        case kCryptoMaterial:
+            v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;
         }
     }
     uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
