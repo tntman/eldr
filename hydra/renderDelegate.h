@@ -56,6 +56,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((blendShapeMotion, "hdvk:blendShapeMotion"))            \
     ((extraAovs, "hdvk:extraAovs"))                          \
     ((shareFrame, "hdvk:shareFrame"))                        \
+    ((renderProducts, "hdvk:renderProducts"))                \
     ((specularWorkflow, "hdvk:specularWorkflow"))            \
     ((clearcoat, "hdvk:clearcoat"))                          \
     ((sheen, "hdvk:sheen"))                                  \
@@ -135,6 +136,13 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
     ((baseColor, "export_basecolor"))                       \
     ((diffuseAlbedo, "lpe:CDA"))                            \
     ((directEmission, "lpe:CO"))                            \
+    ((combinedEmission, "lpe:C.*O"))                        \
+    ((directDiffuse, "lpe:C<RD>L"))                         \
+    ((indirectDiffuse, "lpe:C<RD>.+L"))                     \
+    ((combinedDiffuse, "lpe:C<RD>.*L"))                     \
+    ((directGlossy, "lpe:C<RG>L"))                          \
+    ((indirectGlossy, "lpe:C<RG>.+L"))                      \
+    ((combinedGlossy, "lpe:C<RG>.*[LO]"))                   \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))
 
@@ -161,6 +169,7 @@ void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
 
 class HdVkTextureCache;
 class HdVkGLInterop;
+class HdRenderSettings;
 class Hgi;
 
 class HdVkRenderDelegate final : public HdRenderDelegate
@@ -215,6 +224,8 @@ public:
     HdVkGLInterop *GLInterop();
     // After it failed: read back from then on.
     void DisableGLInterop();
+    // The active render settings prim (UsdRenderSettings), if any.
+    const HdRenderSettings *ActiveRenderSettings() const;
     // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
     void SetFrameShared(bool shared) { _frameShared = shared; }
 
@@ -232,6 +243,7 @@ private:
     // GPU sharing; declared last: released before the renderer and device.
     Hgi *_hgi = nullptr;
     bool _interopTried = false, _frameShared = false;
+    std::vector<HdRenderSettings *> _renderSettings;  // render settings Bprims
     std::unique_ptr<HdVkGLInterop> _interop;
 };
 

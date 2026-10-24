@@ -95,6 +95,9 @@ public:
         // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
         // and depth go to the app's OpenGL on the GPU instead of Targets.
         bool shareFrame = true;
+        // Render products (the Hydra layer's HdVkRenderProducts): the active
+        // UsdRenderSettings' products are written as EXR files once converged.
+        bool renderProducts = true;
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
