@@ -107,6 +107,7 @@ constexpr uint32_t kStyleToon = 1, kStyleHair = 2;
 constexpr uint32_t kFeatureToon = 512;  // FrameData::styles[1] > 0
 // Ray tracing's (shaders/gi.glsl).
 constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21, kFeatureGi = 1u << 22;
+constexpr uint32_t kFeatureSsgi = 1u << 23;  // gi.glsl
 // The TLAS's custom index (a mesh slot) has 24 bits, and so has its count.
 constexpr uint32_t kMaxRtInstances = (1u << 24) - 1;
 // Translucency (transparency.glsl).
@@ -118,7 +119,8 @@ constexpr uint32_t kFeatureHoldouts = 32768;
 constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
-constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureRefraction |
+constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
+                                       kFeatureRefraction |
                                        kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
                                        kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon;
 
@@ -2041,6 +2043,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
     }
+    // SSGI: in the AO texture (gtao.cpp), sampled by shading.
+    const bool ssgi = frame.ssgi && frame.depthPrepass;
+    _gtao.SetSsgi(ssgi, frame.ssgiResolution);
+    fd.features[0] |= ssgi ? kFeatureSsgi : 0;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -2329,7 +2335,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
-    if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
+    // SSGI replaces it (its visibility is the AO).
+    if (ssgi && draw) {
+        _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius, sample,
+                         std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
+                         _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0));
+        pass("ssgi");
+    } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,
                      std::clamp(frame.aoSlices, 1u, 8u));
         pass("ambientOcclusion");

@@ -1445,6 +1445,42 @@ int main()
             std::puts("no ray tracing on this GPU: its tests skipped");
         }
 
+        {
+            // Screen-space GI (no ray tracing needed): a red emitter leaning
+            // from the white wall (x = 0, z = 0.5) towards the camera (x =
+            // 0.4, z = 0) and nothing else lighting it: the wall left of it
+            // stays black, unless SSGI gathers the emitter's light from last
+            // frame's image.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = AddEmitter(scene, 0, 0, 0, 0, 0, 2.0f);
+            panel->points = {0, -0.6f, 0.5f, 0.4f, -0.6f, 0, 0.4f, 0.6f, 0, 0, -0.6f, 0.5f, 0.4f, 0.6f, 0, 0, 0.6f, 0.5f};
+            auto red = std::make_shared<vkr::Material>(*panel->material);
+            red->emissive[1] = red->emissive[2] = 0;
+            panel->material = red;
+            scene.Commit();
+            auto wall = [&](bool ssgi) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.ssgi = ssgi;
+                frame.ssgiRadius = 2.0f;
+                Image img;
+                for (int i = 0; i < 16; ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                return std::array<float, 2>{img.At(29, 32, 0), img.At(29, 32, 1)};
+            };
+            const auto off = wall(false), on = wall(true);
+            Expect(off[0] < 0.005f && on[0] > 0.03f && on[0] > 4.0f * on[1],
+                   "SSGI bleeds the red emitter's light onto the white wall beside it");
+        }
+
         if (device.rayTracing) {
             // Skinned instances block rays: the sun test's occluder as a
             // skinned quad (one joint), its traced shadow on the ground one

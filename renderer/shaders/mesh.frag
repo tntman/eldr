@@ -754,7 +754,10 @@ void main()
     vec3 Favg = f0 + (1.0 - f0) / 21.0;
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
-    color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    // With SSGI the bounces are traced: the visibility hides the rest alone.
+    color += FssEss * specular + (Fms * Ems + kd) * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
+                                                                                                     : diffuseColor) +
+                                                    SsgiDiffuse() * occlusion);
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
         color = ToonShade(color, emissive, diffuseColor + f0);

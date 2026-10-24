@@ -53,6 +53,16 @@ endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
 # primvars, mesh.frag with the interpreter; other materials never run it.
 # Extra AOVs' G-buffer pass likewise (aov.frag).
+# Screen-space GI (gtao.cpp): the GTAO passes built with SSGI.
+foreach(shader gtao.frag gtao_denoise.frag)
+    string(REPLACE "gtao" "ssgi" variant ${shader})
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/${variant}.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPENDS renderer/shaders/${shader})
+    list(APPEND shader_incs ${spv})
+endforeach()
 foreach(shader mesh.vert mesh.frag aov.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)

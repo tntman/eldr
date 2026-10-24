@@ -4,6 +4,7 @@
 
 // frame.features.x bits of these features.
 const uint kFeatureRtShadows = 1048576u, kFeatureRtReflections = 2097152u, kFeatureGi = 4194304u;
+const uint kFeatureSsgi = 8388608u;  // screen-space GI (gtao.frag's SSGI), no ray tracing needed
 
 // std140 mirror of RayTracingData in raytracing.cpp.
 layout(std140, set = 0, binding = 59) uniform RayTracingData {
@@ -112,6 +113,15 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 }
 
 #ifdef RT_RESULTS
+// Screen-space GI: then the AO texture holds SSGI's visibility (r, used as
+// AO: it hides the probes' or the dome's light, which fills the rest) and
+// the light gathered from what screen-space rays hit (gba, irradiance /
+// pi), which adds to it.
+vec3 SsgiDiffuse()
+{
+    return Feature(kFeatureSsgi) ? texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).gba : vec3(0.0);
+}
+
 // mesh.frag: what the ray tracing pass traced for the opaque surface at
 // this pixel. Translucent surfaces lie in front of it (closer than the
 // prepass depth) and have no rays of their own.

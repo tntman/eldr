@@ -17,6 +17,7 @@ PASSES = [
     ("sunShadows", "Sun shadows"),
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
+    ("ssgi", "Screen-space GI"),
     ("localShadows", "Local light shadows"),
     ("fog", "Volumetric fog"),
     ("accelerationStructures", "Acceleration structures (TLAS)"),

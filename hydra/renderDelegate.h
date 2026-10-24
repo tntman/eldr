@@ -73,6 +73,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((giProbes, "hdvk:giProbes"))                            \
     ((giRays, "hdvk:giRaysPerProbe"))                        \
     ((giHysteresis, "hdvk:giHysteresis"))                    \
+    ((ssgi, "hdvk:ssgi"))                                    \
+    ((ssgiSteps, "hdvk:ssgiSteps"))                          \
+    ((ssgiRadius, "hdvk:ssgiRadius"))                        \
+    ((ssgiResolution, "hdvk:ssgiResolution"))                \
     ((emissiveLights, "hdvk:emissiveLights"))                \
     ((emissiveLightThreshold, "hdvk:emissiveLightThreshold"))        \
     ((oit, "hdvk:oit"))                                      \

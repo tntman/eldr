@@ -125,6 +125,13 @@ public:
         uint32_t giProbes = 16;      // along the scene's longest side (2..64; at most 16384 in all)
         uint32_t giRays = 128;       // per probe and frame (16..512)
         float giHysteresis = 0.97f;  // weight of the probes' history (0..0.99): smoother, but slower to react
+        // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
+        // prepass: per-pixel indirect diffuse light from what's on screen,
+        // instead of GTAO; the probes (gi) or the dome light the rest.
+        bool ssgi = false;
+        uint32_t ssgiSteps = 8;        // per direction and side (1..32)
+        float ssgiRadius = 1.0f;       // world units
+        uint32_t ssgiResolution = 2;   // traced at 1 / this (1, 2), denoised and upsampled
         // Emissive surfaces as lights: small meshes emitting at least the
         // threshold also light the scene as sphere lights (with shadows);
         // the caller applies these to the Scene (Scene::SetEmissiveLights).
