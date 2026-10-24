@@ -16,7 +16,8 @@ GROUPS = [
      "ssgiThickness ssgiBitmask directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
-     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),
+     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
+     "rtDisplacement"),
     ("Reflections",
      "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
      "planarReflections planarScale"),

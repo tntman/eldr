@@ -211,6 +211,10 @@ public:
         // ssgiRadius thick, light from the sectors nothing nearer hides,
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
+        // Ray tracing sees displacement (with displacement on): displaced
+        // meshes' BLASes are built from their displaced vertices (rebuilt
+        // when the scale changes). Off: from their rest vertices.
+        bool rtDisplacement = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

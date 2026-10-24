@@ -445,7 +445,8 @@ void Renderer::_CreateDescriptors()
     // table in the vertex stage too.
     constexpr VkShaderStageFlags kVertex = VK_SHADER_STAGE_VERTEX_BIT;
     const VkDescriptorSetLayoutBinding bindings[] = {
-        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures, kFragment | kRt | kVertex},
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures,
+         kFragment | kRt | kVertex | VK_SHADER_STAGE_COMPUTE_BIT},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting | kRt},
         {3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kLighting | kRt | kVertex},
@@ -470,7 +471,7 @@ void Renderer::_CreateDescriptors()
         {22, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {23, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex},
+        {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex | VK_SHADER_STAGE_COMPUTE_BIT},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -1932,6 +1933,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     rt.giProbes = frame.giProbes;
     rt.giRays = frame.giRays;
     rt.giHysteresis = frame.giHysteresis;
+    rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&

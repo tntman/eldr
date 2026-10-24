@@ -659,6 +659,7 @@ public:
             bool cutout;   // alpha-tested: any-hit shaders run
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
             bool skinned;  // posed per instance (LargestSkinned)
+            bool displaced = false;  // its material displaces (Gpu::kDisplaced)
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

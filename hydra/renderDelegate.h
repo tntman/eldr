@@ -120,7 +120,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((directClamp, "hdvk:directClamp"))                      \
     ((indirectClamp, "hdvk:indirectClamp"))                  \
     ((ssgiThickness, "hdvk:ssgiThickness"))                  \
-    ((ssgiBitmask, "hdvk:ssgiBitmask"))
+    ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
+    ((rtDisplacement, "hdvk:rtDisplacement"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

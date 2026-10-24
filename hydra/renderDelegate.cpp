@@ -198,6 +198,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
         {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray Tracing Sees Displacement", t.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
