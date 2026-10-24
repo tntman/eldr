@@ -203,7 +203,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.subsurfaceSamples, &frame.subsurfaceSamples},
                                 {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
-                                {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
+                                {t.volumeShadowSteps, &frame.volume.shadowSteps},
+                                {t.volumeResolution, &frame.volume.resolution}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;

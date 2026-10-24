@@ -6,17 +6,22 @@
 namespace vkr {
 class Scene;
 struct Volume;
+struct VolumeShading;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// UsdVolVolume: its field bindings by name (density, temperature, Cd or
-// color, emission; without a density binding the first field is the
-// density) to openvdbAsset fields (HdVkField), raymarched by vkr's
-// VolumePass.
-// ponytail: the volume's material isn't read (no field-reader remapping,
-// fixed albedo and phase from the render settings), and volumes aren't
-// pickable.
+struct HdMaterialNetwork2;
+
+// A material's volume terminal (MaterialX volume shading) into `shading`;
+// leaves it alone without one. See volume.cpp.
+void HdVkReadVolumeShading(HdMaterialNetwork2 const &net, vkr::VolumeShading *shading);
+
+// UsdVolVolume: its field bindings by name to openvdbAsset fields
+// (HdVkField) and its material's volume shading (HdVkMaterial::Volume(),
+// which picks the fields by role: density, temperature, Cd, emission by
+// default), raymarched by vkr's VolumePass.
+// ponytail: volumes aren't pickable.
 class HdVkVolume final : public HdVolume
 {
 public:
