@@ -1882,9 +1882,35 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     Mat4 unjitter;          // jittered NDC -> unjittered NDC
     const uint32_t taaSamples = std::clamp(frame.taaSamples, 1u, 256u);
-    uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..taaSamples
+    uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..taaSamples (the film's: its sample)
+    // The camera's lens: motion blur with an open shutter when the camera
+    // or the scene moved. That frame is final as it is: still frames after
+    // it would only average the blur away (usdrecord renders until converged).
+    const bool cameraMoved = _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+    const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && _historyValid &&
+                            (cameraMoved || gpu.moved);
+    // Film: anything the image depends on besides the camera (the app's
+    // scene and settings, the renderer's geometry, lights and probe) starts
+    // it over; a fresh history (first frame, resize) starts it at once.
+    uint64_t filmKey = frame.sceneVersion;
+    for (const uint64_t v : {gpu.version, gpu.lightingHash, uint64_t(_reflections && _reflections->ProbePending())}) {
+        filmKey = (filmKey ^ v) * 1099511628211ull;
+    }
+    const bool fresh = !_taaValid;
+    const bool changed = !fresh && (cameraMoved || gpu.moved || filmKey != _filmKey);
+    _filmKey = filmKey;
+    _stillFrames = changed ? 0 : _stillFrames + 1;
+    const bool film = taa && frame.filmAccumulation && !motionBlur &&
+                      (fresh || frame.finalQuality || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
+    // 0 adds, 1 starts over, 2 starts over from the TAA image.
+    const uint32_t filmMode = !film ? 0 : fresh ? 1 : changed || _filmSamples == 0 ? (frame.finalQuality ? 1 : 2) : 0;
+    _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
+    float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     if (taa) {
-        sample = (_haltonIndex++ % taaSamples) + 1;
+        sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
+        ++_haltonIndex;
+        filmOffset[0] = 0.5f - Halton(sample, 2);
+        filmOffset[1] = 0.5f - Halton(sample, 3);
         const float jx = (Halton(sample, 2) - 0.5f) * 2.0f / float(_width);
         const float jy = (Halton(sample, 3) - 0.5f) * 2.0f / float(_height);
         for (int r = 0; r < 4; ++r) {  // clip.xy += jitter * clip.w
@@ -2482,15 +2508,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     constexpr VkPipelineStageFlags2 kPostStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
-    // The camera's lens: depth of field when it has an fStop; motion blur
-    // with an open shutter when the camera or the scene moved. That frame
-    // is final as it is: still frames after it would only average the blur
-    // away (usdrecord renders until converged).
+    // The camera's lens: depth of field when it has an fStop (motion blur above).
     const bool dof = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
                      frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
-    const bool cameraMoved = _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
-    const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && _historyValid &&
-                            (cameraMoved || gpu.moved);
     Lens::Params lens{};
     if (dof || motionBlur) {
         const Mat4 back = motionBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
@@ -2538,9 +2558,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                 _taaWarmup = false;
             }
             alpha = 1.0f / float(_taaFrames + 1);
-            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1;  // last sample of a still camera
+            // Last sample of a still camera; with the film, which takes over, never.
+            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1 && !(frame.filmAccumulation && !motionBlur);
             _taaFrames = std::min(_taaFrames + 1, taaSamples - 1);
             _taaValid = true;
+            if (film) {
+                alpha = 1.0f / float(_filmSamples);
+                _taaConverged = _filmSamples >= std::max(frame.filmSamples, 1u);
+                _taaFrames = kTaaMoving;  // TAA goes on from the film's image
+            }
         } else {
             _taaValid = false;
             _taaWarmup = false;
@@ -2562,8 +2588,15 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             _taaWarmup = false;
         }
 
-        _taa.Record(_cmd, &reprojection.m[0][0], alpha);
-        pass("taa");
+        if (film) {
+            // From a TAA image: as much as 4 samples, a small bias that keeps
+            // the switch from TAA from showing one sample's noise.
+            _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f);
+            pass("film");
+        } else {
+            _taa.Record(_cmd, &reprojection.m[0][0], alpha);
+            pass("taa");
+        }
         if (motionBlur) {
             _lens.RecordMotionBlur(_cmd, lens);
             _taaConverged = true;
@@ -2572,7 +2605,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
         pass("post");
         _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
-        _stats.taaTarget = taa ? taaSamples : 1;
+        _stats.taaTarget = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
         std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
         _historyValid = true;
     } else {

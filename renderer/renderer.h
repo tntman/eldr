@@ -193,7 +193,25 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Film accumulation (with taa; TemporalAA::RecordFilm): once the
+        // camera and the scene have been still for kFilmStillFrames, and
+        // from the first sample of a final frame, the samples are averaged
+        // without TAA's reprojection and clipping, each through a Gaussian
+        // pixel filter of filmFilterRadius pixels, until filmSamples
+        // (IsConverged). Frames with motion blur stay TAA's.
+        bool filmAccumulation = true;
+        uint32_t filmSamples = 64;
+        float filmFilterRadius = 1.5f;
+        // Final quality (offline renders): the film starts over at the
+        // first sample after any change instead of from the TAA image.
+        bool finalQuality = false;
+        // Changes whenever the app's scene or settings changed (the Hydra
+        // layer: change tracker and settings versions): the film starts over.
+        uint64_t sceneVersion = 0;
     };
+
+    // Still frames before the film takes over from TAA (EEVEE's 3).
+    static constexpr uint32_t kFilmStillFrames = 3;
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
     // Null pointers skip that output's readback.
@@ -304,6 +322,10 @@ private:
     bool _historyValid = false;    // the TAA history holds last frame's image
     bool _taaWarmup = false;  // accumulating a fresh history for a still camera
     bool _taaConverged = true;
+    // Film: samples in it (0: TAA resolves), frames the camera and the
+    // scene have been still, what the scene was.
+    uint32_t _filmSamples = 0, _stillFrames = 0;
+    uint64_t _filmKey = 0;
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;
     bool _adapting = false;       // last frame ran auto-exposure

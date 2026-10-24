@@ -24,6 +24,13 @@ public:
     // previous frame's clip space (row-vector order).
     void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha);
 
+    // Film accumulation instead (shaders/film.comp), same layouts: adds
+    // this sample, its pixels' samples `offset` pixels from their centres,
+    // through a Gaussian of `radius` pixels to the fp32 sums and resolves
+    // their average. `mode` 0 adds, 1 starts over, 2 starts over from the
+    // history (the TAA image) at `seed` samples' weight.
+    void RecordFilm(VkCommandBuffer cmd, const float offset[2], float radius, uint32_t mode, float seed);
+
     VkImageView Output() const { return _resolved.view; }
     VkImage OutputImage() const { return _resolved.image; }
     // Last frame's resolve, in SHADER_READ_ONLY_OPTIMAL between frames.
@@ -31,6 +38,8 @@ public:
 
 private:
     void _Destroy();
+    void _CopyToHistory(VkCommandBuffer cmd, VkImageLayout layout, VkPipelineStageFlags2 stage,
+                        VkAccessFlags2 access);
 
     Device &_dev;
     VkSampler _nearest = VK_NULL_HANDLE, _linear = VK_NULL_HANDLE;
@@ -40,6 +49,12 @@ private:
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _resolved, _history;
+    // Film: compute pipeline, set and its fp32 sums (colour * weight; weight), GENERAL.
+    VkDescriptorSetLayout _filmSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout _filmLayout = VK_NULL_HANDLE;
+    VkPipeline _film = VK_NULL_HANDLE;
+    VkDescriptorSet _filmSet = VK_NULL_HANDLE;
+    Image _sums, _weights;
     uint32_t _width = 0, _height = 0;
 };
 

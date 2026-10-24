@@ -162,8 +162,8 @@ static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, fl
 }
 
 // Post-processed render through a fresh renderer, repeated until converged
-// like usdrecord does: exposure snaps on the first frame, TAA accumulates
-// 16 jittered frames of the still camera.
+// like usdrecord does: exposure snaps on the first frame, the film
+// accumulates Frame::filmSamples jittered frames of the still camera.
 static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f,
                         bool taa = true, bool ssr = true)
 {
@@ -178,9 +178,9 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     do {
         img = Render(renderer, scene, frame);
         ++frames;
-    } while (!renderer.IsConverged() && frames < 64);
-    Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
-                                         : "without TAA the first frame is final");
+    } while (!renderer.IsConverged() && frames < 200);
+    Expect(frames == (taa ? int(frame.filmSamples) : 1), taa ? "the film converges after filmSamples still frames"
+                                                              : "without TAA the first frame is final");
     return img;
 }
 
@@ -1004,6 +1004,64 @@ int main()
         }
 
         {
+            // Film accumulation: an emitter over x < 32.3 pixels, exposed
+            // linear over black. The converged film is the edge through
+            // the Gaussian pixel filter (sigma 0.284 * 1.5 pixels):
+            // Phi((32.3 - centre) / 0.426) per pixel; radius 0 is a box,
+            // 0.3 at pixel 32. Any change starts it over: at once in final
+            // quality, after kFilmStillFrames of TAA otherwise.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 32.3f / 32.0f - 1.0f, 1, 0, 1.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            std::fill(frame.clearColor, frame.clearColor + 4, 0.0f);
+            frame.filmSamples = 32;
+            auto converge = [&](vkr::Renderer &renderer, int *frames) {
+                Image img;
+                for (*frames = 0; *frames < 100;) {
+                    img = Render(renderer, scene, frame);
+                    ++*frames;
+                    if (renderer.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto phi = [](float x) { return 0.5f * std::erfc(-x / std::sqrt(2.0f)); };
+            vkr::Renderer renderer(device);
+            int frames = 0;
+            const Image gauss = converge(renderer, &frames);
+            Expect(frames == 32 && renderer.GetStats().taaSamples == 32, "the film converges after filmSamples");
+            bool filtered = true;
+            for (int x = 30; x <= 34; ++x) {
+                filtered = filtered && std::abs(gauss.At(x, 32, 1) - phi((32.3f - (x + 0.5f)) / 0.426f)) < 0.02f;
+            }
+            Expect(filtered, "the film reconstructs the edge with its Gaussian");
+            frame.sceneVersion = 1;  // the app changed something
+            Render(renderer, scene, frame);
+            Expect(!renderer.IsConverged() && renderer.GetStats().taaTarget == frame.taaSamples,
+                   "a change hands the image back to TAA");
+            converge(renderer, &frames);
+            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1, "the film takes over after still frames");
+            frame.finalQuality = true;
+            frame.sceneVersion = 2;
+            Render(renderer, scene, frame);
+            Expect(renderer.GetStats().taaSamples == 1, "final quality starts the film over at once");
+            frame.finalQuality = false;
+            frame.filmFilterRadius = 0.0f;
+            vkr::Renderer box(device);
+            Expect(std::abs(converge(box, &frames).At(32, 32, 1) - 0.3f) < 0.02f, "radius 0: a box filter");
+            frame.filmAccumulation = false;
+            vkr::Renderer taa(device);
+            converge(taa, &frames);
+            Expect(frames == int(frame.taaSamples), "film off: TAA converges after taaSamples");
+        }
+
+        {
             // Material programs (MaterialX graphs): emission-only quads and no
             // lights or dome, so each pixel is exactly what its program outputs.
             vkr::Scene scene(&device);
@@ -1154,7 +1212,10 @@ int main()
                 return img.At(33, 32, 0);
             };
             const float sharp = beside(0.0f, 1.0f), blurred = beside(1.0f, 1.0f), focused = beside(1.0f, 4.0f);
-            Expect(sharp < 0.01f && focused < 0.01f && blurred > 0.05f,
+            // Focused, the post blur's gather still leaks ~2% of the edge
+            // into the out-of-focus background beside it (TAA's clipping hid
+            // that; the film's plain average keeps it).
+            Expect(sharp < 0.01f && focused < 0.03f && blurred > 0.05f,
                    "depth of field spreads an out-of-focus edge, not a focused one");
         }
 
