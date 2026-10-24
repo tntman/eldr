@@ -16,7 +16,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     mat4 envWorldToLocal;
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
     mat4 prevViewProj;   // unjittered camera of the last frame (previousColor, motion vectors)
-    vec4 ssr;            // x = 1: trace reflections, y = noise index
+    vec4 ssr;            // x = 1: trace reflections, y = noise index, z = 1: denoised (renderer/ssr.h)
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)
@@ -43,7 +43,33 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 planarPlane[4]; // the mirrors' planes (unit normal towards the camera, offset)
     uvec4 planarInfo;    // the mirrors' mesh slots (DrawInfo), kNone: unused
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    // Sample dimensions (SampleNoise): this sample's value per kDim*;
+    // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.
+    vec4 sampleDims[2];
+    uvec4 sampleInfo;
+    uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them
+    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
+    vec4 screenTrace;    // x: 1 = thickness estimator in SSR (Frame::ssgiThickness)
 } frame;
+
+// Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic
+// effect turns a 64 x 64 blue noise by a low-discrepancy value of its own
+// per sample (Cranley-Patterson rotation), each dimension reading the noise
+// elsewhere, so effects neither share a pattern nor leave one in the film.
+const uint kDimAo = 0u, kDimSsgi = 1u, kDimSsr = 2u, kDimShadow = 3u, kDimSunShadow = 4u, kDimRefraction = 5u,
+           kDimVolume = 6u, kDimFog = 7u;
+layout(set = 0, binding = 90) uniform sampler2D blueNoise;
+
+// In [0, 1): dimension `dim` of this sample at `pixel`. Off: interleaved
+// gradient noise (Jimenez 2014) shifted per frame by `index`.
+float SampleNoise(uint dim, vec2 pixel, float index)
+{
+    if (frame.sampleInfo.x == 0u) {
+        return fract(52.9829189 * fract(dot(pixel + 5.588238 * index, vec2(0.06711056, 0.00583715))));
+    }
+    ivec2 p = (ivec2(pixel) + ivec2(dim * 23u, dim * 41u)) & 63;
+    return fract(texelFetch(blueNoise, p, 0)[dim & 3u] + frame.sampleDims[dim >> 2u][dim & 3u]);
+}
 
 // frame.features.x: what the renderer's settings switched on.
 const uint kFeatureNormalMaps = 1u, kFeatureMaterialGraphs = 2u, kFeatureClusters = 4u;
@@ -59,6 +85,29 @@ const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 2621
 // (Renderer::_ShadingSet), as skipped code still costs every pixel
 // registers and occupancy. Other shaders have them all.
 layout(constant_id = 13) const uint kCompiledFeatures = 0xFFFFFFFFu;
+
+// c scaled down so its brightest channel is at most `limit` (0: no limit),
+// keeping its hue: kills fireflies (Frame::directClamp, indirectClamp).
+vec3 BrightnessClamp(vec3 c, float limit)
+{
+    float peak = max(max(c.r, c.g), c.b);
+    return limit > 0.0 && peak > limit ? c * (limit / peak) : c;
+}
+
+// GGX visible normal (Heitz 2018), in the frame where n is +z.
+vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
+{
+    vec3 vh = normalize(vec3(a * ve.x, a * ve.y, ve.z));
+    float lensq = vh.x * vh.x + vh.y * vh.y;
+    vec3 t1 = lensq > 0.0 ? vec3(-vh.y, vh.x, 0.0) * inversesqrt(lensq) : vec3(1.0, 0.0, 0.0);
+    vec3 t2 = cross(vh, t1);
+    float r = sqrt(u.x), phi = 2.0 * PI * u.y;
+    float p1 = r * cos(phi), p2 = r * sin(phi);
+    float s = 0.5 * (1.0 + vh.z);
+    p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2;
+    vec3 nh = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * vh;
+    return normalize(vec3(a * nh.x, a * nh.y, max(nh.z, 0.0)));
+}
 
 // Whether this frame has `feature` (an optional frame.features.x bit) and
 // this pipeline its code.

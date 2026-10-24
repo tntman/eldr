@@ -106,7 +106,25 @@ public:
         float emission = 1.0f;      // emission multiplier (on the material's)
         float anisotropy = 0.2f;    // Henyey-Greenstein g of volumes whose material has none
         uint32_t resolution = 1;    // 1: every pixel, 2: half resolution, upsampled
+        // Under transparency: with translucent meshes in view (and the depth
+        // prepass), the part of each ray behind the nearest translucent
+        // surface is marched before the translucency pass, which then dims
+        // and refracts it, and the part in front after it.
+        bool underTransparency = true;
+        // Shadows: the sun's light through the volumes onto surfaces
+        // (RecordShadow into Transparency's sun tint map).
+        bool shadows = true;
     };
+
+    // Which part of each ray Record marches: all of it, the part behind
+    // the nearest translucent surface (TranslucentDepth()), or in front.
+    enum Part : uint32_t { kAll, kBehind, kInFront };
+
+    // A depth target for the nearest translucent surfaces, `width` x
+    // `height` (made on first use and on resizes; the GPU must be idle),
+    // bound as binding 67 for kBehind and kInFront; null without one yet.
+    const Image &EnsureTranslucentDepth(uint32_t width, uint32_t height);
+    VkImageView TranslucentDepth() const { return _translucentDepth.view; }
 
     // The half resolution target for a `width` x `height` frame (made on
     // first use and on resizes; the GPU must be idle), bound as binding 66;
@@ -119,15 +137,27 @@ public:
     // DEPTH_READ_ONLY_OPTIMAL and, at half resolution, Half() (66). Returns
     // false (records nothing) without volumes.
     bool Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                uint32_t width, uint32_t height, const Settings &settings);
+                uint32_t width, uint32_t height, const Settings &settings, Part part = kAll);
+
+    // Inside rendering into one layer of Transparency's sun tint map (just
+    // cleared, `mapSize` texels square, viewport set) for frame cascade
+    // `cascade`: multiplies the colour by the volumes' transmittance along
+    // the light and writes the depth of their optical depth's mean, before
+    // the translucent casters (which keep the nearer depth). Binds `set`
+    // with its own layout: rebind the renderer's after.
+    void RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
+                      uint32_t mapSize, const Settings &settings);
 
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;   // full resolution, blended over the image
     VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
+    VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map
     Image _half;
     uint32_t _halfWidth = 0, _halfHeight = 0;
+    Image _translucentDepth;
+    uint32_t _depthWidth = 0, _depthHeight = 0;
 };
 
 } // namespace vkr

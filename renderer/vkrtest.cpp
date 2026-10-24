@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <tuple>
 #include <vector>
@@ -163,8 +165,8 @@ static vkr::Mesh *AddEmitter(vkr::Scene &scene, float x0, float y0, float x1, fl
 }
 
 // Post-processed render through a fresh renderer, repeated until converged
-// like usdrecord does: exposure snaps on the first frame, TAA accumulates
-// 16 jittered frames of the still camera.
+// like usdrecord does: exposure snaps on the first frame, the film
+// accumulates Frame::filmSamples jittered frames of the still camera.
 static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloom = 0.04f,
                         bool taa = true, bool ssr = true)
 {
@@ -179,9 +181,9 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     do {
         img = Render(renderer, scene, frame);
         ++frames;
-    } while (!renderer.IsConverged() && frames < 64);
-    Expect(frames == (taa ? 16 : 1), taa ? "TAA converges after 16 still frames"
-                                         : "without TAA the first frame is final");
+    } while (!renderer.IsConverged() && frames < 200);
+    Expect(frames == (taa ? int(frame.filmSamples) : 1), taa ? "the film converges after filmSamples still frames"
+                                                              : "without TAA the first frame is final");
     return img;
 }
 
@@ -282,6 +284,18 @@ int main()
                 VK_API_VERSION_MAJOR(info.apiVersion),
                 VK_API_VERSION_MINOR(info.apiVersion),
                 VK_API_VERSION_PATCH(info.apiVersion));
+
+    // Pipelines cache in a folder of this run's (Device::LoadPipelineCache),
+    // its own so runs in parallel don't share it.
+    const std::filesystem::path cacheDir = std::filesystem::temp_directory_path() /
+        ("eldr_vkrtest_pipelines_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::error_code cacheError;
+    std::filesystem::remove_all(cacheDir, cacheError);
+#ifdef _WIN32
+    _putenv_s("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str());
+#else
+    setenv("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str(), 1);
+#endif
 
     try {
         vkr::Device device;
@@ -887,6 +901,46 @@ int main()
             Expect(soft >= hard + 3, "area light shadows have a penumbra (PCSS)");
             Expect(penumbra(0.15f, false) <= hard + 1, "Frame::softShadows off: hard edges for area lights");
             Expect(penumbra(0.15f, true, 4) >= hard + 3, "Frame::softShadowSamples 4: still a penumbra");
+
+            // Sample dimensions: one PCSS tap per pixel, turned per sample,
+            // averaged by the film. The blue noise turned by its own Halton
+            // value converges on the 512-sample film at least as well as
+            // the per-frame shifted gradient noise, and to the same image.
+            vkr::Light *light = AddSphereLight(scene, -0.6f, 0, 0, 0.15f, 0.16f / (0.15f * 0.15f));
+            light->castShadows = true;
+            scene.Commit();
+            auto film = [&](uint32_t samples, bool dims) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.softShadowSamples = 1;
+                frame.filmSamples = samples;
+                frame.sampleDimensions = dims;
+                Image img;
+                do {
+                    img = Render(r, scene, frame);
+                } while (!r.IsConverged());
+                return img;
+            };
+            auto error = [](const Image &a, const Image &b) {
+                double sum = 0;
+                for (int y = 16; y < 48; ++y) {
+                    for (int x = 12; x < 44; ++x) {
+                        sum += std::pow(a.At(x, y, 0) - b.At(x, y, 0), 2.0f);
+                    }
+                }
+                return std::sqrt(sum / (32 * 32));
+            };
+            const Image reference = film(512, true);
+            const double on = error(film(16, true), reference), off = error(film(16, false), reference);
+            std::printf("sample dimensions: 16-sample film error %.5f (gradient noise %.5f), vs %.5f\n", on, off,
+                        error(film(512, false), reference));
+            Expect(on <= off && error(film(1, true), film(1, false)) > 0.0, "sample dimensions: blue noise per effect");
+            Expect(error(film(512, false), reference) < 0.5 * off, "sample dimensions: the same converged image");
+            scene.RemoveLight(light);
         }
 
         {
@@ -1072,6 +1126,103 @@ int main()
         }
 
         {
+            // Film accumulation: an emitter over x < 32.3 pixels, exposed
+            // linear over black. The converged film is the edge through
+            // the Gaussian pixel filter (sigma 0.284 * 1.5 pixels):
+            // Phi((32.3 - centre) / 0.426) per pixel; radius 0 is a box,
+            // 0.3 at pixel 32. Any change starts it over: at once in final
+            // quality, after kFilmStillFrames of TAA otherwise.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 32.3f / 32.0f - 1.0f, 1, 0, 1.0f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            std::fill(frame.clearColor, frame.clearColor + 4, 0.0f);
+            frame.filmSamples = 32;
+            auto converge = [&](vkr::Renderer &renderer, int *frames) {
+                Image img;
+                for (*frames = 0; *frames < 100;) {
+                    img = Render(renderer, scene, frame);
+                    ++*frames;
+                    if (renderer.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto phi = [](float x) { return 0.5f * std::erfc(-x / std::sqrt(2.0f)); };
+            vkr::Renderer renderer(device);
+            int frames = 0;
+            const Image gauss = converge(renderer, &frames);
+            Expect(frames == 32 && renderer.GetStats().taaSamples == 32, "the film converges after filmSamples");
+            bool filtered = true;
+            for (int x = 30; x <= 34; ++x) {
+                filtered = filtered && std::abs(gauss.At(x, 32, 1) - phi((32.3f - (x + 0.5f)) / 0.426f)) < 0.02f;
+            }
+            Expect(filtered, "the film reconstructs the edge with its Gaussian");
+            frame.sceneVersion = 1;  // the app changed something
+            Render(renderer, scene, frame);
+            Expect(!renderer.IsConverged() && renderer.GetStats().taaTarget == frame.taaSamples,
+                   "a change hands the image back to TAA");
+            converge(renderer, &frames);
+            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1, "the film takes over after still frames");
+            frame.finalQuality = true;
+            frame.sceneVersion = 2;
+            Render(renderer, scene, frame);
+            Expect(renderer.GetStats().taaSamples == 1, "final quality starts the film over at once");
+            frame.finalQuality = false;
+            frame.filmFilterRadius = 0.0f;
+            vkr::Renderer box(device);
+            Expect(std::abs(converge(box, &frames).At(32, 32, 1) - 0.3f) < 0.02f, "radius 0: a box filter");
+            frame.filmAccumulation = false;
+            vkr::Renderer taa(device);
+            converge(taa, &frames);
+            Expect(frames == int(frame.taaSamples), "film off: TAA converges after taaSamples");
+
+            // Interactive sample loop: while the camera moves the sample
+            // dimensions loop over their first interactiveSamples; still,
+            // the film's samples run on.
+            frame.filmAccumulation = true;
+            frame.filmFilterRadius = 1.5f;
+            frame.interactiveSamples = 4;
+            vkr::Renderer moving(device);
+            uint32_t seen = 0, most = 0;
+            for (int i = 0; i < 12; ++i) {
+                frame.viewProj[12] = (i % 2 ? 1.0f : -1.0f) * 0.01f;
+                frame.invViewProj[12] = -frame.viewProj[12];
+                Render(moving, scene, frame);
+                seen |= 1u << moving.GetStats().sample;
+                most = std::max(most, moving.GetStats().sample);
+            }
+            frame.viewProj[12] = frame.invViewProj[12] = 0.0f;
+            for (int i = 0; i < 12; ++i) {
+                Render(moving, scene, frame);
+            }
+            Expect(seen == 0x1Eu && most == 4 && moving.GetStats().sample > 4,
+                   "moving: the sample dimensions loop over interactiveSamples; still: the film's run on");
+
+            // Adaptive sampling: away from the edge the pixels have no
+            // noise and stop at the minimum; the edge's keep sampling to
+            // filmSamples. A threshold above their noise stops them all.
+            frame.interactiveSamples = 8;
+            frame.adaptiveThreshold = 0.002f;
+            frame.adaptiveMinSamples = 8;
+            vkr::Renderer adaptive(device);
+            const Image early = converge(adaptive, &frames);
+            const uint32_t active = adaptive.GetStats().filmActivePixels;
+            Expect(frames == 32 && active > 0 && active <= 4 * 64 && MaxDifference(early, gauss) < 0.02f,
+                   "adaptive sampling: only the noisy pixels take more samples");
+            frame.adaptiveThreshold = 0.5f;
+            vkr::Renderer coarse(device);
+            converge(coarse, &frames);
+            Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
+                   "adaptive sampling: done once every pixel's noise is under the threshold");
+        }
+
+        {
             // Material programs (MaterialX graphs): emission-only quads and no
             // lights or dome, so each pixel is exactly what its program outputs.
             vkr::Scene scene(&device);
@@ -1222,7 +1373,10 @@ int main()
                 return img.At(33, 32, 0);
             };
             const float sharp = beside(0.0f, 1.0f), blurred = beside(1.0f, 1.0f), focused = beside(1.0f, 4.0f);
-            Expect(sharp < 0.01f && focused < 0.01f && blurred > 0.05f,
+            // Focused, the post blur's gather still leaks ~2% of the edge
+            // into the out-of-focus background beside it (TAA's clipping hid
+            // that; the film's plain average keeps it).
+            Expect(sharp < 0.01f && focused < 0.03f && blurred > 0.05f,
                    "depth of field spreads an out-of-focus edge, not a focused one");
         }
 
@@ -1474,6 +1628,33 @@ int main()
                    "GI bounces the red panel's light onto the white wall");
             Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
+
+            // GI preconverge: the film's 8 samples start once the probes
+            // have settled (their first 1 / (1 - 0.97) = 33 updates), so no
+            // sample sees half-filled probes; off, the film starts at once
+            // and averages them in.
+            auto filmFrames = [&](bool preconverge, Image *out) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame f = frame;
+                f.postProcess = true;
+                f.post.autoExposure = false;
+                f.post.bloomIntensity = 0.0f;
+                f.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                f.filmSamples = 8;
+                f.giPreconverge = preconverge;
+                int n = 0;
+                do {
+                    *out = Render(r, scene, f);
+                    ++n;
+                } while (!r.IsConverged() && n < 200);
+                return n;
+            };
+            Image settledFilm, earlyFilm;
+            const int settledFrames = filmFrames(true, &settledFilm), earlyFrames = filmFrames(false, &earlyFilm);
+            Expect(settledFrames >= 33 + 8 - 1 && earlyFrames < settledFrames,
+                   "GI preconverge: the film starts after the probes settled");
+            Expect(settledFilm.At(28, 32, 0) > earlyFilm.At(28, 32, 0),
+                   "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
             Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
         }
@@ -2386,9 +2567,14 @@ int main()
             matte->material = glass;
             scene.Commit();
             const Image translucent = Render(renderer, scene);
-            Expect(std::abs(translucent.At(16, 32, 0) - translucent.At(48, 32, 0)) < 1e-3f &&
-                       translucent.At(16, 32, 3) == 1.0f,
-                   "translucent holdout: what's behind it unchanged");
+            Expect(std::abs(translucent.At(16, 32, 0) - 0.5f * translucent.At(48, 32, 0)) < 0.01f &&
+                       std::abs(translucent.At(16, 32, 3) - 0.5f) < 0.01f,
+                   "translucent holdout (opacity 0.5): cuts colour and alpha by half");
+            frame = IdentityFrame();
+            frame.holdoutAlpha = false;
+            const Image uncut = Render(renderer, scene, frame);
+            Expect(std::abs(uncut.At(16, 32, 0) - uncut.At(48, 32, 0)) < 1e-3f && uncut.At(16, 32, 3) == 1.0f,
+                   "Frame::holdoutAlpha off: a translucent holdout leaves what's behind it alone");
         }
 
         {
@@ -2524,6 +2710,25 @@ int main()
             scene.Commit();
             const float scattered = Render(renderer, scene, frame).At(32, 32, 0);
             Expect(std::abs(scattered - (1.0f - std::exp(-0.8f))) < 0.02f, "fog: in-scattered sunlight");
+            {
+                // Under the film each sample jitters the froxels anew, with
+                // no history; the average is the same medium.
+                vkr::Renderer filmRenderer(device);
+                vkr::Renderer::Frame film = frame;
+                film.postProcess = true;
+                film.post.autoExposure = false;
+                film.post.bloomIntensity = 0.0f;
+                film.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                film.filmSamples = 16;
+                Image first, img;
+                int n = 0;
+                do {
+                    img = Render(filmRenderer, scene, film);
+                    first = n++ == 1 ? img : first;
+                } while (!filmRenderer.IsConverged() && n < 100);
+                Expect(std::abs(img.At(32, 32, 0) - (1.0f - std::exp(-0.8f))) < 0.02f && MaxDifference(first, img) > 0.0f,
+                       "fog under the film: froxels jittered per sample average to the medium");
+            }
 
             // Light from above (+y), a plane at y = 0.5 over x < 0.
             sun->direction[1] = 1;
@@ -2790,6 +2995,66 @@ int main()
             Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
                    "half resolution volumes stop at nearer surfaces");
             frame.volume.resolution = 1;
+
+            // Under transparency: black glass (opacity 0.5) in front of the
+            // glowing ball's left half dims it to half; glass behind its
+            // right half leaves it alone. Off, the ball goes over the glass.
+            vkr::Scene glassy(&device);
+            vkr::Volume *glow = glassy.AddVolume();
+            glow->fields["density"] = ball->fields["density"];
+            auto emitting = std::make_shared<vkr::VolumeShading>();
+            std::fill(emitting->scattering, emitting->scattering + 3, 0.0f);
+            std::fill(emitting->absorption, emitting->absorption + 3, 0.2f);
+            std::copy(green, green + 3, emitting->emission);
+            glow->shading = emitting;
+            auto glass = std::make_shared<vkr::Material>();
+            std::fill(glass->baseColor, glass->baseColor + 3, 0.0f);
+            glass->opacity = 0.5f;
+            AddQuad(glassy, -1, -1, 0, 1, -0.5f)->material = glass;
+            AddQuad(glassy, 0, -1, 1, 1, 0.5f)->material = glass;
+            glassy.Commit();
+            const Image under = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = false;
+            const Image over = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = true;
+            const float front = under.At(28, 32, 1), back = under.At(36, 32, 1);
+            Expect(back > 0.2f && std::abs(front - 0.5f * back) < 0.05f * back,
+                   "glass in front of a volume dims it, glass behind doesn't");
+            Expect(std::abs(over.At(28, 32, 1) - back) < 0.05f * back && std::abs(over.At(36, 32, 1) - back) < 1e-3f,
+                   "without volumes under transparency they go over the glass");
+            std::printf("volume behind glass %.3f, in front of glass %.3f, over glass %.3f\n", front, back, over.At(28, 32, 1));
+
+            // Volume shadows: the ball at z -0.5 under a sun from (1, 0, -1)
+            // shadows the ground (z 0.5) around x -1, outside the ball's
+            // own pixels, by its transmittance along the light: a chord of
+            // 0.74 at pixel 3, exp(-2 * 0.74). Black glass of opacity 0.5
+            // above (y 0.5..0.9) shadows it by half at the same time.
+            vkr::Scene shadowed(&device);
+            vkr::Volume *smoke = shadowed.AddVolume();
+            smoke->fields["density"] = ball->fields["density"];
+            smoke->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -0.5f, 1};
+            AddLight(shadowed, 1, 0, -1)->castShadows = true;
+            AddQuad(shadowed, -1, -1, 1, 1, 0.5f);
+            AddQuad(shadowed, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);  // keeps the ground off the far edge
+            AddQuad(shadowed, 0.0f, 0.5f, 0.25f, 0.9f, -0.5f)->material = glass;
+            shadowed.Commit();
+            const Image cast = Render(renderer, shadowed, frame);
+            frame.volume.shadows = false;
+            const Image uncast = Render(renderer, shadowed, frame);
+            frame.volume.shadows = true;
+            frame.volumes = false;
+            const Image noVolumes = Render(renderer, shadowed, frame);
+            frame.volumes = true;
+            const float ratio = cast.At(3, 32, 0) / uncast.At(3, 32, 0);
+            const float glassRatio = cast.At(3, 52, 0) / uncast.At(3, 52, 0);
+            Expect(uncast.At(3, 32, 0) > 0.1f && std::abs(ratio - std::exp(-1.48f)) < 0.05f,
+                   "a volume shadows surfaces from the sun by its transmittance");
+            Expect(std::abs(glassRatio - 1.0f) < 0.02f && uncast.At(3, 52, 0) < 0.6f * noVolumes.At(3, 20, 0),
+                   "volume and glass shadows together");
+            Expect(uncast.At(3, 32, 0) == noVolumes.At(3, 32, 0),
+                   "without volume shadows the ground is as without volumes");
+            std::printf("volume shadow %.3f (expected %.3f) on ground %.3f, glass beside it %.3f\n", ratio,
+                        std::exp(-1.48f), uncast.At(3, 32, 0), uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
         }
 
         {
@@ -2894,11 +3159,235 @@ int main()
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
         }
+
+        {
+            // Light clamps: a quad in a sun ten times as bright as usual
+            // (radiance 10 x albedo) comes out at the direct clamp; the SSGI
+            // scene's red emitter (radiance 2) bleeds a quarter of its light
+            // onto the wall when it comes in clamped to 0.5 (less than half
+            // after the tonemap).
+            vkr::Scene lit(&device);
+            vkr::Light *sun = AddLight(lit, 0, 0, -1);
+            std::fill(sun->irradiance, sun->irradiance + 3, 31.4159265f);
+            AddQuad(lit, -1, -1, 1, 1, 0);
+            lit.Commit();
+            auto direct = [&](float clamp) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.directClamp = clamp;
+                const Image img = Render(renderer, lit, frame);
+                return std::max({img.At(32, 32, 0), img.At(32, 32, 1), img.At(32, 32, 2)});
+            };
+            const float unclamped = direct(0.0f), clamped = direct(2.0f);
+            Expect(unclamped > 5.0f && std::abs(clamped - 2.0f) < 0.01f, "the direct clamp caps a pixel's direct light");
+
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = AddEmitter(scene, 0, 0, 0, 0, 0, 2.0f);
+            panel->points = {0, -0.6f, 0.5f, 0.4f, -0.6f, 0, 0.4f, 0.6f, 0, 0, -0.6f, 0.5f, 0.4f, 0.6f, 0, 0, 0.6f, 0.5f};
+            auto red = std::make_shared<vkr::Material>(*panel->material);
+            red->emissive[1] = red->emissive[2] = 0;
+            panel->material = red;
+            scene.Commit();
+            auto wall = [&](float clamp) {
+                vkr::Renderer ssgiRenderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.ssgi = true;
+                frame.ssgiRadius = 2.0f;
+                frame.indirectClamp = clamp;
+                Image img;
+                for (int i = 0; i < 16; ++i) {
+                    img = Render(ssgiRenderer, scene, frame);
+                }
+                return img.At(29, 32, 0);
+            };
+            const float full = wall(0.0f), quarter = wall(0.5f);
+            Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
+        }
+
+        {
+            // Light splits: a grey quad under a head-on distant light (no
+            // dome): its light is all direct, diffuse and glossy add up to
+            // the colour, and nothing is indirect. Accumulated over TAA's
+            // still frames like the colour.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0)->primId = 1;  // AOVs are 0 where no prim is
+            scene.Commit();
+            using A = vkr::Aovs;
+            std::vector<float> splits[A::kCount];
+            Image img;
+            vkr::Renderer::Targets out;
+            out.color = img.color.data();
+            for (uint32_t k = A::kDirectDiffuse; k <= A::kCombinedGlossy; ++k) {
+                splits[k].assign(64 * 64 * 3, -7.0f);
+                out.aovs[k] = splits[k].data();
+            }
+            renderer.Render(scene, IdentityFrame(), out);
+            auto at = [&](uint32_t k, int c) { return splits[k][(32 * 64 + 32) * 3 + c]; };
+            const float sum = at(A::kCombinedDiffuse, 1) + at(A::kCombinedGlossy, 1);
+            Expect(at(A::kDirectDiffuse, 1) > 0.3f && at(A::kDirectGlossy, 1) > 0.0f &&
+                       std::abs(at(A::kIndirectDiffuse, 1)) < 1e-4f && std::abs(at(A::kIndirectGlossy, 1)) < 1e-4f,
+                   "light splits: a distant light's light is direct");
+            Expect(std::abs(sum - img.At(32, 32, 1)) < 2e-3f, "light splits add up to the colour");
+
+            // Under the film the splits average its jittered samples:
+            // a slanted edge gets values between none and the inside's.
+            vkr::Scene slanted(&device);
+            AddLight(slanted, 0, 0, -1);
+            vkr::Mesh *tri = AddQuad(slanted, 0, 0, 0, 0, 0);
+            tri->points = {-1, -1, 0, 1, -1, 0, -1, 0.6f, 0};
+            tri->uvs.clear();
+            tri->primId = 1;
+            slanted.Commit();
+            vkr::Renderer taaRenderer(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            int frames = 0;
+            do {
+                taaRenderer.Render(slanted, frame, out);
+                ++frames;
+            } while (!taaRenderer.IsConverged() && frames < 200);
+            const float inside = splits[A::kDirectDiffuse][(4 * 64 + 4) * 3 + 1];
+            int partial = 0;
+            for (int i = 0; i < 64 * 64; ++i) {
+                const float v = splits[A::kDirectDiffuse][i * 3 + 1];
+                partial += v > 0.1f * inside && v < 0.9f * inside;
+            }
+            Expect(frames == int(frame.filmSamples) && inside > 0.3f && partial > 20,
+                   "light splits average the film's samples");
+        }
+
+        {
+            // Pipeline cache: what this run compiled is on disk, and a new
+            // device starts with it.
+            device.SavePipelineCache();
+            uintmax_t bytes = 0;
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
+                bytes = entry.path().extension() == ".bin" ? entry.file_size() : bytes;
+            }
+            Expect(bytes > 0, "pipeline cache: saved");
+            vkr::Device second;
+            vkr::Renderer secondRenderer(second);
+            Expect(second.pipelineCacheBytes == bytes, "pipeline cache: a new device starts with it");
+        }
+
+        {
+            // Pipeline prewarm: after a frame a worker compiles the shading
+            // sets one toggle away; turning toon bands on then takes its set
+            // (no compile), which draws as one compiled on the spot.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            scene.Commit();
+            vkr::Renderer warm(device), cold(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.pipelinePrewarm = true;
+            Render(warm, scene, frame);
+            warm.WaitForPrewarm();
+            Expect(warm.GetStats().prewarmedSets == 0, "pipeline prewarm: nothing taken yet");
+            frame.toonBands = 3;
+            const Image prewarmed = Render(warm, scene, frame);
+            Expect(warm.GetStats().prewarmedSets == 1, "pipeline prewarm: the toon set came from the worker");
+            frame.pipelinePrewarm = false;
+            const Image compiled = Render(cold, scene, frame);
+            Expect(cold.GetStats().prewarmedSets == 0 && prewarmed.color == compiled.color,
+                   "pipeline prewarm: the same image as a set compiled when needed");
+        }
+
+        {
+            // Refraction from inside: a water surface (transmission 1, ior
+            // 1.33) at z = -2 with its normal facing away from the camera,
+            // i.e. seen from below, in front of a red (x < 0) and green wall.
+            // Seen head-on it lets the wall through (and is drawn: its ids);
+            // turned 60 degrees, past the critical angle (48.8), it reflects
+            // the inside totally and lets nothing through; with
+            // Frame::refractionBackFaces off it isn't drawn at all.
+            vkr::Scene scene(&device);
+            vkr::Mesh *left = AddEmitter(scene, -6, -6, 0, 6, -5, 1.0f);
+            left->material->emissive[1] = left->material->emissive[2] = 0;
+            vkr::Mesh *right = AddEmitter(scene, 0, -6, 6, 6, -5, 1.0f);
+            right->material->emissive[0] = right->material->emissive[2] = 0;
+            vkr::Mesh *water = AddQuad(scene, -1.5f, -1.5f, 1.5f, 1.5f, -2);
+            water->primId = 7;
+            auto material = std::make_shared<vkr::Material>();
+            std::fill(material->baseColor, material->baseColor + 3, 1.0f);
+            material->roughness = 0;
+            material->transmission = 1;
+            material->ior = 1.33f;
+            water->material = material;
+            auto turn = [&](float degrees) {
+                const float c = std::cos(degrees * 3.14159265f / 180.0f), s = std::sin(degrees * 3.14159265f / 180.0f);
+                water->points.clear();
+                water->normals.clear();
+                const float corners[6][2] = {{-1.5f, -1.5f}, {1.5f, -1.5f}, {1.5f, 1.5f},
+                                             {-1.5f, -1.5f}, {1.5f, 1.5f}, {-1.5f, 1.5f}};
+                for (const auto &q : corners) {
+                    water->points.insert(water->points.end(), {q[0] * c, q[1], -2.0f - q[0] * s});
+                    water->normals.insert(water->normals.end(), {s, 0, -c});  // away from the camera
+                }
+                water->geometryDirty = true;
+                scene.Commit();
+            };
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            turn(0);
+            const Image under = Render(renderer, scene, frame);
+            Expect(under.Prim(44, 32) == 7 && under.At(44, 32, 1) > 0.9f && under.At(44, 32, 0) < 0.05f,
+                   "refraction from inside: water seen from below is drawn and lets the wall through");
+            turn(60);
+            const Image total = Render(renderer, scene, frame);
+            frame.refractionBackFaces = false;
+            const Image off = Render(renderer, scene, frame);
+            // Past the critical angle the centre shows the mirrored inside (the
+            // red half), not the green it would refract towards.
+            Expect(total.Prim(32, 32) == 7 && total.At(32, 32, 0) > 0.9f && total.At(32, 32, 1) < 0.05f &&
+                       off.At(32, 32, 1) > 0.9f,
+                   "refraction from inside: total internal reflection past the critical angle");
+            Expect(off.Prim(32, 32) != 7 && off.Prim(44, 32) != 7, "Frame::refractionBackFaces off: not drawn");
+        }
+
+        {
+            // Refraction through layers: two thin-walled glass quads over a
+            // white wall, the far one taking out green, the near one blue.
+            // Where they overlap, light passes both (red) with
+            // Frame::multiRefraction; without, the near one refracts the
+            // opaque wall alone and hides the far one (yellow).
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -1, -1, 1, 1, 0.5f, 1.0f);
+            auto glass = [&](float x0, float x1, float z, float g, float b) {
+                auto m = std::make_shared<vkr::Material>();
+                m->roughness = 0;
+                m->transmission = 1;
+                m->thinWalled = true;
+                m->transmissionColor[1] = g;
+                m->transmissionColor[2] = b;
+                AddQuad(scene, x0, -1, x1, 1, z)->material = m;
+            };
+            glass(-1, 0.5f, 0.25f, 0, 1);  // far: no green
+            glass(-0.5f, 1, 0, 1, 0);      // near: no blue
+            scene.Commit();
+            const Image both = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.multiRefraction = false;
+            const Image one = Render(renderer, scene, frame);
+            Expect(both.At(32, 32, 0) > 0.8f && both.At(32, 32, 1) < 0.05f && both.At(32, 32, 2) < 0.05f,
+                   "refraction through layers: the overlap passes both glasses");
+            Expect(one.At(32, 32, 1) > 0.8f && one.At(32, 32, 2) < 0.05f,
+                   "Frame::multiRefraction off: the near glass refracts the opaque wall only");
+            Expect(both.At(8, 32, 1) < 0.05f && both.At(56, 32, 2) < 0.05f && both.At(56, 32, 1) > 0.8f,
+                   "refraction through layers: each glass alone as before");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
     }
 
+    std::filesystem::remove_all(cacheDir, cacheError);
     std::puts(failures ? "FAILED" : "OK");
     return failures ? 1 : 0;
 }

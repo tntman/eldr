@@ -10,12 +10,17 @@
 #include "raytracing.h"
 #include "scene.h"
 #include "subsurface.h"
+#include "ssr.h"
 #include "taa.h"
 #include "transparency.h"
 #include "volume.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 namespace vkr {
 
@@ -96,6 +101,9 @@ public:
         // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
         // and depth go to the app's OpenGL on the GPU instead of Targets.
         bool shareFrame = true;
+        // Render products (the Hydra layer's HdVkRenderProducts): the active
+        // UsdRenderSettings' products are written as EXR files once converged.
+        bool renderProducts = true;
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
@@ -106,6 +114,8 @@ public:
         bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
         uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
         bool hairShading = true;       // curves (Mesh::hair) with strand highlights
+        bool texturedLobes = true;     // lobe inputs from textures and graphs (material programs); off: constants
+        bool texturedTransmission = true;  // the same for transmission and subsurface inputs
         // Ray tracing (raytracing.cpp), ignored without Device::rayTracing.
         // With the depth prepass: traced shadows of the sun and the three
         // lights that matter most (no shadow maps for them; soft from the
@@ -203,7 +213,98 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Film accumulation (with taa; TemporalAA::RecordFilm): once the
+        // camera and the scene have been still for kFilmStillFrames, and
+        // from the first sample of a final frame, the samples are averaged
+        // without TAA's reprojection and clipping, each through a Gaussian
+        // pixel filter of filmFilterRadius pixels, until filmSamples
+        // (IsConverged). Frames with motion blur stay TAA's.
+        bool filmAccumulation = true;
+        uint32_t filmSamples = 64;
+        float filmFilterRadius = 1.5f;
+        // Final quality (offline renders): the film starts over at the
+        // first sample after any change instead of from the TAA image.
+        bool finalQuality = false;
+        // Changes whenever the app's scene or settings changed (the Hydra
+        // layer: change tracker and settings versions): the film starts over.
+        uint64_t sceneVersion = 0;
+        // Sample dimensions: every stochastic effect (AO, SSGI, SSR and
+        // traced reflections' filter, soft shadows, refraction blur,
+        // volumes) turns blue noise by a Halton value of its own per sample
+        // (frame.glsl's SampleNoise), so the film converges without screen
+        // patterns; off: interleaved gradient noise shifted per frame.
+        bool sampleDimensions = true;
+        // While TAA resolves (the camera or the scene moves), the sample
+        // dimensions loop over their first this many samples (1..256).
+        uint32_t interactiveSamples = 8;
+        // Adaptive sampling (the film): a pixel whose mean's standard error
+        // (exposed, compressed luma: about the displayed value) is under
+        // adaptiveThreshold after adaptiveMinSamples takes no more samples,
+        // and the film is converged once no pixel is left (or at
+        // filmSamples, the most). 0: off. Edges' anti-aliasing is variance
+        // too, so most scenes still run to filmSamples; worth it for large
+        // flat areas (try 0.002).
+        float adaptiveThreshold = 0.0f;
+        uint32_t adaptiveMinSamples = 16;
+        // GI preconverge: with gi, the film waits until fresh probes have
+        // settled (RayTracing::Converged), so no sample sees half-filled ones.
+        bool giPreconverge = true;
+        // Fog under the film: every froxel sampled at a point jittered per
+        // sample (sample dimensions) and no history, so the film's average
+        // is the medium's (EEVEE: no reprojection when accumulating).
+        bool fogFilmJitter = true;
+        // Shading pipelines a frame compiles are saved to the device's
+        // pipeline cache file (Device::LoadPipelineCache) for later runs.
+        bool pipelineCache = true;
+        // Compile the shading sets of this frame's features with one of
+        // them toggled on a worker thread, so turning one on or off later
+        // doesn't stall (Hydra's default: on).
+        bool pipelinePrewarm = false;
+        // Refracting meshes' back faces (needs refraction): seen from inside
+        // the medium (water from below, the far side of a glass ball) with
+        // the inverted ior and total internal reflection, drawn before their
+        // front faces; off: back faces are discarded.
+        bool refractionBackFaces = true;
+        // Refraction through several layers (needs refraction): refracting
+        // meshes back to front, the opaque colour copied again after each
+        // (glass behind glass, a ball's far side), up to this many copies.
+        bool multiRefraction = true;
+        uint32_t refractionLayers = 4;
+        // Translucent holdouts (with holdouts) cut the image's colour and
+        // alpha by their opacity; off: they draw nothing.
+        bool holdoutAlpha = true;
+        // Brightness clamps against fireflies (EEVEE's light clamps): the
+        // brightest channel of a pixel's direct light (sun, local lights),
+        // and of every bounce light comes in by (SSGI's input, SSR and
+        // traced reflection hits, GI probe rays; not the dome), scaled down
+        // to at most this scene-referred radiance. 0: off.
+        float directClamp = 0.0f;
+        float indirectClamp = 0.0f;
+        // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
+        // quadratically, each at least a pixel on, objects at least a pixel's
+        // footprint thick (deep at grazing angles) and a ray that crosses a
+        // continuous surface hits it whatever its thickness. Off: the ray
+        // steps evenly and any object is 5% of its distance thick.
+        bool ssgiThickness = true;
+        // SSGI with a visibility bitmask (EEVEE's fast GI) instead of the
+        // highest horizon: 32 sectors per slice, objects a quarter of
+        // ssgiRadius thick, light from the sectors nothing nearer hides,
+        // weighted by how much the surface it comes from faces the pixel.
+        bool ssgiBitmask = false;
+        // Ray tracing sees displacement (with displacement on): displaced
+        // meshes' BLASes are built from their displaced vertices (rebuilt
+        // when the scale changes). Off: from their rest vertices.
+        bool rtDisplacement = true;
+        // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
+        // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
+        // through a ratio estimator, temporal reprojection through the
+        // reflected point and a variance-guided bilateral filter. Off: one
+        // mirror ray, faded out from roughness 0.3 to 0.6.
+        bool ssrDenoise = false;
     };
+
+    // Still frames before the film takes over from TAA (EEVEE's 3).
+    static constexpr uint32_t kFilmStillFrames = 3;
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
     // Null pointers skip that output's readback.
@@ -253,11 +354,16 @@ public:
         uint32_t instances = 0;   // the camera drew, after culling
         uint32_t drawCalls = 0;   // the camera's indirect calls (each covers many meshes)
         uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
+        uint32_t sample = 0;      // the sample dimensions' sample (0: no TAA)
+        uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
+        uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
     };
     const Stats &GetStats() const { return _stats; }
+    // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
+    void WaitForPrewarm();
 
     // GPU sharing (interop.h): the last frame's images, in
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
@@ -277,8 +383,21 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    // A shading set's pipelines: per pass kVariants of them.
+    struct ShadingTargets {
+        VkPipeline *opaque, *translucent, *oit, *subsurface, *refractBack;
+    };
+    void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
+                          VkPipelineCache cache = VK_NULL_HANDLE);
     uint32_t _ShadingSet(uint32_t features);
+    ShadingTargets _SetTargets(uint32_t set)
+    {
+        const uint32_t base = set * kVariants;
+        return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base,
+                _refractBackPipeline + base};
+    }
+    void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
+    void _PrewarmWorker();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -291,6 +410,7 @@ private:
                                               uint32_t *rtLights, uint32_t rtSlots);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
+    void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
                            const float *invViewProj, VkRenderingAttachmentInfo depth);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
@@ -303,6 +423,8 @@ private:
     PostProcess _post;
     Transparency _transparency;
     Subsurface _subsurface;
+    SsrDenoise _ssr;
+    bool _ssrHistory = false;  // the denoiser ran last frame
     Fog _fog;
     float _fogDepth = 0;  // last frame's froxel depth (Frame::fogMaxDistance or the scene's)
     uint64_t _fogKey = 0; // last frame's lighting and medium (history is kept while they stay)
@@ -314,6 +436,13 @@ private:
     bool _historyValid = false;    // the TAA history holds last frame's image
     bool _taaWarmup = false;  // accumulating a fresh history for a still camera
     bool _taaConverged = true;
+    // Film: samples in it (0: TAA resolves), frames the camera and the
+    // scene have been still, what the scene was.
+    uint32_t _filmSamples = 0, _stillFrames = 0;
+    bool _filmAdaptive = false;
+    bool _freshRun = false;
+    bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
+    uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;
     bool _adapting = false;       // last frame ran auto-exposure
@@ -339,21 +468,48 @@ private:
     // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
     // variants at set * kVariants + variant; a frame draws with the set of
     // its own features (_shadingBase), made when a frame first needs it.
-    static constexpr uint32_t kShadingSets = 8;
+    static constexpr uint32_t kShadingSets = 16;
     std::vector<uint32_t> _shadingSets;
     uint32_t _shadingBase = 0;
+    // Frame::pipelinePrewarm: the worker compiles the queued feature sets
+    // into its own pipeline cache (merged into the device's after each) and
+    // leaves them in _prewarmed for _ShadingSet to take; a set it is on
+    // when a frame needs it is waited for, a queued one is taken back.
+    struct PrewarmJob {
+        uint32_t features;
+        bool displaced;  // with the displaced variants too
+    };
+    struct Prewarmed {
+        PrewarmJob job;
+        std::vector<VkPipeline> pipelines;  // 4 * kVariants: opaque, translucent, OIT, subsurface
+    };
+    std::thread _prewarmThread;
+    std::mutex _prewarmMutex;
+    std::condition_variable _prewarmChanged;
+    std::vector<PrewarmJob> _prewarmQueue;
+    uint32_t _prewarmCurrent = kNone;  // the features being compiled
+    std::vector<Prewarmed> _prewarmed;
+    std::atomic<bool> _prewarmStop{false};
+    bool _prewarmSave = false;         // Frame::pipelineCache when queued
+    uint32_t _prewarmFor = kNone;      // the features the queue was made around
+    VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
+    // Refracting meshes' back faces, seen from inside (transparency.glsl's
+    // kShadingPass 3), blended as _translucentPipeline.
+    VkPipeline _refractBackPipeline[kShadingSets * kVariants] = {};
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _mattePipeline[kVariants] = {};  // translucent holdouts' matte (matte.frag)
     VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
     VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
+    bool _savePipelines = true;  // Frame::pipelineCache
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
@@ -396,6 +552,7 @@ private:
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;
     Image _blackCube;                           // bound when there is no dome
+    Image _blueNoise;                           // RGBA8, frame.glsl's SampleNoise
     Buffer _readback, _frameData;
     uint32_t _width = 0, _height = 0;
     LensDistortion _distortion{_dev};

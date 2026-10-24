@@ -1,0 +1,66 @@
+#pragma once
+
+#include "renderer.h"
+
+#include "pxr/pxr.h"
+#include "pxr/imaging/hd/renderSettings.h"
+
+#include <string>
+#include <vector>
+
+PXR_NAMESPACE_OPEN_SCOPE
+
+// The render settings prim (UsdRenderSettings); HdRenderSettings' own Sync
+// flattens its products and render vars.
+class HdVkRenderSettings final : public HdRenderSettings
+{
+public:
+    explicit HdVkRenderSettings(SdfPath const &id) : HdRenderSettings(id) {}
+
+protected:
+    // Nothing of its own (the base's isn't exported).
+    void _Sync(HdSceneDelegate *, HdRenderParam *, const HdDirtyBits *) override {}
+};
+
+// UsdRender products of the active render settings (usdrecord
+// --renderSettingsPrimPath, husk): each raster product's render vars that
+// Eldr can fill go into one EXR (any file OpenImageIO writes), written when
+// the frame has converged; again after it changed and converged anew.
+// Render vars name their AOV as UsdRender does (sourceType "lpe": "lpe:" +
+// sourceName, "primvar": "primvars:" + sourceName, else sourceName): Hydra's
+// color, depth, primId, instanceId and Eldr's extra AOVs (HdVkExtraAovs,
+// Karma's names). Cryptomatte vars become layers <name>00 (rank 0 and 1)
+// with the spec's metadata (cryptomatte/<key>/name, hash, conversion,
+// manifest).
+// ponytail: written at the frame's size, not the product's resolution; an
+// extra AOV Hydra binds itself as well isn't in the product (one target per
+// kind); vars Eldr can't fill are left out with a warning.
+class HdVkRenderProducts
+{
+public:
+    // This frame's products (`settings` null or inactive: none): asks `out`
+    // for the extra AOVs they need that no Hydra buffer asked for.
+    void Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height, vkr::Renderer::Targets *out);
+    bool Needs(vkr::Aovs::Kind kind) const { return _need[kind]; }
+    // After Render: writes the products once `renderer` converged.
+    void Write(vkr::Renderer &renderer, const std::string &objectManifest, const std::string &materialManifest);
+
+private:
+    enum class Source { Color, Depth, PrimId, InstanceId, Aov };
+    struct Var {
+        std::string name;  // the render var prim's: the EXR layer
+        Source source;
+        uint32_t kind;     // vkr::Aovs::Kind with Source::Aov
+    };
+    struct Product {
+        std::string path;
+        std::vector<Var> vars;
+    };
+    std::vector<Product> _products;
+    bool _need[vkr::Aovs::kCount] = {};
+    std::vector<float> _aovs[vkr::Aovs::kCount];  // the extra AOVs the products asked for
+    uint32_t _width = 0, _height = 0;
+    bool _written = false;
+};
+
+PXR_NAMESPACE_CLOSE_SCOPE

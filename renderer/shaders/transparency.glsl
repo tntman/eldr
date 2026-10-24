@@ -4,7 +4,7 @@
 // The pass a shading pipeline draws (the Renderer specializes it): 0 the
 // opaque pass or sorted translucency (colour premultiplied by coverage,
 // blended over), 1 weighted blended OIT accumulation, 2 the subsurface
-// pass (subsurface.glsl).
+// pass (subsurface.glsl), 3 refracting back faces (TransmissionEnd).
 layout(constant_id = 12) const uint kShadingPass = 0u;
 
 // frame.features.x: refraction samples the opaque colour behind (bound
@@ -30,7 +30,7 @@ void TransmissionBegin(inout float alpha)
     if (inMaterial == kNoMaterial) {
         return;
     }
-    Material m = materials[inMaterial];
+    Material m = ShadingMaterial();
     gRefracted = alpha * m.transmission.w;
     alpha *= 1.0 - m.transmission.w;
     if (m.refraction.w > 0.0) {
@@ -39,78 +39,108 @@ void TransmissionBegin(inout float alpha)
     }
 }
 
-// After shading (`color` premultiplied, highlights whole): adds what the
-// surface refracts and returns the coverage to blend over what's behind
-// with. The refracted ray (thin walls: the view ray) leaves the surface
-// after a thickness estimate, the distance to the opaque surface behind
-// but at most the mesh's size, and reads the background where that exit
-// point lands, blurred over mips and frame.translucency.x rotated taps by
-// the roughness spreading it over the distance to the background. The
-// transmission colour absorbs at the surface, or over the path inside at
-// its transmission depth (Beer-Lambert); Fresnel (Schlick at the ior)
-// splits reflection from transmission. Where it refracts the app's
-// background (clear, coverage 0) coverage drops instead. Closed refractive
-// meshes show their front only (back faces, by the authored normal, are
-// discarded), so the two refractions read as one.
-// ponytail: one refraction (no exit interface), screen space only (what
-// isn't on screen or is translucent itself isn't refracted).
-float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
+// The opaque colour (and what refracting layers behind added, see
+// Renderer::_RenderTranslucency) along direction `dir` from the surface,
+// after `distance`: where that point lands on screen, blurred over mips and
+// frame.translucency.x rotated taps by the roughness spreading the rays
+// over `spread`.
+vec4 RefractedBackground(vec3 dir, float distance, float spread)
 {
-    if (gRefracted <= 0.0) {
-        return 1.0 - gStraight;
-    }
-    Material m = materials[inMaterial];
-    float ior = max(m.refraction.x, 1e-3);
-    bool thin = m.refraction.y > 0.0;
-    if (!thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0) {
-        discard;
-    }
-    float f0 = (ior - 1.0) / (ior + 1.0);
-    f0 *= f0;
-    float through = gRefracted * (1.0 - (f0 + (1.0 - f0) * pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 5.0)));
-    if (!Feature(kFeatureRefraction)) {
-        return 1.0 - gStraight - through;  // no background: seen straight through, untinted
-    }
-
-    vec2 pixelUv = gl_FragCoord.xy / frame.viewport.xy;
-    float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
-    vec4 behindP = frame.invViewProj * vec4(pixelUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-    float camera = length(inWorldPos - frame.cameraPos.xyz);
-    float behind = depth < 1.0 ? length(behindP.xyz / behindP.w - inWorldPos) : 1e30;
-    Instance inst = instances[inSlot];
-    DrawInfo d = draws[inst.draw];
-    float size = length(mat3(InstanceTransform(inst)) * (d.boundsMax.xyz - d.boundsMin.xyz));
-    float thickness = thin ? 0.0 : min(behind, size);
-    vec3 r = thin ? -v : refract(-v, n, 1.0 / ior);
-    r = dot(r, r) > 0.0 ? r : -v;  // total internal reflection (ior < 1)
-    vec3 exitP = inWorldPos + r * thickness;
+    vec3 exitP = inWorldPos + dir * distance;
     vec4 clip = frame.viewProj * vec4(exitP, 1.0);
-    vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : pixelUv;
-
-    float spread = perceptual * perceptual * min(behind, camera);
+    vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;
+    vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
     vec3 side = normalize(cross(v, abs(v.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec4 clipSide = frame.viewProj * vec4(exitP + side * spread, 1.0);
     float pixels = clip.w > 0.0 && clipSide.w > 0.0
         ? length((clipSide.xy / clipSide.w - clip.xy / clip.w) * 0.5 * frame.viewport.xy) : 0.0;
     int taps = clamp(int(frame.translucency.x), 1, 16);
     float lod = clamp(log2(max(pixels * inversesqrt(float(taps)), 1e-3)), 0.0, frame.translucency.y - 1.0);
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimRefraction, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     vec4 background = vec4(0.0);
     for (int i = 0; i < taps; ++i) {
         vec2 offset = taps > 1 ? rotation * kPoisson[i] * pixels / frame.viewport.xy : vec2(0.0);
         background += textureLod(refractionBackground, clamp(uv + offset, 0.0, 1.0), lod);
     }
-    background /= float(taps);
+    return background / float(taps);
+}
 
+// After shading (`color` premultiplied, highlights whole): adds what the
+// surface refracts and returns the coverage to blend over what's behind
+// with. The refracted ray (thin walls: the view ray) leaves the surface
+// after a thickness estimate, the distance to the opaque surface behind
+// but at most the mesh's size, and reads the background where that exit
+// point lands (RefractedBackground). The transmission colour absorbs at
+// the surface, or over the path inside at its transmission depth
+// (Beer-Lambert); Fresnel (Schlick at the ior) splits reflection from
+// transmission. Where it refracts the app's background (clear, coverage 0)
+// coverage drops instead.
+// Closed refractive meshes: the shading passes draw their front faces and
+// discard the back ones (by the authored normal); kShadingPass 3 draws
+// only those back faces, before the front ones (Renderer's refraction
+// layers): the surface seen from inside the medium (water from below,
+// the far side of a glass ball), with the inverted ior, so beyond the
+// critical angle it reflects the inside totally (sampled along the
+// mirrored ray) instead of letting light out.
+// ponytail: screen space only (what isn't on screen isn't refracted);
+// one interface per layer, the thickness an estimate.
+float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
+{
+    if (gRefracted <= 0.0) {
+        if (kShadingPass == 3u) {
+            discard;  // refracts nothing: drawn by the shading passes
+        }
+        return 1.0 - gStraight;
+    }
+    Material m = ShadingMaterial();
+    float ior = max(m.refraction.x, 1e-3);
+    bool thin = m.refraction.y > 0.0;
+    bool inside = !thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0;
+    if (inside != (kShadingPass == 3u)) {
+        discard;
+    }
+    float f0 = (ior - 1.0) / (ior + 1.0);
+    f0 *= f0;
+    vec3 r = thin ? -v : refract(-v, n, inside ? ior : 1.0 / ior);
+    bool total = inside && dot(r, r) == 0.0;  // total internal reflection
+    r = dot(r, r) > 0.0 ? r : -v;  // (ior < 1 seen from outside: straight on, as before)
+    // Schlick's cosine is the one on the thinner medium's side.
+    float cosine = inside ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
+    float F = total ? 1.0 : f0 + (1.0 - f0) * pow(1.0 - cosine, 5.0);
+    float through = gRefracted * (1.0 - F);
+    if (!Feature(kFeatureRefraction)) {
+        return 1.0 - gStraight - through;  // no background: seen straight through, untinted
+    }
+
+    float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
+    vec4 behindP = frame.invViewProj * vec4(gl_FragCoord.xy / frame.viewport.xy * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    float camera = length(inWorldPos - frame.cameraPos.xyz);
+    float behind = depth < 1.0 ? length(behindP.xyz / behindP.w - inWorldPos) : 1e30;
+    Instance inst = instances[inSlot];
+    DrawInfo d = draws[inst.draw];
+    float size = length(mat3(InstanceTransform(inst)) * (d.boundsMax.xyz - d.boundsMin.xyz));
+    float thickness = thin ? 0.0 : min(behind, size);
+    float spread = perceptual * perceptual * min(behind, camera);
     vec3 tint = m.transmission.rgb;
     if (m.refraction.z > 0.0 && !thin) {
         tint = pow(max(tint, vec3(1e-4)), vec3(thickness / m.refraction.z));
     }
-    vec3 transmitted = through * tint;
-    color += transmitted * background.rgb;
-    return 1.0 - gStraight - dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
+    float lost = 0.0;  // coverage the app's background takes back
+    if (!total) {
+        vec4 background = RefractedBackground(r, thickness, spread);
+        vec3 transmitted = through * tint;
+        color += transmitted * background.rgb;
+        lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
+    }
+    if (inside) {
+        // The inside's reflection, all of it past the critical angle.
+        vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
+        vec3 reflected = gRefracted * F * tint;
+        color += reflected * mirrored.rgb;
+        lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
+    }
+    return 1.0 - gStraight - lost;
 }
 
 // frame.features.x: translucent casters tint the sun's and local lights'
@@ -216,7 +246,7 @@ void PassOutput(vec3 color, float alpha)
         return;
     }
     if (kShadingPass == 2u) {
-        vec3 radius = inMaterial != kNoMaterial ? max(materials[inMaterial].subsurfaceRadius.xyz, vec3(1e-6))
+        vec3 radius = inMaterial != kNoMaterial ? max(ShadingMaterial().subsurfaceRadius.xyz, vec3(1e-6))
                                                 : vec3(1.0);
         float largest = max(radius.r, max(radius.g, radius.b));
         uvec3 q = uvec3(round(radius / largest * 1023.0));

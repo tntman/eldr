@@ -17,6 +17,9 @@ const uint32_t kDenoiseFrag[] =
 const uint32_t kSsgiFrag[] =
 #include "ssgi.frag.inc"
 ;
+const uint32_t kSsgiBitmaskFrag[] =
+#include "ssgi_bitmask.frag.inc"
+;
 const uint32_t kSsgiDenoiseFrag[] =
 #include "ssgi_denoise.frag.inc"
 ;
@@ -31,7 +34,7 @@ struct GtaoParams {  // mirror of the push block in gtao.frag (the SSGI part onl
     float params[4];
     float prevViewProj[16];
     float ssgi[4];      // depth pixels per raw pixel, steps per side, history valid, max radiance
-    float temporal[4];  // weight of this frame in SSGI's running average
+    float temporal[4];  // weight of this frame in SSGI's running average, thickness estimator, object thickness
 };
 
 VkImageSubresourceRange Color()
@@ -52,20 +55,21 @@ Gtao::Gtao(Device &device)
 
     // Binding 0: scene depth (gtao.frag), 1: raw AO (gtao_denoise.frag), 2:
     // last frame's resolved colour, 3: last frame's SSGI (SSGI; partially
-    // bound).
-    const VkDescriptorSetLayoutBinding bindings[4] = {
+    // bound), 4: the blue noise (SetBlueNoise).
+    const VkDescriptorSetLayoutBinding bindings[5] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
+        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT},
     };
-    const VkDescriptorBindingFlags partial[4] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
-                                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    const VkDescriptorBindingFlags partial[5] = {0, 0, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
+                                                 VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, 0};
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 4;
+    flags.bindingCount = 5;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 4;
+    slci.bindingCount = 5;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GtaoParams)};
@@ -78,6 +82,7 @@ Gtao::Gtao(Device &device)
     _gtaoPipeline = CreateFullscreenPipeline(d, _layout, kGtaoFrag, sizeof(kGtaoFrag), kRawFormat);
     _denoisePipeline = CreateFullscreenPipeline(d, _layout, kDenoiseFrag, sizeof(kDenoiseFrag), kAoFormat);
     _ssgiPipeline = CreateFullscreenPipeline(d, _layout, kSsgiFrag, sizeof(kSsgiFrag), kSsgiFormat);
+    _ssgiBitmaskPipeline = CreateFullscreenPipeline(d, _layout, kSsgiBitmaskFrag, sizeof(kSsgiBitmaskFrag), kSsgiFormat);
     _ssgiDenoisePipeline = CreateFullscreenPipeline(d, _layout, kSsgiDenoiseFrag, sizeof(kSsgiDenoiseFrag), kSsgiFormat);
 }
 
@@ -89,6 +94,7 @@ Gtao::~Gtao()
     vkDestroyPipeline(d, _gtaoPipeline, nullptr);
     vkDestroyPipeline(d, _denoisePipeline, nullptr);
     vkDestroyPipeline(d, _ssgiPipeline, nullptr);
+    vkDestroyPipeline(d, _ssgiBitmaskPipeline, nullptr);
     vkDestroyPipeline(d, _ssgiDenoisePipeline, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
@@ -119,7 +125,7 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
                                VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                            VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
 
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 2;
     pci.poolSizeCount = 1;
@@ -134,6 +140,17 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
     Check(vkAllocateDescriptorSets(_dev.device, &ai, sets), "vkAllocateDescriptorSets");
     _set = sets[0];
     _ssgiSet = sets[1];
+    const VkDescriptorImageInfo noise{_sampler, _blueNoise, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet noiseWrites[2] = {};
+    for (uint32_t i = 0; i < 2; ++i) {
+        noiseWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        noiseWrites[i].dstSet = sets[i];
+        noiseWrites[i].dstBinding = 4;
+        noiseWrites[i].descriptorCount = 1;
+        noiseWrites[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        noiseWrites[i].pImageInfo = &noise;
+    }
+    vkUpdateDescriptorSets(_dev.device, 2, noiseWrites, 0, nullptr);
     _depth = depth;
     const VkDescriptorImageInfo images[2] = {
         {_sampler, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
@@ -230,8 +247,9 @@ void Gtao::_Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, 
 }
 
 void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
-                      const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                      VkImageView history, bool historyValid, float maxRadiance, bool still)
+                      const float eye[3], float radius, float noise, uint32_t slices, uint32_t steps,
+                      VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
+                      float objectThickness)
 {
     const VkDescriptorImageInfo images[2] = {{_sampler, history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                              {_sampler, _ssgi[_current ^ 1u].view,
@@ -262,13 +280,15 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
     params.ssgi[2] = historyValid ? 1.0f : 0.0f;
     params.ssgi[3] = maxRadiance;
     params.temporal[0] = 1.0f / float(_accumulated);
-    _Draw(cmd, _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
+    params.temporal[1] = thickness ? 1.0f : 0.0f;
+    params.temporal[2] = objectThickness;
+    _Draw(cmd, objectThickness > 0.0f ? _ssgiBitmaskPipeline : _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
           &params);
     _Draw(cmd, _ssgiDenoisePipeline, _ssgiSet, _ssgi[_current], _width, _height, &params);
 }
 
 void Gtao::Record(VkCommandBuffer cmd, const float invViewProj[16], const float eye[3], float radius,
-                  uint32_t noise, uint32_t slices)
+                  float noise, uint32_t slices)
 {
     GtaoParams params{};
     std::copy(invViewProj, invViewProj + 16, params.invViewProj);

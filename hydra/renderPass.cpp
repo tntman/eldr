@@ -10,6 +10,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
+#include "pxr/imaging/hd/changeTracker.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -124,6 +125,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Each setting over the renderer's default (renderDelegate.cpp lists
     // them); counts are ints in Hydra, at least 1.
     const auto &t = *HdVkRenderSettingsTokens;
+    const auto &t2 = *HdVkRenderSettingsTokens2;
     for (auto [token, value] : {std::pair{t.postProcess, &frame.postProcess}, {t.taa, &frame.taa},
                                 {t.ambientOcclusion, &frame.ambientOcclusion}, {t.ssr, &frame.ssr},
                                 {t.autoExposure, &frame.post.autoExposure}, {t.shadows, &frame.shadows},
@@ -137,26 +139,38 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.proceduralTextures, &frame.proceduralTextures},
                                 {t.lensDistortion, &frame.lensDistortion},
                                 {t.blendShapeMotion, &frame.blendShapeMotion},
-                                {t.extraAovs, &frame.extraAovs}, {t.shareFrame, &frame.shareFrame},
+                                {t.extraAovs, &frame.extraAovs}, {t.renderProducts, &frame.renderProducts}, {t.shareFrame, &frame.shareFrame},
                                 {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
                                 {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
-                                {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
+                                {t.hairShading, &frame.hairShading}, {t.texturedLobes, &frame.texturedLobes},
+                                {t.texturedTransmission, &frame.texturedTransmission}, {t.rtShadows, &frame.rtShadows},
                                 {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
                                 {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
-                                {t.refraction, &frame.refraction},
+                                {t.refraction, &frame.refraction}, {t.holdoutAlpha, &frame.holdoutAlpha}, {t.multiRefraction, &frame.multiRefraction}, {t.refractionBackFaces, &frame.refractionBackFaces},
                                 {t.translucentShadows, &frame.translucentShadows},
                                 {t.subsurface, &frame.subsurface}, {t.holdouts, &frame.holdouts},
                                 {t.softSunShadows, &frame.softSunShadows}, {t.fog, &frame.fog},
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
                                 {t.planarReflections, &frame.planarReflections},
-                                {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
-                                {t.lod, &frame.lod},
-                                {t.authoredProbes, &frame.authoredProbes},
-                                {t.probeNormalize, &frame.probeNormalize},
-                                {t.domeSun, &frame.domeSun},
-                                {t.fogGiAmbient, &frame.fogGiAmbient},
-                                {t.lightTextures, &frame.lightTextures}}) {
+                                {t.volumes, &frame.volumes},
+                                {t.volumeUnderTransparency, &frame.volume.underTransparency},
+                                {t.volumeShadows, &frame.volume.shadows},
+                                {t.displacement, &frame.displacement},
+                                {t.lod, &frame.lod}, {t.filmAccumulation, &frame.filmAccumulation},
+                                {t.finalQuality, &frame.finalQuality},
+                                {t.sampleDimensions, &frame.sampleDimensions},
+                                {t.giPreconverge, &frame.giPreconverge}, {t.fogFilmJitter, &frame.fogFilmJitter},
+                                {t.pipelineCache, &frame.pipelineCache},
+                                {t.pipelinePrewarm, &frame.pipelinePrewarm},
+                                {t2.ssgiThickness, &frame.ssgiThickness},
+                                {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
+                                {t2.ssrDenoise, &frame.ssrDenoise},
+                                {t2.authoredProbes, &frame.authoredProbes},
+                                {t2.probeNormalize, &frame.probeNormalize},
+                                {t2.domeSun, &frame.domeSun},
+                                {t2.fogGiAmbient, &frame.fogGiAmbient},
+                                {t2.lightTextures, &frame.lightTextures}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -173,7 +187,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
-                                {t.domeSunThreshold, &frame.domeSunThreshold}}) {
+                                {t2.domeSunThreshold, &frame.domeSunThreshold},
+                                {t.filmFilterRadius, &frame.filmFilterRadius},
+                                {t.adaptiveThreshold, &frame.adaptiveThreshold},
+                                {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -205,14 +222,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
                                 {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays},
                                 {t.ssgiSteps, &frame.ssgiSteps}, {t.ssgiResolution, &frame.ssgiResolution},
-                                {t.refractionSamples, &frame.refractionSamples},
+                                {t.refractionSamples, &frame.refractionSamples}, {t.refractionLayers, &frame.refractionLayers},
                                 {t.translucentShadowDivisor, &frame.translucentShadowDivisor},
                                 {t.subsurfaceSamples, &frame.subsurfaceSamples},
                                 {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
                                 {t.volumeResolution, &frame.volume.resolution},
-                                {t.planarCount, &frame.planarCount}}) {
+                                {t2.planarCount, &frame.planarCount},
+                                {t.filmSamples, &frame.filmSamples},
+                                {t.interactiveSamples, &frame.interactiveSamples},
+                                {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // 0 allowed: no skinned instance blocks rays.
@@ -259,6 +279,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
+    // Final quality: asked for, or an offline renderer's convention (husk,
+    // hdPrman: enableInteractive false). usdrecord sets neither, but its
+    // first frame has no history, so its film starts with the first sample.
+    frame.finalQuality = frame.finalQuality ||
+                         !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
+    // Any edit to the scene or the settings starts the film over.
+    frame.sceneVersion = (uint64_t(GetRenderIndex()->GetChangeTracker().GetSceneStateVersion()) << 32) |
+                         delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // Either may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
@@ -286,14 +314,37 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.cameraPos[1] = float(eye[1]);
     frame.cameraPos[2] = float(eye[2]);
 
+    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
+    // none of the four is read back unless someone maps it.
+    auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
+    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
+    const bool lazy = interop != nullptr;
+    HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
+                                          static_cast<HdVkRenderBuffer *>(primId),
+                                          static_cast<HdVkRenderBuffer *>(instanceId)};
+    vkr::Renderer::Targets out;
+    if (!lazy) {
+        out.color = color ? color->Map() : nullptr;
+        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
+        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
+        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
+    }
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        out.aovComponents[k] = extraComponents[k];
+    }
+    // UsdRender products (renderProducts.h) of the active render settings.
+    _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
+                      &out);
+
     // Cryptomatte: per primId the ids of its rprim's path and material path,
     // and their manifests (GetRenderStats).
     // ponytail: rebuilt every frame these AOVs are bound; instances share
     // their prototype's id.
     std::vector<uint32_t> cryptomatte;
-    if (extra[vkr::Aovs::kCryptoObject] || extra[vkr::Aovs::kCryptoMaterial]) {
+    std::string objects, materials;
+    if (out.aovs[vkr::Aovs::kCryptoObject] || out.aovs[vkr::Aovs::kCryptoMaterial]) {
         HdRenderIndex *index = GetRenderIndex();
-        std::string objects, materials;
         std::unordered_set<SdfPath, SdfPath::Hash> seen;  // materials in the manifest
         auto entry = [](const std::string &list, const SdfPath &name, uint32_t id) {
             return TfStringPrintf("%s\"%s\":\"%08x\"", list.empty() ? "" : ",", name.GetText(), id);
@@ -315,29 +366,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         frame.cryptomatte = cryptomatte.data();
         frame.cryptomatteIds = uint32_t(cryptomatte.size() / 2);
-        static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests("{" + objects + "}",
-                                                                            "{" + materials + "}");
+        objects = "{" + objects + "}";
+        materials = "{" + materials + "}";
+        static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests(objects, materials);
     }
 
-    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
-    // none of the four is read back unless someone maps it.
-    auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
-    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
-    const bool lazy = interop != nullptr;
-    HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
-                                          static_cast<HdVkRenderBuffer *>(primId),
-                                          static_cast<HdVkRenderBuffer *>(instanceId)};
-    vkr::Renderer::Targets out;
-    if (!lazy) {
-        out.color = color ? color->Map() : nullptr;
-        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
-        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
-        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
-    }
-    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
-        out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
-        out.aovComponents[k] = extraComponents[k];
-    }
     bool shared = false;
     try {
         _renderer->Render(_scene, frame, out);
@@ -349,6 +382,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    try {
+        _products.Write(*_renderer, objects, materials);
+    } catch (const std::exception &e) {
+        TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
+    }
     for (int i = 0; i < 4; ++i) {
         if (!buffers[i]) {
             continue;

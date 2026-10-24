@@ -18,6 +18,15 @@
 // that the probes' or the dome's light fills in mesh.frag.
 // ponytail: hit surfaces count as facing the pixel (no normal test), and
 // their light is what the camera saw of them (view-dependent highlights too).
+//
+// Built with BITMASK too (Frame::ssgiBitmask): a visibility bitmask
+// instead of the highest horizon (Therrien et al. 2023, EEVEE's fast GI).
+// Each slice's hemisphere is 32 sectors; a sample hides the sectors
+// between the angles of its front and of its back (thickness behind it),
+// and only sectors no nearer sample hid yet take its light, weighted by
+// how much its surface faces the pixel. Light passes behind thin objects
+// and what one hides is lit by it alone. The sector grid is jittered per
+// slice within a sector (no banding, for TAA to average).
 
 layout(set = 0, binding = 0) uniform sampler2D sceneDepth;  // window depth [0, 1]
 
@@ -29,6 +38,7 @@ layout(push_constant) uniform GtaoParams {
     mat4 prevViewProj;  // the camera of the history (last frame's resolved image)
     vec4 ssgi;          // x: pixels of depth per output pixel (1, 2), y: steps per side, z: 1 = history valid,
                         // w: brightest radiance taken (fireflies: highlights a few pixels wide)
+    vec4 temporal;      // (gtao_denoise.frag's); y: 1 = thickness estimator, z: object thickness (BITMASK)
 #endif
 } pc;
 
@@ -54,10 +64,17 @@ vec3 PixelPos(ivec2 q)
     return WorldPos((vec2(q) + 0.5) * pc.params.zw, texelFetch(sceneDepth, q, 0).r);
 }
 
-// Interleaved gradient noise (Jimenez 2014), shifted per frame for TAA.
+layout(set = 0, binding = 4) uniform sampler2D blueNoise;  // 64 x 64 (Renderer's sample dimensions)
+
+// The blue noise turned by this sample's value (params.y < 1, Renderer's
+// sample dimensions), or interleaved gradient noise (Jimenez 2014) shifted
+// per frame by index params.y - 1.
 float Noise(vec2 p)
 {
-    p += 5.588238 * pc.params.y;
+    if (pc.params.y < 1.0) {
+        return fract(texelFetch(blueNoise, ivec2(p) & 63, 0).r + pc.params.y);
+    }
+    p += 5.588238 * (pc.params.y - 1.0);
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
@@ -76,6 +93,16 @@ float Arc(float h, float angleN, float cosN)
 {
     return (cosN + 2.0 * h * sin(angleN) - cos(2.0 * h - angleN)) / 4.0;
 }
+
+#ifdef BITMASK
+// The cosine-weighted share between angles a <= b (Arc measures from the
+// view vector, 0, either way).
+float Share(float a, float b, float angleN, float cosN)
+{
+    float fa = Arc(a, angleN, cosN), fb = Arc(b, angleN, cosN);
+    return a >= 0.0 || b <= 0.0 ? abs(fb - fa) : fa + fb;
+}
+#endif
 
 #ifdef SSGI
 // What the camera saw at world point p last frame (0 off its image).
@@ -142,6 +169,14 @@ void main()
     float falloffAdd = radius * (1.0 - 0.615) / falloffRange + 1.0;
     float minS = 1.3 / radiusPixels;  // never sample the center pixel
 
+#ifdef SSGI
+    // The thickness estimator (Frame::ssgiThickness): every step at least
+    // a pixel on, and nothing within a pixel's footprint of this surface's
+    // plane occludes it (depth precision at grazing angles).
+    bool estimator = pc.temporal.y > 0.0;
+#else
+    const bool estimator = false;
+#endif
     float sliceNoise = Noise(vec2(q) + 0.5);
     float stepNoise = Noise(vec2(q.yx) + 0.5 + vec2(17.0, 43.0));
     float visibility = 0.0;
@@ -162,10 +197,21 @@ void main()
         float lowCos0 = cos(angleN + HALF_PI), lowCos1 = cos(angleN - HALF_PI);
         float horizonCos0 = lowCos0, horizonCos1 = lowCos1;
         float sliceWeight = mix(projectedLength, 1.0, 0.05);
+        float lastPixels = 0.0;
+#ifdef BITMASK
+        uint occluded = 0u;
+        float hidden = 0.0;  // the cosine-weighted share of the occluded sectors
+        float jitter = fract(stepNoise + 0.618034 * float(slice));
+#endif
         for (int s = 0; s < steps; ++s) {
             float t = (float(s) + stepNoise) / float(steps);
             t = t * t + minS;  // denser near the center
-            ivec2 offset = ivec2(round(t * radiusPixels * omega));
+            float stepPixels = t * radiusPixels;
+            if (estimator) {
+                stepPixels = max(stepPixels, lastPixels + 1.0);
+                lastPixels = stepPixels;
+            }
+            ivec2 offset = ivec2(round(stepPixels * omega));
             for (int side = 0; side < 2; ++side) {
                 ivec2 sq = side == 0 ? q + offset : q - offset;
                 if (any(lessThan(sq, ivec2(0))) || any(greaterThanEqual(sq, size))) {
@@ -177,9 +223,46 @@ void main()
                 }
                 vec3 hitPos = WorldPos((vec2(sq) + 0.5) * pc.params.zw, sd);
                 vec3 delta = hitPos - p;
+                if (estimator && dot(delta, n) <= pixelSize * length(hitPos - pc.eye.xyz) / distanceToEye) {
+                    continue;
+                }
                 float len = length(delta);
                 float weight = clamp(len * falloffMul + falloffAdd, 0.0, 1.0);
                 float c = dot(delta / max(len, 1e-20), v);
+#ifdef BITMASK
+                if (weight <= 0.0) {
+                    continue;
+                }
+                // The angles of the sample's front and of its back, at
+                // least a pixel's footprint and the object thickness
+                // behind it, in the hemisphere around the normal.
+                float sgn = side == 0 ? 1.0 : -1.0;
+                vec3 toEye = normalize(pc.eye.xyz - hitPos);
+                float thickness = max(pc.temporal.z, pixelSize * length(hitPos - pc.eye.xyz) / distanceToEye);
+                vec3 back = hitPos - toEye * thickness;
+                float hf = clamp(sgn * acos(clamp(c, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
+                float hb = clamp(sgn * acos(clamp(dot(normalize(back - p), v), -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
+                float a0 = min(hf, hb), a1 = max(hf, hb);
+                uint first = uint(clamp(floor((a0 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
+                uint last = uint(clamp(ceil((a1 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
+                uint count = last > first ? last - first : 0u;
+                uint mask = count >= 32u ? 0xFFFFFFFFu : ((1u << count) - 1u) << first;
+                uint fresh = mask & ~occluded;
+                if (fresh != 0u) {
+                    float share = Share(angleN + a0, angleN + a1, angleN, cosN) * weight *
+                                  float(bitCount(fresh)) / float(bitCount(mask));
+                    hidden += share;
+                    // Light leaves the hit towards the pixel only from its
+                    // front: its normal (from depth) must face it.
+                    vec3 hn = normalize(cross(Tangent(hitPos, sq, ivec2(1, 0), size - 1),
+                                              Tangent(hitPos, sq, ivec2(0, 1), size - 1)));
+                    hn = dot(hn, toEye) < 0.0 ? -hn : hn;
+                    float facing = any(isnan(hn)) ? 1.0 : smoothstep(-0.1, 0.1, -dot(hn, delta / max(len, 1e-20)));
+                    light += HistoryAt(hitPos) * (sliceWeight * share * facing);
+                    occluded |= mask;
+                }
+                continue;
+#endif
 #ifdef SSGI
                 // The arc this step hides, lit by what it hit.
                 float before = side == 0 ? horizonCos0 : horizonCos1;
@@ -199,11 +282,15 @@ void main()
             }
         }
 
+#ifdef BITMASK
+        visibility += sliceWeight * max(Arc(angleN - HALF_PI, angleN, cosN) + Arc(angleN + HALF_PI, angleN, cosN) - hidden, 0.0);
+#else
         float h0 = -acos(clamp(horizonCos1, -1.0, 1.0));
         float h1 = acos(clamp(horizonCos0, -1.0, 1.0));
         h0 = angleN + clamp(h0 - angleN, -HALF_PI, HALF_PI);
         h1 = angleN + clamp(h1 - angleN, -HALF_PI, HALF_PI);
         visibility += sliceWeight * (Arc(h0, angleN, cosN) + Arc(h1, angleN, cosN));
+#endif
     }
 #ifdef SSGI
     light /= float(slices);

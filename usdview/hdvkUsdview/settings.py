@@ -9,26 +9,28 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 GROUPS = [
     ("Performance and geometry",
      "depthPrepass frustumCulling cullPixels lod lodBias subdivision maxRefineLevel displacement "
-     "displacementScale anisotropy shareFrame extraAovs"),
+     "displacementScale anisotropy shareFrame extraAovs renderProducts pipelineCache pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis ssgi ssgiSteps ssgiRadius ssgiResolution"),
+     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
+     "ssgiThickness ssgiBitmask directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
-     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),
+     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
+     "rtDisplacement"),
     ("Reflections",
-     "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes probeNormalize "
-     "planarReflections planarScale planarCount"),
+     "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
+     "probeNormalize planarReflections planarScale planarCount"),
     ("Materials",
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands "
+     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "
      "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Transparency", "translucency oit oitDepthWeight refraction refractionSamples holdouts"),
+    ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts refractionBackFaces multiRefraction refractionLayers holdoutAlpha"),
     ("Fog and volumes",
-     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize fogZUp "
+     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
-     "volumeResolution"),
+     "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",
-     "taa taaSamples objectMotion blendShapeMotion depthOfField motionBlur lensDistortion postProcess "
+     "taa taaSamples filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField motionBlur lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),
 ]
 

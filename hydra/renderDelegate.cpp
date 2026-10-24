@@ -9,6 +9,7 @@
 #include "mesh.h"
 #include "renderBuffer.h"
 #include "renderPass.h"
+#include "renderProducts.h"
 #include "renderer.h"
 #ifdef HDVK_VOLUMES
 #include "field.h"
@@ -34,6 +35,7 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
 TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 const std::vector<HdVkExtraAov> &HdVkExtraAovs()
@@ -57,6 +59,17 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
         {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
         {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
+        // Light splits as Karma's light path expressions name them. Eldr's
+        // "direct" is its lights' (distant, sphere, rect, disk); the dome,
+        // probes, reflections and GI count as indirect (Karma counts the
+        // dome as a light). Emission seen in reflections isn't tracked.
+        {k.combinedEmission, A::kEmission, HdFormatFloat32Vec3},
+        {k.directDiffuse, A::kDirectDiffuse, HdFormatFloat32Vec3},
+        {k.indirectDiffuse, A::kIndirectDiffuse, HdFormatFloat32Vec3},
+        {k.combinedDiffuse, A::kCombinedDiffuse, HdFormatFloat32Vec3},
+        {k.directGlossy, A::kDirectGlossy, HdFormatFloat32Vec3},
+        {k.indirectGlossy, A::kIndirectGlossy, HdFormatFloat32Vec3},
+        {k.combinedGlossy, A::kCombinedGlossy, HdFormatFloat32Vec3},
         {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
     };
@@ -80,7 +93,7 @@ const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeToke
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
                                    HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
-const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer,
+const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer, HdPrimTypeTokens->renderSettings,
 #ifdef HDVK_VOLUMES
                                    _openvdbAsset
 #endif
@@ -165,6 +178,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::Renderer::Frame frame{};
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
+    const auto &t2 = *HdVkRenderSettingsTokens2;
     // In usdview's order: pipeline, lighting, shadows, materials, motion,
     // image (volumes last).
     HdRenderSettingDescriptorList settings = {
@@ -175,6 +189,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
+        {"Prewarm Pipelines (compile toggles in the background)", t.pipelinePrewarm, VtValue(true)},
+        {"Pipeline Cache on Disk (save compiled shaders)", t.pipelineCache, VtValue(frame.pipelineCache)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
@@ -184,29 +200,35 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
         {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
+        {"Screen-Space Thickness Estimator (SSGI, SSR)", t2.ssgiThickness, VtValue(frame.ssgiThickness)},
+        {"SSGI Visibility Bitmask (light behind thin objects)", t2.ssgiBitmask, VtValue(frame.ssgiBitmask)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
-        {"Dome Sun Extraction (HDRI sun as a shadowed light)", t.domeSun, VtValue(frame.domeSun)},
-        {"Dome Sun Threshold (radiance)", t.domeSunThreshold, VtValue(frame.domeSunThreshold)},
+        {"Dome Sun Extraction (HDRI sun as a shadowed light)", t2.domeSun, VtValue(frame.domeSun)},
+        {"Dome Sun Threshold (radiance)", t2.domeSunThreshold, VtValue(frame.domeSunThreshold)},
+        {"Direct Light Clamp (radiance, 0 = off)", t2.directClamp, VtValue(frame.directClamp)},
+        {"Indirect Light Clamp (radiance, 0 = off)", t2.indirectClamp, VtValue(frame.indirectClamp)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
-        {"Light Textures (rect/disk inputs:texture:file)", t.lightTextures, VtValue(frame.lightTextures)},
+        {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
         {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
+        {"Denoised Glossy SSR (GGX rays, ratio estimator)", t2.ssrDenoise, VtValue(frame.ssrDenoise)},
         {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
         {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
         {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},
-        {"Authored Reflection Probes (primvars:hdvk:reflectionProbe)", t.authoredProbes, VtValue(frame.authoredProbes)},
-        {"Normalize Reflection Probes (by GI/SSGI light)", t.probeNormalize, VtValue(frame.probeNormalize)},
+        {"Authored Reflection Probes (primvars:hdvk:reflectionProbe)", t2.authoredProbes, VtValue(frame.authoredProbes)},
+        {"Normalize Reflection Probes (by GI/SSGI light)", t2.probeNormalize, VtValue(frame.probeNormalize)},
         {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
-        {"Planar Reflection Mirrors (most)", t.planarCount, VtValue(int(frame.planarCount))},
+        {"Planar Reflection Mirrors (most)", t2.planarCount, VtValue(int(frame.planarCount))},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -220,7 +242,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Fog Height (base)", t.fogHeight, VtValue(frame.fogHeight)},
         {"Fog Height Falloff (per unit, 0 = even)", t.fogHeightFalloff, VtValue(frame.fogHeightFalloff)},
         {"Fog Anisotropy (phase g, -1..1)", t.fogAnisotropy, VtValue(frame.fogAnisotropy)},
-        {"Fog Ambient from GI Probes (occluded dome light)", t.fogGiAmbient, VtValue(frame.fogGiAmbient)},
+        {"Fog Ambient from GI Probes (occluded dome light)", t2.fogGiAmbient, VtValue(frame.fogGiAmbient)},
         {"Fog Color (r g b)", t.fogColor,
          VtValue(TfStringPrintf("%g %g %g", frame.fogColor[0], frame.fogColor[1], frame.fogColor[2]))},
         {"Fog Max Distance (0 = scene)", t.fogMaxDistance, VtValue(frame.fogMaxDistance)},
@@ -242,6 +264,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Thin Film Iridescence", t.thinFilm, VtValue(frame.thinFilm)},
         {"Anisotropic Specular (brushed metal)", t.anisotropicSpecular, VtValue(frame.anisotropicSpecular)},
         {"Hair Shading (curves)", t.hairShading, VtValue(frame.hairShading)},
+        {"Textured Lobe Inputs (coat, sheen, film, IORs)", t.texturedLobes, VtValue(frame.texturedLobes)},
+        {"Textured Transmission and Subsurface Inputs", t.texturedTransmission, VtValue(frame.texturedTransmission)},
         {"Toon Shading (materials' eldr:toonBands)", t.toon, VtValue(frame.toon)},
         {"Toon Bands for Every Material (0 = off)", t.toonBands, VtValue(int(frame.toonBands))},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
@@ -253,19 +277,38 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
+        {"Translucent Holdouts Cut Alpha (by opacity)", t.holdoutAlpha, VtValue(frame.holdoutAlpha)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},
         {"Refraction Blur Samples (1-16)", t.refractionSamples, VtValue(int(frame.refractionSamples))},
+        {"Refraction Back Faces (water from below, TIR)", t.refractionBackFaces, VtValue(frame.refractionBackFaces)},
+        {"Refraction Through Layers (glass behind glass)", t.multiRefraction, VtValue(frame.multiRefraction)},
+        {"Refraction Layers (copies, 1-16)", t.refractionLayers, VtValue(int(frame.refractionLayers))},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
         {"TAA Samples (still camera)", t.taaSamples, VtValue(int(frame.taaSamples))},
+        {"Film Accumulation (still camera: plain average, no TAA clipping)", t.filmAccumulation,
+         VtValue(frame.filmAccumulation)},
+        {"Film Samples (still camera, final frames)", t.filmSamples, VtValue(int(frame.filmSamples))},
+        {"Film Pixel Filter Radius (Gaussian, pixels, 0-2)", t.filmFilterRadius, VtValue(frame.filmFilterRadius)},
+        {"Final Quality (offline: also when enableInteractive is false)", t.finalQuality,
+         VtValue(frame.finalQuality)},
+        {"Sample Dimensions (blue noise per effect; off: IGN)", t.sampleDimensions, VtValue(frame.sampleDimensions)},
+        {"Interactive Noise Loop (samples while moving, 1-256)", t.interactiveSamples,
+         VtValue(int(frame.interactiveSamples))},
+        {"Adaptive Sampling Noise Threshold (0 = off)", t.adaptiveThreshold, VtValue(frame.adaptiveThreshold)},
+        {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
+         VtValue(int(frame.adaptiveMinSamples))},
+        {"GI Preconverge (film waits for fresh probes)", t.giPreconverge, VtValue(frame.giPreconverge)},
+        {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
+        {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
@@ -283,6 +326,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
         {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
         {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
+        {"Volumes under Transparency (glass dims and refracts them)", t.volumeUnderTransparency,
+         VtValue(volume.underTransparency)},
+        {"Volume Shadows (volumes shadow surfaces from the sun)", t.volumeShadows, VtValue(volume.shadows)},
     });
 #endif
     return settings;
@@ -367,6 +413,10 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
     if (typeId == HdPrimTypeTokens->renderBuffer) {
         return new HdVkRenderBuffer(bprimId);
     }
+    if (typeId == HdPrimTypeTokens->renderSettings) {
+        _renderSettings.push_back(new HdVkRenderSettings(bprimId));
+        return _renderSettings.back();
+    }
 #ifdef HDVK_VOLUMES
     if (typeId == _openvdbAsset) {
         return new HdVkField(bprimId);
@@ -380,7 +430,21 @@ HdBprim *HdVkRenderDelegate::CreateFallbackBprim(TfToken const &typeId)
     return CreateBprim(typeId, SdfPath::EmptyPath());
 }
 
-void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim) { delete bprim; }
+void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim)
+{
+    _renderSettings.erase(std::remove(_renderSettings.begin(), _renderSettings.end(), bprim), _renderSettings.end());
+    delete bprim;
+}
+
+const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
+{
+    for (const HdRenderSettings *settings : _renderSettings) {
+        if (settings->IsActive()) {
+            return settings;
+        }
+    }
+    return nullptr;
+}
 
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
