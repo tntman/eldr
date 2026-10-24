@@ -25,5 +25,7 @@ void main()
         }
     }
     barrier();
-    atomicAdd(bins[gl_LocalInvocationIndex], localBins[gl_LocalInvocationIndex]);
+    if (localBins[gl_LocalInvocationIndex] != 0u) {
+        atomicAdd(bins[gl_LocalInvocationIndex], localBins[gl_LocalInvocationIndex]);
+    }
 }

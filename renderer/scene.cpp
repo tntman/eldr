@@ -1,6 +1,10 @@
 ﻿#include "scene.h"
 
+#include "vkmath.h"
+#include "lod.h"
+
 #include <algorithm>
+#include <chrono>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -31,12 +35,34 @@ struct GpuMaterial {
     // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
     uint32_t program[4];
     float specular[4];  // Material::specular
+    // Lobes (shaders/brdf.glsl).
+    float specularColor[4];  // specular workflow F0, w = 1 when used
+    float coat[4];           // weight, roughness, F0
+    float coatColor[4];
+    float sheen[4];          // weight, roughness
+    float sheenColor[4];
+    float thinFilm[4];       // weight, thickness (nm), ior
+    float anisotropy[4];     // amount, rotation (turns), 1: OpenPBR's mapping
+    float toon[4];           // bands, softness
+    float transmission[4];  // Material::transmissionColor, transmission
+    float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
+    float subsurface[4];        // Material::subsurfaceColor, subsurface
+    float subsurfaceRadius[4];  // Material::subsurfaceRadius
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
+struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
+    float params[4];      // Material::displacement, displacementBound
+    GpuTexRef tex;
+};
+struct GpuLod {           // mirror of Lod in shaders/cull.comp
+    uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
+    uint32_t regions[4];  // where level 1 fills back from; levels 2, 3: the second range's start and end
+    float errors[4];      // levels 1..3, relative to the bounding radius
+};
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
     float color[4];      // distant: irradiance; else surface radiance
-    float axis[4];       // emission axis; w: sphere radius
+    float axis[4];       // emission axis; w: sphere/cylinder radius, distant: tan of the sun's angular radius
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
@@ -91,12 +117,17 @@ struct VertexKey {
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
+    // Eight bytes a step (FNV-1a byte by byte was a good part of a big
+    // scene's upload time).
     size_t operator()(const VertexKey &k) const
     {
-        uint64_t h = 1469598103934665603ull;  // FNV-1a
+        uint64_t h = 1469598103934665603ull;
         const auto *p = reinterpret_cast<const uint8_t *>(&k);
-        for (size_t i = 0; i < sizeof(VertexKey); ++i) {
-            h = (h ^ p[i]) * 1099511628211ull;
+        for (size_t i = 0; i < sizeof(VertexKey); i += 8) {
+            uint64_t w = 0;
+            std::memcpy(&w, p + i, std::min<size_t>(8, sizeof(VertexKey) - i));
+            h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+            h ^= h >> 29;
         }
         return size_t(h);
     }
@@ -116,6 +147,14 @@ uint16_t ToHalf(float f)
         return uint16_t(sign | 0x7C00u);
     }
     return uint16_t(sign | ((uint32_t(exponent) << 10) + (((x & 0x7FFFFFu) + 0x1000u) >> 13)));
+}
+
+// ToHalf's inverse (which has no tiny values).
+float FromHalf(uint16_t h)
+{
+    const int exponent = h >> 10 & 0x1F;
+    const float m = exponent == 0 ? 0.0f : std::ldexp(float((h & 0x3FF) | 0x400), exponent - 25);
+    return h & 0x8000 ? -m : m;
 }
 
 uint32_t PackUnorm16(float a, float b)
@@ -220,9 +259,12 @@ Scene::~Scene()
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
                           &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices,
-                          &_programCode, &_programConstants, &_primvarTable, &_primvarData}) {
+                          &_programCode, &_programConstants, &_primvarTable, &_primvarData, &_volumeTable,
+                          &_volumeGrids}) {
             _device->Destroy(*b);
         }
+        _device->Destroy(_displacements);
+        _device->Destroy(_lodTable);
         _DestroyEnvironment();
     }
 }
@@ -396,7 +438,11 @@ void Scene::RemoveMesh(Mesh *mesh)
         _blendAlloc.Free(mesh->_blendBase, mesh->_blendSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
         _primvarVertexAlloc.Free(mesh->_primvarVertexOffset, mesh->_primvarVertexCount);
+        _indexAlloc.Free(mesh->_lodFirstIndex, mesh->_lodIndexCount);
         _FreeInstances(*mesh);
+        for (PendingLods &p : _pendingLods) {
+            p.mesh = p.mesh == mesh ? nullptr : p.mesh;  // finishes, then is dropped
+        }
     }
     const size_t slot = mesh->_slot;
     _RemoveSlot(_meshes, mesh);
@@ -427,6 +473,18 @@ Dome *Scene::AddDome()
 void Scene::RemoveDome(Dome *dome)
 {
     _RemoveSlot(_domes, dome);
+}
+
+Volume *Scene::AddVolume()
+{
+    _volumes.push_back(std::make_unique<Volume>());
+    _volumes.back()->_slot = _volumes.size() - 1;
+    return _volumes.back().get();
+}
+
+void Scene::RemoveVolume(Volume *volume)
+{
+    _RemoveSlot(_volumes, volume);
 }
 
 VkDeviceSize Scene::_Stage(const void *data, VkDeviceSize size)
@@ -513,7 +571,10 @@ void Scene::_UploadGeometry(Mesh &m)
     _skinAlloc.Free(m._skinOffset, m._skinCount);
     _blendAlloc.Free(m._blendBase, m._blendSlots);
     _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
-    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = 0;
+    _indexAlloc.Free(m._lodFirstIndex, m._lodIndexCount);
+    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = m._lodIndexCount = 0;
+    m._lods.clear();
+    ++m._lodGeneration;  // levels still building for the last upload don't fit
     m._jointBounds.clear();
     m.geometryDirty = false;
     static std::atomic<uint64_t> geometryVersions{0};
@@ -536,6 +597,39 @@ void Scene::_UploadGeometry(Mesh &m)
                        std::all_of(m.indices.begin(), m.indices.end(), [&](uint32_t i) { return i < elements; });
     if (!valid || corners == 0) {
         return;
+    }
+    // Planar reflections: is the mesh flat? Its first proper triangle,
+    // and every point within a thousandth of its size of that plane.
+    m._flat = false;
+    if (!skinned && m.blendRanges.empty()) {
+        auto point = [&](size_t corner) {
+            const size_t e = indexed ? m.indices[corner] : corner;
+            return Vec3{m.points[e * 3], m.points[e * 3 + 1], m.points[e * 3 + 2]};
+        };
+        float lo[3] = {m.points[0], m.points[1], m.points[2]}, hi[3] = {lo[0], lo[1], lo[2]};
+        for (size_t i = 0; i < m.points.size(); ++i) {
+            lo[i % 3] = std::min(lo[i % 3], m.points[i]);
+            hi[i % 3] = std::max(hi[i % 3], m.points[i]);
+        }
+        const float size = Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]});
+        for (size_t t = 0; t < corners && !m._flat; t += 3) {
+            const Vec3 a = point(t), b = point(t + 1), c = point(t + 2);
+            const Vec3 n = Cross(b - a, c - a);
+            if (Length(n) > 1e-6f * size * size) {
+                const Vec3 u = Normalize(n);
+                m._flat = true;
+                for (size_t k = 0; k < m.points.size() && m._flat; k += 3) {
+                    m._flat = std::abs(Dot(Vec3{m.points[k], m.points[k + 1], m.points[k + 2]} - a, u)) <= 1e-3f * size;
+                }
+                const Vec3 tri[3] = {a, b, c};
+                for (int k = 0; k < 3; ++k) {
+                    m._flatTriangle[k * 3] = tri[k].x;
+                    m._flatTriangle[k * 3 + 1] = tri[k].y;
+                    m._flatTriangle[k * 3 + 2] = tri[k].z;
+                }
+                break;
+            }
+        }
     }
     // Vertex-rate primvars: the first that fit in four components.
     m._primvarComponents.assign(m.primvars.size(), kNone);
@@ -677,6 +771,79 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = vertexCount;
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
+    // Levels of detail of heavy meshes (lod.h), built on other threads; a
+    // later Commit stores them (the mesh draws whole until then).
+    if (indexCount / 3 >= kLodMinTriangles) {
+        // Position, then the shading attributes as distances (see BuildLods):
+        // normals and colours relative to the bounding radius (a turn of
+        // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
+        // by how far they slide the texture over the surface (its area per
+        // uv area).
+        const float radius = 0.5f * Length(Vec3{m._boundsMax[0] - m._boundsMin[0], m._boundsMax[1] - m._boundsMin[1],
+                                                m._boundsMax[2] - m._boundsMin[2]});
+        double area = 0.0, uvArea = 0.0;
+        for (size_t t = 0; !m.uvs.empty() && t + 2 < indices.size(); t += 3) {
+            const Vertex &a = vertices[indices[t]], &b = vertices[indices[t + 1]], &c = vertices[indices[t + 2]];
+            const Vec3 pa{a.position[0], a.position[1], a.position[2]};
+            area += Length(Cross(Vec3{b.position[0], b.position[1], b.position[2]} - pa,
+                                 Vec3{c.position[0], c.position[1], c.position[2]} - pa));
+            uvArea += std::abs((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]));
+        }
+        const float uvScale = uvArea > 0.0 ? float(std::sqrt(area / uvArea)) : 0.0f;
+        const size_t stride = 3 + (m.normals.empty() ? 0 : 3) + (uvScale > 0.0f ? 2 : 0) + (m.colors.empty() ? 0 : 3);
+        std::vector<float> lodVertices(vertices.size() * stride);
+        for (size_t v = 0; v < vertices.size(); ++v) {
+            float *out = std::copy_n(vertices[v].position, 3, &lodVertices[v * stride]);
+            for (int k = 0; k < 3 && !m.normals.empty(); ++k) {
+                *out++ = vertices[v].normal[k] * radius * kLodNormalWeight;
+            }
+            for (int k = 0; k < 2 && uvScale > 0.0f; ++k) {
+                *out++ = vertices[v].uv[k] * uvScale;
+            }
+            for (int k = 0; k < 3 && !m.colors.empty(); ++k) {
+                *out++ = FromHalf(vertices[v].color[k]) * radius * kLodColorWeight;
+            }
+        }
+        // Skinned: each vertex's influences (joint, weight), m.influences each.
+        std::vector<std::pair<uint32_t, float>> influences;
+        for (size_t v = 0; skinned && v < vertices.size(); ++v) {
+            for (uint32_t k = 0; k < m.influences; ++k) {
+                const SkinVertex &sv = skin[v * (m.influences == 8 ? 2 : 1) + k / 4];
+                const uint32_t pair = sv.weights[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu;
+                influences.push_back({sv.joints[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu, float(pair) / 65535.0f});
+            }
+        }
+        const uint32_t n = m.influences;
+        _pendingLods.push_back(
+            {&m, m._lodGeneration,
+             std::async(std::launch::async, [lodVertices = std::move(lodVertices), stride, indices,
+                                             influences = std::move(influences), n] {
+                 // Half the L1 distance of two vertices' joint weights.
+                 auto difference = [&](uint32_t a, uint32_t b) {
+                     float d = 0.0f;
+                     for (uint32_t i = 0; i < n; ++i) {
+                         const auto [joint, weight] = influences[size_t(a) * n + i];
+                         float other = 0.0f;
+                         for (uint32_t k = 0; k < n; ++k) {
+                             other += influences[size_t(b) * n + k].first == joint ? influences[size_t(b) * n + k].second
+                                                                                   : 0.0f;
+                         }
+                         d += std::abs(weight - other);
+                     }
+                     for (uint32_t k = 0; k < n; ++k) {  // b's joints a lacks
+                         const auto [joint, weight] = influences[size_t(b) * n + k];
+                         bool shared = false;
+                         for (uint32_t i = 0; i < n; ++i) {
+                             shared = shared || influences[size_t(a) * n + i].first == joint;
+                         }
+                         d += shared ? 0.0f : weight;
+                     }
+                     return 0.5f * d;
+                 };
+                 return BuildLods(lodVertices.data(), stride, lodVertices.size() / stride, indices, kMaxLods, kLodMaxError,
+                                  influences.empty() ? std::function<float(uint32_t, uint32_t)>() : difference);
+             })});
+    }
     if (packed > 0) {
         while (!_primvarVertexAlloc.Allocate(vertexCount, &m._primvarVertexOffset)) {
             _EnsureCapacity(_primvarVertices, _primvarVertexAlloc, vertexCount, 4 * sizeof(float),
@@ -720,6 +887,48 @@ void Scene::_UploadGeometry(Mesh &m)
     }
 }
 
+// A mesh's levels of detail (BuildLods' output): their triangles after its
+// own in the index pool.
+void Scene::_StoreLods(Mesh &m, std::vector<LodLevel> levels)
+{
+    std::vector<uint32_t> indices;
+    for (const LodLevel &level : levels) {
+        m._lods.push_back({uint32_t(indices.size()), uint32_t(level.indices.size()), level.error});
+        indices.insert(indices.end(), level.indices.begin(), level.indices.end());
+    }
+    m._lodIndexCount = uint32_t(indices.size());
+    while (!_indexAlloc.Allocate(m._lodIndexCount, &m._lodFirstIndex)) {
+        _EnsureCapacity(_indices, _indexAlloc, m._lodIndexCount, sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                        false);
+    }
+    for (Mesh::Lod &lod : m._lods) {
+        lod.firstIndex += m._lodFirstIndex;
+    }
+    if (!indices.empty()) {
+        _copies.push_back({_indices.buffer, VkDeviceSize(m._lodFirstIndex) * sizeof(uint32_t),
+                           _Stage(indices.data(), indices.size() * sizeof(uint32_t)),
+                           indices.size() * sizeof(uint32_t)});
+    }
+    _ReserveLodInstances(m);
+}
+
+// Levels 2 and 3 of detail fill a range of the visible lists of their own
+// (Gpu::lods): instance slots that stay invalid.
+// ponytail: past kLodMaxInstances instances a mesh keeps one coarser level
+// (no second range), so huge instancing doesn't double its pools.
+void Scene::_ReserveLodInstances(Mesh &m)
+{
+    const uint32_t slots = m._lods.size() > 1 && m._instanceCount <= kLodMaxInstances ? m._instanceCount : 0;
+    if (slots != m._lodInstanceCount) {
+        _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);
+        while (!_instanceAlloc.Allocate(slots, &m._lodInstanceBase)) {
+            _EnsureCapacity(_instances, _instanceAlloc, slots, sizeof(Instance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                            true);
+        }
+        m._lodInstanceCount = slots;
+    }
+}
+
 void Scene::_FreeInstances(Mesh &m)
 {
     if (m._instanceCount > 0) {
@@ -728,6 +937,8 @@ void Scene::_FreeInstances(Mesh &m)
                           VkDeviceSize(m._instanceCount) * sizeof(Instance)});
     }
     m._instanceCount = 0;
+    _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);  // never written: still invalid
+    m._lodInstanceCount = 0;
 }
 
 // Rewrites only this mesh's range of the instance pool; reallocates it when
@@ -747,6 +958,7 @@ void Scene::_UploadInstances(Mesh &m)
         m._instanceBase = base;
         m._instanceCount = count;
     }
+    _ReserveLodInstances(m);
     if (count == 0) {
         return;
     }
@@ -1167,6 +1379,19 @@ void Scene::Commit()
         _gpu.moved = _gpu.moved || (joints && !geometry);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
+    // Levels of detail that finished building, for meshes they still fit.
+    for (auto it = _pendingLods.begin(); it != _pendingLods.end();) {
+        if (it->levels.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            ++it;
+            continue;
+        }
+        std::vector<LodLevel> levels = it->levels.get();
+        if (it->mesh && it->generation == it->mesh->_lodGeneration) {
+            _StoreLods(*it->mesh, std::move(levels));
+            changed = true;
+        }
+        it = _pendingLods.erase(it);
+    }
     _Flush();
 
     // Per-mesh tables, materials and textures are small: rebuilt every
@@ -1215,6 +1440,32 @@ void Scene::Commit()
                 g.tex[i] = texRef(*refs[i]);
             }
             std::copy(m.specular, m.specular + 3, g.specular);
+            std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
+            g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.coat[0] = m.coat;
+            g.coat[1] = m.coatRoughness;
+            g.coat[2] = m.coatF0;
+            std::copy(m.coatColor, m.coatColor + 3, g.coatColor);
+            g.sheen[0] = m.sheen;
+            g.sheen[1] = m.sheenRoughness;
+            std::copy(m.sheenColor, m.sheenColor + 3, g.sheenColor);
+            g.thinFilm[0] = m.thinFilm;
+            g.thinFilm[1] = m.thinFilmThickness;
+            g.thinFilm[2] = m.thinFilmIor;
+            g.anisotropy[0] = m.anisotropy;
+            g.anisotropy[1] = m.anisotropyRotation;
+            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
+            g.toon[0] = m.toonBands;
+            g.toon[1] = m.toonSoftness;
+            std::copy(m.transmissionColor, m.transmissionColor + 3, g.transmission);
+            g.transmission[3] = m.transmission;
+            g.refraction[0] = m.ior;
+            g.refraction[1] = m.thinWalled ? 1.0f : 0.0f;
+            g.refraction[2] = m.transmissionDepth;
+            g.refraction[3] = m.opacityRefracts ? 1.0f : 0.0f;
+            std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
+            g.subsurface[3] = m.subsurface;
+            std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
             const MaterialProgram &p = m.program;
             if (!p.Empty() && p.Valid()) {
                 g.program[0] = uint32_t(programCode.size() / 4);
@@ -1236,9 +1487,13 @@ void Scene::Commit()
     };
 
     const size_t slots = _meshes.size();
+    size_t commandSlots = slots;  // levels of detail have commands after the meshes'
+    for (const auto &m : _meshes) {
+        commandSlots += m->_lods.size();
+    }
     const uint32_t capacity = _instanceAlloc.Capacity();
     _device->Reserve(_draws, slots * sizeof(DrawInfo), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    _device->Reserve(_commandTemplate, slots * sizeof(VkDrawIndexedIndirectCommand),
+    _device->Reserve(_commandTemplate, commandSlots * sizeof(VkDrawIndexedIndirectCommand),
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
@@ -1250,6 +1505,10 @@ void Scene::Commit()
     _gpu.translucentVariant.clear();
     _gpu.translucentCenters.clear();
     _gpu.slotGeometry.resize(slots);
+    _gpu.refraction = false;
+    _gpu.holdouts = false;
+    _gpu.subsurface.clear();
+    _gpu.subsurfaceVariant.clear();
     float lo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
@@ -1264,14 +1523,18 @@ void Scene::Commit()
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
+        d.boundsMax[3] = drawable && m.material ? m.material->displacementBound : 0.0f;
         std::copy(m.color, m.color + 3, d.color);
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
+        d.hair = m.hair ? 1 : 0;
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
-                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0);
+                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
+                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
+                                (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;
@@ -1308,17 +1571,24 @@ void Scene::Commit()
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture ||
+                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->transmission > 0 ||
                     (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
+            _gpu.refraction = _gpu.refraction || m.material->transmission > 0 || m.material->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
+        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->subsurface > 0) {
+            _gpu.subsurface.push_back(uint32_t(slot));
+            _gpu.subsurfaceVariant.push_back(variant >> 2);
+        }
         kind[slot] |= variant;
         d.primId = m.primId;
+        d.holdout = m.holdout ? 1u : 0u;
+        _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
         d.visible = drawable ? 1u : 0u;
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
@@ -1352,14 +1622,47 @@ void Scene::Commit()
     // ponytail: a single slot over the budget stays one call; splitting it
     // needs instance ranges.
     constexpr double kChunkTriangles = 5e8;
+    // Levels of detail (cull.comp picks one per instance): commands drawn
+    // with their mesh's pipeline, counted at most all its instances.
+    std::vector<GpuLod> lods(std::max<size_t>(slots, 1), GpuLod{});
+    std::vector<double> weight(commandSlots);  // triangles a slot draws at most
+    kind.resize(commandSlots);
+    for (size_t slot = 0, next = slots; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        weight[slot] = double(drawn[slot]) * double(m._indexCount / 3);
+        GpuLod &g = lods[slot];
+        g.slots[0] = uint32_t(next);
+        // Translucent meshes draw per slot, without levels; displaced ones
+        // keep their density (the levels' errors don't see displacement).
+        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ? 0
+                     : m._lodInstanceCount > 0                           ? uint32_t(m._lods.size())
+                                                                         : std::min<uint32_t>(uint32_t(m._lods.size()), 1);
+        const uint32_t firsts[3] = {m._instanceBase + m._instanceCount, m._lodInstanceBase,
+                                    m._lodInstanceBase + m._lodInstanceCount};
+        std::copy(firsts, firsts + 3, g.regions);
+        for (size_t k = 0; k < m._lods.size(); ++k, ++next) {
+            const Mesh::Lod &lod = m._lods[k];
+            templates[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
+            kind[next] = kind[slot];
+            weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
+            g.errors[k] = lod.error;
+        }
+    }
+    _device->Reserve(_lodTable, lods.size() * sizeof(GpuLod), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(lods.begin(), lods.end(), static_cast<GpuLod *>(_lodTable.mapped));
+    _gpu.lods = _lodTable.buffer;
+    _gpu.meshCount = uint32_t(slots);
+
     _gpu.drawChunks.assign(1, 0);
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
     _gpu.instanceCount = _gpu.triangleCount = 0;
     double triangles = 0;
-    for (size_t slot = 0; slot < slots; ++slot) {
-        const double t = double(drawn[slot]) * double(_meshes[slot]->_indexCount / 3);
-        _gpu.instanceCount += drawn[slot];
-        _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
+    for (size_t slot = 0; slot < commandSlots; ++slot) {
+        const double t = weight[slot];
+        if (slot < slots) {
+            _gpu.instanceCount += drawn[slot];
+            _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
+        }
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
@@ -1371,7 +1674,7 @@ void Scene::Commit()
         _gpu.chunkKind.back() = kind[slot];
         triangles += t;
     }
-    _gpu.drawChunks.push_back(uint32_t(slots));
+    _gpu.drawChunks.push_back(uint32_t(commandSlots));
 
     // Visibility edits change what shadows draw without any upload.
     if (changed || drawn != _lastDrawn) {
@@ -1382,6 +1685,60 @@ void Scene::Commit()
     _gpu.hasBounds = anyDrawable;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
+
+    // Displacement, per material slot.
+    std::vector<GpuDisplacement> displacements(std::max<size_t>(materials.size(), 1), GpuDisplacement{});
+    _gpu.displaced = false;
+    for (const auto &[material, slot] : materialSlots) {
+        GpuDisplacement &g = displacements[slot];
+        g.params[0] = material->displacement;
+        g.params[1] = material->displacementBound;
+        g.tex = texRef(material->displacementTex);
+        _gpu.displaced = _gpu.displaced || material->displacementBound > 0;
+    }
+    _device->Reserve(_displacements, displacements.size() * sizeof(GpuDisplacement),
+                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
+    _gpu.displacements = _displacements.buffer;
+    // Planar reflections' mirror: a flagged flat mesh, else the largest
+    // glossy one (its world bounds' diagonal) spanning a third of the scene.
+    // ponytail: one mirror, from its first instance.
+    _gpu.mirrorSlot = kNone;
+    const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
+    float mirrorScore = 0.0f;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        const Mesh &m = *_meshes[slot];
+        if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
+            m.transforms.size() < 16) {
+            continue;
+        }
+        const Material *mat = m.material.get();
+        const bool glossy = mat && mat->roughness <= 0.3f && !mat->roughnessTex.texture &&
+                            !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
+        const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
+                                       m._worldMax[2] - m._worldMin[2]});
+        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
+        if (score <= mirrorScore) {
+            continue;
+        }
+        const float *x = m.transforms.data();  // row-vector order
+        Vec3 p[3];
+        for (int k = 0; k < 3; ++k) {
+            const float *t = &m._flatTriangle[k * 3];
+            p[k] = {t[0] * x[0] + t[1] * x[4] + t[2] * x[8] + x[12], t[0] * x[1] + t[1] * x[5] + t[2] * x[9] + x[13],
+                    t[0] * x[2] + t[1] * x[6] + t[2] * x[10] + x[14]};
+        }
+        const Vec3 n = Normalize(Cross(p[1] - p[0], p[2] - p[0]));
+        if (Dot(n, n) < 0.5f) {
+            continue;
+        }
+        mirrorScore = score;
+        _gpu.mirrorSlot = uint32_t(slot);
+        const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
+        std::copy(plane, plane + 4, _gpu.mirrorPlane);
+        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
+        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+    }
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -1413,6 +1770,7 @@ void Scene::Commit()
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
     _gpu.shadowLight = kNone;
+    _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     for (const bool distant : {true, false}) {  // distant lights first
         for (const auto &l : _lights) {
@@ -1426,6 +1784,7 @@ void Scene::Commit()
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
                     _gpu.shadowLight = lightCount;
+                    _gpu.shadowAngle = l->angle;
                     std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
@@ -1435,13 +1794,14 @@ void Scene::Commit()
                 continue;
             }
             const bool sphere = l->type == Light::Type::Sphere;
+            const bool cylinder = l->type == Light::Type::Cylinder;
             std::copy(l->position, l->position + 3, g.position);
-            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : 3.0f;
+            g.position[3] = sphere ? 1.0f : l->type == Light::Type::Rect ? 2.0f : cylinder ? 4.0f : 3.0f;
             std::copy(l->radiance, l->radiance + 3, g.color);
             std::copy(l->direction, l->direction + 3, g.axis);
-            g.axis[3] = sphere ? l->radius : 0.0f;
+            g.axis[3] = sphere || cylinder ? l->radius : 0.0f;
             std::copy(l->halfWidth, l->halfWidth + 3, g.halfWidth);
-            g.halfWidth[3] = sphere && !l->point ? l->radius : 0.0f;
+            g.halfWidth[3] = (sphere || cylinder) && !l->point ? l->radius : 0.0f;
             std::copy(l->halfHeight, l->halfHeight + 3, g.halfHeight);
             const float cone = l->coneAngle * 0.0174532925f;
             g.shaping[0] = cone * (1.0f - std::clamp(l->coneSoftness, 0.0f, 1.0f));
@@ -1461,6 +1821,14 @@ void Scene::Commit()
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;
                     c.size = l->point ? 0.0f : l->radius;
+                } else if (cylinder) {
+                    // Seen from the side it is a 2r x length rect; casters
+                    // can come within r / sqrt 2 of the center (radius 0).
+                    const float h = std::sqrt(l->halfWidth[0] * l->halfWidth[0] + l->halfWidth[1] * l->halfWidth[1] +
+                                              l->halfWidth[2] * l->halfWidth[2]);
+                    c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
+                    c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
+                    c.extent = h;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];
@@ -1549,6 +1917,24 @@ void Scene::Commit()
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
     }
 
+    // What lighting depends on besides geometry (FNV-1a, a word at a time).
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t bytes) {
+        const auto *b = static_cast<const uint8_t *>(data);
+        for (size_t i = 0; i < bytes; i += 8) {
+            uint64_t word = 0;
+            std::memcpy(&word, b + i, std::min<size_t>(8, bytes - i));
+            hash = (hash ^ word) * 1099511628211ull;
+        }
+    };
+    mix(lights, (lightCount + localLightCount) * sizeof(GpuLight));
+    mix(materials.data(), materials.size() * sizeof(GpuMaterial));
+    mix(&_gpu.environment, sizeof(_gpu.environment));
+    mix(_gpu.environmentRadiance, sizeof(_gpu.environmentRadiance));
+    mix(_gpu.environmentWorldToLocal, sizeof(_gpu.environmentWorldToLocal));
+    _gpu.lightingHash = hash;
+
+    _CommitVolumes();
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;
     _gpu.instances = _instances.buffer;
@@ -1571,7 +1957,8 @@ void Scene::Commit()
     _gpu.jointBounds = _jointBoundsPool.buffer;
     _gpu.blendOffsets = _blendOffsets.buffer;
     _gpu.blendWeights = _blendWeights.buffer;
-    _gpu.drawCount = uint32_t(slots);
+    _gpu.blendWeightsBytes = _blendWeights.size;
+    _gpu.drawCount = uint32_t(commandSlots);
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;

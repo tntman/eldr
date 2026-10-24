@@ -4,6 +4,7 @@
 #include "material.h"
 #include "renderDelegate.h"
 #include "scene.h"
+#include "subdivision.h"
 
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
@@ -22,7 +23,12 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 namespace {
 
-TF_DEFINE_PRIVATE_TOKENS(_tokens, (st));
+TF_DEFINE_PRIVATE_TOKENS(
+    _tokens,
+    (st)
+    ((riMatte, "ri:attributes:Ri:Matte"))
+    ((karmaHoldout, "karma:object:holdoutmode"))
+    ((planarReflection, "hdvk:planarReflection")));
 
 // Finds a primvar's interpolation; false if the prim doesn't have it. An
 // empty name finds the first texture coordinate (float2) primvar.
@@ -43,6 +49,28 @@ bool FindPrimvar(HdSceneDelegate *sd, SdfPath const &id, TfToken const &name,
     }
     return false;
 }
+
+} // namespace
+
+bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
+{
+    for (const TfToken &name : {_tokens->riMatte, _tokens->karmaHoldout}) {
+        HdInterpolation interp;
+        if (!FindPrimvar(sceneDelegate, id, name, &interp)) {
+            continue;
+        }
+        const VtValue value = sceneDelegate->Get(id, name);
+        const VtValue scalar = value.IsArrayValued() && value.GetArraySize() > 0
+            ? VtValue::Cast<VtIntArray>(value) : VtValue::Cast<int>(value);
+        if (scalar.IsHolding<int>() ? scalar.UncheckedGet<int>() != 0
+                                    : scalar.IsHolding<VtIntArray>() && scalar.UncheckedGet<VtIntArray>()[0] != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+namespace {
 
 // Expands a primvar of any interpolation to one value per triangle corner.
 // Returns false (and leaves `out` empty) if the data doesn't fit the topology.
@@ -143,7 +171,8 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyTopology | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
-           HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex;
+           HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
+           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags;
 }
 
 void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -155,8 +184,7 @@ void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderP
     }
 }
 
-// ponytail: renders the subdivision cage, reads only the "st" primvar for
-// texcoords.
+// ponytail: reads only the "st" primvar for texcoords.
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
@@ -168,13 +196,22 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // Skinned meshes get points and topology dirtied with every new pose
     // (UsdSkelImaging's own points come from the pose), while HdVk's are
     // the rest points: re-flatten only on a real change.
-    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id)) {
+    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id) || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) {
         HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
+        topology.SetSubdivTags(GetSubdivTags(sceneDelegate));  // creases, corners, boundary rules
         if (!(topology == _topology)) {
             _topology = topology;
             HdMeshUtil(&_topology, id).ComputeTriangleIndices(&_triangles, &_primitiveParams);
             geometryDirty = true;
         }
+    }
+    // Subdivision surfaces: refined to the display style's level (usdview's
+    // Complexity) when flattened. The render delegate re-dirties the
+    // display style when the subdivision settings change.
+    if (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id)) {
+        const int level = _RefineLevel(sceneDelegate);
+        geometryDirty |= level != _refineLevel && _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
+        _refineLevel = level;
     }
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
         const VtValue value = GetPoints(sceneDelegate);
@@ -288,7 +325,16 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         }
         _programPrimvarNames = programNames;
     }
-    if (geometryDirty) {
+    // Planar reflections: primvars:hdvk:planarReflection (bool or int)
+    // makes this mesh the mirror.
+    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->planarReflection)) {
+        const VtValue flag = sceneDelegate->Get(id, _tokens->planarReflection);
+        m.planarReflection = flag.IsHolding<bool>() ? flag.UncheckedGet<bool>()
+                           : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
+                                                    : false;
+    }
+    // Subdivision surfaces flatten their refined mesh (subdivision.cpp).
+    if (geometryDirty && !_FlattenRefined()) {
         _Flatten();
         _SplitSubsets();
     }
@@ -334,12 +380,16 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _UpdateVisibility(sceneDelegate, dirtyBits);
         m.visible = IsVisible();
     }
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        m.holdout = HdVkHoldout(sceneDelegate, id);
+    }
 
     // Sprims sync before rprims, so the material already exists here.
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
+        SetMaterialId(sceneDelegate->GetMaterialId(id));  // Cryptomatte's material ids
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(
-                HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
+                HdPrimTypeTokens->material, GetMaterialId()));
         m.material = material ? material->Get() : nullptr;
     }
     _SyncSubsets(sceneDelegate);
@@ -433,6 +483,7 @@ void HdVkMesh::_SplitSubsets()
         d->blendOffsets = m.blendOffsets;
         d->jointCount = m.jointCount;
         d->geometryDirty = true;
+        HdVkSplitIndexed(m, tris, d);  // refined subdivision surfaces are indexed
     };
     for (size_t i = 0; i < _subsetMeshes.size(); ++i) {
         split(parts[i + 1], _subsetMeshes[i]);
@@ -447,6 +498,7 @@ void HdVkMesh::_SplitSubsets()
     m.jointWeights = std::move(rest.jointWeights);
     m.blendRanges = std::move(rest.blendRanges);
     m.primvars = std::move(rest.primvars);
+    m.indices = std::move(rest.indices);
 }
 
 // Subset meshes share everything but their triangles and material.
@@ -471,6 +523,7 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         std::copy(m.color, m.color + 3, d.color);
         d.primId = m.primId;
         d.visible = m.visible;
+        d.holdout = m.holdout;
         d.tag = m.tag;
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));

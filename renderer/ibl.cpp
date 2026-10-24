@@ -191,38 +191,10 @@ float VSmithGgxCorrelated(float NoV, float NoL, float a)
     return 0.5f / (gv + gl);
 }
 
-} // namespace
-
-EnvironmentMaps BuildEnvironment(const Texture *latlong)
+// The maps of a cube whose level 0 is `chain[0]`.
+EnvironmentMaps Prefilter(std::vector<CubeLevel> chain)
 {
-    // Base cube at roughly the source's resolution, at most 128 (Unreal's
-    // default sky capture size).
-    uint32_t size = 16;
-    while (latlong && size < 128 && size * 4 * 2 <= latlong->width) {
-        size *= 2;
-    }
-
-    // Level 0: 4x4 supersampled latlong lookups per texel.
-    std::vector<CubeLevel> chain(1);
-    chain[0].size = size;
-    chain[0].texels.assign(size_t(6) * size * size, Vec3{1, 1, 1});
-    if (latlong) {
-        ParallelFor(size_t(6) * size, [&](size_t row) {
-            const int face = int(row / size);
-            const uint32_t y = uint32_t(row % size);
-            for (uint32_t x = 0; x < size; ++x) {
-                Vec3 sum;
-                for (int sy = 0; sy < 4; ++sy) {
-                    for (int sx = 0; sx < 4; ++sx) {
-                        const Vec3 d = Normalize(CubeDir(face, (x + (sx + 0.5f) / 4) / size,
-                                                         (y + (sy + 0.5f) / 4) / size));
-                        sum = sum + SampleLatlong(*latlong, d);
-                    }
-                }
-                chain[0].At(face, x, y) = sum * (1.0f / 16);
-            }
-        });
-    }
+    const uint32_t size = chain[0].size;
     // Box-filtered chain down to 1x1, the source for filtered importance sampling.
     while (chain.back().size > 1) {
         const CubeLevel &src = chain.back();
@@ -327,6 +299,52 @@ EnvironmentMaps BuildEnvironment(const Texture *latlong)
         }
     }
     return env;
+}
+
+} // namespace
+
+EnvironmentMaps BuildEnvironment(const Texture *latlong)
+{
+    // Base cube at roughly the source's resolution, at most 128 (Unreal's
+    // default sky capture size).
+    uint32_t size = 16;
+    while (latlong && size < 128 && size * 4 * 2 <= latlong->width) {
+        size *= 2;
+    }
+
+    // Level 0: 4x4 supersampled latlong lookups per texel.
+    std::vector<CubeLevel> chain(1);
+    chain[0].size = size;
+    chain[0].texels.assign(size_t(6) * size * size, Vec3{1, 1, 1});
+    if (latlong) {
+        ParallelFor(size_t(6) * size, [&](size_t row) {
+            const int face = int(row / size);
+            const uint32_t y = uint32_t(row % size);
+            for (uint32_t x = 0; x < size; ++x) {
+                Vec3 sum;
+                for (int sy = 0; sy < 4; ++sy) {
+                    for (int sx = 0; sx < 4; ++sx) {
+                        const Vec3 d = Normalize(CubeDir(face, (x + (sx + 0.5f) / 4) / size,
+                                                         (y + (sy + 0.5f) / 4) / size));
+                        sum = sum + SampleLatlong(*latlong, d);
+                    }
+                }
+                chain[0].At(face, x, y) = sum * (1.0f / 16);
+            }
+        });
+    }
+    return Prefilter(std::move(chain));
+}
+
+EnvironmentMaps BuildEnvironment(const float *faces, uint32_t size)
+{
+    std::vector<CubeLevel> chain(1);
+    chain[0].size = size;
+    chain[0].texels.resize(size_t(6) * size * size);
+    for (size_t i = 0; i < chain[0].texels.size(); ++i) {
+        chain[0].texels[i] = {faces[i * 4], faces[i * 4 + 1], faces[i * 4 + 2]};
+    }
+    return Prefilter(std::move(chain));
 }
 
 std::vector<float> BuildBrdfLut(uint32_t size)

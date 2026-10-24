@@ -21,6 +21,19 @@ struct Material {
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
     vec4 specular;   // dielectric specular weight times colour
+    // Lobes (brdf.glsl).
+    vec4 specularColor;  // specular workflow F0, w = 1 when used
+    vec4 coat;           // weight (0: none), roughness, F0
+    vec4 coatColor;      // tints the base beneath
+    vec4 sheen;          // weight (0: none), roughness
+    vec4 sheenColor;
+    vec4 thinFilm;       // weight (0: none), thickness (nm), ior
+    vec4 anisotropy;     // amount (0: none), rotation (turns), 1: OpenPBR's roughness mapping
+    vec4 toon;           // bands (0: none), softness
+    vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
+    vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
+    vec4 subsurface;        // colour, weight (subsurface.glsl)
+    vec4 subsurfaceRadius;  // per channel, world units
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

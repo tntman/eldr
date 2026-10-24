@@ -47,6 +47,13 @@ def udim_tile(color):
     return pixel
 
 
+def bumps(x, y):
+    # A height field for displacement.usda: round bumps (white tops) on five
+    # cells of a 3 x 3 checker, flat (black) between.
+    h = max(0.0, math.sin(x / 128 * 3 * math.pi) * math.sin(y / 128 * 3 * math.pi))
+    return (round(h * 255),) * 3
+
+
 def cutout(x, y):
     # A green ring: opaque between radius 12 and 28 of 32, clear elsewhere.
     r = math.hypot(x - 31.5, y - 31.5)
@@ -57,6 +64,7 @@ here = os.path.dirname(os.path.abspath(__file__))
 write_png(os.path.join(here, "quadrants.png"), 64, quadrants)
 write_png(os.path.join(here, "ridges_normal.png"), 64, ridges)
 write_png(os.path.join(here, "cutout.png"), 64, cutout)
+write_png(os.path.join(here, "bumps.png"), 128, bumps)
 # 16-bit linear halves: ACEScg (left, right) and the same colours in linear
 # Rec.709 (GfColorSpace's conversion), for colorspace.usda.
 def halves(left, right):

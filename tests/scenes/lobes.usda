@@ -1,0 +1,353 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# The lobes beyond the metallic base (renderer/shaders/brdf.glsl), one
+# sphere each, under a sun and the dome. Top row, left to right:
+# UsdPreviewSurface specular workflow (orange specularColor over dark blue),
+# UsdPreviewSurface clearcoat (sharp coat over rough red), standard_surface
+# car paint (blue metallic flake base, coat), OpenPBR amber coat over white,
+# standard_surface velvet (pink sheen over dark red), OpenPBR fuzz.
+# Bottom row: standard_surface thin film over black (oil slick), OpenPBR
+# anodized metal (thin film over grey metal), standard_surface brushed
+# steel and OpenPBR brushed gold (anisotropic; spheres have no uvs, so the
+# highlights stretch around the up axis), UsdPreviewSurface toon (Eldr's
+# own inputs:eldr:toonBands and inputs:eldr:toonSoftness), a plain
+# UsdPreviewSurface for reference. Third row: a patch of brown hair
+# (BasisCurves without a material, displayColor) for hair shading; a quad
+# whose specular workflow F0 is a texture (quadrants.png: bottom-left red,
+# bottom-right green, top-left blue, top-right white) over black.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 20)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 25, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "dome"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 0.5
+}
+
+def Scope "mtl"
+{
+    def Material "specularWorkflow"
+    {
+        token outputs:surface.connect = </mtl/specularWorkflow/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.02, 0.02, 0.08)
+            int inputs:useSpecularWorkflow = 1
+            color3f inputs:specularColor = (1, 0.55, 0.1)
+            float inputs:roughness = 0.25
+            token outputs:surface
+        }
+    }
+
+    def Material "clearcoat"
+    {
+        token outputs:surface.connect = </mtl/clearcoat/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.03, 0.02)
+            float inputs:roughness = 0.6
+            float inputs:clearcoat = 1
+            float inputs:clearcoatRoughness = 0.02
+            token outputs:surface
+        }
+    }
+
+    def Material "carPaint"
+    {
+        token outputs:mtlx:surface.connect = </mtl/carPaint/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.05, 0.12, 0.45)
+            float inputs:metalness = 0.5
+            float inputs:specular_roughness = 0.45
+            float inputs:coat = 1
+            float inputs:coat_roughness = 0.03
+            token outputs:out
+        }
+    }
+
+    def Material "amberCoat"
+    {
+        token outputs:mtlx:surface.connect = </mtl/amberCoat/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.9, 0.9)
+            float inputs:specular_roughness = 0.5
+            float inputs:coat_weight = 1
+            color3f inputs:coat_color = (1, 0.6, 0.2)
+            float inputs:coat_roughness = 0.05
+            token outputs:out
+        }
+    }
+
+    def Material "velvet"
+    {
+        token outputs:mtlx:surface.connect = </mtl/velvet/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.25, 0.02, 0.05)
+            float inputs:specular = 0.2
+            float inputs:specular_roughness = 0.6
+            float inputs:sheen = 1
+            color3f inputs:sheen_color = (1, 0.6, 0.7)
+            float inputs:sheen_roughness = 0.3
+            token outputs:out
+        }
+    }
+
+    def Material "fuzz"
+    {
+        token outputs:mtlx:surface.connect = </mtl/fuzz/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.05, 0.08, 0.3)
+            float inputs:specular_roughness = 0.7
+            float inputs:fuzz_weight = 1
+            color3f inputs:fuzz_color = (0.8, 0.85, 1)
+            float inputs:fuzz_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "oilSlick"
+    {
+        token outputs:mtlx:surface.connect = </mtl/oilSlick/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.01, 0.01, 0.01)
+            float inputs:specular_roughness = 0.15
+            float inputs:thin_film_thickness = 400
+            float inputs:thin_film_IOR = 1.4
+            token outputs:out
+        }
+    }
+
+    def Material "anodized"
+    {
+        token outputs:mtlx:surface.connect = </mtl/anodized/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.62)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.25
+            float inputs:thin_film_weight = 1
+            float inputs:thin_film_thickness = 0.35
+            float inputs:thin_film_ior = 2
+            token outputs:out
+        }
+    }
+
+    def Material "brushedSteel"
+    {
+        token outputs:mtlx:surface.connect = </mtl/brushedSteel/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.9, 0.92)
+            float inputs:metalness = 1
+            float inputs:specular_roughness = 0.35
+            float inputs:specular_anisotropy = 0.8
+            token outputs:out
+        }
+    }
+
+    def Material "brushedGold"
+    {
+        token outputs:mtlx:surface.connect = </mtl/brushedGold/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (1, 0.78, 0.34)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.35
+            float inputs:specular_roughness_anisotropy = 0.8
+            token outputs:out
+        }
+    }
+
+    def Material "toon"
+    {
+        token outputs:surface.connect = </mtl/toon/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.35, 0.1)
+            float inputs:roughness = 0.4
+            float inputs:eldr:toonBands = 3
+            float inputs:eldr:toonSoftness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "plain"
+    {
+        token outputs:surface.connect = </mtl/plain/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Material "texturedSpecular"
+    {
+        token outputs:surface.connect = </mtl/texturedSpecular/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            int inputs:useSpecularWorkflow = 1
+            color3f inputs:specularColor.connect = </mtl/texturedSpecular/tex.outputs:rgb>
+            float inputs:roughness = 0.3
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/texturedSpecular/st.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+}
+
+def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/specularWorkflow>
+    double3 xformOp:translate = (-6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "clearcoat" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/clearcoat>
+    double3 xformOp:translate = (-3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "carPaint" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/carPaint>
+    double3 xformOp:translate = (-1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "amberCoat" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/amberCoat>
+    double3 xformOp:translate = (1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "velvet" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/velvet>
+    double3 xformOp:translate = (3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "fuzz" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/fuzz>
+    double3 xformOp:translate = (6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "oilSlick" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/oilSlick>
+    double3 xformOp:translate = (-6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "anodized" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/anodized>
+    double3 xformOp:translate = (-3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "brushedSteel" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/brushedSteel>
+    double3 xformOp:translate = (-1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "brushedGold" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/brushedGold>
+    double3 xformOp:translate = (1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "toon" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/toon>
+    double3 xformOp:translate = (3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "plain" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    rel material:binding = </mtl/plain>
+    double3 xformOp:translate = (6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def BasisCurves "hair"
+{
+    uniform token type = "cubic"
+    uniform token basis = "bspline"
+    int[] curveVertexCounts = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+    point3f[] points = [(-0.910, 0.900, 0.027), (-0.865, 0.540, 0.039), (-0.836, 0.180, 0.075), (-0.833, -0.180, 0.135), (-0.856, -0.540, 0.219), (-0.899, -0.900, 0.327), (-0.792, 0.900, 0.062), (-0.779, 0.540, 0.074), (-0.794, 0.180, 0.110), (-0.832, -0.180, 0.170), (-0.879, -0.540, 0.254), (-0.920, -0.900, 0.362), (-0.730, 0.900, -0.261), (-0.761, 0.540, -0.249), (-0.807, 0.180, -0.213), (-0.852, -0.180, -0.153), (-0.879, -0.540, -0.069), (-0.879, -0.900, 0.039), (-0.770, 0.900, 0.202), (-0.816, 0.540, 0.214), (-0.851, 0.180, 0.250), (-0.861, -0.180, 0.310), (-0.843, -0.540, 0.394), (-0.803, -0.900, 0.502), (-0.786, 0.900, -0.159), (-0.805, 0.540, -0.147), (-0.796, 0.180, -0.111), (-0.762, -0.180, -0.051), (-0.716, -0.540, 0.033), (-0.672, -0.900, 0.141), (-0.726, 0.900, -0.018), (-0.700, 0.540, -0.006), (-0.656, 0.180, 0.030), (-0.610, -0.180, 0.090), (-0.578, -0.540, 0.174), (-0.570, -0.900, 0.282), (-0.632, 0.900, -0.014), (-0.585, 0.540, -0.002), (-0.546, 0.180, 0.034), (-0.530, -0.180, 0.094), (-0.541, -0.540, 0.178), (-0.577, -0.900, 0.286), (-0.519, 0.900, -0.210), (-0.494, 0.540, -0.198), (-0.496, 0.180, -0.162), (-0.525, -0.180, -0.102), (-0.569, -0.540, -0.018), (-0.615, -0.900, 0.090), (-0.446, 0.900, 0.221), (-0.467, 0.540, 0.233), (-0.508, 0.180, 0.269), (-0.555, -0.180, 0.329), (-0.592, -0.540, 0.413), (-0.605, -0.900, 0.521), (-0.451, 0.900, 0.145), (-0.498, 0.540, 0.157), (-0.540, 0.180, 0.193), (-0.562, -0.180, 0.253), (-0.557, -0.540, 0.337), (-0.527, -0.900, 0.445), (-0.475, 0.900, -0.262), (-0.505, 0.540, -0.250), (-0.510, 0.180, -0.214), (-0.487, -0.180, -0.154), (-0.445, -0.540, -0.070), (-0.398, -0.900, 0.038), (-0.462, 0.900, 0.055), (-0.448, 0.540, 0.067), (-0.411, 0.180, 0.103), (-0.363, -0.180, 0.163), (-0.323, -0.540, 0.247), (-0.303, -0.900, 0.355), (-0.397, 0.900, -0.281), (-0.351, 0.540, -0.269), (-0.307, 0.180, -0.233), (-0.279, -0.180, -0.173), (-0.277, -0.540, -0.089), (-0.302, -0.900, 0.019), (-0.252, 0.900, -0.016), (-0.217, 0.540, -0.004), (-0.206, 0.180, 0.032), (-0.222, -0.180, 0.092), (-0.261, -0.540, 0.176), (-0.308, -0.900, 0.284), (-0.166, 0.900, 0.227), (-0.174, 0.540, 0.239), (-0.206, 0.180, 0.275), (-0.252, -0.180, 0.335), (-0.296, -0.540, 0.419), (-0.322, -0.900, 0.527), (-0.147, 0.900, 0.253), (-0.191, 0.540, 0.265), (-0.237, 0.180, 0.301), (-0.270, -0.180, 0.361), (-0.279, -0.540, 0.445), (-0.259, -0.900, 0.553), (-0.189, 0.900, 0.181), (-0.228, 0.540, 0.193), (-0.245, 0.180, 0.229), (-0.235, -0.180, 0.289), (-0.201, -0.540, 0.373), (-0.154, -0.900, 0.481), (-0.195, 0.900, 0.261), (-0.194, 0.540, 0.273), (-0.166, 0.180, 0.309), (-0.122, -0.180, 0.369), (-0.076, -0.540, 0.453), (-0.045, -0.900, 0.561), (-0.114, 0.900, -0.242), (-0.074, 0.540, -0.230), (-0.027, 0.180, -0.194), (0.011, -0.180, -0.134), (0.026, -0.540, -0.050), (0.013, -0.900, 0.058), (-0.026, 0.900, -0.170), (0.017, 0.540, -0.158), (0.040, 0.180, -0.122), (0.037, -0.180, -0.062), (0.007, -0.540, 0.022), (-0.038, -0.900, 0.130), (0.115, 0.900, -0.038), (0.120, 0.540, -0.026), (0.099, 0.180, 0.010), (0.057, -0.180, 0.070), (0.010, -0.540, 0.154), (-0.026, -0.900, 0.262), (0.141, 0.900, -0.119), (0.105, 0.540, -0.107), (0.058, 0.180, -0.071), (0.016, -0.180, -0.011), (-0.005, -0.540, 0.073), (0.002, -0.900, 0.181), (0.115, 0.900, -0.068), (0.070, 0.540, -0.056), (0.041, 0.180, -0.020), (0.038, -0.180, 0.040), (0.062, -0.540, 0.124), (0.105, -0.900, 0.232), (0.088, 0.900, 0.051), (0.076, 0.540, 0.063), (0.091, 0.180, 0.099), (0.129, -0.180, 0.159), (0.177, -0.540, 0.243), (0.217, -0.900, 0.351), (0.139, 0.900, 0.243), (0.170, 0.540, 0.255), (0.216, 0.180, 0.291), (0.261, -0.180, 0.351), (0.287, -0.540, 0.435), (0.288, -0.900, 0.543), (0.251, 0.900, 0.257), (0.297, 0.540, 0.269), (0.331, 0.180, 0.305), (0.341, -0.180, 0.365), (0.322, -0.540, 0.449), (0.283, -0.900, 0.557), (0.375, 0.900, 0.295), (0.394, 0.540, 0.307), (0.385, 0.180, 0.343), (0.351, -0.180, 0.403), (0.304, -0.540, 0.487), (0.261, -0.900, 0.595), (0.430, 0.900, -0.202), (0.403, 0.540, -0.190), (0.359, 0.180, -0.154), (0.313, -0.180, -0.094), (0.281, -0.540, -0.010), (0.274, -0.900, 0.098), (0.428, 0.900, 0.279), (0.381, 0.540, 0.291), (0.343, 0.180, 0.327), (0.327, -0.180, 0.387), (0.339, -0.540, 0.471), (0.374, -0.900, 0.579), (0.402, 0.900, 0.041), (0.377, 0.540, 0.053), (0.380, 0.180, 0.089), (0.408, -0.180, 0.149), (0.453, -0.540, 0.233), (0.499, -0.900, 0.341), (0.414, 0.900, -0.173), (0.435, 0.540, -0.161), (0.476, 0.180, -0.125), (0.523, -0.180, -0.065), (0.560, -0.540, 0.019), (0.573, -0.900, 0.127), (0.512, 0.900, 0.044), (0.559, 0.540, 0.056), (0.601, 0.180, 0.092), (0.623, -0.180, 0.152), (0.617, -0.540, 0.236), (0.586, -0.900, 0.344), (0.612, 0.900, -0.262), (0.642, 0.540, -0.250), (0.647, 0.180, -0.214), (0.623, -0.180, -0.154), (0.581, -0.540, -0.070), (0.534, -0.900, 0.038), (0.717, 0.900, 0.294), (0.703, 0.540, 0.306), (0.665, 0.180, 0.342), (0.618, -0.180, 0.402), (0.578, -0.540, 0.486), (0.558, -0.900, 0.594), (0.695, 0.900, 0.180), (0.649, 0.540, 0.192), (0.605, 0.180, 0.228), (0.577, -0.180, 0.288), (0.576, -0.540, 0.372), (0.601, -0.900, 0.480), (0.678, 0.900, -0.210), (0.643, 0.540, -0.198), (0.632, 0.180, -0.162), (0.649, -0.180, -0.102), (0.688, -0.540, -0.018), (0.736, -0.900, 0.090), (0.674, 0.900, 0.161), (0.682, 0.540, 0.173), (0.715, 0.180, 0.209), (0.761, -0.180, 0.269), (0.805, -0.540, 0.353), (0.830, -0.900, 0.461), (0.771, 0.900, -0.273), (0.815, 0.540, -0.261), (0.861, 0.180, -0.225), (0.894, -0.180, -0.165), (0.902, -0.540, -0.081), (0.882, -0.900, 0.027), (0.882, 0.900, -0.273), (0.921, 0.540, -0.261), (0.938, 0.180, -0.225), (0.927, -0.180, -0.165), (0.893, -0.540, -0.081), (0.846, -0.900, 0.027), (0.986, 0.900, -0.101), (0.984, 0.540, -0.089), (0.957, 0.180, -0.053), (0.912, -0.180, 0.007), (0.866, -0.540, 0.091), (0.835, -0.900, 0.199)]
+    float[] widths = [0.03] (interpolation = "constant")
+    color3f[] primvars:displayColor = [(0.35, 0.17, 0.06)] (interpolation = "constant")
+    double3 xformOp:translate = (-6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedSpecular" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/texturedSpecular>
+    double3 xformOp:translate = (-3.6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

@@ -215,6 +215,12 @@ Device::Device()
         VkPhysicalDeviceVulkan12Features has12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &frt};
         VkPhysicalDeviceFeatures2 hasFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &has12};
         vkGetPhysicalDeviceFeatures2(physical, &hasFeatures);
+        VkFormatProperties r32;
+        vkGetPhysicalDeviceFormatProperties(physical, VK_FORMAT_R32_SFLOAT, &r32);
+        constexpr VkFormatFeatureFlags kMinmax =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_MINMAX_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+        samplerMinmax = has12.samplerFilterMinmax && (r32.optimalTilingFeatures & kMinmax) == kMinmax;
+        f12.samplerFilterMinmax = samplerMinmax ? VK_TRUE : VK_FALSE;
         const char *disable = std::getenv("HDVK_NO_RAY_TRACING");
         rayTracing = !(disable && std::strcmp(disable, "1") == 0) && has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
                      has(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
@@ -234,6 +240,13 @@ Device::Device()
                                            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME});
             rayTracingInputUsage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                    VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
+        }
+
+        // Optional: GPU sharing with OpenGL (usdview), see interop.h.
+        const char *win32[2] = {"VK_KHR_external_memory_win32", "VK_KHR_external_semaphore_win32"};
+        externalWin32 = has(win32[0]) && has(win32[1]);
+        if (externalWin32) {
+            enabled.insert(enabled.end(), win32, win32 + 2);
         }
 
         VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &f};
@@ -276,7 +289,7 @@ void Device::_Release()
 }
 
 VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags props,
-                                VkMemoryPropertyFlags preferred, bool texture)
+                                VkMemoryPropertyFlags preferred, bool texture, const void *next)
 {
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(physical, &mp);
@@ -285,9 +298,10 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
             if ((req.memoryTypeBits & (1u << i)) &&
                 (mp.memoryTypes[i].propertyFlags & wanted) == wanted) {
                 // Ray tracing reads buffers through device addresses.
-                VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
+                VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, next};
                 flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
-                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, rayTracing ? &flags : nullptr};
+                VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        rayTracing ? static_cast<const void *>(&flags) : next};
                 ai.allocationSize = req.size;
                 ai.memoryTypeIndex = i;
                 VkDeviceMemory memory = VK_NULL_HANDLE;

@@ -3,9 +3,13 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "frame.glsl"
+#include "fog.glsl"
 #include "lights.glsl"
+#include "probes.glsl"
 #include "material.glsl"
 #include "scene.glsl"
+#define DISPLACE_FRAGMENT
+#include "displace.glsl"
 
 // Depth is read-only here (the prepass wrote it), so the depth test can run
 // before the shader even though cutouts discard.
@@ -30,6 +34,10 @@ layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 layout(set = 0, binding = 20) uniform sampler2D shadowAtlasDepth;  // same atlas, raw depths
+layout(set = 0, binding = 49) uniform sampler2DArray shadowMapDepth;  // the sun's cascades, raw depths
+// Their nearest depths (shadow_min.comp: level 0 per 4 x 4 texels), read
+// with a minimum-reduction sampler: the minimum of the bilinear footprint.
+layout(set = 0, binding = 61) uniform sampler2DArray shadowMin;
 
 const vec2 kPoisson[16] = vec2[](
     vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725), vec2(-0.09418410, -0.92938870),
@@ -68,6 +76,10 @@ layout(location = 2) out int outInstanceId;
 // camera saw it (camera motion comes from depth in TAA). Static geometry
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
+
+#include "brdf.glsl"
+#include "transparency.glsl"
+#include "subsurface.glsl"
 
 vec4 Fetch(TexRef r, vec4 constant)
 {
@@ -110,6 +122,11 @@ vec3 F_Schlick(vec3 f0, float VoH)
 // GGX specular times cos for light from direction l.
 vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
+#ifdef LAYERS
+    if (layers.anisotropy > 0.0) {
+        return TangentSpecular(n, v, l, a, f0, NoV);  // brdf.glsl: anisotropic or hair
+    }
+#endif
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
@@ -216,10 +233,61 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     return sum / float(samples);
 }
 
-// Sphere, rect or disk light (UsdLux semantics as in hdEmbree: cone and
-// focus shaping around the emission axis; rects and disks emit from their
-// -Z side). Diffuse: Frostbite's horizon-clipped sphere/disk illuminance;
-// for rects the exact polygon form factor vector with Heitz's horizon
+// One edge's term of a polygon's form factor vector (corners relative to
+// the shading point); the sum over a closed loop, / 2 pi, is the vector.
+vec3 EdgeFormFactor(vec3 a, vec3 b)
+{
+    vec3 v0 = normalize(a), v1 = normalize(b);
+    vec3 c = cross(v0, v1);
+    float len = length(c);
+    return len > 1e-8 ? acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len : vec3(0.0);
+}
+
+// Form factor vector of the rect toLight +- hw +- hh (seen from the
+// shading point), pointing at it whatever the winding.
+vec3 RectFormFactor(vec3 toLight, vec3 hw, vec3 hh)
+{
+    vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
+    vec3 formFactor = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        formFactor += EdgeFormFactor(corners[i], corners[(i + 1) % 4]);
+    }
+    formFactor /= 2.0 * PI;
+    return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
+}
+
+// Form factor vector of the side of a cylinder (axis toLight +- axis,
+// radius r) facing the shading point: the three facets of the half hexagon
+// prism inscribed in it there, whose sum is the form factor of their
+// outline (within a few percent of the cylinder while r is under a tenth
+// of the distance).
+vec3 CylinderFormFactor(vec3 toLight, vec3 axis, float r)
+{
+    vec3 side = cross(axis, toLight);
+    float len = length(side);
+    if (len <= 1e-8) {
+        return vec3(0.0);  // seen end-on: only the caps, which don't emit
+    }
+    side /= len;
+    vec3 face = normalize(cross(side, axis));
+    face = dot(face, toLight) > 0.0 ? -face : face;  // towards the shading point
+    vec3 q[4] = vec3[4](toLight - r * side, toLight + r * (0.8660254 * face - 0.5 * side),
+                        toLight + r * (0.8660254 * face + 0.5 * side), toLight + r * side);
+    vec3 loop[8] = vec3[8](q[0] - axis, q[1] - axis, q[2] - axis, q[3] - axis,
+                           q[3] + axis, q[2] + axis, q[1] + axis, q[0] + axis);
+    vec3 formFactor = vec3(0.0);
+    for (int i = 0; i < 8; ++i) {
+        formFactor += EdgeFormFactor(loop[i], loop[(i + 1) % 8]);
+    }
+    formFactor /= 2.0 * PI;
+    return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
+}
+
+// Sphere, rect, disk or cylinder light (UsdLux semantics as in hdEmbree:
+// cone and focus shaping around the emission axis; rects and disks emit
+// from their -Z side, cylinders from their sides). Diffuse: Frostbite's
+// horizon-clipped sphere/disk illuminance; for rects (and cylinders' rect
+// silhouettes) the exact polygon form factor vector with Heitz's horizon
 // approximation.
 // Specular: Karis' representative point with (a / a')^2 normalization.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
@@ -251,6 +319,26 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         sourceRadius = light.halfWidth.w;
         vec3 centerToRay = dot(toLight, r) * r - toLight;
         l = normalize(toLight + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+    } else if (uint(light.position.w) == kLightCylinder) {
+        // Diffuse: the form factor of its side facing p (the caps don't
+        // emit). Specular: the point of the axis closest to the reflection
+        // ray (Karis 2013), widened by the radius like a sphere's;
+        // normalized a / a' across and along the axis.
+        vec3 axis = light.halfWidth.xyz;
+        vec3 formFactor = CylinderFormFactor(toLight, axis, light.axis.w);
+        float f = length(formFactor);
+        diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
+        sourceRadius = light.halfWidth.w;
+        vec3 l0 = toLight - axis, l1 = toLight + axis, ld = l1 - l0;
+        float rd = dot(r, ld);
+        vec3 closest = l0 + ld * clamp((dot(r, l0) * rd - dot(l0, ld)) / max(dot(ld, ld) - rd * rd, 1e-8), 0.0, 1.0);
+        vec3 centerToRay = dot(closest, r) * r - closest;
+        l = normalize(closest + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+        d = max(length(closest), 1e-8);  // aWide below: across the axis, at its nearest part
+        float cosSubtended = dot(normalize(l0), normalize(l1));
+        float aAcross = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+        float aAlong = clamp(aAcross + sqrt((1.0 - cosSubtended) / (1.0 + cosSubtended + 1e-4)) / 3.0, 0.0, 1.0);
+        specularE = PI * f * aAcross / aAlong;
     } else {
         if (dot(toLight, light.axis.xyz) >= 0.0) {
             return vec3(0.0);  // behind the emitting side
@@ -258,20 +346,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
         bool rect = uint(light.position.w) == kLightRect;
         if (rect) {
-            vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
-            vec3 formFactor = vec3(0.0);
-            for (int i = 0; i < 4; ++i) {
-                vec3 v0 = normalize(corners[i]), v1 = normalize(corners[(i + 1) % 4]);
-                vec3 c = cross(v0, v1);
-                float len = length(c);
-                if (len > 1e-8) {
-                    formFactor += acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len;
-                }
-            }
-            formFactor /= 2.0 * PI;
-            if (dot(formFactor, toLight) < 0.0) {
-                formFactor = -formFactor;  // winding-independent: points at the light
-            }
+            vec3 formFactor = RectFormFactor(toLight, hw, hh);
             float f = length(formFactor);
             diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
             specularE = PI * f;
@@ -296,11 +371,85 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
-    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng);
+    specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
+    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 
-// Cascaded shadow lookup with normal offset and 3x3 hardware PCF.
-float Shadow(vec3 p, vec3 ng, vec3 l)
+// Soft sun shadows: PCSS in the cascade's light space, as LocalShadow()
+// but with the sun's angular radius (tan, `tanHalf`) and a parallel
+// projection: penumbra radius = blocker-to-receiver distance * tanHalf.
+// Every tap compares against the receiver's plane there (the geometric
+// normal's slope in light space), so wide kernels don't shadow the surface
+// itself. Blockers are searched on a spiral whose radius grows
+// geometrically from 1.5 texels to as far as the penumbra of one at the
+// light box's near side reaches, and only count where their own penumbra
+// reaches the receiver: every scale gets taps, and a wide search doesn't
+// soften contact shadows. The search stops where no blocker's penumbra can
+// reach from: shadowMin bounds how near the light the blockers out to the
+// last tap are, so how high above the receiver's plane, so how far their
+// penumbrae reach. The taps up to there are the same, so is the result
+// (for a 0.5 degree sun over a crowd the search is 1-4 taps, not 16).
+// uv/ref are the hard lookup's, c its cascade.
+// ponytail: kernels clamped to 5% of the cascade; no blend between cascades.
+float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
+{
+    mat4 m = frame.cascadeViewProj[c];
+    vec3 gx = vec3(m[0][0], m[1][0], m[2][0]), gy = vec3(m[0][1], m[1][1], m[2][1]);
+    vec3 gz = vec3(m[0][2], m[1][2], m[2][2]);  // NDC per world unit (orthographic)
+    float depthRange = 2.0 / length(gz);        // world units per unit of window depth
+    float uvPerUnit = 0.5 * length(gx);
+    vec2 grad = -dot(gz, l) / max(dot(ng, l), 0.2) * vec2(dot(ng, gx) / dot(gx, gx), dot(ng, gy) / dot(gy, gy));
+    float size = float(textureSize(shadowMap, 0).x);
+    float maxUv = 0.05;
+    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
+                                                           vec2(0.06711056, 0.00583715))));
+    mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+    int samples = int(frame.features.z);
+
+    float minUv = 1.5 / size;
+    float growth = max(ref * depthRange * tanHalf * uvPerUnit, minUv) / minUv;
+    float reach = min(minUv * growth, maxUv);
+    int levels = int(frame.features.w), base = textureSize(shadowMin, 0).x;
+    if (reach > minUv && levels > 0) {
+        // The level whose bilinear footprint, at least a texel (4 << level
+        // shadow texels) around uv, covers every texel within reach.
+        int level = min(findMSB(int(ceil(reach * size))), levels - 1);
+        float span = float((4 << level) * max(base >> level, 1));  // shadow texels the level's texels span
+        float nearest = textureLod(shadowMin, vec3(uv * size / span, float(c)), float(level)).r;
+        float above = ref + length(grad) * reach - nearest;  // at most, for blockers within reach
+        reach = min(reach, max(above * depthRange * tanHalf * uvPerUnit * 1.001, minUv));
+    }
+    // The receiver's own texel first: a blocker right above always counts.
+    float above = ref - texelFetch(shadowMapDepth, ivec3(clamp(ivec2(uv * size), ivec2(0), ivec2(size - 1.0)), c), 0).r;
+    float blockers = max(above, 0.0), count = above > 0.0 ? 1.0 : 0.0;
+    for (int i = 0; i < samples; ++i) {
+        float r = minUv * pow(growth, float(i) / float(samples)), a = angle + 2.3999632 * float(i);
+        if (min(r, maxUv) > reach) {
+            break;  // nor any further out
+        }
+        vec2 o = min(r, maxUv) * vec2(cos(a), sin(a));
+        ivec2 texel = clamp(ivec2((uv + o) * size), ivec2(0), ivec2(size - 1.0));
+        above = ref + dot(grad, o) - texelFetch(shadowMapDepth, ivec3(texel, c), 0).r;
+        if (above > 0.0 && length(o) <= max(above * depthRange * tanHalf * uvPerUnit, minUv)) {
+            blockers += above;
+            count += 1.0;
+        }
+    }
+    if (count == 0.0 || count == float(samples + 1)) {
+        return count == 0.0 ? 1.0 : 0.0;  // no blocker, or the umbra
+    }
+    float filterUv = clamp(blockers / count * depthRange * tanHalf * uvPerUnit, 1.5 / size, maxUv);
+    float sum = 0.0;
+    for (int i = 0; i < samples; ++i) {
+        vec2 o = rotation * kPoisson[i] * filterUv;
+        sum += texture(shadowMap, vec4(uv + o, float(c), ref + dot(grad, o)));
+    }
+    return sum / float(samples);
+}
+
+// Cascaded shadow lookup with normal offset and 3x3 hardware PCF; soft
+// (SoftSunShadow) for a sun with an angle when soft sun shadows are on.
+float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
 {
     float traced;
     if (RtShadow(frame.counts.y, traced)) {
@@ -321,6 +470,9 @@ float Shadow(vec3 p, vec3 ng, vec3 l)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
+    if (Feature(kFeatureSoftSun) && tanHalf > 0.0) {
+        return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
+    }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);
     float sum = 0.0;
     for (int y = -1; y <= 1; ++y) {
@@ -485,6 +637,8 @@ void main()
         }
 #endif
     }
+    TransmissionBegin(alpha);
+    SubsurfaceBegin(baseColor, emissive, metallic, specularTint);
 
     vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
@@ -497,6 +651,7 @@ void main()
     if (dot(n, ng) < 0.0) {
         n = -n;
     }
+    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
     if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }
@@ -516,6 +671,8 @@ void main()
     // standard_surface's specular weight and colour scale the dielectric
     // lobe (and give its energy back to the diffuse one).
     vec3 tint = mix(specularTint, vec3(1.0), metallic);
+    PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
+    SubsurfaceLayers();
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
     vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
 
@@ -528,10 +685,11 @@ void main()
             continue;
         }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         Specular(n, v, l, a, f0, NoV) * energyCompensation * light.shaping.w) *
+                         (Specular(n, v, l, a, f0, NoV) * energyCompensation + LayerLight(n, v, l, NoV, 0.0)) *
+                             light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l);
+            radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
     }
@@ -552,14 +710,23 @@ void main()
         }
     }
 
+    color += SubsurfaceTransmission(inWorldPos, n);
+
     // Image-based lighting from the dome, if any.
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
     if (frame.envRadiance.w > 0.0) {
         mat3 toLocal = mat3(frame.envWorldToLocal);
-        vec3 r = normalize(toLocal * reflect(-v, n));
+        vec3 r = normalize(toLocal * reflect(-v, BentNormal(n, v, perceptual)));
         float lod = perceptual * float(frame.counts.z - 1u);
         specular = textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb;
         Lavg = max(Irradiance(normalize(toLocal * n)), 0.0) * frame.envRadiance.rgb / PI;
+    }
+    // Reflections beyond the screen (probes.glsl): the mirror reflects the
+    // planar reflection (below, over the dome's sky), other surfaces the
+    // reflection probe's captured surroundings instead of the dome.
+    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
+    if (Feature(kFeatureProbe) && !mirror) {
+        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual);
     }
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
@@ -567,9 +734,16 @@ void main()
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
     float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
     specular *= MultiBounce(specularAO, f0);
-    // Screen-space reflections replace the dome where they hit something;
-    // where the hit is partly background the dome shows through.
-    float ssrWeight = frame.ssr.x > 0.0 ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    // The mirror's planar reflection, elsewhere screen-space reflections:
+    // they replace the dome (or probe) where they hit something; where the
+    // hit is partly background the dome shows through.
+    if (mirror) {
+        specular = PlanarSpecular(specular, inWorldPos, n, perceptual);
+    }
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+#ifdef LAYERS
+    ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
+#endif
     if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
@@ -581,9 +755,20 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     color += FssEss * specular + (Fms * Ems + kd) * Lavg * MultiBounce(diffuseAO, diffuseColor);
+    if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
+        color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        color = ToonShade(color, emissive, diffuseColor + f0);
+    }
+    alpha = TransmissionEnd(color, n, v, perceptual);
     // Cutouts: last, so every derivative above saw the whole quad.
     if (!present) {
         discard;
+    }
+    // Volumetric fog between the camera and the surface (premultiplied;
+    // also for OIT, not on the subsurface pass's diffuse light).
+    if (kShadingPass != 2u) {
+        vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
+        color = color * fog.a + fog.rgb * alpha;
     }
     outColor = vec4(color, alpha);
     outPrimId = inPrimId;
@@ -591,4 +776,5 @@ void main()
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
     vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
     outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
+    PassOutput(color, alpha);
 }

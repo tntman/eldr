@@ -90,6 +90,46 @@ TF_DEFINE_PRIVATE_TOKENS(
     (varname)
     (displayColor)
     (r)(g)(b)(a)
+    (useSpecularWorkflow)
+    (specularColor)
+    (clearcoat)
+    (clearcoatRoughness)
+    (ior)
+    (coat)
+    (coat_color)
+    (coat_roughness)
+    (coat_IOR)
+    (coat_weight)
+    (coat_ior)
+    (sheen)
+    (sheen_color)
+    (sheen_roughness)
+    (fuzz_weight)
+    (fuzz_color)
+    (fuzz_roughness)
+    (thin_film_thickness)
+    (thin_film_IOR)
+    (thin_film_weight)
+    (thin_film_ior)
+    (specular_anisotropy)
+    (specular_rotation)
+    (specular_roughness_anisotropy)
+    ((toonBands, "eldr:toonBands"))
+    ((toonSoftness, "eldr:toonSoftness"))
+    (transmission)
+    (transmission_weight)
+    (transmission_color)
+    (transmission_depth)
+    (specular_IOR)
+    (specular_ior)
+    (thin_walled)
+    (geometry_thin_walled)
+    (subsurface)
+    (subsurface_weight)
+    (subsurface_color)
+    (subsurface_radius)
+    (subsurface_scale)
+    (subsurface_radius_scale)
 );
 
 // Expands `channels`-wide texels to RGBA, filling missing channels the way
@@ -1165,8 +1205,135 @@ private:
     std::string _failed;
 };
 
-// ponytail: metallic workflow only. Ignored for now: specular workflow,
-// coat, sheen, transmission, subsurface, ior and displacement.
+// A colour input in linear Rec.709 (converted from the colour space it was
+// authored in), else `color`.
+GfVec3f ReadColor(std::map<TfToken, VtValue> const &params, TfToken const &name, GfVec3f color)
+{
+    if (Read(params, name, &color)) {
+        const TfToken colorSpace = ParameterColorSpace(params, name);
+        if (NeedsConversion(colorSpace)) {
+            color = GfColor(GfColor(color, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                        .GetRGB();
+        }
+    }
+    return color;
+}
+
+// F0 of a dielectric of index `ior` in air.
+float IorToF0(float ior)
+{
+    const float r = (ior - 1.0f) / (ior + 1.0f);
+    return r * r;
+}
+
+// The lobes beyond the metallic base (shaders/brdf.glsl): constants
+// (authored, else the surface's defaults), and connected inputs (textures,
+// graphs) computed per pixel by the material program, as the base's on
+// other uv sets. Where a connected input's graph can't be compiled, or
+// programs are off, its constant is the default, except specularColor:
+// 0.04 grey (a dielectric, as the metallic workflow), not black.
+// ponytail: connected IORs, coat colour of UsdPreviewSurface, thin film
+// weight and IOR, and the anisotropy's rotation keep their constants.
+void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &graph)
+{
+    using P = vkr::MaterialProgram;
+    auto const &p = surface.parameters;
+    const TfToken &id = surface.nodeTypeId;
+    auto color = [&](TfToken const &name, float *out) {
+        const GfVec3f c = ReadColor(p, name, GfVec3f(out[0], out[1], out[2]));
+        std::copy(c.data(), c.data() + 3, out);
+    };
+    // Whether `name` is connected; if so the program computes it (times
+    // `scale`) where it can.
+    auto program = [&](TfToken const &name, P::Input target, float scale = 1.0f) {
+        const auto c = surface.inputConnections.find(name);
+        if (c == surface.inputConnections.end() || c->second.empty()) {
+            return false;
+        }
+        if (!graph.Output(surface, name, target, scale)) {
+            static std::mutex mutex;
+            static std::set<std::string> warned;
+            std::lock_guard<std::mutex> lock(mutex);
+            if (warned.insert(graph.Failed()).second) {
+                TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
+                        graph.Failed().c_str());
+            }
+        }
+        return true;
+    };
+    if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        if (ReadOr(p, _tokens->useSpecularWorkflow, 0) != 0) {
+            m->specularWorkflow = true;
+            color(_tokens->specularColor, m->specularColor);
+            if (program(_tokens->specularColor, P::kSpecularColor)) {
+                std::fill(m->specularColor, m->specularColor + 3, 0.04f);
+            }
+            m->metallic = 0.0f;  // the workflow ignores it
+            m->metallicTex = vkr::TextureRef();
+        }
+        // The coat's F0 from the surface's ior, as Storm.
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+        program(_tokens->clearcoat, P::kCoat);
+        program(_tokens->clearcoatRoughness, P::kCoatRoughness);
+    } else if (id == _tokens->ND_standard_surface_surfaceshader) {
+        m->coat = ReadOr(p, _tokens->coat, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->sheen_roughness, 0.3f);
+        color(_tokens->sheen_color, m->sheenColor);
+        // Its thin film is on whenever it has a thickness (nm).
+        m->thinFilmThickness = ReadOr(p, _tokens->thin_film_thickness, 0.0f);
+        const bool textured = program(_tokens->thin_film_thickness, P::kThinFilmThickness);
+        m->thinFilm = m->thinFilmThickness > 0.0f || textured ? 1.0f : 0.0f;
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_IOR, 1.5f);
+        m->anisotropy = ReadOr(p, _tokens->specular_anisotropy, 0.0f);
+        m->anisotropyRotation = ReadOr(p, _tokens->specular_rotation, 0.0f);
+        program(_tokens->coat, P::kCoat);
+        program(_tokens->coat_roughness, P::kCoatRoughness);
+        program(_tokens->coat_color, P::kCoatColor);
+        program(_tokens->sheen, P::kSheen);
+        program(_tokens->sheen_color, P::kSheenColor);
+        program(_tokens->sheen_roughness, P::kSheenRoughness);
+        program(_tokens->specular_anisotropy, P::kAnisotropy);
+    } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
+        // ponytail: coat_darkening isn't modelled (the coat's albedo only);
+        // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
+        // under the coat rather than over it.
+        m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
+        m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
+        m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
+        color(_tokens->coat_color, m->coatColor);
+        m->sheen = ReadOr(p, _tokens->fuzz_weight, 0.0f);
+        m->sheenRoughness = ReadOr(p, _tokens->fuzz_roughness, 0.5f);
+        color(_tokens->fuzz_color, m->sheenColor);
+        m->thinFilm = ReadOr(p, _tokens->thin_film_weight, 0.0f);
+        m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
+        m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
+        m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
+        m->openPbrAnisotropy = true;
+        program(_tokens->coat_weight, P::kCoat);
+        program(_tokens->coat_roughness, P::kCoatRoughness);
+        program(_tokens->coat_color, P::kCoatColor);
+        program(_tokens->fuzz_weight, P::kSheen);
+        program(_tokens->fuzz_color, P::kSheenColor);
+        program(_tokens->fuzz_roughness, P::kSheenRoughness);
+        program(_tokens->thin_film_thickness, P::kThinFilmThickness, 1000.0f);
+        program(_tokens->specular_roughness_anisotropy, P::kAnisotropy);
+    }
+    // NPR toon has no USD standard: Eldr's own inputs on any surface it
+    // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
+    // light, 0: none) and `float inputs:eldr:toonSoftness = 0.05` (edge
+    // width, in bands).
+    m->toonBands = std::max(ReadOr(p, _tokens->toonBands, 0.0f), 0.0f);
+    m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
+}
+
+// ponytail: metallic and specular workflows; the lobes ReadLobes reads.
+// Transmission and subsurface below. Ignored for now: displacement.
 // *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
 // reads; textures on other sets are read by the program, through primvars.
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
@@ -1266,6 +1433,57 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
             m->specular[i] = weight * color[i];
         }
     }
+    // Transmission: standard_surface and OpenPBR transmit and refract by
+    // their own inputs; UsdPreviewSurface refracts what its opacity lets
+    // through once it has an ior ("for translucent objects"; Hydra hands
+    // over authored inputs only).
+    // ponytail: constants only; textured or graph-driven transmission keeps
+    // its constant.
+    const bool openPbr = surface.nodeTypeId == _tokens->ND_open_pbr_surface_surfaceshader;
+    if (openPbr || surface.nodeTypeId == _tokens->ND_standard_surface_surfaceshader) {
+        Read(surface.parameters, openPbr ? _tokens->transmission_weight : _tokens->transmission, &m->transmission);
+        GfVec3f tint;
+        if (Read(surface.parameters, _tokens->transmission_color, &tint)) {
+            const TfToken colorSpace = ParameterColorSpace(surface.parameters, _tokens->transmission_color);
+            if (NeedsConversion(colorSpace)) {
+                tint = GfColor(GfColor(tint, GfColorSpace(colorSpace)), GfColorSpace(GfColorSpaceNames->LinearRec709))
+                           .GetRGB();
+            }
+            std::copy(tint.data(), tint.data() + 3, m->transmissionColor);
+        }
+        Read(surface.parameters, _tokens->transmission_depth, &m->transmissionDepth);
+        Read(surface.parameters, openPbr ? _tokens->specular_ior : _tokens->specular_IOR, &m->ior);
+        Read(surface.parameters, openPbr ? _tokens->geometry_thin_walled : _tokens->thin_walled, &m->thinWalled);
+        m->transmission = std::clamp(m->transmission, 0.0f, 1.0f);
+        // Subsurface: standard_surface's radius is a colour times a scale,
+        // OpenPBR's a distance times a colour (the shaders' defaults
+        // apply where nothing is authored).
+        Read(surface.parameters, openPbr ? _tokens->subsurface_weight : _tokens->subsurface, &m->subsurface);
+        m->subsurface = std::clamp(m->subsurface, 0.0f, 1.0f);
+        GfVec3f color = openPbr ? GfVec3f(0.8f) : GfVec3f(1.0f);
+        if (Read(surface.parameters, _tokens->subsurface_color, &color)) {
+            const TfToken colorSpace = ParameterColorSpace(surface.parameters, _tokens->subsurface_color);
+            if (NeedsConversion(colorSpace)) {
+                color = GfColor(GfColor(color, GfColorSpace(colorSpace)),
+                                GfColorSpace(GfColorSpaceNames->LinearRec709)).GetRGB();
+            }
+        }
+        std::copy(color.data(), color.data() + 3, m->subsurfaceColor);
+        GfVec3f radius = openPbr ? GfVec3f(1.0f, 0.5f, 0.25f) : GfVec3f(1.0f);
+        float scale = 1.0f;
+        if (openPbr) {
+            Read(surface.parameters, _tokens->subsurface_radius_scale, &radius);
+            Read(surface.parameters, _tokens->subsurface_radius, &scale);
+        } else {
+            Read(surface.parameters, _tokens->subsurface_radius, &radius);
+            Read(surface.parameters, _tokens->subsurface_scale, &scale);
+        }
+        for (int i = 0; i < 3; ++i) {
+            m->subsurfaceRadius[i] = std::max(radius[i] * scale, 0.0f);
+        }
+    } else if (Read(surface.parameters, _tokens->ior, &m->ior)) {
+        m->opacityRefracts = m->ior != 1.0f;
+    }
     using P = vkr::MaterialProgram;
     input(kind->baseColor, kind->baseWeight, kind->baseWeightDefault, kind->baseColorDefault, m->baseColor, 3,
           &m->baseColorTex, P::kBaseColor);
@@ -1280,6 +1498,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // standard_surface's opacity is a colour: its constant stays 1, a
     // texture is read through its first channel.
     input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex, P::kOpacity);
+    ReadLobes(surface, m, graph);
     if (!graph.Finish()) {
         TF_WARN("HdVk: a material's shading graph needs more than %u registers; its inputs keep their constants",
                 P::kRegisters);
@@ -1290,6 +1509,91 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
     }
+}
+
+// The largest |texel * scale + bias| of ref's channel (the red one without
+// a channel): 8- and 16-bit textures hold 0..1, float ones are scanned.
+float TexelBound(vkr::TextureRef const &ref)
+{
+    using F = vkr::Texture::Format;
+    float largest = 0.0f;
+    auto scan = [&](vkr::Texture const *t) {
+        if (!t) {
+            return;
+        }
+        if (t->format == F::R16F || t->format == F::RG16F || t->format == F::RGBA16F) {
+            for (size_t i = 0; i + 1 < t->pixels.size(); i += 2) {
+                uint16_t bits;
+                std::memcpy(&bits, &t->pixels[i], 2);
+                GfHalf h;
+                h.setBits(bits);
+                largest = std::isfinite(float(h)) ? std::max(largest, std::abs(float(h))) : largest;
+            }
+        } else if (t->format == F::RGBA32F) {
+            for (size_t i = 0; i + 3 < t->pixels.size(); i += 4) {
+                float f;
+                std::memcpy(&f, &t->pixels[i], 4);
+                largest = std::isfinite(f) ? std::max(largest, std::abs(f)) : largest;
+            }
+        } else {
+            largest = std::max(largest, 1.0f);
+        }
+    };
+    scan(ref.texture.get());
+    for (const auto &tile : ref.udim) {
+        scan(tile.get());
+    }
+    const int c = std::max(ref.channel, 0);
+    return largest * std::abs(ref.scale[c]) + std::abs(ref.bias[c]);
+}
+
+// The displacement terminal: a UsdPreviewSurface's `displacement` input, or
+// a MaterialX displacement shader's `displacement` (along the normal; of a
+// vector, its normal component z) times its `scale`. A constant, or a
+// texture through what ReadTexture follows, read with the material's uv set.
+// ponytail: no shading graphs (the vertex stage runs no programs), and
+// vector displacement drops its tangent components (per-vertex tangents).
+void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m,
+                      TfToken *uvPrimvar)
+{
+    const auto terminal = net.terminals.find(HdMaterialTerminalTokens->displacement);
+    const auto it = terminal == net.terminals.end() ? net.nodes.end() : net.nodes.find(terminal->second.upstreamNode);
+    if (it == net.nodes.end()) {
+        return;
+    }
+    const HdMaterialNode2 &node = it->second;
+    const TfToken &id = node.nodeTypeId, &input = HdMaterialTerminalTokens->displacement;
+    const bool vector = id == "ND_displacement_vector3", mtlx = vector || id == "ND_displacement_float";
+    if (!mtlx && id != _tokens->UsdPreviewSurface && id != _tokens->ND_UsdPreviewSurface_surfaceshader) {
+        return;
+    }
+    const float scale = mtlx ? ReadOr(node.parameters, _tokens->scale, 1.0f) : 1.0f;
+    GfVec3f v(0.0f);
+    if (!Read(node.parameters, input, &m->displacement) && Read(node.parameters, input, &v)) {
+        m->displacement = v[2];
+    }
+    m->displacement *= scale;
+    m->displacementBound = std::abs(m->displacement);
+    TfToken primvar;
+    vkr::TextureRef &ref = m->displacementTex;
+    ReadTexture(net, &node, input, textures, m, &ref, &primvar);
+    if (!ref.texture) {
+        return;
+    }
+    if (vector && ref.channel < 0) {
+        ref.channel = 2;  // (dPdu, dPdv, N) space: z is along the normal
+    }
+    for (int i = 0; i < 4; ++i) {
+        ref.scale[i] *= scale;
+        ref.bias[i] *= scale;
+    }
+    if (uvPrimvar->IsEmpty()) {
+        *uvPrimvar = primvar;
+    } else if (primvar != *uvPrimvar) {
+        TF_WARN("HdVk: a material reads uv sets '%s' and '%s'; all textures use '%s'", uvPrimvar->GetText(),
+                primvar.GetText(), uvPrimvar->GetText());
+    }
+    m->displacementBound = TexelBound(ref);
 }
 
 } // namespace
@@ -1339,8 +1643,9 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _uvPrimvar = TfToken();
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
-            ReadSurface(HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>()),
-                        _textures, &m, &_uvPrimvar);
+            const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
+            ReadSurface(net, _textures, &m, &_uvPrimvar);
+            ReadDisplacement(net, _textures, &m, &_uvPrimvar);
         }
         _primvars.clear();
         for (const std::string &name : m.program.primvars) {

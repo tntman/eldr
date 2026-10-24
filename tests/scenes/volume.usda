@@ -1,0 +1,100 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# OpenVDB volumes (volume.vdb, written by tests/make_volume.cpp): a smoke
+# cloud, turned and lit by the sun through its own density, with an opaque
+# ball poking out of it; the same cloud smaller with a temperature field,
+# glowing at its bottom; and a dense little ball, the file's second grid
+# named "density" (fieldIndex 1). Storm (--renderer GL) draws density and
+# emission fields only, and ignores fieldIndex.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    double3 xformOp:translate = (0, 1.4, 9)
+    float xformOp:rotateX = -8
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 40, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 0.5
+}
+
+def Cube "floor"
+{
+    double size = 1
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+    double3 xformOp:translate = (0, -2.05, 0)
+    float3 xformOp:scale = (14, 0.1, 10)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "orb"
+{
+    double radius = 0.6
+    color3f[] primvars:displayColor = [(0.8, 0.2, 0.1)]
+    double3 xformOp:translate = (-1.0, 0.9, 1.0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Volume "cloud"
+{
+    rel field:density = </cloud/density>
+    double3 xformOp:translate = (-2.0, 0.1, 0)
+    float xformOp:rotateY = 35
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+    }
+}
+
+def Volume "fire"
+{
+    rel field:density = </fire/density>
+    rel field:temperature = </fire/temperature>
+    double3 xformOp:translate = (2.3, -0.6, -0.5)
+    float3 xformOp:scale = (0.7, 0.7, 0.7)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+    }
+
+    def OpenVDBAsset "temperature"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "temperature"
+    }
+}
+
+def Volume "ball"
+{
+    rel field:density = </ball/density>
+    double3 xformOp:translate = (0.4, -1.4, 2.0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+        int fieldIndex = 1
+    }
+}
