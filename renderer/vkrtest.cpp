@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -283,8 +284,10 @@ int main()
                 VK_API_VERSION_MINOR(info.apiVersion),
                 VK_API_VERSION_PATCH(info.apiVersion));
 
-    // Pipelines cache in a folder of this run's (Device::LoadPipelineCache).
-    const std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "eldr_vkrtest_pipelines";
+    // Pipelines cache in a folder of this run's (Device::LoadPipelineCache),
+    // its own so runs in parallel don't share it.
+    const std::filesystem::path cacheDir = std::filesystem::temp_directory_path() /
+        ("eldr_vkrtest_pipelines_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::error_code cacheError;
     std::filesystem::remove_all(cacheDir, cacheError);
 #ifdef _WIN32
@@ -3085,6 +3088,7 @@ int main()
         return 1;
     }
 
+    std::filesystem::remove_all(cacheDir, cacheError);
     std::puts(failures ? "FAILED" : "OK");
     return failures ? 1 : 0;
 }
