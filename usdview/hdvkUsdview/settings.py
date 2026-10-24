@@ -24,7 +24,7 @@ GROUPS = [
      "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
     ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts"),
     ("Fog and volumes",
-     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp "
+     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution"),
     ("Camera and image",

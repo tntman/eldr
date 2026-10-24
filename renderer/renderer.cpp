@@ -1687,7 +1687,11 @@ bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *d
         std::memcpy(&bits, &v, sizeof(bits));
         key = (key ^ bits) * 1099511628211ull;
     }
-    const bool history = _fog.Resize(x, y, kSlices) && _fogDepth > 0.0f && key == _fogKey;
+    // A film sample (Frame::fogFilmJitter): each froxel at a point of its
+    // own, new per sample, and no history; the film averages them.
+    const bool usable = _fog.Resize(x, y, kSlices);
+    const bool history = usable && !_filmFroxels && _fogDepth > 0.0f && key == _fogKey;
+    data->sampleInfo[1] = _filmFroxels ? 1 : 0;
     _fogKey = key;
     // History: 90% of last frame's grid, sampled half a slice apart on average.
     const float temporal[4] = {history ? _fog.Jitter() : 0.5f, history ? 0.9f : 0.0f, history ? _fogDepth : depth,
@@ -2357,6 +2361,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
+    _filmFroxels = film && frame.fogFilmJitter;
     const bool fog = _SetupFog(gpu, frame, &fd);
     const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
     if (_reflections && _reflections->Probe()) {

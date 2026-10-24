@@ -238,6 +238,10 @@ public:
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
+        // Fog under the film: every froxel sampled at a point jittered per
+        // sample (sample dimensions) and no history, so the film's average
+        // is the medium's (EEVEE: no reprojection when accumulating).
+        bool fogFilmJitter = true;
         // Shading pipelines a frame compiles are saved to the device's
         // pipeline cache file (Device::LoadPipelineCache) for later runs.
         bool pipelineCache = true;
@@ -380,7 +384,8 @@ private:
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
     bool _filmAdaptive = false;
-    bool _freshRun = false;  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
+    bool _freshRun = false;
+    bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
     std::chrono::steady_clock::time_point _lastFrame;
     bool _hasLastFrame = false;

@@ -129,6 +129,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((adaptiveThreshold, "hdvk:adaptiveThreshold"))          \
     ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
     ((giPreconverge, "hdvk:giPreconverge"))                  \
+    ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 

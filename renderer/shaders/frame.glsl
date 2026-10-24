@@ -42,7 +42,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
     // Sample dimensions (SampleNoise): this sample's value per kDim*;
-    // sampleInfo.x 1 with them on.
+    // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.
     vec4 sampleDims[2];
     uvec4 sampleInfo;
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them

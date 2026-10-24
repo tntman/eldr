@@ -2587,6 +2587,25 @@ int main()
             scene.Commit();
             const float scattered = Render(renderer, scene, frame).At(32, 32, 0);
             Expect(std::abs(scattered - (1.0f - std::exp(-0.8f))) < 0.02f, "fog: in-scattered sunlight");
+            {
+                // Under the film each sample jitters the froxels anew, with
+                // no history; the average is the same medium.
+                vkr::Renderer filmRenderer(device);
+                vkr::Renderer::Frame film = frame;
+                film.postProcess = true;
+                film.post.autoExposure = false;
+                film.post.bloomIntensity = 0.0f;
+                film.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                film.filmSamples = 16;
+                Image first, img;
+                int n = 0;
+                do {
+                    img = Render(filmRenderer, scene, film);
+                    first = n++ == 1 ? img : first;
+                } while (!filmRenderer.IsConverged() && n < 100);
+                Expect(std::abs(img.At(32, 32, 0) - (1.0f - std::exp(-0.8f))) < 0.02f && MaxDifference(first, img) > 0.0f,
+                       "fog under the film: froxels jittered per sample average to the medium");
+            }
 
             // Light from above (+y), a plane at y = 0.5 over x < 0.
             sun->direction[1] = 1;
