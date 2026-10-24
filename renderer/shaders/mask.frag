@@ -10,10 +10,13 @@
 // mesh.vert built with DEPTH_ONLY.
 layout(location = 2) in vec2 inUv;
 layout(location = 4) flat in uint inMaterial;
+layout(location = 5) flat in uint inEntry;
 
+// Also the depth prepass of meshes with levels of detail while they may
+// crossfade (frame.lodFade): the fading copies' dither (frame.glsl).
 void main()
 {
-    if (inMaterial != kNoMaterial && !Present(materials[inMaterial], inUv)) {
+    if ((inMaterial != kNoMaterial && !Present(materials[inMaterial], inUv)) || !LodKeep(inEntry, gl_FragCoord.xy)) {
         discard;
     }
 }

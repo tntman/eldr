@@ -175,6 +175,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
+        {"Level of Detail Crossfade (dithered)", t.lodFade, VtValue(frame.lodFade)},
         {"Curves as Camera-Facing Ribbons (else tubes)", t.curveRibbons, VtValue(kHdVkCurveRibbons)},
         {"Points as Camera-Facing Discs (else spheres)", t.pointSprites, VtValue(kHdVkPointSprites)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},

@@ -56,7 +56,7 @@ struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
 };
 struct GpuLod {           // mirror of Lod in shaders/cull.comp
     uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
-    uint32_t regions[4];  // where level 1 fills back from; levels 2, 3: the second range's start and end
+    uint32_t regions[4];  // where levels 1, 2, 3 fill from (Scene::_ReserveLodInstances)
     float errors[4];      // levels 1..3, relative to the bounding radius
 };
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -952,13 +952,14 @@ void Scene::_StoreLods(Mesh &m, std::vector<LodLevel> levels)
     _ReserveLodInstances(m);
 }
 
-// Levels 2 and 3 of detail fill a range of the visible lists of their own
-// (Gpu::lods): instance slots that stay invalid.
-// ponytail: past kLodMaxInstances instances a mesh keeps one coarser level
-// (no second range), so huge instancing doesn't double its pools.
+// Each level of detail fills a range of the visible lists of its own
+// (Gpu::lods), room for every instance (a crossfading one is in two
+// levels): instance slots that stay invalid.
+// ponytail: past kLodMaxInstances instances a mesh has no levels, so huge
+// instancing doesn't multiply its pools.
 void Scene::_ReserveLodInstances(Mesh &m)
 {
-    const uint32_t slots = m._lods.size() > 1 && m._instanceCount <= kLodMaxInstances ? m._instanceCount : 0;
+    const uint32_t slots = m._instanceCount <= kLodMaxInstances ? m._instanceCount * uint32_t(m._lods.size()) : 0;
     if (slots != m._lodInstanceCount) {
         _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);
         while (!_instanceAlloc.Allocate(slots, &m._lodInstanceBase)) {
@@ -1678,11 +1679,12 @@ void Scene::Commit()
         g.slots[0] = uint32_t(next);
         // Translucent meshes draw per slot, without levels; displaced ones
         // keep their density (the levels' errors don't see displacement).
-        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ? 0
-                     : m._lodInstanceCount > 0                           ? uint32_t(m._lods.size())
-                                                                         : std::min<uint32_t>(uint32_t(m._lods.size()), 1);
-        const uint32_t firsts[3] = {m._instanceBase + m._instanceCount, m._lodInstanceBase,
-                                    m._lodInstanceBase + m._lodInstanceCount};
+        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ||
+                             m._lodInstanceCount == 0
+                         ? 0
+                         : uint32_t(m._lods.size());
+        const uint32_t firsts[3] = {m._lodInstanceBase, m._lodInstanceBase + m._instanceCount,
+                                    m._lodInstanceBase + 2 * m._instanceCount};
         std::copy(firsts, firsts + 3, g.regions);
         for (size_t k = 0; k < m._lods.size(); ++k, ++next) {
             const Mesh::Lod &lod = m._lods[k];
@@ -1699,6 +1701,7 @@ void Scene::Commit()
 
     _gpu.drawChunks.assign(1, 0);
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
+    _gpu.chunkLevels.assign(1, 0);
     _gpu.instanceCount = _gpu.triangleCount = 0;
     double triangles = 0;
     for (size_t slot = 0; slot < commandSlots; ++slot) {
@@ -1710,12 +1713,16 @@ void Scene::Commit()
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
-        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back())) {
+        const uint8_t levels = slot >= slots || lods[slot].slots[1] > 0;
+        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back() ||
+                              levels != _gpu.chunkLevels.back())) {
             _gpu.drawChunks.push_back(uint32_t(slot));
             _gpu.chunkKind.push_back(kind[slot]);
+            _gpu.chunkLevels.push_back(levels);
             triangles = 0;
         }
         _gpu.chunkKind.back() = kind[slot];
+        _gpu.chunkLevels.back() = levels;
         triangles += t;
     }
     _gpu.drawChunks.push_back(uint32_t(commandSlots));

@@ -614,6 +614,9 @@ public:
             kDisplaced = 128
         };
         std::vector<uint8_t> chunkKind;
+        // Per chunk: 1 if it draws levels of detail (a mesh with levels or
+        // their commands), whose crossfade needs the alpha-tested prepass.
+        std::vector<uint8_t> chunkLevels;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
         std::vector<uint32_t> translucent;

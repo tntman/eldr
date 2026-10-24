@@ -41,6 +41,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    uvec4 lodFade;       // x: frames a level of detail change crossfades over (0: it pops; LodKeep)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
@@ -63,6 +64,33 @@ layout(constant_id = 13) const uint kCompiledFeatures = 0xFFFFFFFFu;
 bool Feature(uint feature)
 {
     return (kCompiledFeatures & feature) != 0u && (frame.features.x & feature) != 0u;
+}
+
+// Level of detail crossfades (cull.comp): while an instance changes level
+// it is drawn in both, as visible-list entries with kLodFading set (its slot
+// in the low 24 bits, how far the fade got in bits 24..29, kLodFadingOut on
+// the old level's), and each pixel keeps one of the two by a dither that
+// moves every frame, so the history (TAA, accumulation) blends them.
+const uint kLodFading = 0x80000000u, kLodFadingOut = 0x40000000u;
+
+// The instance slot of a visible-list entry.
+uint EntrySlot(uint entry)
+{
+    return entry >= kLodFading ? entry & 0x00FFFFFFu : entry;
+}
+
+// Whether this pixel draws the copy `entry` (always, unless it is fading).
+// The depth prepass and the shading pass agree, so each pixel has one
+// level's depth and shading.
+bool LodKeep(uint entry, vec2 pixel)
+{
+    if (entry < kLodFading) {
+        return true;
+    }
+    float t = float((entry >> 24) & 63u) / 64.0;
+    float shift = float((uint(frame.geometry.z) * 2654435769u) >> 8) / 16777216.0;  // golden ratio steps
+    float noise = fract(52.9829189 * fract(dot(floor(pixel), vec2(0.06711056, 0.00583715))) + shift);
+    return (entry & kLodFadingOut) != 0u ? noise >= t : noise < t;
 }
 
 layout(set = 0, binding = 0) uniform sampler2D textures[];

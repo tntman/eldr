@@ -37,9 +37,10 @@ layout(std430, set = 0, binding = 60) readonly buffer PrevBlendWeights { float p
 layout(location = 0) out vec4 outWorldPos;  // xyz; w: last frame's x
 layout(location = 1) out vec4 outNormal;    // xyz; w: last frame's y
 layout(location = 3) out vec4 outColor;     // rgb; w: last frame's z
-layout(location = 4) flat out uint outSlot;  // instance slot; mesh.frag reads the rest from it
+layout(location = 4) flat out uint outSlot;  // visible-list entry (EntrySlot); mesh.frag reads the rest from it
 #else
 layout(location = 4) flat out uint outMaterial;
+layout(location = 5) flat out uint outEntry;  // visible-list entry (mask.frag's LodKeep)
 #endif
 layout(location = 2) out vec2 outUv;
 #if defined(GRAPH) && !defined(DEPTH_ONLY)
@@ -116,7 +117,8 @@ vec3 Facing(uint kind, vec3 p, mat3 m, out vec3 normal)
 
 void main()
 {
-    uint slot = pc.listBase == kFreeSlot ? uint(gl_InstanceIndex) : visible[pc.listBase + gl_InstanceIndex];
+    uint entry = pc.listBase == kFreeSlot ? uint(gl_InstanceIndex) : visible[pc.listBase + gl_InstanceIndex];
+    uint slot = EntrySlot(entry);
     Instance inst = instances[slot];
     DrawInfo d = draws[inst.draw];
     mat4 model = InstanceTransform(inst);
@@ -172,12 +174,13 @@ void main()
     outWorldPos = vec4(world.xyz, prevWorld.x);
     outNormal = vec4(facing ? facingNormal : normalMatrix * inNormal, prevWorld.y);
     outColor = vec4(d.vertexColors != 0u ? inVertexColor.rgb : d.color.rgb, prevWorld.z);
-    outSlot = slot;
+    outSlot = entry;
 #ifdef GRAPH
     outPrimvars = d.primvarVertices == kFreeSlot ? vec4(0.0)
                                                  : primvarVertices[d.primvarVertices + uint(gl_VertexIndex) - d.vertexBase];
 #endif
 #else
     outMaterial = d.material;
+    outEntry = entry;
 #endif
 }

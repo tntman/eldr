@@ -193,6 +193,9 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // A level of detail change crossfades over a few frames (dithered,
+        // the history blends it) instead of popping.
+        bool lodFade = true;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -354,6 +357,8 @@ private:
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
     Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    VkBuffer _lodInstances = VK_NULL_HANDLE;  // the instance pool _lodState is about
+    uint32_t _lodFadeLeft = 0, _lodDrawCount = 0;  // frames crossfades may still run; commands when counted
     float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
     uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;

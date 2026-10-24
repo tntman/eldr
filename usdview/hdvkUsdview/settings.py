@@ -8,7 +8,7 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 # land in "Other".
 GROUPS = [
     ("Performance and geometry",
-     "depthPrepass frustumCulling cullPixels lod lodBias subdivision maxRefineLevel displacement curveRibbons pointSprites "
+     "depthPrepass frustumCulling cullPixels lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons pointSprites "
      "displacementScale anisotropy shareFrame extraAovs"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "

@@ -45,6 +45,7 @@ struct FrameData {
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
+    uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
 };
 
 namespace {
@@ -99,6 +100,7 @@ const uint32_t kShadowMinComp[] =
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
 constexpr uint32_t kFeatureProcedurals = 256;
 constexpr uint32_t kFeatureDisplacement = 1024, kFeatureLod = 2048;
+constexpr uint32_t kLodFadeFrames = 8;  // a level of detail change crossfades over (Frame::lodFade)
 // Material lobes, as shaders/brdf.glsl numbers them.
 constexpr uint32_t kFeatureSpecularWorkflow = 8, kFeatureClearcoat = 16, kFeatureSheen = 32, kFeatureThinFilm = 64,
                    kFeatureAnisotropy = 128;
@@ -189,8 +191,10 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 // variant (chunkKind >> 2, within `variants`: depth passes have no program
 // variants). Translucent chunks are left to the translucent pass (and cast
 // no shadows).
+// `fading`: levels of detail crossfade, so their chunks take `cutout` too
+// (mask.frag's dither; the camera's depth prepass).
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
-                const VkPipeline *opaque, const VkPipeline *cutout, uint8_t variants)
+                const VkPipeline *opaque, const VkPipeline *cutout, uint8_t variants, bool fading = false)
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
@@ -199,7 +203,8 @@ void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, V
         if (kind == Scene::Gpu::kTranslucent) {
             continue;
         }
-        const VkPipeline pipeline = (kind == Scene::Gpu::kCutout ? cutout : opaque)[(gpu.chunkKind[i] >> 2) & variants];
+        const bool masked = kind == Scene::Gpu::kCutout || (fading && gpu.chunkLevels[i]);
+        const VkPipeline pipeline = (masked ? cutout : opaque)[(gpu.chunkKind[i] >> 2) & variants];
         if (pipeline != bound) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             bound = pipeline;
@@ -1793,7 +1798,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
 bool Renderer::IsConverged() const
 {
     return (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged()) &&
-           !(_reflections && _reflections->ProbePending());
+           !(_reflections && _reflections->ProbePending()) && _lodFadeLeft == 0;
 }
 
 uint32_t Renderer::VisibleInstances() const
@@ -1871,6 +1876,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.features[0] |= kFeatureLod;
         fd.geometry[1] = frame.lodBias;
         fd.geometry[2] = float(++_lodFrame & 0xFFFFFFu);  // exact as a float
+        // ponytail: a fixed length, the TAA's history; a setting if it matters.
+        fd.lodFade[0] = frame.lodFade && gpu.drawCount > gpu.meshCount ? kLodFadeFrames : 0;
     }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
@@ -1996,10 +2003,11 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     _prevJointsSource = gpu.joints;
     // The camera's level of detail per instance slot, kept across frames
     // (cull.comp); a new pool starts from whatever is there.
-    if (VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t) > _lodState.size) {
+    if (VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * 2 * sizeof(uint32_t) > _lodState.size) {
         _dev.Destroy(_lodState);
-        _lodState = _dev.CreateDeviceBuffer(VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * sizeof(uint32_t),
-                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        _lodInstances = VK_NULL_HANDLE;  // cleared before its first use
+        _lodState = _dev.CreateDeviceBuffer(VkDeviceSize(std::max(gpu.instanceCapacity, 1u)) * 2 * sizeof(uint32_t),
+                                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     // Blend shape motion: last frame's weights, kept like the joints.
     const bool blendMotion = frame.objectMotion && frame.blendShapeMotion && gpu.blendWeightsBytes > 0;
@@ -2057,7 +2065,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.translucency[1] = float(_transparency.BackgroundLevels());
     }
     // The shading pipelines with the code of this frame's optional features.
-    _shadingBase = _ShadingSet(fd.features[0] & kOptionalFeatures) * kVariants;
+    // (Crossfading levels of detail: kFeatureLod stands for mesh.frag's dither.)
+    _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (fd.lodFade[0] > 0 ? kFeatureLod : 0)) *
+                   kVariants;
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
@@ -2097,12 +2107,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             resets[k] = {0, k * commandBytes, commandBytes};
         }
         vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1 + cascades, resets);
+        // Levels of detail of another scene's (or pool's) instances mean
+        // nothing here: no last level, nothing to fade from.
+        if (gpu.instances != _lodInstances) {
+            vkCmdFillBuffer(_cmd, _lodState.buffer, 0, VK_WHOLE_SIZE, 0);
+            _lodInstances = gpu.instances;
+        }
         if (prevJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
             vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
         }
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-        toCull.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        toCull.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
         toCull.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
         toCull.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
         toCull.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
@@ -2323,7 +2339,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             PushDraw(_cmd, _layout, jitteredViewProj, 0);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, kDepthVariants);
+            DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, kDepthVariants,
+                       fd.lodFade[0] > 0);
         }
         vkCmdEndRendering(_cmd);
         ImageBarrier(_cmd, _depth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT),
@@ -2352,9 +2369,18 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
 
     // The atlas draws the camera's levels of detail (cull.comp): it is
     // redrawn when the camera moves while there are levels.
+    // Crossfades may run for kLodFadeFrames after the camera moves or new
+    // levels arrive: not converged until they are over.
+    // ponytail: instances that move on their own can start fades unseen.
+    _lodFadeLeft = _lodFadeLeft > 0 ? _lodFadeLeft - 1 : 0;
+    if (fd.lodFade[0] > 0 && gpu.drawCount != _lodDrawCount) {
+        _lodFadeLeft = kLodFadeFrames + 1;
+    }
+    _lodDrawCount = gpu.drawCount;
     if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
         std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
         _atlasVersion = 0;
+        _lodFadeLeft = fd.lodFade[0] > 0 ? kLodFadeFrames + 1 : 0;
     }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
     if (!shadowTiles.empty()) {
