@@ -2339,7 +2339,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (ssgi && draw) {
         _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius, sample,
                          std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
-                         _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0));
+                         _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                         _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,

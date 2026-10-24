@@ -541,6 +541,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                                                vec2(0.06711056, 0.00583715))));
     float uPrev = 0.0;
     vec3 sPrev = s0;
+    bool wasBehind = false;
     for (int i = 0; i < steps; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
         vec3 s = mix(s0, s1, u);
@@ -553,16 +554,33 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
         // it. Further behind, it passes behind a separate object. Surfaces
         // seen at grazing angles put a crossing ray far behind along the
         // view ray, so objects are also assumed 5% of their distance thick.
-        bool crossed = false;
-        if (scene < 1.0 && z > scene) {
-            vec3 ray = Unproject(s);
-            vec3 surface = Unproject(vec3(s.xy, scene * 2.0 - 1.0));
-            float thickness = max(2.0 * length(ray - Unproject(sPrev)),
-                                  0.05 * length(surface - frame.cameraPos.xyz));
+        // A step that goes from in front of the depth to behind it is
+        // refined first and judged where it crosses: at grazing angles a
+        // whole step can land far behind a surface it did pass through
+        // (otherwise a miss that TAA's clipping keeps as grain).
+        bool behind = scene < 1.0 && z > scene, crossed = false;
+        float lo = uPrev, hi = u;
+        if (behind) {
+            float stepLength = length(Unproject(s) - Unproject(sPrev));
+            if (!wasBehind) {
+                for (int k = 0; k < 5; ++k) {
+                    float mid = 0.5 * (lo + hi);
+                    vec3 m = mix(s0, s1, mid);
+                    if (m.z * 0.5 + 0.5 > SceneDepth(m.xy)) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+            }
+            vec3 c = mix(s0, s1, hi);
+            vec3 ray = Unproject(c);
+            vec3 surface = Unproject(vec3(c.xy, SceneDepth(c.xy) * 2.0 - 1.0));
+            float thickness = max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
             crossed = length(ray - surface) <= thickness;
         }
+        wasBehind = behind;
         if (crossed) {
-            float lo = uPrev, hi = u;
             for (int k = 0; k < 5; ++k) {
                 float mid = 0.5 * (lo + hi);
                 vec3 m = mix(s0, s1, mid);
