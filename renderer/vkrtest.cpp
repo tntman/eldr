@@ -2677,6 +2677,77 @@ int main()
         }
 
         {
+            // Lens jitter (Frame::dofJitter), through PerspectiveFrame (90
+            // degrees, 64 pixels): f = 1, sensor 2, f/1 focused at 2. A 2 x 2
+            // pixel emitter 4 away spreads over the thin lens's circle of
+            // confusion, 0.5 f^2 / (N (S - f)) * 32 * |D - S| / D = 8 pixels
+            // in radius: its light keeps its sum and its RMS radius is
+            // sqrt(8^2 / 2 + 2^2 / 6). An emitter's edge in the focus plane
+            // stays as sharp as without depth of field. Off the film the
+            // image is the post DOF's, bit for bit.
+            vkr::Scene scene(&device);
+            AddEmitter(scene, -0.125f, -0.125f, 0.125f, 0.125f, -4.0f, 1.0f);
+            AddEmitter(scene, -1.0f, 0.75f, 0.25f, 1.5f, -2.0f, 1.0f);  // lower edge at row 44
+            scene.Commit();
+            vkr::Renderer::Frame frame = PerspectiveFrame();
+            std::fill(frame.clearColor, frame.clearColor + 4, 0.0f);
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.post.bloomIntensity = 0.0f;
+            frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+            frame.filmFilterRadius = 0.0f;
+            frame.filmSamples = 256;
+            frame.finalQuality = true;
+            frame.focalLength = 1.0f;
+            frame.sensorWidth = 2.0f;
+            frame.fStop = 1.0f;
+            frame.focusDistance = 2.0f;
+            auto film = [&](const vkr::Renderer::Frame &f) {
+                vkr::Renderer r(device);
+                Image img;
+                for (int i = 0; i < 400; ++i) {
+                    img = Render(r, scene, f);
+                    if (r.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            auto spot = [](const Image &img, float *rms) {  // the far emitter: rows below 42
+                double sum = 0, moment = 0;
+                for (int y = 0; y < 42; ++y) {
+                    for (int x = 0; x < 64; ++x) {
+                        const double v = img.At(x, y, 1), dx = x + 0.5 - 32.0, dy = y + 0.5 - 32.0;
+                        sum += v;
+                        moment += v * (dx * dx + dy * dy);
+                    }
+                }
+                *rms = float(std::sqrt(moment / std::max(sum, 1e-9)));
+                return float(sum);
+            };
+            const Image jittered = film(frame);
+            frame.depthOfField = false;
+            const Image sharp = film(frame);
+            float rms = 0, sharpRms = 0;
+            const float energy = spot(jittered, &rms), sharpEnergy = spot(sharp, &sharpRms);
+            const float expected = std::sqrt(32.0f + 4.0f / 6.0f);
+            float edge = 0;
+            for (int y = 40; y < 48; ++y) {
+                edge = std::max(edge, std::abs(jittered.At(24, y, 1) - sharp.At(24, y, 1)));
+            }
+            std::printf("dof jitter: spot sum %.2f (sharp %.2f), RMS radius %.2f px (thin lens %.2f), focus edge %.3f\n",
+                        energy, sharpEnergy, rms, expected, edge);
+            Expect(std::abs(energy / sharpEnergy - 1.0f) < 0.05f && std::abs(rms / expected - 1.0f) < 0.08f,
+                   "dof jitter: the film converges to the thin lens's circle of confusion");
+            Expect(edge < 0.1f, "dof jitter: the focus plane stays sharp");
+            frame.depthOfField = true;
+            frame.filmAccumulation = false;
+            const Image post = film(frame);
+            frame.dofJitter = false;
+            Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
+        }
+
+        {
             // Volumetric fog, through PerspectiveFrame (camera at the origin
             // looking down -z): an emitter 4 away behind uniform fog of
             // density 0.2 keeps exp(-0.8) of its light; a black backdrop

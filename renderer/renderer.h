@@ -298,6 +298,12 @@ public:
         // is the true penumbra; with softShadows (and softSunShadows for
         // the sun). TAA frames keep PCSS.
         bool shadowJitter = true;
+        // Lens jitter under the film (EEVEE's DOF jitter): with depth of
+        // field, each sample sees through a point of the lens aperture
+        // (the focus plane fixed), so the film's average is the thin lens's
+        // blur, with true occlusion; the post DOF is skipped then. TAA
+        // frames keep the post DOF.
+        bool dofJitter = true;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).

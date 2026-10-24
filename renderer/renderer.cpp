@@ -2463,8 +2463,13 @@ uint32_t Renderer::VisibleInstances() const
 
 // ponytail: synchronous, one frame in flight. The Hydra layer's GPU sharing
 // (interop.h) skips the readback; frames in flight would come next.
-void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out)
+void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &out)
 {
+    // The app's camera, or this film sample's through a point of the lens
+    // (Frame::dofJitter, set once the film's state is known below); the
+    // film's and TAA's motion tests compare the app's.
+    Frame lensed = appFrame;
+    const Frame &frame = lensed;
     if (frame.width == 0 || frame.height == 0) {
         return;
     }
@@ -2541,7 +2546,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // matrices used for culling, shadows and reprojection stay unjittered.
     const bool taa = frame.postProcess && frame.taa;
     float jitteredViewProj[16];
-    std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     Mat4 unjitter;          // jittered NDC -> unjittered NDC
     const uint32_t taaSamples = std::clamp(frame.taaSamples, 1u, 256u);
     uint32_t sample = 0;    // jitter (and GTAO noise) index, 1..taaSamples (the film's: its sample)
@@ -2587,6 +2591,54 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                : taa  ? _haltonIndex % std::clamp(frame.interactiveSamples, 1u, 256u) + 1
                                       : 0;
     _stats.sample = noiseSample;
+    const uint32_t sobolIndex = noiseSample > 0 ? noiseSample - 1 : 0;
+    // Depth of field: a thin lens with a circle of confusion
+    // f^2 / (N (S - f)) * |D - S| / D across on the sensor.
+    const bool dofLens = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
+                         frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
+    // Lens jitter (film samples): the camera moves to a point of a disc
+    // whose radius gives that circle of confusion through the pinhole
+    // projection (f S / (2 N (S - f))), sheared so the focus plane stays,
+    // and the post DOF is skipped.
+    const bool lensJitter = film && frame.dofJitter && dofLens;
+    if (lensJitter) {
+        float lens[2];
+        ScrambledSobol(sobolIndex, kSeedLens, lens, 2);
+        const float f = frame.focalLength, focus = frame.focusDistance;
+        const float r = 0.5f * f * focus / (frame.fStop * (focus - f)) * std::sqrt(lens[0]);
+        const float phi = 6.2831853f * lens[1];
+        const Mat4 inv = ToMat4(appFrame.invViewProj);
+        const Vec3 o = TransformPoint(inv, {0, 0, 0});
+        const Vec3 right = Normalize(TransformPoint(inv, {1, 0, 0}) - o), up = Normalize(TransformPoint(inv, {0, 1, 0}) - o);
+        Vec3 forward = Normalize(Cross(up, right));  // normal of the planes of equal depth
+        if (Dot(forward, TransformPoint(inv, {0, 0, 1}) - TransformPoint(inv, {0, 0, -1})) < 0) {
+            forward = forward * -1.0f;
+        }
+        const Vec3 eye{appFrame.cameraPos[0], appFrame.cameraPos[1], appFrame.cameraPos[2]};
+        // p -> p + d (dot(p - eye, forward) / S - 1): the lens point maps to
+        // the eye, the focus plane to itself; its inverse is the same with -d.
+        auto shear = [&](Vec3 d) {
+            Mat4 m;
+            const float fw[3] = {forward.x, forward.y, forward.z}, dd[3] = {d.x, d.y, d.z};
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    m.m[i][j] += fw[i] * dd[j] / focus;
+                }
+                m.m[3][i] = -dd[i] * (1.0f + Dot(eye, forward) / focus);
+            }
+            return m;
+        };
+        const Vec3 d = (right * std::cos(phi) + up * std::sin(phi)) * r;
+        const Mat4 viewProj = shear(d) * ToMat4(appFrame.viewProj);
+        const Mat4 invViewProj = inv * shear(d * -1.0f);
+        std::memcpy(lensed.viewProj, viewProj.m, sizeof(lensed.viewProj));
+        std::memcpy(lensed.invViewProj, invViewProj.m, sizeof(lensed.invViewProj));
+        lensed.cameraPos[0] = eye.x + d.x;
+        lensed.cameraPos[1] = eye.y + d.y;
+        lensed.cameraPos[2] = eye.z + d.z;
+        std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
+    }
+    std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     if (taa) {
         sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
         ++_haltonIndex;
@@ -2645,7 +2697,6 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Jittered light shapes (film samples only): this sample's point on
     // every shape, the sun's direction within its disc.
     const bool shapeJitter = film && frame.shadowJitter && frame.softShadows;
-    const uint32_t sobolIndex = noiseSample > 0 ? noiseSample - 1 : 0;
     float shapeSample[3];
     ScrambledSobol(sobolIndex, kSeedLightShape, shapeSample, 3);
     float toSun[3];
@@ -3120,7 +3171,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                          _historyValid,
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
-                         _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
+                         _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
                          frame.ssgiThickness, frame.ssgiBitmask ? 0.25f * frame.ssgiRadius : 0.0f);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
@@ -3134,8 +3185,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
 
     // The atlas draws the camera's levels of detail (cull.comp): it is
     // redrawn when the camera moves while there are levels.
-    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
-        std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
+    if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(appFrame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
+        std::memcpy(_lodViewProj, appFrame.viewProj, sizeof(_lodViewProj));
         _atlasVersion = 0;
     }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
@@ -3288,8 +3339,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
     // The camera's lens: depth of field when it has an fStop (motion blur above).
-    const bool dof = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
-                     frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
+    const bool dof = dofLens && !lensJitter;
     Lens::Params lens{};
     if (dof || motionBlur) {
         const Mat4 back = motionBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
@@ -3325,7 +3375,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         float alpha = 1.0f;
         Mat4 reprojection;
         if (taa) {
-            const bool moved = _taaValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+            const bool moved = _taaValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
             if (_taaValid) {
                 reprojection = unjitter * ToMat4(frame.invViewProj) * ToMat4(_prevViewProj);
             }
@@ -3387,7 +3437,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         pass("post");
         _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
         _stats.taaTarget = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
-        std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
+        std::memcpy(_prevViewProj, appFrame.viewProj, sizeof(_prevViewProj));
         _historyValid = true;
     } else {
         _taaValid = false;
