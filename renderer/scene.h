@@ -643,6 +643,10 @@ public:
             float extent;
             float radius;            // sphere radius: the shadow near plane stays outside it
             float size;              // emitter radius for soft shadows (0: point, hard)
+            // Its shape (Frame::shadowJitter): a sphere of radius size, a
+            // rect or disk of these half extents, a cylinder's axis.
+            enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
+            float halfWidth[3], halfHeight[3];
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,

@@ -160,7 +160,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.finalQuality, &frame.finalQuality},
                                 {t.sampleDimensions, &frame.sampleDimensions},
                                 {t.giPreconverge, &frame.giPreconverge}, {t.fogFilmJitter, &frame.fogFilmJitter},
-                                {t.pipelineCache, &frame.pipelineCache},
+                                {t.shadowJitter, &frame.shadowJitter}, {t.pipelineCache, &frame.pipelineCache},
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }

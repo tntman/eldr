@@ -46,6 +46,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 sampleDims[2];
     uvec4 sampleInfo;
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them
+    uvec4 shadowJitter;  // x 1: light shapes jittered this film sample (shadow maps seen from a point
+                         // of each light, ShadowTile.origin): hard lookups, no PCSS
 } frame;
 
 // Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic

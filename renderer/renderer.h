@@ -262,6 +262,13 @@ public:
         // Translucent holdouts (with holdouts) cut the image's colour and
         // alpha by their opacity; off: they draw nothing.
         bool holdoutAlpha = true;
+        // Jittered light shapes under the film (EEVEE's jittered soft
+        // shadows): each sample renders the shadow maps from a point of the
+        // light (the sun's disc, a rect's or disk's area, a sphere's
+        // surface) and looks them up hard (3x3 PCF), so the film's average
+        // is the true penumbra; with softShadows (and softSunShadows for
+        // the sun). TAA frames keep PCSS.
+        bool shadowJitter = true;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
@@ -363,12 +370,12 @@ private:
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
-    bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
+    bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLight[3], FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
-                                              uint32_t *rtLights, uint32_t rtSlots);
+                                              uint32_t *rtLights, uint32_t rtSlots, const float *shapeSample);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
     void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);

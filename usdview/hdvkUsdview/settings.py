@@ -15,7 +15,7 @@ GROUPS = [
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
-     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),
+     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances shadowJitter"),
     ("Reflections",
      "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
      "planarReflections planarScale"),

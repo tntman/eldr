@@ -136,6 +136,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
     ((giPreconverge, "hdvk:giPreconverge"))                  \
     ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
+    ((shadowJitter, "hdvk:shadowJitter"))                    \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
     ((pipelineCache, "hdvk:pipelineCache"))
 

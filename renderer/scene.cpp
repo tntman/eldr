@@ -1854,6 +1854,12 @@ void Scene::Commit()
                 std::copy(l->position, l->position + 3, c.position);
                 std::copy(l->direction, l->direction + 3, c.axis);
                 c.coneAngle = cone;
+                c.shape = sphere ? Scene::Gpu::ShadowCaster::Shape::Sphere
+                        : cylinder ? Scene::Gpu::ShadowCaster::Shape::Cylinder
+                        : l->type == Light::Type::Rect ? Scene::Gpu::ShadowCaster::Shape::Rect
+                                                       : Scene::Gpu::ShadowCaster::Shape::Disk;
+                std::copy(l->halfWidth, l->halfWidth + 3, c.halfWidth);
+                std::copy(l->halfHeight, l->halfHeight + 3, c.halfHeight);
                 const float radiance = std::max({l->radiance[0], l->radiance[1], l->radiance[2]}) *
                                        std::max(l->diffuse, l->specular);
                 if (sphere) {
@@ -1919,6 +1925,9 @@ void Scene::Commit()
                     c.extent += (e.wide[k] + e.high[k]) * (e.wide[k] + e.high[k]);
                 }
                 g.position[3] = 2.0f;
+                c.shape = Scene::Gpu::ShadowCaster::Shape::Rect;
+                std::copy(e.wide, e.wide + 3, c.halfWidth);
+                std::copy(e.high, e.high + 3, c.halfHeight);
                 const float area = 4.0f * std::sqrt(e.wide[0] * e.wide[0] + e.wide[1] * e.wide[1] + e.wide[2] * e.wide[2]) *
                                    std::sqrt(e.high[0] * e.high[0] + e.high[1] * e.high[1] + e.high[2] * e.high[2]);
                 c.rangeIntensity = peak * area / 3.14159265f;  // as for rect lights above
