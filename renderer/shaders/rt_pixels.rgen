@@ -111,7 +111,7 @@ void main()
                 }
                 Trace(reflectOrigin, l, a);
                 reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
-                                              : ShadeHit(l, seed, true);
+                                              : BrightnessClamp(ShadeHit(l, seed, true), frame.lightClamp.y);
             }
             reflection.rgb /= float(samples);
             reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual);

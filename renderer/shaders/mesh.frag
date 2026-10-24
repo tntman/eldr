@@ -597,6 +597,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                 return 0.0;
             }
             hit = textureLod(previousColor, prevUv, 0.0);
+            hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
             // Fade towards the screen edges, beyond which the ray is blind.
             vec2 edge = 1.0 - abs(ndc);
             return smoothstep(0.0, 0.1, min(edge.x, edge.y));
@@ -728,6 +729,9 @@ void main()
         }
     }
 
+    if (frame.lightClamp.x > 0.0) {
+        color = emissive + BrightnessClamp(color - emissive, frame.lightClamp.x);
+    }
     color += SubsurfaceTransmission(inWorldPos, n);
 
     // Image-based lighting from the dome, if any.

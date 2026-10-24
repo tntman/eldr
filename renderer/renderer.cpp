@@ -5,6 +5,7 @@
 #include "vkmath.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cstring>
 #include <functional>
 #include <tuple>
@@ -45,6 +46,7 @@ struct FrameData {
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
+    float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
 };
 
 namespace {
@@ -1867,6 +1869,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.features[0] |= kFeatureDisplacement;
         fd.geometry[0] = frame.displacementScale;
     }
+    fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
+    fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     if (frame.lod) {
         fd.features[0] |= kFeatureLod;
         fd.geometry[1] = frame.lodBias;
@@ -2339,7 +2343,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (ssgi && draw) {
         _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius, sample,
                          std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
-                         _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                         _historyValid,
+                         std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
+                                  frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {

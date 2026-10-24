@@ -41,6 +41,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.
@@ -57,6 +58,14 @@ const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 2621
 // (Renderer::_ShadingSet), as skipped code still costs every pixel
 // registers and occupancy. Other shaders have them all.
 layout(constant_id = 13) const uint kCompiledFeatures = 0xFFFFFFFFu;
+
+// c scaled down so its brightest channel is at most `limit` (0: no limit),
+// keeping its hue: kills fireflies (Frame::directClamp, indirectClamp).
+vec3 BrightnessClamp(vec3 c, float limit)
+{
+    float peak = max(max(c.r, c.g), c.b);
+    return limit > 0.0 && peak > limit ? c * (limit / peak) : c;
+}
 
 // Whether this frame has `feature` (an optional frame.features.x bit) and
 // this pipeline its code.

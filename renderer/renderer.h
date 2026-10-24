@@ -193,6 +193,13 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Brightness clamps against fireflies (EEVEE's light clamps): the
+        // brightest channel of a pixel's direct light (sun, local lights),
+        // and of every bounce light comes in by (SSGI's input, SSR and
+        // traced reflection hits, GI probe rays; not the dome), scaled down
+        // to at most this scene-referred radiance. 0: off.
+        float directClamp = 0.0f;
+        float indirectClamp = 0.0f;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).

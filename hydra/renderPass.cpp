@@ -167,7 +167,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
-                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias}}) {
+                                {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
+                                {t.directClamp, &frame.directClamp}, {t.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a

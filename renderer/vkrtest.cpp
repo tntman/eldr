@@ -2733,6 +2733,56 @@ int main()
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
         }
+
+        {
+            // Light clamps: a quad in a sun ten times as bright as usual
+            // (radiance 10 x albedo) comes out at the direct clamp; the SSGI
+            // scene's red emitter (radiance 2) bleeds a quarter of its light
+            // onto the wall when it comes in clamped to 0.5 (less than half
+            // after the tonemap).
+            vkr::Scene lit(&device);
+            vkr::Light *sun = AddLight(lit, 0, 0, -1);
+            std::fill(sun->irradiance, sun->irradiance + 3, 31.4159265f);
+            AddQuad(lit, -1, -1, 1, 1, 0);
+            lit.Commit();
+            auto direct = [&](float clamp) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.directClamp = clamp;
+                const Image img = Render(renderer, lit, frame);
+                return std::max({img.At(32, 32, 0), img.At(32, 32, 1), img.At(32, 32, 2)});
+            };
+            const float unclamped = direct(0.0f), clamped = direct(2.0f);
+            Expect(unclamped > 5.0f && std::abs(clamped - 2.0f) < 0.01f, "the direct clamp caps a pixel's direct light");
+
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *panel = AddEmitter(scene, 0, 0, 0, 0, 0, 2.0f);
+            panel->points = {0, -0.6f, 0.5f, 0.4f, -0.6f, 0, 0.4f, 0.6f, 0, 0, -0.6f, 0.5f, 0.4f, 0.6f, 0, 0, 0.6f, 0.5f};
+            auto red = std::make_shared<vkr::Material>(*panel->material);
+            red->emissive[1] = red->emissive[2] = 0;
+            panel->material = red;
+            scene.Commit();
+            auto wall = [&](float clamp) {
+                vkr::Renderer ssgiRenderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.ssgi = true;
+                frame.ssgiRadius = 2.0f;
+                frame.indirectClamp = clamp;
+                Image img;
+                for (int i = 0; i < 16; ++i) {
+                    img = Render(ssgiRenderer, scene, frame);
+                }
+                return img.At(29, 32, 0);
+            };
+            const float full = wall(0.0f), quarter = wall(0.5f);
+            Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;
