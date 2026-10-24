@@ -22,7 +22,7 @@ GROUPS = [
     ("Materials",
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "
      "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts"),
+    ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts refractionBackFaces multiRefraction refractionLayers holdoutAlpha"),
     ("Fog and volumes",
      "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "

@@ -1,0 +1,112 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Refraction from inside: the camera under a water surface (UsdPreviewSurface
+# opacity 0, ior 1.33, its normal up, so seen from below). Looking up steeply
+# the surface lets the ball and sky above through, bent; towards the horizon,
+# past the critical angle (48.8 degrees from the vertical), it mirrors the
+# pool floor totally. hdvk:refractionBackFaces off hides the surface.
+
+def Camera "cam"
+{
+    float focalLength = 14
+    double3 xformOp:translate = (0, -2.2, 5)
+    float xformOp:rotateX = 18
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-60, 20, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    asset inputs:texture:file = @StinsonBeach.hdr@
+    float inputs:intensity = 0.6
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/floor/tex.outputs:rgb>
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./textures/udim.1001.png@
+            float2 inputs:st.connect = </mtl/floor/st.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+    def Material "water"
+    {
+        token outputs:surface.connect = </mtl/water/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.6, 0.85, 0.9)
+            float inputs:opacity = 0
+            float inputs:ior = 1.33
+            float inputs:roughness = 0.02
+            token outputs:surface
+        }
+    }
+}
+
+def Mesh "poolFloor" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-8, -3, -8), (8, -3, -8), (8, -3, 8), (-8, -3, 8)]
+    texCoord2f[] primvars:st = [(0, 0), (8, 0), (8, 8), (0, 8)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/floor>
+}
+
+def Mesh "water" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 3, 2, 1]
+    point3f[] points = [(-8, 0, -8), (8, 0, -8), (8, 0, 8), (-8, 0, 8)]
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/water>
+}
+
+def Sphere "ball"
+{
+    double radius = 0.8
+    color3f[] primvars:displayColor = [(0.9, 0.25, 0.15)]
+    double3 xformOp:translate = (0, 1.5, -1)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "rock"
+{
+    double size = 1
+    color3f[] primvars:displayColor = [(0.3, 0.6, 0.3)]
+    double3 xformOp:translate = (1.5, -2.5, -1.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

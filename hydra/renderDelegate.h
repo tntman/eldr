@@ -86,11 +86,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
     ((refraction, "hdvk:refraction"))                        \
     ((refractionSamples, "hdvk:refractionSamples"))              \
+    ((refractionBackFaces, "hdvk:refractionBackFaces"))              \
+    ((multiRefraction, "hdvk:multiRefraction"))              \
+    ((refractionLayers, "hdvk:refractionLayers"))              \
     ((translucentShadows, "hdvk:translucentShadows"))        \
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
     ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
-    ((holdouts, "hdvk:holdouts")) \
+    ((holdouts, "hdvk:holdouts"))              \
+    ((holdoutAlpha, "hdvk:holdoutAlpha")) \
     ((softSunShadows, "hdvk:softSunShadows"))                \
     ((fog, "hdvk:fog"))                                      \
     ((fogDensity, "hdvk:fogDensity"))                        \

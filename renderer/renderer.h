@@ -249,6 +249,19 @@ public:
         // them toggled on a worker thread, so turning one on or off later
         // doesn't stall (Hydra's default: on).
         bool pipelinePrewarm = false;
+        // Refracting meshes' back faces (needs refraction): seen from inside
+        // the medium (water from below, the far side of a glass ball) with
+        // the inverted ior and total internal reflection, drawn before their
+        // front faces; off: back faces are discarded.
+        bool refractionBackFaces = true;
+        // Refraction through several layers (needs refraction): refracting
+        // meshes back to front, the opaque colour copied again after each
+        // (glass behind glass, a ball's far side), up to this many copies.
+        bool multiRefraction = true;
+        uint32_t refractionLayers = 4;
+        // Translucent holdouts (with holdouts) cut the image's colour and
+        // alpha by their opacity; off: they draw nothing.
+        bool holdoutAlpha = true;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
@@ -333,7 +346,7 @@ private:
     void _CreateDescriptors();
     // A shading set's pipelines: per pass kVariants of them.
     struct ShadingTargets {
-        VkPipeline *opaque, *translucent, *oit, *subsurface;
+        VkPipeline *opaque, *translucent, *oit, *subsurface, *refractBack;
     };
     void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
                           VkPipelineCache cache = VK_NULL_HANDLE);
@@ -341,7 +354,8 @@ private:
     ShadingTargets _SetTargets(uint32_t set)
     {
         const uint32_t base = set * kVariants;
-        return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base};
+        return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base,
+                _refractBackPipeline + base};
     }
     void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
     void _PrewarmWorker();
@@ -441,9 +455,13 @@ private:
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
+    // Refracting meshes' back faces, seen from inside (transparency.glsl's
+    // kShadingPass 3), blended as _translucentPipeline.
+    VkPipeline _refractBackPipeline[kShadingSets * kVariants] = {};
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _mattePipeline[kVariants] = {};  // translucent holdouts' matte (matte.frag)
     VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
     VkPipeline _prepassCutoutPipeline[kVariants] = {}, _shadowCutoutPipeline[kVariants] = {};
