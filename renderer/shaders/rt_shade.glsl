@@ -197,7 +197,7 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
     vec3 indirect = DomeDiffuse(n);
     if ((frame.features.x & kFeatureGi) != 0u) {
         vec4 gi = GiIrradiance(p, n, -dir);
-        indirect = gi.a > 0.0 ? gi.rgb : indirect;
+        indirect = mix(indirect, gi.rgb, gi.a);
     }
     vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
     return emission ? radiance + hit.emissive : radiance;

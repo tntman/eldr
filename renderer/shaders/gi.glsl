@@ -65,7 +65,8 @@ vec3 GiRayDirection(uint ray, uint rays)
 // Irradiance / pi at p with normal n, seen from direction v, from the eight
 // probes around it: trilinear weights, a soft backface weight and the
 // Chebyshev test against each probe's visibility (no light through walls).
-// w: 0 where no probe applies (keep the caller's fallback).
+// w: how far the probes apply, from their summed weight (0: none of them
+// sees p, e.g. the outside of a thin wall: the caller's fallback instead).
 vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 {
     float spacing = rt.giOrigin.w;
@@ -109,7 +110,9 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         sum += irradiance.rgb * w;
         weights += w;
     }
-    return weights > 1e-6 ? vec4(sum / weights, 1.0) : vec4(0.0);
+    // Probes the visibility test rejects keep under ~0.005 each after the
+    // crush; a probe that sees p keeps over ~0.2 (times its trilinear share).
+    return weights > 1e-6 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights)) : vec4(0.0);
 }
 
 #ifdef RT_RESULTS
@@ -205,6 +208,6 @@ vec3 GiDiffuse(vec3 p, vec3 n, vec3 v, vec3 fallback)
         return fallback;
     }
     vec4 gi = GiIrradiance(p, n, v);
-    return gi.a > 0.0 ? gi.rgb : fallback;
+    return mix(fallback, gi.rgb, gi.a);
 }
 #endif
