@@ -25,7 +25,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
                shadow_tint.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
-               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp film.comp
+               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp
                shutter.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
@@ -64,6 +64,20 @@ foreach(shader gtao.frag gtao_denoise.frag)
         DEPENDS renderer/shaders/${shader})
     list(APPEND shader_incs ${spv})
 endforeach()
+foreach(pass 0 1 2)  # denoised SSR (ssr.cpp): its three passes
+    set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssr_denoise${pass}.frag.inc)
+    add_custom_command(OUTPUT ${spv}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DPASS=${pass} -o ${spv}
+                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/ssr_denoise.frag
+        DEPENDS renderer/shaders/ssr_denoise.frag)
+    list(APPEND shader_incs ${spv})
+endforeach()
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssgi_bitmask.frag.inc)  # SSGI with a visibility bitmask
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/gtao.frag
+    DEPENDS renderer/shaders/gtao.frag)
+list(APPEND shader_incs ${spv})
 foreach(shader mesh.vert mesh.frag aov.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
@@ -109,7 +123,7 @@ add_library(vkrenderer STATIC
     renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
-    renderer/transparency.cpp renderer/subsurface.cpp
+    renderer/transparency.cpp renderer/subsurface.cpp renderer/ssr.cpp
     renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
@@ -234,6 +248,8 @@ if(WIN32)
     set_tests_properties(displacement PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lod COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lod.py)
     set_tests_properties(lod PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME screenspace COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_screenspace.py)
+    set_tests_properties(screenspace PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
 endif()
 set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
     "PXR_PLUGINPATH_NAME=set:$<TARGET_FILE_DIR:hdVk>/;PATH=path_list_prepend:${pxr_DIR}/bin;PATH=path_list_prepend:${pxr_DIR}/lib")

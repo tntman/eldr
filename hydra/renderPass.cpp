@@ -125,12 +125,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Each setting over the renderer's default (renderDelegate.cpp lists
     // them); counts are ints in Hydra, at least 1.
     const auto &t = *HdVkRenderSettingsTokens;
+    const auto &t2 = *HdVkRenderSettingsTokens2;
     for (auto [token, value] : {std::pair{t.postProcess, &frame.postProcess}, {t.taa, &frame.taa},
                                 {t.ambientOcclusion, &frame.ambientOcclusion}, {t.ssr, &frame.ssr},
                                 {t.autoExposure, &frame.post.autoExposure}, {t.shadows, &frame.shadows},
                                 {t.localShadows, &frame.localShadows}, {t.softShadows, &frame.softShadows},
                                 {t.depthOfField, &frame.depthOfField}, {t.motionBlur, &frame.motionBlur},
-                                {t.motionBlurTimeSamples, &frame.motionBlurTimeSamples},
+                                {t2.motionBlurTimeSamples, &frame.motionBlurTimeSamples},
                                 {t.depthPrepass, &frame.depthPrepass}, {t.frustumCulling, &frame.frustumCulling},
                                 {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
@@ -162,7 +163,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.sampleDimensions, &frame.sampleDimensions},
                                 {t.giPreconverge, &frame.giPreconverge}, {t.fogFilmJitter, &frame.fogFilmJitter},
                                 {t.pipelineCache, &frame.pipelineCache},
-                                {t.pipelinePrewarm, &frame.pipelinePrewarm}}) {
+                                {t.pipelinePrewarm, &frame.pipelinePrewarm},
+                                {t2.ssgiThickness, &frame.ssgiThickness},
+                                {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
+                                {t2.ssrDenoise, &frame.ssrDenoise}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -180,7 +184,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
                                 {t.filmFilterRadius, &frame.filmFilterRadius},
-                                {t.adaptiveThreshold, &frame.adaptiveThreshold}}) {
+                                {t.adaptiveThreshold, &frame.adaptiveThreshold},
+                                {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
