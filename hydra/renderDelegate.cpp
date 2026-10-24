@@ -290,6 +290,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
+        {"Motion Blur Time Samples (film: scene at shutter times)", t.motionBlurTimeSamples,
+         VtValue(frame.motionBlurTimeSamples)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},

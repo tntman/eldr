@@ -1353,6 +1353,77 @@ int main()
         }
 
         {
+            // Motion blur time samples: the same quad's edge moves from x = 0
+            // to 0.25 (pixel 32 to 40) over a shutter of [-1, 0]; in final
+            // quality the film renders each sample with the quad at a time in
+            // it, so the edge's pixels are covered for the part of the shutter
+            // the edge is past them: a linear ramp (in linear post, no
+            // tonemapper). The camera moving instead (by -0.25) gives the
+            // same ramp. Time samples off: the film stays off for the motion
+            // and the post blur's frame is final at once, as before.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 0);
+            quad->material = white;
+            auto ramp = [&](bool timeSamples, bool moveCamera, int *frames) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.shutterOpen = -1.0f;
+                frame.shutter = 1.0f;
+                frame.finalQuality = true;
+                frame.filmSamples = 64;
+                frame.filmFilterRadius = 0.0f;
+                frame.motionBlurTimeSamples = timeSamples;
+                quad->transforms[12] = 0.0f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                Render(renderer, scene, frame);
+                if (moveCamera) {
+                    frame.viewProj[12] = -0.25f;
+                    frame.invViewProj[12] = 0.25f;
+                    frame.cameraPos[0] = 0.25f;
+                } else {
+                    quad->prevTransforms = quad->transforms;
+                    quad->transforms[12] = 0.25f;
+                    quad->transformsDirty = true;
+                    scene.Commit();
+                }
+                Image img;
+                for (*frames = 0; *frames < 100 && (*frames == 0 || !renderer.IsConverged()); ++*frames) {
+                    img = Render(renderer, scene, frame);
+                    scene.Commit();  // still: no motion rows any more
+                }
+                std::vector<float> row;
+                for (int x = 0; x < 64; ++x) {
+                    row.push_back(img.At(x, 32, 0) / std::max(img.At(16, 32, 0), 1e-6f));
+                }
+                return row;
+            };
+            int frames = 0;
+            bool linear = true, mirrored = true;
+            const std::vector<float> rigid = ramp(true, false, &frames);
+            const int rigidFrames = frames;
+            const std::vector<float> camera = ramp(true, true, &frames);
+            for (int x = 33; x < 40; ++x) {  // pixel x is past the edge for t > (x + 0.5 - 32) / 8
+                linear = linear && std::abs(rigid[x] - (1.0f - (x + 0.5f - 32.0f) / 8.0f)) < 0.06f;
+            }
+            for (int x = 25; x < 32; ++x) {  // the edge moves left: covered for t < (31.5 - x) / 8
+                mirrored = mirrored && std::abs(camera[x] - (31.5f - x) / 8.0f) < 0.06f;
+            }
+            Expect(rigidFrames == 64 && linear && rigid[30] > 0.95f && rigid[41] < 0.05f,
+                   "time samples: a moving edge blurs into a linear ramp over the film's samples");
+            Expect(mirrored, "time samples: the camera's motion blurs the same");
+            const std::vector<float> off = ramp(false, false, &frames);
+            Expect(frames == 1 && off[34] > 0.9f, "time samples off: the post blur's frame is final at once");
+        }
+
+        {
             // SSR: a mirror tilted towards -y (normal (0, -1, -1)) above an
             // emitter tilted up towards it. View rays (+z) reflect straight
             // down and hit the emitter, which is on screen. No dome, so the

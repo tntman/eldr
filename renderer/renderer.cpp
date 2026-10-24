@@ -94,6 +94,9 @@ const uint32_t kLightsComp[] =
 const uint32_t kSkinComp[] =
 #include "skin.comp.inc"
 ;
+const uint32_t kShutterComp[] =
+#include "shutter.comp.inc"
+;
 const uint32_t kShadowTintFrag[] =
 #include "shadow_tint.frag.inc"
 ;
@@ -498,10 +501,15 @@ Renderer::~Renderer()
     _dev.Destroy(_prevJoints);
     _dev.Destroy(_lodState);
     _dev.Destroy(_prevBlendWeights);
+    for (Buffer *b : {&_shutterRows, &_shutterJoints, &_shutterWeights, &_savedInstances, &_savedJoints,
+                      &_savedWeights}) {
+        _dev.Destroy(*b);
+    }
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
-    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline, _shadowMinPipeline}) {
+    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline, _shadowMinPipeline,
+                         _shutterPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     for (VkImageView v : _shadowMinLevels) {
@@ -626,7 +634,7 @@ void Renderer::_CreateDescriptors()
         {24, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
@@ -676,6 +684,11 @@ void Renderer::_CreateDescriptors()
         {90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting | kRt},
         // Light splits (aov.h), stored by the shading pass.
         {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
+        // Motion blur time samples (shutter.comp): last frame's rigid rows,
+        // joints and blend shape weights.
+        {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {70, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {71, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -691,7 +704,7 @@ void Renderer::_CreateDescriptors()
 
     const VkDescriptorPoolSize sizes[5] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels + 1},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
@@ -736,6 +749,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
                                          std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline},
                                          std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline},
+                                         std::tuple{kShutterComp, sizeof(kShutterComp), &_shutterPipeline},
                                          std::tuple{kShadowMinComp, sizeof(kShadowMinComp), &_shadowMinPipeline}}) {
         if (!first) {
             break;
@@ -1513,6 +1527,14 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         write(43 + i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &tints[i]);
     }
     write(60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &prevBlendWeights, nullptr);
+    // Until a time sample made them, the motion rows stand in.
+    const VkDescriptorBufferInfo shutter[3] = {
+        {_shutterRows.buffer ? _shutterRows.buffer : gpu.motion, 0, VK_WHOLE_SIZE},
+        {_shutterJoints.buffer ? _shutterJoints.buffer : gpu.motion, 0, VK_WHOLE_SIZE},
+        {_shutterWeights.buffer ? _shutterWeights.buffer : gpu.motion, 0, VK_WHOLE_SIZE}};
+    for (uint32_t i = 0; i < 3; ++i) {
+        write(69 + i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &shutter[i], nullptr);
+    }
     VkDescriptorImageInfo fogStorage[3], fogVolume;
     _fog.Descriptors(fogStorage, &fogVolume, _clampSampler);
     write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
@@ -2450,7 +2472,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // ponytail: full frames, not probe updates alone; K probe-only
     // dispatches would need K sets of the probes' uniforms.
     const bool giSettling = frame.giPreconverge && frame.gi && _rt && !_rt->Converged();
-    const bool film = taa && frame.filmAccumulation && !motionBlur && !giSettling &&
+    // Motion blur time samples: the film samples the shutter, so motion
+    // no longer keeps it off.
+    const bool shutterOn = frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0;
+    const bool film = taa && frame.filmAccumulation && (!motionBlur || shutterOn) && !giSettling &&
                       (fresh || frame.finalQuality || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
     const uint32_t filmMode = !film                            ? 0
@@ -2468,6 +2493,51 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                                : taa  ? _haltonIndex % std::clamp(frame.interactiveSamples, 1u, 256u) + 1
                                       : 0;
     _stats.sample = noiseSample;
+    // The post motion blur: TAA's frames (interactive) when the camera or
+    // the scene moved; under the film the time samples blur instead.
+    const bool postBlur = motionBlur && !film;
+    // Motion blur time samples: each motion is kept from the frame before
+    // it (shutter.comp's capture; the camera here) and the film's samples
+    // render the scene at a time in the shutter, linear from that frame
+    // (0) to this one (1), until a change other than motion moves the
+    // scene's pools. The camera moves for this frame (`cam`), the scene in
+    // its pools (below).
+    const bool shutterCapture = shutterOn && _historyValid && (cameraMoved || gpu.moved) && gpu.instanceCapacity > 0 &&
+                                gpu.drawCount > 0;
+    if (shutterCapture) {
+        _shutter.valid = true;
+        _shutter.version = gpu.version;
+        _shutter.instances = gpu.instances;
+        _shutter.jointPool = gpu.joints;
+        _shutter.weightPool = gpu.blendWeights;
+        _shutter.instanceCapacity = gpu.instanceCapacity;
+        std::memcpy(_shutter.viewProj, _prevViewProj, sizeof(_shutter.viewProj));
+        std::memcpy(_shutter.cameraPos, _prevCameraPos, sizeof(_shutter.cameraPos));
+    }
+    _shutter.valid = _shutter.valid && shutterOn && gpu.version == _shutter.version &&
+                     gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
+                     gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
+    const bool timeSample = film && _shutter.valid;
+    // ponytail: the sample's time from Halton base 5 (the pixel jitter has
+    // 2 and 3, the GPU's sample dimensions the Sobol ones); a box shutter.
+    const float shutterT =
+        timeSample ? 1.0f + frame.shutterOpen + frame.shutter * Halton(std::max(noiseSample, 1u), 5) : 1.0f;
+    Frame shifted;
+    if (timeSample) {
+        shifted = frame;
+        for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
+            shifted.viewProj[i] = _shutter.viewProj[i] + (frame.viewProj[i] - _shutter.viewProj[i]) * shutterT;
+        }
+        const Mat4 inv = Inverse(ToMat4(shifted.viewProj));
+        std::memcpy(shifted.invViewProj, inv.m, sizeof(shifted.invViewProj));
+        for (int i = 0; i < 3; ++i) {
+            shifted.cameraPos[i] = _shutter.cameraPos[i] + (frame.cameraPos[i] - _shutter.cameraPos[i]) * shutterT;
+        }
+        std::memcpy(jitteredViewProj, shifted.viewProj, sizeof(jitteredViewProj));
+        std::memcpy(fd.invViewProj, shifted.invViewProj, sizeof(fd.invViewProj));
+    }
+    // This frame's camera: at the sample's time with time samples.
+    const Frame &cam = timeSample ? shifted : frame;
     if (taa) {
         sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
         ++_haltonIndex;
@@ -2482,7 +2552,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         unjitter.m[3][0] = -jx;
         unjitter.m[3][1] = -jy;
         // The sky reconstructs rays per pixel, so it follows the jitter too.
-        const Mat4 invJittered = unjitter * ToMat4(frame.invViewProj);
+        const Mat4 invJittered = unjitter * ToMat4(cam.invViewProj);
         std::memcpy(fd.invViewProj, invJittered.m, sizeof(fd.invViewProj));
     }
     std::memcpy(fd.viewProj, jitteredViewProj, sizeof(fd.viewProj));
@@ -2496,7 +2566,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.ssr[1] = float(sample);
     }
 
-    std::memcpy(fd.cameraPos, frame.cameraPos, sizeof(frame.cameraPos));
+    std::memcpy(fd.cameraPos, cam.cameraPos, sizeof(cam.cameraPos));
     fd.viewport[0] = float(_width);
     fd.viewport[1] = float(_height);
     // Ray tracing (raytracing.cpp): with the prepass (mesh.frag tells the
@@ -2517,7 +2587,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
-                         _FitCascades(gpu, frame, &fd);
+                         _FitCascades(gpu, cam, &fd);
     const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
     const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
     fd.counts[0] = gpu.lightCount;
@@ -2533,10 +2603,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         }
     }
     if (localLights > 0) {
-        _FitClusters(gpu, frame, &fd);
+        _FitClusters(gpu, cam, &fd);
     }
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0);
+        _PlanLocalShadows(gpu, cam, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0);
     rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0);
@@ -2561,7 +2631,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     _filmFroxels = film && frame.fogFilmJitter;
-    const bool fog = _SetupFog(gpu, frame, &fd);
+    const bool fog = _SetupFog(gpu, cam, &fd);
     const VkImage planarImage = _reflections ? _reflections->PlanarImage() : VK_NULL_HANDLE;
     if (_reflections && _reflections->Probe()) {
         fd.features[0] |= kFeatureProbe;
@@ -2606,17 +2676,46 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (blendMotion && gpu.blendWeightsBytes > _prevBlendWeights.size) {
         _dev.Destroy(_prevBlendWeights);
         _prevBlendWeights = _dev.CreateDeviceBuffer(gpu.blendWeightsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                                               VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     const bool rayTracing = rt.shadows || rt.reflections || rt.gi;
+    // Time samples move the scene without a new version; the TLAS follows
+    // (and once more when they end).
+    rt.moving = timeSample || _shutterMoved;
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
-        rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
+        rt.skinned = scene.LargestSkinned(cam.cameraPos, rt.skinnedCapacity);
         _rt->Prepare(gpu, rt, _width, _height);
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
     }
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
+    // Motion blur time samples: room for the capture (shutter.comp) and for
+    // this frame's pools, saved while a sample moves them.
+    const bool shutterMove = draw && timeSample;
+    const VkDeviceSize instanceBytes = VkDeviceSize(gpu.instanceCapacity) * sizeof(Instance);
+    if (shutterCapture || shutterMove) {
+        auto ensure = [&](Buffer &b, VkDeviceSize bytes) {
+            if (bytes > b.size) {
+                _dev.Destroy(b);
+                b = _dev.CreateDeviceBuffer(bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                                       VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            }
+        };
+        if (shutterCapture) {
+            _shutter.joints = frame.objectMotion && prevJoints;
+            _shutter.weights = prevBlend;
+        }
+        ensure(_shutterRows, VkDeviceSize(gpu.instanceCapacity) * 3 * 4 * sizeof(float));
+        ensure(_shutterJoints, _shutter.joints ? gpu.jointsBytes : 4);
+        ensure(_shutterWeights, _shutter.weights ? gpu.blendWeightsBytes : 4);
+        if (shutterMove) {
+            ensure(_savedInstances, instanceBytes);
+            ensure(_savedJoints, std::max<VkDeviceSize>(gpu.jointsBytes, 4));
+            ensure(_savedWeights, std::max<VkDeviceSize>(gpu.blendWeightsBytes, 4));
+        }
+    }
     // Refraction reads a copy of the opaque colour and the prepass depth.
     const bool refraction = draw && frame.translucency && frame.refraction && frame.depthPrepass && gpu.refraction;
     // Translucent shadows: tint maps at a fraction of the shadow maps'
@@ -2721,6 +2820,16 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
             vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
         }
+        // Motion blur time samples: the motion this frame starts from last
+        // frame's joints and blend shape weights.
+        if (shutterCapture && _shutter.joints) {
+            const VkBufferCopy all{0, 0, gpu.jointsBytes};
+            vkCmdCopyBuffer(_cmd, gpu.joints, _shutterJoints.buffer, 1, &all);
+        }
+        if (shutterCapture && _shutter.weights) {
+            const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
+            vkCmdCopyBuffer(_cmd, _prevBlendWeights.buffer, _shutterWeights.buffer, 1, &all);
+        }
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toCull.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
         toCull.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
@@ -2746,19 +2855,79 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
 
+        // Motion blur time samples (shutter.comp): a motion's rows are
+        // captured; a sample saves this frame's pools (put back after the
+        // frame) and moves them to its time, before anything else reads them.
+        if (shutterCapture || shutterMove) {
+            struct {
+                uint32_t capture;
+                float t;
+                uint32_t instances, weights, joints, objects;
+            } params{0, shutterT, gpu.instanceCapacity, 0, _shutter.joints ? 1u : 0u, frame.objectMotion ? 1u : 0u};
+            VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            barrier.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                                    VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            dep.pMemoryBarriers = &barrier;
+            if (shutterMove) {
+                vkCmdPipelineBarrier2(_cmd, &dep);  // skin.comp's joints, before they are saved
+                const VkBufferCopy instances{0, 0, instanceBytes};
+                vkCmdCopyBuffer(_cmd, gpu.instances, _savedInstances.buffer, 1, &instances);
+                if (gpu.jointsBytes > 0) {
+                    const VkBufferCopy joints{0, 0, gpu.jointsBytes};
+                    vkCmdCopyBuffer(_cmd, gpu.joints, _savedJoints.buffer, 1, &joints);
+                }
+                if (gpu.blendWeightsBytes > 0) {
+                    const VkBufferCopy weights{0, 0, gpu.blendWeightsBytes};
+                    vkCmdCopyBuffer(_cmd, gpu.blendWeights, _savedWeights.buffer, 1, &weights);
+                }
+                barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+                barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
+                barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+                barrier.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            }
+            vkCmdPipelineBarrier2(_cmd, &dep);
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _shutterPipeline);
+            vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+            if (shutterCapture) {
+                params.capture = 1;
+                vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(params), &params);
+                vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
+                barrier.srcStageMask = barrier.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+                barrier.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+                barrier.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+                vkCmdPipelineBarrier2(_cmd, &dep);
+            }
+            if (shutterMove) {
+                params.capture = 0;
+                params.weights = _shutter.weights ? uint32_t(gpu.blendWeightsBytes / sizeof(float)) : 0u;
+                vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(params), &params);
+                vkCmdDispatch(_cmd, (std::max(gpu.instanceCapacity, params.weights) + 63) / 64, 1, 1);
+            }
+            // Culling, rays (TLAS, skinned BLASes) and every pass read the moved pools.
+            barrier.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            barrier.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+            barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+            vkCmdPipelineBarrier2(_cmd, &dep);
+            pass("shutter");
+        }
+
         // Without frustum culling the planes stay zero (everything is inside)
         // and so does the minimum size.
         CullParams cull{};
         if (frame.frustumCulling) {
-            FrustumPlanes(frame.viewProj, cull.planes);
+            FrustumPlanes(cam.viewProj, cull.planes);
             cull.minRadius = std::max(frame.cullPixels, 0.0f);
         }
         cull.instanceCapacity = gpu.instanceCapacity;
         cull.drawCount = gpu.drawCount;
         // Screen size of an instance: its world radius over the size of a
         // pixel at its depth (which grows linearly with depth unless ortho).
-        const Mat4 inv = ToMat4(frame.invViewProj);
-        const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
+        const Mat4 inv = ToMat4(cam.invViewProj);
+        const Vec3 eye{cam.cameraPos[0], cam.cameraPos[1], cam.cameraPos[2]};
         const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1}), mid = TransformPoint(inv, {0, 0, 0});
         const Vec3 forward = Normalize(mid - nearCenter);
         const float pixel = Length(TransformPoint(inv, {0, 2.0f / float(_height), 0}) - mid);
@@ -2965,14 +3134,14 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // AO only darkens the dome lighting, so without a dome it is skipped.
     // SSGI replaces it (its visibility is the AO).
     if (ssgi && draw) {
-        _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius,
+        _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, cam.cameraPos, frame.ssgiRadius,
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
                          std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid, 4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                          _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
-        _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,
+        _gtao.Record(_cmd, fd.invViewProj, cam.cameraPos, frame.aoRadius,
                      frame.sampleDimensions ? dims[kDimAo] : float(sample + 1),
                      std::clamp(frame.aoSlices, 1u, 8u));
         pass("ambientOcclusion");
@@ -2985,6 +3154,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.lod && gpu.drawCount > gpu.meshCount && std::memcmp(frame.viewProj, _lodViewProj, sizeof(_lodViewProj))) {
         std::memcpy(_lodViewProj, frame.viewProj, sizeof(_lodViewProj));
         _atlasVersion = 0;
+    }
+    if (timeSample || _shutterMoved) {
+        _atlasVersion = 0;  // the casters moved without a new version
     }
     _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
     if (!shadowTiles.empty()) {
@@ -3101,7 +3273,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         dep.pMemoryBarriers = &drawn;
         vkCmdPipelineBarrier2(_cmd, &dep);
         const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
-        vkCmdCopyBuffer(_cmd, gpu.blendWeights, _prevBlendWeights.buffer, 1, &all);
+        // (This frame's: a time sample moved the pool.)
+        vkCmdCopyBuffer(_cmd, shutterMove ? _savedWeights.buffer : gpu.blendWeights, _prevBlendWeights.buffer, 1, &all);
         _prevBlendSource = gpu.blendWeights;
     }
     // Volumes, clipped by the opaque depth. Under transparency (above) the
@@ -3130,8 +3303,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool dof = frame.postProcess && frame.depthOfField && frame.fStop > 0 && frame.focalLength > 0 &&
                      frame.sensorWidth > 0 && frame.focusDistance > frame.focalLength;
     Lens::Params lens{};
-    if (dof || motionBlur) {
-        const Mat4 back = motionBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
+    if (dof || postBlur) {
+        const Mat4 back = postBlur ? ToMat4(frame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
         std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
         std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
         if (dof) {
@@ -3144,7 +3317,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
         lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);
         lens.frame = float(_haltonIndex % 64);
-        lens.shutter = motionBlur ? frame.shutter : 0.0f;
+        lens.shutter = postBlur ? frame.shutter : 0.0f;
         lens.maxHalfBlur = std::min(0.025f * float(frame.width), 32.0f);
         _lens.RecordTiles(_cmd, lens);
     }
@@ -3177,7 +3350,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             }
             alpha = 1.0f / float(_taaFrames + 1);
             // Last sample of a still camera; with the film, which takes over, never.
-            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1 && !(frame.filmAccumulation && !motionBlur);
+            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1 && !(frame.filmAccumulation && !postBlur);
             _taaFrames = std::min(_taaFrames + 1, taaSamples - 1);
             _taaValid = true;
             if (film) {
@@ -3217,7 +3390,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
             _taa.Record(_cmd, &reprojection.m[0][0], alpha);
             pass("taa");
         }
-        if (motionBlur) {
+        if (postBlur) {
             _lens.RecordMotionBlur(_cmd, lens);
             _taaConverged = true;
             pass("motionBlur");
@@ -3227,6 +3400,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
         _stats.taaTarget = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
         std::memcpy(_prevViewProj, frame.viewProj, sizeof(_prevViewProj));
+        std::memcpy(_prevCameraPos, frame.cameraPos, sizeof(_prevCameraPos));
         _historyValid = true;
     } else {
         _taaValid = false;
@@ -3338,6 +3512,36 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     dep.pBufferMemoryBarriers = &toHost;
     vkCmdPipelineBarrier2(_cmd, &dep);
     pass("readback");
+
+    // Motion blur time samples: this frame's pools back, for the next
+    // commit's uploads and frames.
+    if (shutterMove) {
+        VkMemoryBarrier2 barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        VkDependencyInfo restore{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        restore.memoryBarrierCount = 1;
+        restore.pMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(_cmd, &restore);
+        const VkBufferCopy instances{0, 0, instanceBytes};
+        vkCmdCopyBuffer(_cmd, _savedInstances.buffer, gpu.instances, 1, &instances);
+        if (gpu.jointsBytes > 0) {
+            const VkBufferCopy joints{0, 0, gpu.jointsBytes};
+            vkCmdCopyBuffer(_cmd, _savedJoints.buffer, gpu.joints, 1, &joints);
+        }
+        if (gpu.blendWeightsBytes > 0) {
+            const VkBufferCopy weights{0, 0, gpu.blendWeightsBytes};
+            vkCmdCopyBuffer(_cmd, _savedWeights.buffer, gpu.blendWeights, 1, &weights);
+        }
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        vkCmdPipelineBarrier2(_cmd, &restore);
+    }
+    _shutterMoved = shutterMove;
 
     Check(vkEndCommandBuffer(_cmd), "vkEndCommandBuffer");
 

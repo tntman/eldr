@@ -43,6 +43,45 @@ inline Mat4 operator*(const Mat4 &a, const Mat4 &b)
     return r;
 }
 
+// Gauss-Jordan with partial pivoting, in doubles.
+inline Mat4 Inverse(const Mat4 &m)
+{
+    double a[4][8];
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            a[i][j] = m.m[i][j];
+            a[i][4 + j] = i == j ? 1.0 : 0.0;
+        }
+    }
+    for (int c = 0; c < 4; ++c) {
+        int p = c;
+        for (int r = c + 1; r < 4; ++r) {
+            p = std::abs(a[r][c]) > std::abs(a[p][c]) ? r : p;
+        }
+        std::swap(a[p], a[c]);
+        const double d = a[c][c];
+        if (d == 0.0) {
+            return Mat4();  // singular
+        }
+        for (double &x : a[c]) {
+            x /= d;
+        }
+        for (int r = 0; r < 4; ++r) {
+            const double f = r == c ? 0.0 : a[r][c];
+            for (int j = 0; j < 8; ++j) {
+                a[r][j] -= f * a[c][j];
+            }
+        }
+    }
+    Mat4 r;
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            r.m[i][j] = float(a[i][4 + j]);
+        }
+    }
+    return r;
+}
+
 // Point transform with perspective divide.
 inline Vec3 TransformPoint(const Mat4 &m, Vec3 p)
 {

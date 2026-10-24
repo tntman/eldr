@@ -19,45 +19,6 @@ Mat4 ToMat4(const float *m)
     return r;
 }
 
-// Gauss-Jordan with partial pivoting, in doubles.
-Mat4 Inverse(const Mat4 &m)
-{
-    double a[4][8];
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            a[i][j] = m.m[i][j];
-            a[i][4 + j] = i == j ? 1.0 : 0.0;
-        }
-    }
-    for (int c = 0; c < 4; ++c) {
-        int p = c;
-        for (int r = c + 1; r < 4; ++r) {
-            p = std::abs(a[r][c]) > std::abs(a[p][c]) ? r : p;
-        }
-        std::swap(a[p], a[c]);
-        const double d = a[c][c];
-        if (d == 0.0) {
-            return Mat4();  // singular
-        }
-        for (double &x : a[c]) {
-            x /= d;
-        }
-        for (int r = 0; r < 4; ++r) {
-            const double f = r == c ? 0.0 : a[r][c];
-            for (int j = 0; j < 8; ++j) {
-                a[r][j] -= f * a[c][j];
-            }
-        }
-    }
-    Mat4 r;
-    for (int i = 0; i < 4; ++i) {
-        for (int j = 0; j < 4; ++j) {
-            r.m[i][j] = float(a[i][4 + j]);
-        }
-    }
-    return r;
-}
-
 float HalfToFloat(uint16_t h)
 {
     const int exponent = (h >> 10) & 0x1F, mantissa = h & 0x3FF;
@@ -111,7 +72,7 @@ Renderer::Frame Nested(const Renderer::Frame &frame, uint32_t width, uint32_t he
     f.cameraPos[0] = eye.x;
     f.cameraPos[1] = eye.y;
     f.cameraPos[2] = eye.z;
-    f.postProcess = f.taa = f.ssr = f.ambientOcclusion = f.depthOfField = f.motionBlur = false;
+    f.postProcess = f.taa = f.ssr = f.ambientOcclusion = f.depthOfField = f.motionBlur = f.motionBlurTimeSamples = false;
     f.reflectionProbe = f.planarReflections = false;
     f.lensDistortion = f.extraAovs = false;
     // ponytail: reflections are shaded with shadow maps and the dome's

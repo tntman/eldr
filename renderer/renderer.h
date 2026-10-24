@@ -75,6 +75,13 @@ public:
         float focusDistance = 0.0f;
         float sensorWidth = 0.0f;     // horizontal aperture the projection shows
         float shutter = 0.0f;         // open interval in frames (shutter:close - shutter:open)
+        float shutterOpen = 0.0f;     // shutter:open, frames relative to this one
+        // Motion blur time samples (with motionBlur): under the film each
+        // sample renders the scene at a time in the shutter interval, every
+        // pass (shadows, rays) included, instead of the post blur. Motion
+        // is linear from the last frame's to this one's (transforms, joints,
+        // blend shape weights, camera), as the motion vectors are.
+        bool motionBlurTimeSamples = true;
         // Inverse projection's z and w columns over NDC z (row-vector order):
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
@@ -473,6 +480,7 @@ private:
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
     VkPipeline _skinPipeline = VK_NULL_HANDLE;      // joint matrices from skinning transforms
+    VkPipeline _shutterPipeline = VK_NULL_HANDLE;   // motion blur time samples (shutter.comp)
     Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
     // Last frame's joint matrices for motion vectors, copied before skin.comp
@@ -523,6 +531,23 @@ private:
     Buffer _prevBlendWeights;
     VkBuffer _prevBlendSource = VK_NULL_HANDLE;
     bool _prevBlendValid = false;
+    // Motion blur time samples (Frame::motionBlurTimeSamples): what the
+    // last motion left of the frame before it (shutter.comp's rigid rows per
+    // instance slot, joints, blend shape weights; the camera), kept while
+    // the film samples the shutter, for the scene's pools and version it
+    // was taken of; and this frame's pools, saved to be put back.
+    struct Shutter {
+        bool valid = false;
+        bool joints = false, weights = false;  // joints / weights move too
+        uint64_t version = 0;
+        VkBuffer instances = VK_NULL_HANDLE, jointPool = VK_NULL_HANDLE, weightPool = VK_NULL_HANDLE;
+        uint32_t instanceCapacity = 0;
+        float viewProj[16] = {};
+        float cameraPos[3] = {};
+    } _shutter;
+    Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
+    bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
+    float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing

@@ -137,7 +137,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((giPreconverge, "hdvk:giPreconverge"))                  \
     ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
     ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
-    ((pipelineCache, "hdvk:pipelineCache"))
+    ((pipelineCache, "hdvk:pipelineCache"))                      ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 
