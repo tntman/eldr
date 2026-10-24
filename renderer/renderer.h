@@ -14,8 +14,12 @@
 #include "transparency.h"
 #include "volume.h"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
+#include <thread>
 
 namespace vkr {
 
@@ -198,6 +202,13 @@ public:
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // Shading pipelines a frame compiles are saved to the device's
+        // pipeline cache file (Device::LoadPipelineCache) for later runs.
+        bool pipelineCache = true;
+        // Compile the shading sets of this frame's features with one of
+        // them toggled on a worker thread, so turning one on or off later
+        // doesn't stall (Hydra's default: on).
+        bool pipelinePrewarm = false;
     };
 
     // Host memory a frame is copied to, bottom row first (GL/Hydra order).
@@ -251,8 +262,11 @@ public:
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
+        uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
     };
     const Stats &GetStats() const { return _stats; }
+    // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
+    void WaitForPrewarm();
 
     // GPU sharing (interop.h): the last frame's images, in
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
@@ -272,8 +286,20 @@ public:
 
 private:
     void _CreateDescriptors();
-    void _CreatePipelines(bool displaced = false, uint32_t set = kNone);
+    // A shading set's pipelines: per pass kVariants of them.
+    struct ShadingTargets {
+        VkPipeline *opaque, *translucent, *oit, *subsurface;
+    };
+    void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
+                          VkPipelineCache cache = VK_NULL_HANDLE);
     uint32_t _ShadingSet(uint32_t features);
+    ShadingTargets _SetTargets(uint32_t set)
+    {
+        const uint32_t base = set * kVariants;
+        return {_pipeline + base, _translucentPipeline + base, _oitPipeline + base, _subsurfacePipeline + base};
+    }
+    void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
+    void _PrewarmWorker();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
@@ -334,9 +360,31 @@ private:
     // features (frame.glsl's kCompiledFeatures) _shadingSets has for it, its
     // variants at set * kVariants + variant; a frame draws with the set of
     // its own features (_shadingBase), made when a frame first needs it.
-    static constexpr uint32_t kShadingSets = 8;
+    static constexpr uint32_t kShadingSets = 16;
     std::vector<uint32_t> _shadingSets;
     uint32_t _shadingBase = 0;
+    // Frame::pipelinePrewarm: the worker compiles the queued feature sets
+    // into its own pipeline cache (merged into the device's after each) and
+    // leaves them in _prewarmed for _ShadingSet to take; a set it is on
+    // when a frame needs it is waited for, a queued one is taken back.
+    struct PrewarmJob {
+        uint32_t features;
+        bool displaced;  // with the displaced variants too
+    };
+    struct Prewarmed {
+        PrewarmJob job;
+        std::vector<VkPipeline> pipelines;  // 4 * kVariants: opaque, translucent, OIT, subsurface
+    };
+    std::thread _prewarmThread;
+    std::mutex _prewarmMutex;
+    std::condition_variable _prewarmChanged;
+    std::vector<PrewarmJob> _prewarmQueue;
+    uint32_t _prewarmCurrent = kNone;  // the features being compiled
+    std::vector<Prewarmed> _prewarmed;
+    std::atomic<bool> _prewarmStop{false};
+    bool _prewarmSave = false;         // Frame::pipelineCache when queued
+    uint32_t _prewarmFor = kNone;      // the features the queue was made around
+    VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
@@ -349,6 +397,7 @@ private:
     VkPipeline _pipeline[kShadingSets * kVariants] = {};  // shading, depth read-only
     VkPipeline _shadowPipeline[kVariants] = {};
     bool _displacedPipelines = false;
+    bool _savePipelines = true;  // Frame::pipelineCache
     VkPipeline _skyPipeline = VK_NULL_HANDLE;
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment

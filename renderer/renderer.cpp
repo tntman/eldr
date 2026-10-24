@@ -1,4 +1,4 @@
-﻿#include "renderer.h"
+#include "renderer.h"
 
 #include "ibl.h"
 #include "probes.h"
@@ -317,6 +317,23 @@ Renderer::Renderer(Device &device)
     _dev.Reserve(_frameData, sizeof(FrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
+    // The shaders here key the device's pipeline cache file.
+    // ponytail: other files' shaders aren't in the key; the driver skips
+    // their stale entries.
+    uint64_t hash = 14695981039346656037ull;  // FNV-1a
+    for (const auto &[words, bytes] :
+         {std::pair{kMeshVert, sizeof(kMeshVert)}, {kMeshDepthVert, sizeof(kMeshDepthVert)},
+          {kMeshFrag, sizeof(kMeshFrag)}, {kMeshGraphVert, sizeof(kMeshGraphVert)},
+          {kMeshGraphFrag, sizeof(kMeshGraphFrag)}, {kMeshLayersFrag, sizeof(kMeshLayersFrag)},
+          {kMeshGraphLayersFrag, sizeof(kMeshGraphLayersFrag)}, {kMaskFrag, sizeof(kMaskFrag)},
+          {kSkyFrag, sizeof(kSkyFrag)}, {kCullComp, sizeof(kCullComp)}, {kLightsComp, sizeof(kLightsComp)},
+          {kSkinComp, sizeof(kSkinComp)}, {kShadowTintFrag, sizeof(kShadowTintFrag)},
+          {kShadowMinComp, sizeof(kShadowMinComp)}}) {
+        for (size_t i = 0; i < bytes / sizeof(uint32_t); ++i) {
+            hash = (hash ^ words[i]) * 1099511628211ull;
+        }
+    }
+    _dev.LoadPipelineCache(hash);
     _CreatePipelines();
     _fog.CreatePipelines(_layout);
     _CreateConstantImages();
@@ -328,6 +345,20 @@ Renderer::Renderer(Device &device)
 
 Renderer::~Renderer()
 {
+    {
+        std::lock_guard<std::mutex> lock(_prewarmMutex);
+        _prewarmStop = true;
+    }
+    _prewarmChanged.notify_all();
+    if (_prewarmThread.joinable()) {
+        _prewarmThread.join();
+    }
+    for (const Prewarmed &p : _prewarmed) {
+        for (VkPipeline pipeline : p.pipelines) {
+            vkDestroyPipeline(_dev.device, pipeline, nullptr);
+        }
+    }
+    vkDestroyPipelineCache(_dev.device, _prewarmCache, nullptr);
     vkDeviceWaitIdle(_dev.device);
     _rt.reset();
     _volumePass.reset();
@@ -552,12 +583,16 @@ void Renderer::_CreateDescriptors()
 
 // `displaced`: only the mesh pipelines of displaced materials (variant
 // bit 5), made once a scene has some, so others never compile them.
-// Without a shading `set` the depth, compute and sky pipelines, with one
-// only that set's shading pipelines.
-void Renderer::_CreatePipelines(bool displaced, uint32_t set)
+// Without `shading` the depth, compute and sky pipelines; with it only the
+// shading pipelines specialized with `features`, into its arrays (reads no
+// other member: Frame::pipelinePrewarm's worker calls it too). Each pass's
+// variants compile in parallel, through `cache` (else the device's).
+void Renderer::_CreatePipelines(bool displaced, uint32_t features, const ShadingTargets *shading,
+                                VkPipelineCache cache)
 {
     const VkDevice device = _dev.device;
-    const bool shading = set != kNone, first = !displaced && !shading;
+    const bool first = !displaced && !shading;
+    cache = cache ? cache : _dev.pipelineCache;
 
     // One range for both users (vertex: mat4 viewProj; cull: CullParams), so
     // every push names the same stages and the ranges never partly overlap.
@@ -582,7 +617,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                      VK_SHADER_STAGE_COMPUTE_BIT, module, "main"};
         cci.layout = _layout;
-        const VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        const VkResult r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, pipeline);
         vkDestroyShaderModule(device, module, nullptr);
         Check(r, "vkCreateComputePipelines");
     }
@@ -696,42 +731,78 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
                                                          {8, sizeof(uint32_t), sizeof(VkBool32)},
                                                          {10, 2 * sizeof(uint32_t), sizeof(VkBool32)},
                                                          {13, 3 * sizeof(uint32_t), sizeof(uint32_t)}};
-    const uint32_t features = shading ? _shadingSets[set] : kNone;
-    auto createMesh = [&](VkGraphicsPipelineCreateInfo info, VkPipeline *out, uint32_t variants, uint32_t pass = 0) {
-        VkResult res = VK_SUCCESS;
-        for (uint32_t v = 0; v < kVariants && res == VK_SUCCESS; ++v) {
+    // Pipelines are queued, then compiled on as many threads (drivers
+    // compile each on one): a shading set's four passes at once.
+    struct Job {
+        VkBool32 vertexData[3];
+        uint32_t fragmentData[4];
+        VkSpecializationInfo vertexSpec, fragmentSpec;
+        VkPipelineShaderStageCreateInfo stages[2];
+        VkGraphicsPipelineCreateInfo create;
+        VkPipeline *out;
+    };
+    std::vector<Job> jobs;
+    jobs.reserve(4 * kVariants);  // no reallocation: the infos point into the jobs
+    auto queueMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
+                         uint32_t pass = 0) {
+        for (uint32_t v = 0; v < kVariants; ++v) {
             if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced) {
                 continue;  // not this pass's or call's; noise comes with a program
             }
-            const VkBool32 vertexData[3] = {v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE,
-                                            v & 32 ? VK_TRUE : VK_FALSE};
-            const uint32_t fragmentData[4] = {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE,
-                                              features};
-            const VkSpecializationInfo vertexSpec{3, vertexEntries, sizeof(vertexData), vertexData};
-            const VkSpecializationInfo fragmentSpec{4, fragmentEntries, sizeof(fragmentData), fragmentData};
-            VkPipelineShaderStageCreateInfo stages[2] = {};
-            std::copy(info.pStages, info.pStages + info.stageCount, stages);
-            stages[0].pSpecializationInfo = &vertexSpec;  // the vertex stage comes first
-            stages[1].pSpecializationInfo = &fragmentSpec;
+            Job &j = jobs.emplace_back();
+            j = Job{{v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE},
+                    {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE, features}};
+            j.vertexSpec = {3, vertexEntries, sizeof(j.vertexData), j.vertexData};
+            j.fragmentSpec = {4, fragmentEntries, sizeof(j.fragmentData), j.fragmentData};
+            std::copy(info.pStages, info.pStages + info.stageCount, j.stages);
+            j.stages[0].pSpecializationInfo = &j.vertexSpec;  // the vertex stage comes first
+            j.stages[1].pSpecializationInfo = &j.fragmentSpec;
             if (v & (4 | 16)) {  // shading pipelines only
                 const bool program = v & 4;
                 const VkShaderModule frags[4] = {meshFrag, graphFrag, layersFrag, graphLayersFrag};
-                stages[0].module = program ? graphVert : meshVert;
-                stages[1].module = frags[(program ? 1 : 0) + (v & 16 ? 2 : 0)];
+                j.stages[0].module = program ? graphVert : meshVert;
+                j.stages[1].module = frags[(program ? 1 : 0) + (v & 16 ? 2 : 0)];
             }
-            VkGraphicsPipelineCreateInfo create = info;
-            create.pStages = stages;
-            res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create, nullptr, &out[v]);
+            j.create = info;
+            j.create.pStages = j.stages;
+            j.out = &out[v];
         }
-        return res;
     };
-    const uint32_t base = shading ? set * kVariants : 0;
-    VkResult r = shading ? createMesh(ci, _pipeline + base, kVariants - 1) : VK_SUCCESS;
+    auto compile = [&] {
+        std::atomic<size_t> next{0};
+        std::atomic<VkResult> res{VK_SUCCESS};
+        auto work = [&] {
+            for (size_t i; (i = next++) < jobs.size() && !_prewarmStop;) {
+                const VkResult r = vkCreateGraphicsPipelines(device, cache, 1, &jobs[i].create, nullptr, jobs[i].out);
+                if (r != VK_SUCCESS) {
+                    res = r;
+                }
+            }
+        };
+        // The prewarm leaves half the cores to the frames meanwhile.
+        const size_t cores = std::max(std::thread::hardware_concurrency(), 2u) / (cache == _prewarmCache ? 2 : 1);
+        std::vector<std::thread> threads(std::clamp<size_t>(cores, 1, std::max<size_t>(jobs.size(), 1)) - 1);
+        for (std::thread &t : threads) {
+            t = std::thread(work);
+        }
+        work();
+        for (std::thread &t : threads) {
+            t.join();
+        }
+        jobs.clear();
+        return res.load();
+    };
+    auto createMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants) {
+        queueMesh(info, out, variants);
+        return compile();
+    };
+    VkResult r = VK_SUCCESS;
+    if (shading) {
+        queueMesh(ci, shading->opaque, kVariants - 1);
 
-    // Translucent: premultiplied blending over the opaque colour (and its
-    // coverage alpha); ids are written (picking), motion vectors stay the
-    // opaque surface's.
-    if (shading && r == VK_SUCCESS) {
+        // Translucent: premultiplied blending over the opaque colour (and
+        // its coverage alpha); ids are written (picking), motion vectors
+        // stay the opaque surface's.
         VkPipelineColorBlendAttachmentState over[4] = {attachments[0], attachments[1], attachments[2],
                                                        attachments[3]};
         over[0].blendEnable = VK_TRUE;
@@ -743,11 +814,10 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        r = createMesh(tci, _translucentPipeline + base, kVariants - 1);
-    }
-    // Weighted blended OIT (Transparency): colour and coverage summed,
-    // ids as above, location 3 the revealage, multiplied by 1 - coverage.
-    if (shading && r == VK_SUCCESS) {
+        queueMesh(tci, shading->translucent, kVariants - 1);
+
+        // Weighted blended OIT (Transparency): colour and coverage summed,
+        // ids as above, location 3 the revealage, multiplied by 1 - coverage.
         VkPipelineColorBlendAttachmentState oit[4] = {attachments[0], attachments[1], attachments[2],
                                                       attachments[3]};
         oit[0].blendEnable = VK_TRUE;
@@ -765,11 +835,10 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         VkGraphicsPipelineCreateInfo oci = ci;
         oci.pNext = &oitRendering;
         oci.pColorBlendState = &oitBlend;
-        r = createMesh(oci, _oitPipeline + base, kVariants - 1, 1);
-    }
-    // Subsurface pass (Subsurface): the subsurface lobe's light and the
-    // radii (locations 0 and 1), nothing else written.
-    if (shading && r == VK_SUCCESS) {
+        queueMesh(oci, shading->oit, kVariants - 1, 1);
+
+        // Subsurface pass (Subsurface): the subsurface lobe's light and the
+        // radii (locations 0 and 1), nothing else written.
         VkPipelineColorBlendAttachmentState sss[4] = {attachments[0], attachments[1], attachments[2],
                                                       attachments[3]};
         sss[2].colorWriteMask = sss[3].colorWriteMask = 0;
@@ -781,7 +850,8 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         VkGraphicsPipelineCreateInfo sci = ci;
         sci.pNext = &sssRendering;
         sci.pColorBlendState = &sssBlend;
-        r = createMesh(sci, _subsurfacePipeline + base, kVariants - 1, 2);
+        queueMesh(sci, shading->subsurface, kVariants - 1, 2);
+        r = compile();
     }
 
     // Depth prepass: depth only, with mesh.vert's DEPTH_ONLY variant (same
@@ -863,7 +933,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
         VkGraphicsPipelineCreateInfo kci = ci;
         kci.pStages = skyStages;
         kci.pVertexInputState = &noInput;
-        r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &kci, nullptr, &_skyPipeline);
+        r = vkCreateGraphicsPipelines(device, cache, 1, &kci, nullptr, &_skyPipeline);
     }
 
     for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
@@ -884,16 +954,143 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
         features = kOptionalFeatures;
         it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
     }
-    if (it == _shadingSets.end()) {
-        _shadingSets.push_back(features);
-        const uint32_t set = uint32_t(_shadingSets.size() - 1);
-        _CreatePipelines(false, set);
-        if (_displacedPipelines) {
-            _CreatePipelines(true, set);
-        }
-        return set;
+    if (it != _shadingSets.end()) {
+        return uint32_t(it - _shadingSets.begin());
     }
-    return uint32_t(it - _shadingSets.begin());
+    _shadingSets.push_back(features);
+    const uint32_t set = uint32_t(_shadingSets.size() - 1);
+    const ShadingTargets targets = _SetTargets(set);
+    // The prewarm's, if it has them (or is making them); else made here.
+    bool prewarmed = false, prewarmedDisplaced = false;
+    {
+        std::unique_lock<std::mutex> lock(_prewarmMutex);
+        auto queued = std::find_if(_prewarmQueue.begin(), _prewarmQueue.end(),
+                                   [&](const PrewarmJob &j) { return j.features == features; });
+        if (queued != _prewarmQueue.end()) {
+            _prewarmQueue.erase(queued);
+        }
+        _prewarmChanged.wait(lock, [&] { return _prewarmCurrent != features; });
+        auto done = std::find_if(_prewarmed.begin(), _prewarmed.end(),
+                                 [&](const Prewarmed &p) { return p.job.features == features; });
+        if (done != _prewarmed.end()) {
+            VkPipeline *const out[4] = {targets.opaque, targets.translucent, targets.oit, targets.subsurface};
+            for (uint32_t pass = 0; pass < 4; ++pass) {
+                std::copy_n(done->pipelines.data() + pass * kVariants, kVariants, out[pass]);
+            }
+            prewarmed = true;
+            prewarmedDisplaced = done->job.displaced;
+            _prewarmed.erase(done);
+            ++_stats.prewarmedSets;
+        }
+    }
+    if (!prewarmed) {
+        _CreatePipelines(false, features, &targets);
+    }
+    if (_displacedPipelines && !prewarmedDisplaced) {
+        _CreatePipelines(true, features, &targets);
+    }
+    if (_savePipelines && !prewarmed) {
+        _dev.SavePipelineCache();  // the next run starts with them
+    }
+    return set;
+}
+
+// Frame::pipelinePrewarm: queues the shading sets of `features` with one
+// optional feature toggled that this scene can use, and starts the worker.
+// ponytail: single toggles only; two at once (gi and ssgi) wait for the
+// second's set, which the frame after the first queues.
+void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
+{
+    if (features == _prewarmFor) {
+        return;
+    }
+    _prewarmFor = features;
+    // Settings switch these on; scene-made ones (refraction, translucent
+    // shadows, subsurface, holdouts) only off, below. GI and SSGI first.
+    uint32_t toggles = kFeatureSsgi | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | features;
+    toggles |= _rt ? kFeatureGi | kFeatureRtShadows | kFeatureRtReflections : 0;
+    toggles |= gpu.shadowLight != kNone && gpu.shadowAngle > 0 ? kFeatureSoftSun : 0;
+    // What to flip: GI, SSGI and both (often turned on together) first.
+    std::vector<uint32_t> order;
+    for (uint32_t bits : {kFeatureGi, kFeatureSsgi, kFeatureGi | kFeatureSsgi}) {
+        if ((toggles & bits) == bits) {
+            order.push_back(bits);
+        }
+    }
+    for (uint32_t bit = 1; bit; bit <<= 1) {
+        if ((toggles & bit) && bit != kFeatureGi && bit != kFeatureSsgi) {
+            order.push_back(bit);
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(_prewarmMutex);
+        _prewarmSave = save;
+        for (uint32_t bits : order) {
+            const uint32_t next = features ^ bits;
+            const bool known = std::find(_shadingSets.begin(), _shadingSets.end(), next) != _shadingSets.end() ||
+                               next == _prewarmCurrent ||
+                               std::any_of(_prewarmQueue.begin(), _prewarmQueue.end(),
+                                           [&](const PrewarmJob &j) { return j.features == next; }) ||
+                               std::any_of(_prewarmed.begin(), _prewarmed.end(),
+                                           [&](const Prewarmed &p) { return p.job.features == next; });
+            if (!known && _shadingSets.size() + _prewarmQueue.size() + _prewarmed.size() + 1 < kShadingSets) {
+                _prewarmQueue.push_back({next, _displacedPipelines});
+            }
+        }
+    }
+    if (!_prewarmThread.joinable() && !_prewarmQueue.empty()) {
+        VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        Check(vkCreatePipelineCache(_dev.device, &ci, nullptr, &_prewarmCache), "vkCreatePipelineCache");
+        _prewarmThread = std::thread(&Renderer::_PrewarmWorker, this);
+    }
+    _prewarmChanged.notify_all();
+}
+
+void Renderer::_PrewarmWorker()
+{
+    std::unique_lock<std::mutex> lock(_prewarmMutex);
+    for (;;) {
+        _prewarmChanged.wait(lock, [&] { return _prewarmStop || !_prewarmQueue.empty(); });
+        if (_prewarmStop) {
+            return;
+        }
+        Prewarmed p{_prewarmQueue.front(), std::vector<VkPipeline>(4 * kVariants, VK_NULL_HANDLE)};
+        _prewarmQueue.erase(_prewarmQueue.begin());
+        _prewarmCurrent = p.job.features;
+        const bool save = _prewarmSave;
+        lock.unlock();
+        VkPipeline *base = p.pipelines.data();
+        const ShadingTargets targets{base, base + kVariants, base + 2 * kVariants, base + 3 * kVariants};
+        bool ok = true;
+        try {
+            _CreatePipelines(false, p.job.features, &targets, _prewarmCache);
+            if (p.job.displaced) {
+                _CreatePipelines(true, p.job.features, &targets, _prewarmCache);
+            }
+        } catch (const std::exception &) {
+            ok = false;  // the frame that needs it compiles it (and reports why)
+        }
+        if (_dev.pipelineCache && vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) ==
+                                      VK_SUCCESS && save && ok && !_prewarmStop) {
+            _dev.SavePipelineCache();
+        }
+        lock.lock();
+        _prewarmCurrent = kNone;
+        if (ok && !_prewarmStop) {
+            _prewarmed.push_back(std::move(p));
+        } else {
+            for (VkPipeline pipeline : p.pipelines) {
+                vkDestroyPipeline(_dev.device, pipeline, nullptr);
+            }
+        }
+        _prewarmChanged.notify_all();
+    }
+}
+
+void Renderer::WaitForPrewarm()
+{
+    std::unique_lock<std::mutex> lock(_prewarmMutex);
+    _prewarmChanged.wait(lock, [&] { return _prewarmQueue.empty() && _prewarmCurrent == kNone; });
 }
 
 // The sun's cascades, `size` texels square; Render makes them (again) when
@@ -1824,10 +2021,12 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _Resize(frame.width, frame.height);
     }
     const Scene::Gpu &gpu = scene.GetGpu();
+    _savePipelines = frame.pipelineCache;
     if (gpu.displaced && !_displacedPipelines) {  // the first displaced material
         _CreatePipelines(true);
         for (uint32_t set = 0; set < _shadingSets.size(); ++set) {
-            _CreatePipelines(true, set);
+            const ShadingTargets targets = _SetTargets(set);
+            _CreatePipelines(true, _shadingSets[set], &targets);
         }
         _displacedPipelines = true;
     }
@@ -2072,6 +2271,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // code (mesh.frag's kCompiledLightSplits).
     static_assert((kOptionalFeatures & 1u) == 0, "the light splits' key bit");
     _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits ? 1u : 0u)) * kVariants;
+    if (frame.pipelinePrewarm) {
+        // ponytail: prewarms the sets without the light splits' bit only.
+        _Prewarm(fd.features[0] & kOptionalFeatures, gpu, frame.pipelineCache);
+    }
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");

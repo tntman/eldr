@@ -110,8 +110,23 @@ public:
     // shaders read) add to their usage; 0 without rayTracing.
     VkBufferUsageFlags rayTracingInputUsage = 0;
 
+    // Compiled pipelines kept across runs: the first call reads the file
+    // for this driver (pipelineCacheUUID) and these shaders (`shaderHash`)
+    // from %LOCALAPPDATA%\Eldr (HDVK_PIPELINE_CACHE_DIR overrides it) into
+    // pipelineCache, later ones do nothing. SavePipelineCache writes it
+    // back (any thread; also when the Device goes). pipelineCacheBytes:
+    // what the file held.
+    // ponytail: files of older shaders stay; delete the folder to reclaim.
+    void LoadPipelineCache(uint64_t shaderHash);
+    void SavePipelineCache();
+    VkPipelineCache pipelineCache = VK_NULL_HANDLE;
+    size_t pipelineCacheBytes = 0;
+
 private:
     void _Release();
+
+    std::string _pipelineCachePath;
+    std::mutex _pipelineCacheMutex;  // one writer of the file at a time
 
     VkCommandPool _submitPool = VK_NULL_HANDLE;
     VkFence _submitFence = VK_NULL_HANDLE;
