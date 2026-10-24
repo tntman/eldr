@@ -2487,6 +2487,19 @@ int main()
             Expect(authored.At(23, 32, 0) > 1.6f && authored.At(40, 32, 0) < 0.1f && authored.Prim(16, 20) != 9,
                    "Frame::authoredProbes off: the automatic probe");
             frame.authoredProbes = true;
+
+            // Probe normalization: with SSGI the mirror's local ambient light
+            // is known, and none reaches it (black dome, nothing lit on
+            // screen), while its probe saw the emitter: its reflection fades.
+            frame.ssgi = true;
+            frame.probeNormalize = false;
+            const float unnormalized = Render(renderer, scene, frame).At(23, 32, 0);
+            frame.probeNormalize = true;
+            const float normalized = Render(renderer, scene, frame).At(23, 32, 0);
+            Expect(unnormalized > 1.6f && normalized < 0.1f * unnormalized,
+                   "probe normalization: no local light, no probe light");
+            frame.ssgi = false;
+            Expect(Render(renderer, scene, frame).At(23, 32, 0) > 1.6f, "probe normalization needs GI or SSGI");
             frame.imageBasedLighting = false;
             Expect(Render(renderer, scene, frame).At(23, 32, 0) < 0.01f,
                    "Frame::imageBasedLighting off: no probe either");

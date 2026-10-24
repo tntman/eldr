@@ -102,6 +102,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeResolution, "hdvk:probeResolution"))              \
     ((probePosition, "hdvk:probePosition"))                  \
     ((authoredProbes, "hdvk:authoredProbes"))            \
+    ((probeNormalize, "hdvk:probeNormalize"))            \
     ((planarReflections, "hdvk:planarReflections"))          \
     ((planarScale, "hdvk:planarScale"))                      \
     ((volumes, "hdvk:volumes"))                              \

@@ -30,11 +30,29 @@ vec3 ProbeLookup(uint i, vec3 p, vec3 r, float perceptual)
     return textureLod(probeCubes[nonuniformEXT(i)], dir, perceptual * frame.probeCenter[i].w).rgb;
 }
 
+const uint kProbeNormalize = 1u;  // frame.reflections.z
+
+// Probe i's ambient light (irradiance / pi) towards n, from its SH L0, L1.
+vec3 ProbeAmbient(uint i, vec3 n)
+{
+    uint b = i * 4u;
+    vec3 e = frame.probeSh[b].rgb * 0.282095 + 0.488603 * (frame.probeSh[b + 1u].rgb * n.y +
+                                                           frame.probeSh[b + 2u].rgb * n.z +
+                                                           frame.probeSh[b + 3u].rgb * n.x);
+    return max(e, vec3(0.0)) / PI;
+}
+
 // The probes' light over `dome`: smallest box first, each weighted by how
 // far p is inside its box (fading in over its blend distance) times what
-// the smaller ones left; the dome takes the rest.
-vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome)
+// the smaller ones left; the dome takes the rest. With kProbeNormalize
+// each is scaled by the local ambient light (`local`, irradiance / pi from
+// GI or SSGI) over the ambient light the probe saw where it was captured
+// (EEVEE's normalization): a probe captured in daylight doesn't light a
+// dark corner's reflections. ponytail: by luminance, at most 4x.
+vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome, vec3 n, vec3 local)
 {
+    const vec3 kLuma = vec3(0.2126, 0.7152, 0.0722);
+    bool normalized = (frame.reflections.z & kProbeNormalize) != 0u;
     vec3 sum = vec3(0.0);
     float weight = 0.0;
     for (uint i = 0u; i < frame.reflections.x && weight < 0.999; ++i) {
@@ -42,7 +60,9 @@ vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome)
         float blend = frame.probeMin[i].w;
         float w = blend > 0.0 ? clamp(min(inside.x, min(inside.y, inside.z)) / blend, 0.0, 1.0) : 1.0;
         if (w > 0.0) {
-            sum += ProbeLookup(i, p, r, perceptual) * (w * (1.0 - weight));
+            float scale = normalized ? clamp(dot(local, kLuma) / max(dot(ProbeAmbient(i, n), kLuma), 1e-6), 0.0, 4.0)
+                                    : 1.0;
+            sum += ProbeLookup(i, p, r, perceptual) * (w * (1.0 - weight) * scale);
             weight += w * (1.0 - weight);
         }
     }

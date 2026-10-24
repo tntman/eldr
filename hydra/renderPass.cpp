@@ -152,7 +152,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.planarReflections, &frame.planarReflections},
                                 {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod},
-                                {t.authoredProbes, &frame.authoredProbes}}) {
+                                {t.authoredProbes, &frame.authoredProbes},
+                                {t.probeNormalize, &frame.probeNormalize}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},

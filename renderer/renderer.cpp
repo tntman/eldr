@@ -2061,6 +2061,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool ssgi = frame.ssgi && frame.depthPrepass;
     _gtao.SetSsgi(ssgi, frame.ssgiResolution);
     fd.features[0] |= ssgi ? kFeatureSsgi : 0;
+    // Probe normalization needs local ambient light: GI's or SSGI's.
+    fd.reflections[2] = frame.probeNormalize && (fd.features[0] & (kFeatureGi | kFeatureSsgi)) ? 1u : 0u;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);

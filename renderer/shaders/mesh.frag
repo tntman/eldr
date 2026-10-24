@@ -742,14 +742,16 @@ void main()
     // Reflections beyond the screen (probes.glsl): the mirror reflects the
     // planar reflection (below, over the dome's sky), other surfaces the
     // reflection probe's captured surroundings instead of the dome.
-    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
-    if (Feature(kFeatureProbe) && !mirror) {
-        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular);
-    }
-    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
+    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
+    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
+    if (Feature(kFeatureProbe) && !mirror) {
+        // The local ambient light probes are normalized by (GI or SSGI's).
+        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
+                                 Lavg * diffuseAO + SsgiDiffuse());
+    }
     float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
     specular *= MultiBounce(specularAO, f0);
     // The mirror's planar reflection, elsewhere screen-space reflections:
