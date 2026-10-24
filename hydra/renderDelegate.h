@@ -64,6 +64,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((toon, "hdvk:toon"))                                    \
     ((toonBands, "hdvk:toonBands"))                          \
     ((hairShading, "hdvk:hairShading"))                      \
+    ((texturedLobes, "hdvk:texturedLobes"))                  \
+    ((texturedTransmission, "hdvk:texturedTransmission"))    \
     ((rtShadows, "hdvk:rtShadows"))                          \
     ((rtShadowSamples, "hdvk:rtShadowSamples"))              \
     ((rtReflections, "hdvk:rtReflections"))                  \

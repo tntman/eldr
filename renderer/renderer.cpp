@@ -103,7 +103,7 @@ constexpr uint32_t kFeatureDisplacement = 1024, kFeatureLod = 2048;
 constexpr uint32_t kFeatureSpecularWorkflow = 8, kFeatureClearcoat = 16, kFeatureSheen = 32, kFeatureThinFilm = 64,
                    kFeatureAnisotropy = 128;
 // FrameData::styles[0], as brdf.glsl.
-constexpr uint32_t kStyleToon = 1, kStyleHair = 2;
+constexpr uint32_t kStyleToon = 1, kStyleHair = 2, kStyleTexturedLobes = 4, kStyleTexturedTransmission = 8;
 constexpr uint32_t kFeatureToon = 512;  // FrameData::styles[1] > 0
 // Ray tracing's (shaders/gi.glsl).
 constexpr uint32_t kFeatureRtShadows = 1u << 20, kFeatureRtReflections = 1u << 21, kFeatureGi = 1u << 22;
@@ -1858,7 +1858,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     fd.features[0] |= (frame.specularWorkflow ? kFeatureSpecularWorkflow : 0) | (frame.clearcoat ? kFeatureClearcoat : 0) |
                       (frame.sheen ? kFeatureSheen : 0) | (frame.thinFilm ? kFeatureThinFilm : 0) |
                       (frame.anisotropicSpecular ? kFeatureAnisotropy : 0);
-    fd.styles[0] = (frame.toon ? kStyleToon : 0) | (frame.hairShading ? kStyleHair : 0);
+    fd.styles[0] = (frame.toon ? kStyleToon : 0) | (frame.hairShading ? kStyleHair : 0) |
+                   (frame.texturedLobes ? kStyleTexturedLobes : 0) |
+                   (frame.texturedTransmission ? kStyleTexturedTransmission : 0);
     fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
     fd.features[0] |= fd.styles[1] > 0 ? kFeatureToon : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);

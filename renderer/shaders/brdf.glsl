@@ -15,7 +15,48 @@ const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen
            kFeatureAnisotropy = 128u;
 const uint kFeatureToon = 512u;  // toon bands for every material (frame.styles.y), an optional feature
 // frame.styles.x bits.
-const uint kStyleToon = 1u, kStyleHair = 2u;
+const uint kStyleToon = 1u, kStyleHair = 2u, kStyleTexturedLobes = 4u, kStyleTexturedTransmission = 8u;
+
+// The pixel's material (inMaterial): its constants, with the lobe inputs a
+// material program computed (textures, graphs; program.glsl's programLobe
+// in MaterialProgram::Input order from kSpecularColor) in their place when
+// the frame's Textured Lobe (and Transmission) Inputs are on. Only the GRAPH + LAYERS shaders
+// have them. Call after RunProgram.
+Material ShadingMaterial()
+{
+    Material m = materials[inMaterial];
+#if defined(GRAPH) && defined(LAYERS)
+    uint lobes = (frame.styles.x & kStyleTexturedLobes) != 0u ? programLobes : 0u;
+    if (lobes != 0u) {
+        m.specularColor.rgb = (lobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
+        m.coat.x = (lobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
+        m.coat.y = (lobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
+        m.coatColor.rgb = (lobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
+        m.sheen.x = (lobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
+        m.sheenColor.rgb = (lobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
+        m.sheen.y = (lobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
+        m.anisotropy.x = (lobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
+        m.thinFilm.y = (lobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
+        float r = (programLobe[9].x - 1.0) / (programLobe[9].x + 1.0);  // the coat's F0 from its IOR
+        m.coat.z = (lobes & 512u) != 0u ? r * r : m.coat.z;
+        m.thinFilm.x = (lobes & 1024u) != 0u ? programLobe[10].x : m.thinFilm.x;
+        m.thinFilm.z = (lobes & 2048u) != 0u ? programLobe[11].x : m.thinFilm.z;
+        m.anisotropy.y = (lobes & 4096u) != 0u ? programLobe[12].x : m.anisotropy.y;
+        m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
+    }
+    // Transmission and subsurface (transparency.glsl, subsurface.glsl):
+    // the radius multiplies the constant (its scale).
+    uint passes = (frame.styles.x & kStyleTexturedTransmission) != 0u ? programLobes : 0u;
+    if ((passes & 507904u) != 0u) {
+        m.transmission.w = (passes & 16384u) != 0u ? programLobe[14].x : m.transmission.w;
+        m.transmission.rgb = (passes & 32768u) != 0u ? programLobe[15].rgb : m.transmission.rgb;
+        m.subsurface.w = (passes & 65536u) != 0u ? programLobe[16].x : m.subsurface.w;
+        m.subsurface.rgb = (passes & 131072u) != 0u ? programLobe[17].rgb : m.subsurface.rgb;
+        m.subsurfaceRadius.xyz *= (passes & 262144u) != 0u ? programLobe[18].xyz : vec3(1.0);
+    }
+#endif
+    return m;
+}
 
 #ifdef LAYERS
 
@@ -143,22 +184,7 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 f0, inout vec3 diffuseColor, in
     if (inMaterial == kNoMaterial) {
         return;
     }
-    Material m = materials[inMaterial];
-#ifdef GRAPH
-    // Lobe inputs the material program computed (textures, graphs; in
-    // MaterialProgram::Input order) stand in for the constants.
-    if (programLobes != 0u) {
-        m.specularColor.rgb = (programLobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
-        m.coat.x = (programLobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
-        m.coat.y = (programLobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
-        m.coatColor.rgb = (programLobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
-        m.sheen.x = (programLobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
-        m.sheenColor.rgb = (programLobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
-        m.sheen.y = (programLobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
-        m.anisotropy.x = (programLobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
-        m.thinFilm.y = (programLobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
-    }
-#endif
+    Material m = ShadingMaterial();
     layers.toonBands = m.toon.x;
     layers.toonSoftness = m.toon.y;
     // UsdPreviewSurface's specular workflow: F0 is specularColor (F90

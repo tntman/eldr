@@ -20,9 +20,9 @@ GROUPS = [
      "ssr ssrSteps rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
      "planarReflections planarScale"),
     ("Materials",
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands "
+     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "
      "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Transparency", "translucency oit oitDepthWeight refraction refractionSamples holdouts"),
+    ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts"),
     ("Fog and volumes",
      "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "

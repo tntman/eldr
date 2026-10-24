@@ -18,7 +18,10 @@
 # UsdPreviewSurface for reference. Third row: a patch of brown hair
 # (BasisCurves without a material, displayColor) for hair shading; a quad
 # whose specular workflow F0 is a texture (quadrants.png: bottom-left red,
-# bottom-right green, top-left blue, top-right white) over black.
+# bottom-right green, top-left blue, top-right white) over black; a quad
+# of OpenPBR anodized metal whose thin_film_weight is quadrants.png's red
+# channel (0.9 bottom-left, 1 top-right, 0.16 elsewhere).
+# A white standard_surface quad whose transmission is that red channel.
 
 def Camera "cam"
 {
@@ -242,6 +245,48 @@ def Scope "mtl"
             float2 outputs:result
         }
     }
+
+    def Material "texturedFilm"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedFilm/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.62)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.25
+            float inputs:thin_film_weight.connect = </mtl/texturedFilm/weight.outputs:out>
+            float inputs:thin_film_thickness = 0.35
+            float inputs:thin_film_ior = 2
+            token outputs:out
+        }
+        def Shader "weight"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @./textures/quadrants.png@
+            float outputs:out
+        }
+    }
+
+    def Material "texturedTransmission"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedTransmission/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.8, 0.8, 0.8)
+            float inputs:specular_roughness = 0.2
+            float inputs:transmission.connect = </mtl/texturedTransmission/weight.outputs:out>
+            token outputs:out
+        }
+        def Shader "weight"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @./textures/quadrants.png@
+            float outputs:out
+        }
+    }
 }
 
 def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
@@ -349,5 +394,29 @@ def Mesh "texturedSpecular" (prepend apiSchemas = ["MaterialBindingAPI"])
     uniform token subdivisionScheme = "none"
     rel material:binding = </mtl/texturedSpecular>
     double3 xformOp:translate = (-3.6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedFilm" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/texturedFilm>
+    double3 xformOp:translate = (-1.2, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedTransmission" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/texturedTransmission>
+    double3 xformOp:translate = (1.2, -3.6, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }

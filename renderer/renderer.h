@@ -105,6 +105,8 @@ public:
         bool toon = true;              // NPR toon bands of materials with their own (Material::toonBands)
         uint32_t toonBands = 0;        // with toon: bands for every other material too (0: none)
         bool hairShading = true;       // curves (Mesh::hair) with strand highlights
+        bool texturedLobes = true;     // lobe inputs from textures and graphs (material programs); off: constants
+        bool texturedTransmission = true;  // the same for transmission and subsurface inputs
         // Ray tracing (raytracing.cpp), ignored without Device::rayTracing.
         // With the depth prepass: traced shadows of the sun and the three
         // lights that matter most (no shadow maps for them; soft from the
