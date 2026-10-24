@@ -38,7 +38,7 @@ vec4 programRegisters[kProgramRegisters];
 // The lobe inputs a program computes (MaterialProgram::Input from
 // kSpecularColor on, in that order), for brdf.glsl's PrepareLayers: their
 // values, and a bit each in programLobes.
-const uint kProgramLobes = 14u;
+const uint kProgramLobes = 19u;
 vec4 programLobe[kProgramLobes];
 uint programLobes = 0u;
 #endif

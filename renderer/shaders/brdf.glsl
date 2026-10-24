@@ -15,12 +15,12 @@ const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen
            kFeatureAnisotropy = 128u;
 const uint kFeatureToon = 512u;  // toon bands for every material (frame.styles.y), an optional feature
 // frame.styles.x bits.
-const uint kStyleToon = 1u, kStyleHair = 2u, kStyleTexturedLobes = 4u;
+const uint kStyleToon = 1u, kStyleHair = 2u, kStyleTexturedLobes = 4u, kStyleTexturedTransmission = 8u;
 
 // The pixel's material (inMaterial): its constants, with the lobe inputs a
 // material program computed (textures, graphs; program.glsl's programLobe
 // in MaterialProgram::Input order from kSpecularColor) in their place when
-// the frame's Textured Lobe Inputs are on. Only the GRAPH + LAYERS shaders
+// the frame's Textured Lobe (and Transmission) Inputs are on. Only the GRAPH + LAYERS shaders
 // have them. Call after RunProgram.
 Material ShadingMaterial()
 {
@@ -43,6 +43,16 @@ Material ShadingMaterial()
         m.thinFilm.z = (lobes & 2048u) != 0u ? programLobe[11].x : m.thinFilm.z;
         m.anisotropy.y = (lobes & 4096u) != 0u ? programLobe[12].x : m.anisotropy.y;
         m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
+    }
+    // Transmission and subsurface (transparency.glsl, subsurface.glsl):
+    // the radius multiplies the constant (its scale).
+    uint passes = (frame.styles.x & kStyleTexturedTransmission) != 0u ? programLobes : 0u;
+    if ((passes & 507904u) != 0u) {
+        m.transmission.w = (passes & 16384u) != 0u ? programLobe[14].x : m.transmission.w;
+        m.transmission.rgb = (passes & 32768u) != 0u ? programLobe[15].rgb : m.transmission.rgb;
+        m.subsurface.w = (passes & 65536u) != 0u ? programLobe[16].x : m.subsurface.w;
+        m.subsurface.rgb = (passes & 131072u) != 0u ? programLobe[17].rgb : m.subsurface.rgb;
+        m.subsurfaceRadius.xyz *= (passes & 262144u) != 0u ? programLobe[18].xyz : vec3(1.0);
     }
 #endif
     return m;

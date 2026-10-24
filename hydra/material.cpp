@@ -1316,6 +1316,11 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_IOR, P::kThinFilmIor);
         program(_tokens->specular_rotation, P::kAnisotropyRotation);
         program(_tokens->specular_IOR, P::kIor);
+        program(_tokens->transmission, P::kTransmission);
+        program(_tokens->transmission_color, P::kTransmissionColor);
+        program(_tokens->subsurface, P::kSubsurface);
+        program(_tokens->subsurface_color, P::kSubsurfaceColor);
+        program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_scale
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1344,6 +1349,11 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_weight, P::kThinFilm);
         program(_tokens->thin_film_ior, P::kThinFilmIor);
         program(_tokens->specular_ior, P::kIor);
+        program(_tokens->transmission_weight, P::kTransmission);
+        program(_tokens->transmission_color, P::kTransmissionColor);
+        program(_tokens->subsurface_weight, P::kSubsurface);
+        program(_tokens->subsurface_color, P::kSubsurfaceColor);
+        program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_radius_scale
     }
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
@@ -1459,8 +1469,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // their own inputs; UsdPreviewSurface refracts what its opacity lets
     // through once it has an ior ("for translucent objects"; Hydra hands
     // over authored inputs only).
-    // ponytail: constants only; textured or graph-driven transmission keeps
-    // its constant.
+    // Connected weights, colours and the radius (not its scale) are computed
+    // by the material program (ReadLobes); their constants here are the
+    // defaults they fall back to.
+    // ponytail: transmission_depth, thin_walled and the radius scale stay
+    // constants.
     const bool openPbr = surface.nodeTypeId == _tokens->ND_open_pbr_surface_surfaceshader;
     if (openPbr || surface.nodeTypeId == _tokens->ND_standard_surface_surfaceshader) {
         Read(surface.parameters, openPbr ? _tokens->transmission_weight : _tokens->transmission, &m->transmission);
