@@ -2349,7 +2349,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(frame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness);
+                         frame.ssgiThickness, frame.ssgiBitmask ? 0.25f * frame.ssgiRadius : 0.0f);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius, sample,

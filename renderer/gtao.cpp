@@ -17,6 +17,9 @@ const uint32_t kDenoiseFrag[] =
 const uint32_t kSsgiFrag[] =
 #include "ssgi.frag.inc"
 ;
+const uint32_t kSsgiBitmaskFrag[] =
+#include "ssgi_bitmask.frag.inc"
+;
 const uint32_t kSsgiDenoiseFrag[] =
 #include "ssgi_denoise.frag.inc"
 ;
@@ -31,7 +34,7 @@ struct GtaoParams {  // mirror of the push block in gtao.frag (the SSGI part onl
     float params[4];
     float prevViewProj[16];
     float ssgi[4];      // depth pixels per raw pixel, steps per side, history valid, max radiance
-    float temporal[4];  // weight of this frame in SSGI's running average
+    float temporal[4];  // weight of this frame in SSGI's running average, thickness estimator, object thickness
 };
 
 VkImageSubresourceRange Color()
@@ -78,6 +81,7 @@ Gtao::Gtao(Device &device)
     _gtaoPipeline = CreateFullscreenPipeline(d, _layout, kGtaoFrag, sizeof(kGtaoFrag), kRawFormat);
     _denoisePipeline = CreateFullscreenPipeline(d, _layout, kDenoiseFrag, sizeof(kDenoiseFrag), kAoFormat);
     _ssgiPipeline = CreateFullscreenPipeline(d, _layout, kSsgiFrag, sizeof(kSsgiFrag), kSsgiFormat);
+    _ssgiBitmaskPipeline = CreateFullscreenPipeline(d, _layout, kSsgiBitmaskFrag, sizeof(kSsgiBitmaskFrag), kSsgiFormat);
     _ssgiDenoisePipeline = CreateFullscreenPipeline(d, _layout, kSsgiDenoiseFrag, sizeof(kSsgiDenoiseFrag), kSsgiFormat);
 }
 
@@ -89,6 +93,7 @@ Gtao::~Gtao()
     vkDestroyPipeline(d, _gtaoPipeline, nullptr);
     vkDestroyPipeline(d, _denoisePipeline, nullptr);
     vkDestroyPipeline(d, _ssgiPipeline, nullptr);
+    vkDestroyPipeline(d, _ssgiBitmaskPipeline, nullptr);
     vkDestroyPipeline(d, _ssgiDenoisePipeline, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
@@ -231,7 +236,8 @@ void Gtao::_Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, 
 
 void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                       const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                      VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness)
+                      VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
+                      float objectThickness)
 {
     const VkDescriptorImageInfo images[2] = {{_sampler, history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                              {_sampler, _ssgi[_current ^ 1u].view,
@@ -263,7 +269,8 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
     params.ssgi[3] = maxRadiance;
     params.temporal[0] = 1.0f / float(_accumulated);
     params.temporal[1] = thickness ? 1.0f : 0.0f;
-    _Draw(cmd, _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
+    params.temporal[2] = objectThickness;
+    _Draw(cmd, objectThickness > 0.0f ? _ssgiBitmaskPipeline : _ssgiPipeline, _ssgiSet, _ssgiRaw, (_width + _scale - 1) / _scale, (_height + _scale - 1) / _scale,
           &params);
     _Draw(cmd, _ssgiDenoisePipeline, _ssgiSet, _ssgi[_current], _width, _height, &params);
 }

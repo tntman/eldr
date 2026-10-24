@@ -185,6 +185,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
         {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
         {"Screen-Space Thickness Estimator (SSGI, SSR)", t.ssgiThickness, VtValue(frame.ssgiThickness)},
+        {"SSGI Visibility Bitmask (light behind thin objects)", t.ssgiBitmask, VtValue(frame.ssgiBitmask)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
         {"Direct Light Clamp (radiance, 0 = off)", t.directClamp, VtValue(frame.directClamp)},

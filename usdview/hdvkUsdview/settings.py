@@ -13,7 +13,7 @@ GROUPS = [
     ("Lighting",
      "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis ssgi ssgiSteps ssgiRadius ssgiResolution "
-     "ssgiThickness directClamp indirectClamp"),
+     "ssgiThickness ssgiBitmask directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances"),

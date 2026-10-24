@@ -63,6 +63,12 @@ foreach(shader gtao.frag gtao_denoise.frag)
         DEPENDS renderer/shaders/${shader})
     list(APPEND shader_incs ${spv})
 endforeach()
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssgi_bitmask.frag.inc)  # SSGI with a visibility bitmask
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/gtao.frag
+    DEPENDS renderer/shaders/gtao.frag)
+list(APPEND shader_incs ${spv})
 foreach(shader mesh.vert mesh.frag aov.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)

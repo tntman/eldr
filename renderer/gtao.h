@@ -42,10 +42,13 @@ public:
     // `steps` steps per side, its radiance clamped to `maxRadiance` (fireflies).
     // While the camera is `still`, the result accumulates over the frames
     // (up to 16), so its per-frame noise averages out before TAA, whose
-    // neighbourhood clipping would keep the denoised blotches.
+    // neighbourhood clipping would keep the denoised blotches. `thickness`:
+    // the thickness estimator; `objectThickness` > 0: the visibility
+    // bitmask, objects that thick behind their front (world units).
     void RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                     const float eye[3], float radius, uint32_t noise, uint32_t slices, uint32_t steps,
-                    VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness);
+                    VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
+                    float objectThickness);
 
     VkImageView Output() const { return _ssgiOn ? _ssgi[_current].view : _ao.view; }
 
@@ -61,6 +64,7 @@ private:
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _gtaoPipeline = VK_NULL_HANDLE, _denoisePipeline = VK_NULL_HANDLE;
     VkPipeline _ssgiPipeline = VK_NULL_HANDLE, _ssgiDenoisePipeline = VK_NULL_HANDLE;
+    VkPipeline _ssgiBitmaskPipeline = VK_NULL_HANDLE;
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE, _ssgiSet = VK_NULL_HANDLE;
     Image _raw;  // RG16F: visibility, distance to the camera (0 = background)
