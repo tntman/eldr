@@ -208,6 +208,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    // 0 allowed: no skinned instance blocks rays.
+    frame.rtSkinnedInstances =
+        uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx

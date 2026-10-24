@@ -37,6 +37,10 @@ public:
         uint32_t giProbes = 16;     // along the scene's longest side
         uint32_t giRays = 64;       // per probe and frame
         float giHysteresis = 0.97f; // of the probes' running average
+        // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
+        // room for skinnedCapacity of them.
+        std::vector<Scene::SkinnedInstance> skinned;
+        uint32_t skinnedCapacity = 0;
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -71,8 +75,24 @@ private:
         Buffer buffer;
         RangeAllocator ranges;
     };
+    // Skinned instances (rt_skin.comp poses their vertices): a BLAS each,
+    // built once and refit every frame.
+    struct Skinned {
+        Blas blas;
+        uint64_t version = 0;  // of its mesh's geometry
+        uint32_t slot = 0, firstVertex = 0, vertexCount = 0, flags = 0;
+        VkDeviceSize buildScratch = 0, updateScratch = 0;
+        bool built = false;
+    };
+    Blas _CreateBlas(VkDeviceSize bytes);
+    VkAccelerationStructureGeometryKHR _Triangles(VkDeviceAddress vertices, VkDeviceSize stride, uint32_t vertexCount,
+                                                  VkDeviceAddress indices) const;
     void _BuildBlases(const Scene::Gpu &gpu);
     void _DestroyBlas(Blas &blas);
+    VkDeviceSize _PrepareSkinned(const Scene::Gpu &gpu);
+    void _DestroySkinned(Skinned &s);
+    VkAccelerationStructureBuildGeometryInfoKHR _SkinnedBuildInfo(const Skinned &s, const Scene::Gpu &gpu,
+                                                                  VkAccelerationStructureGeometryKHR *geometry) const;
     void _PrepareTlas(const Scene::Gpu &gpu);
     VkAccelerationStructureBuildGeometryInfoKHR _TlasBuildInfo(VkAccelerationStructureGeometryKHR *geometry) const;
     VkDeviceAddress _Address(VkBuffer buffer) const;
@@ -91,6 +111,7 @@ private:
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;  // ray tracing: shaders/rt*
     VkPipeline _tlasPipeline = VK_NULL_HANDLE;
+    VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
     Buffer _sbt;  // shader binding table: raygen, miss and hit regions
     VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _miss{}, _hit{}, _callable{};
 
@@ -109,6 +130,14 @@ private:
     bool _tlasDirty = true;
     uint64_t _tlasVersion = 0;  // Scene::Gpu::version it was built from
     std::vector<uint32_t> _slotWords;  // what _slots holds
+    // Skinned instances by instance slot, this frame's in table order.
+    std::unordered_map<uint32_t, Skinned> _skinned;
+    std::vector<uint32_t> _skinnedOrder;
+    std::vector<VkDeviceSize> _skinnedScratch;  // offsets of their builds' scratch
+    uint32_t _skinnedMostVertices = 0, _skinnedLast = 0;  // this frame; last frame's count
+    Buffer _skinnedVertices;    // posed position and normal per vertex
+    RangeAllocator _skinnedRanges;
+    Buffer _skinnedTable;       // RtSkinned per entry (rt.glsl)
 
     Work _work;
     uint32_t _frame = 0;

@@ -20,6 +20,21 @@ layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]
 // Every instance of the mesh is also a light (Scene::SetEmissiveLights).
 const uint kRtSlotEmitter = 1u;
 
+// Skinned instances (rt_skin.comp): the TLAS's instances from
+// rt.skinned.x on, one per entry here, each with a BLAS of its own over its
+// posed vertices (world-space position and normal, 6 floats each).
+struct RtSkinned {
+    uvec2 blas;
+    uint slot;         // mesh slot
+    uint firstVertex;  // in rtSkinnedVertices
+    uint instance;     // instance slot
+    uint vertexCount;
+    uint flags;        // 1: eight influences, 2: dual quaternions
+    uint pad;
+};
+layout(std430, set = 1, binding = 5) readonly buffer RtSkinnedTable { RtSkinned rtSkinned[]; };
+layout(std430, set = 1, binding = 4) readonly buffer RtSkinnedVertices { float rtSkinnedVertices[]; };
+
 // Ray payload (location 0) of traced rays.
 struct RtHit {
     vec3 position;  // world
@@ -56,6 +71,16 @@ vec3 RtNormal(uint v)
 vec2 RtUv(uint v)
 {
     return vec2(rtVertices[v * 10u + 6u], rtVertices[v * 10u + 7u]);
+}
+
+vec3 RtSkinnedPosition(uint v)
+{
+    return vec3(rtSkinnedVertices[v * 6u], rtSkinnedVertices[v * 6u + 1u], rtSkinnedVertices[v * 6u + 2u]);
+}
+
+vec3 RtSkinnedNormal(uint v)
+{
+    return vec3(rtSkinnedVertices[v * 6u + 3u], rtSkinnedVertices[v * 6u + 4u], rtSkinnedVertices[v * 6u + 5u]);
 }
 
 vec3 RtColor(uint v)

@@ -453,7 +453,7 @@ void Renderer::_CreateDescriptors()
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
@@ -1909,7 +1909,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // take over the sun's cascades and the first local lights' atlas tiles.
     RayTracing::Work rt;
     const bool rtScene = _rt && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
-                         gpu.instanceCapacity <= kMaxRtInstances;
+                         gpu.instanceCapacity <= kMaxRtInstances - kMaxRtSkinned;
     rt.shadows = rtScene && frame.depthPrepass && frame.rtShadows;
     rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
     rt.shadowSamples = frame.rtShadowSamples;
@@ -2005,6 +2005,8 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     }
     const bool rayTracing = rt.shadows || rt.reflections || rt.gi;
     if (rayTracing) {
+        rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
+        rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         _rt->Prepare(gpu, rt, _width, _height);
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either

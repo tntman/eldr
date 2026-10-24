@@ -4,6 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <type_traits>
 #include <unordered_set>
 
@@ -29,6 +30,9 @@ const uint32_t kAnyHit[] =
 const uint32_t kTlasComp[] =
 #include "tlas.comp.inc"
 ;
+const uint32_t kSkinComp[] =
+#include "rt_skin.comp.inc"
+;
 const uint32_t kProbesRgen[] =
 #include "rt_probes.rgen.inc"
 ;
@@ -49,6 +53,7 @@ struct RayTracingData {
     uint32_t giCounts[4];
     float giParams[4];
     float giRotation[16];
+    uint32_t skinned[4];  // the TLAS's first skinned instance, how many
 };
 
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
@@ -128,6 +133,7 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     _dev.Reserve(_uniforms, sizeof(RayTracingData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     std::memset(_uniforms.mapped, 0, sizeof(RayTracingData));
     _dev.Reserve(_slots, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    _dev.Reserve(_skinnedTable, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreatePipelines(sceneLayout);
     // Placeholders until a frame needs the real sizes: every descriptor
     // stays valid.
@@ -147,7 +153,8 @@ RayTracing::~RayTracing()
     _dev.Destroy(_slots);
     _dev.Destroy(_sbt);
     _dev.Destroy(_giRays);
-    for (VkPipeline p : {_pipeline, _tlasPipeline, _giUpdate[0], _giUpdate[1]}) {
+    _dev.Destroy(_skinnedTable);
+    for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _giUpdate[0], _giUpdate[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -162,6 +169,13 @@ void RayTracing::Release()
         _fn->destroyAccelerationStructure(_dev.device, blas.as, nullptr);
     }
     _blas.clear();
+    for (auto &[instance, s] : _skinned) {
+        _fn->destroyAccelerationStructure(_dev.device, s.blas.as, nullptr);
+    }
+    _skinned.clear();
+    _skinnedOrder.clear();
+    _skinnedRanges = RangeAllocator();
+    _dev.Destroy(_skinnedVertices);
     for (Block &b : _blocks) {
         _dev.Destroy(b.buffer);
     }
@@ -186,25 +200,27 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
 {
     const VkDevice device = _dev.device;
     // Set 1, what only these passes write: the TLAS's instances, the probes'
-    // rays and atlases (partially bound: written once they exist).
+    // rays and atlases, the skinned instances' posed vertices and table
+    // (partially bound: written once they exist).
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
-    const VkDescriptorSetLayoutBinding bindings[4] = {
+    const VkDescriptorSetLayoutBinding bindings[6] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
     };
-    const VkDescriptorBindingFlags partial[4] = {
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
-        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
+    VkDescriptorBindingFlags partial[6];
+    std::fill(partial, partial + 6, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 4;
+    flags.bindingCount = 6;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 4;
+    slci.bindingCount = 6;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -222,14 +238,22 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     lci.pSetLayouts = layouts;
     Check(vkCreatePipelineLayout(device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
-    VkShaderModule tlasModule = CreateShaderModule(device, kTlasComp, sizeof(kTlasComp));
+    VkResult r = VK_SUCCESS;
+    for (auto [code, bytes, pipeline] : {std::tuple{kTlasComp, sizeof(kTlasComp), &_tlasPipeline},
+                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
+        VkShaderModule module = CreateShaderModule(device, code, bytes);
+        VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
+                     module, "main"};
+        cci.layout = _layout;
+        r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        vkDestroyShaderModule(device, module, nullptr);
+        Check(r, "vkCreateComputePipelines");
+    }
     VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
     cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
-                 tlasModule, "main"};
+                 VK_NULL_HANDLE, "main"};
     cci.layout = _layout;
-    VkResult r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_tlasPipeline);
-    vkDestroyShaderModule(device, tlasModule, nullptr);
-    Check(r, "vkCreateComputePipelines");
     // The probe update, specialized for each atlas's tile interiors.
     VkShaderModule giModule = CreateShaderModule(device, kGiUpdateComp, sizeof(kGiUpdateComp));
     cci.stage.module = giModule;
@@ -382,8 +406,60 @@ void RayTracing::_DestroyBlas(Blas &blas)
     blas = Blas();
 }
 
+// A BLAS's storage in a block (a new block when none has room) and the
+// acceleration structure over it.
+RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
+{
+    Blas blas;
+    blas.units = uint32_t((bytes + kUnit - 1) / kUnit);
+    bool placed = false;
+    for (uint32_t b = 0; b < _blocks.size() && !placed; ++b) {
+        placed = _blocks[b].ranges.Allocate(blas.units, &blas.offset);
+        blas.block = b;
+    }
+    if (!placed) {
+        Block block;
+        const VkDeviceSize blockBytes = std::max(kBlockBytes, VkDeviceSize(blas.units) * kUnit);
+        block.buffer = _dev.CreateDeviceBuffer(blockBytes, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                                                               VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        block.ranges.Grow(uint32_t(blockBytes / kUnit));
+        block.ranges.Allocate(blas.units, &blas.offset);
+        blas.block = uint32_t(_blocks.size());
+        _blocks.push_back(std::move(block));
+    }
+    VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+    ci.buffer = _blocks[blas.block].buffer.buffer;
+    ci.offset = VkDeviceSize(blas.offset) * kUnit;
+    ci.size = bytes;
+    ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    Check(_fn->createAccelerationStructure(_dev.device, &ci, nullptr, &blas.as), "vkCreateAccelerationStructureKHR");
+    VkAccelerationStructureDeviceAddressInfoKHR ai{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+    ai.accelerationStructure = blas.as;
+    blas.address = _fn->getAddress(_dev.device, &ai);
+    return blas;
+}
+
+// Indexed triangles with float positions first in each vertex; opaque or
+// not per instance (tlas.comp), as the material says.
+VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertices, VkDeviceSize stride,
+                                                          uint32_t vertexCount, VkDeviceAddress indices) const
+{
+    VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+    geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    VkAccelerationStructureGeometryTrianglesDataKHR &t = geometry.geometry.triangles;
+    t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
+    t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+    t.vertexData.deviceAddress = vertices;
+    t.vertexStride = stride;
+    t.maxVertex = vertexCount - 1;
+    t.indexType = VK_INDEX_TYPE_UINT32;
+    t.indexData.deviceAddress = indices;
+    return geometry;
+}
+
 // One BLAS per traced slot geometry, built in batches (one submit each) as
-// soon as a mesh's geometry is new; unused ones are freed.
+// soon as a mesh's geometry is new; unused ones are freed. Skinned meshes
+// get theirs per instance (_PrepareSkinned).
 // ponytail: no compaction (BLASes take about twice the memory they could),
 // and empty blocks are kept until Release.
 void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
@@ -392,7 +468,8 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
     std::vector<uint32_t> missing;
     for (uint32_t s = 0; s < gpu.slotGeometry.size(); ++s) {
         const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[s];
-        if (g.version != 0 && g.indexCount >= 3 && used.insert(g.version).second && !_blas.count(g.version)) {
+        if (g.version != 0 && !g.skinned && g.indexCount >= 3 && used.insert(g.version).second &&
+            !_blas.count(g.version)) {
             missing.push_back(s);
         }
     }
@@ -420,18 +497,8 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         VkDeviceSize scratch = 0;
         while (infos.size() < batch && (infos.empty() || scratch < kScratchBudget)) {
             const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[missing[next++]];
-            VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
-            geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
-            geometry.flags = 0;  // opaque or not per instance (tlas.comp), as the material says
-            VkAccelerationStructureGeometryTrianglesDataKHR &t = geometry.geometry.triangles;
-            t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
-            t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
-            t.vertexData.deviceAddress = vertices + VkDeviceAddress(g.vertexOffset) * sizeof(Vertex);
-            t.vertexStride = sizeof(Vertex);
-            t.maxVertex = g.vertexCount - 1;
-            t.indexType = VK_INDEX_TYPE_UINT32;
-            t.indexData.deviceAddress = indices + VkDeviceAddress(g.firstIndex) * sizeof(uint32_t);
-            geometries.push_back(geometry);
+            geometries.push_back(_Triangles(vertices + VkDeviceAddress(g.vertexOffset) * sizeof(Vertex), sizeof(Vertex),
+                                            g.vertexCount, indices + VkDeviceAddress(g.firstIndex) * sizeof(uint32_t)));
 
             VkAccelerationStructureBuildGeometryInfoKHR info{
                 VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
@@ -445,34 +512,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             _fn->getBuildSizes(_dev.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &triangles,
                                &sizes);
 
-            Blas blas;
-            blas.units = uint32_t((sizes.accelerationStructureSize + kUnit - 1) / kUnit);
-            bool placed = false;
-            for (uint32_t b = 0; b < _blocks.size() && !placed; ++b) {
-                placed = _blocks[b].ranges.Allocate(blas.units, &blas.offset);
-                blas.block = b;
-            }
-            if (!placed) {
-                Block block;
-                const VkDeviceSize bytes = std::max(kBlockBytes, VkDeviceSize(blas.units) * kUnit);
-                block.buffer = _dev.CreateDeviceBuffer(bytes, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
-                                                                  VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-                block.ranges.Grow(uint32_t(bytes / kUnit));
-                block.ranges.Allocate(blas.units, &blas.offset);
-                blas.block = uint32_t(_blocks.size());
-                _blocks.push_back(std::move(block));
-            }
-            VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
-            ci.buffer = _blocks[blas.block].buffer.buffer;
-            ci.offset = VkDeviceSize(blas.offset) * kUnit;
-            ci.size = sizes.accelerationStructureSize;
-            ci.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            Check(_fn->createAccelerationStructure(_dev.device, &ci, nullptr, &blas.as),
-                  "vkCreateAccelerationStructureKHR");
-            VkAccelerationStructureDeviceAddressInfoKHR ai{
-                VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
-            ai.accelerationStructure = blas.as;
-            blas.address = _fn->getAddress(_dev.device, &ai);
+            const Blas blas = _CreateBlas(sizes.accelerationStructureSize);
             _blas[g.version] = blas;
 
             info.dstAccelerationStructure = blas.as;
@@ -493,6 +533,130 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         });
     }
     _dev.Destroy(_scratch);  // the TLAS needs far less
+}
+
+void RayTracing::_DestroySkinned(Skinned &s)
+{
+    _DestroyBlas(s.blas);
+    _skinnedRanges.Free(s.firstVertex, s.vertexCount);
+    s = Skinned();
+}
+
+// A skinned instance's triangles over its posed vertices (6 floats each).
+VkAccelerationStructureBuildGeometryInfoKHR RayTracing::_SkinnedBuildInfo(
+    const Skinned &s, const Scene::Gpu &gpu, VkAccelerationStructureGeometryKHR *geometry) const
+{
+    const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[s.slot];
+    *geometry = _Triangles(_Address(_skinnedVertices.buffer) + VkDeviceAddress(s.firstVertex) * 6 * sizeof(float),
+                           6 * sizeof(float), s.vertexCount,
+                           _Address(gpu.indices) + VkDeviceAddress(g.firstIndex) * sizeof(uint32_t));
+    VkAccelerationStructureBuildGeometryInfoKHR info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+    info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+    info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                 VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR;
+    info.mode = s.built ? VK_BUILD_ACCELERATION_STRUCTURE_MODE_UPDATE_KHR : VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+    info.srcAccelerationStructure = s.built ? s.blas.as : VK_NULL_HANDLE;
+    info.dstAccelerationStructure = s.blas.as;
+    info.geometryCount = 1;
+    info.pGeometries = geometry;
+    return info;
+}
+
+// The skinned instances this frame traces (Work::skinned): a BLAS and room
+// for posed vertices each, kept while an instance stays picked and its
+// mesh's geometry the same (then only refit), built anew otherwise. Writes
+// their table; returns the scratch their builds and refits need.
+VkDeviceSize RayTracing::_PrepareSkinned(const Scene::Gpu &gpu)
+{
+    const size_t count = std::min<size_t>(_work.skinned.size(), _work.skinnedCapacity);
+    std::unordered_set<uint32_t> picked;
+    for (size_t i = 0; i < count; ++i) {
+        picked.insert(_work.skinned[i].instance);
+    }
+    for (auto it = _skinned.begin(); it != _skinned.end();) {
+        if (picked.count(it->first)) {
+            ++it;
+            continue;
+        }
+        _DestroySkinned(it->second);
+        it = _skinned.erase(it);
+    }
+    _skinnedOrder.clear();
+    for (size_t i = 0; i < count; ++i) {
+        const Scene::SkinnedInstance &pick = _work.skinned[i];
+        const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[pick.slot];
+        if (g.version == 0 || g.indexCount < 3) {
+            continue;
+        }
+        Skinned &s = _skinned[pick.instance];
+        if (s.blas.as && (s.version != g.version || s.slot != pick.slot)) {
+            _DestroySkinned(s);
+        }
+        if (!s.blas.as) {
+            // Room for its posed vertices (all get rebuilt where it grows:
+            // their vertices move to a new buffer).
+            while (!_skinnedRanges.Allocate(g.vertexCount, &s.firstVertex)) {
+                const uint32_t old = _skinnedRanges.Capacity();
+                const uint32_t capacity = std::max(old * 2, old + g.vertexCount);
+                _dev.Destroy(_skinnedVertices);
+                _skinnedVertices = _dev.CreateDeviceBuffer(VkDeviceSize(capacity) * 6 * sizeof(float),
+                                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | _dev.rayTracingInputUsage);
+                _skinnedRanges.Grow(capacity);
+                for (auto &[instance, other] : _skinned) {
+                    other.built = false;
+                }
+            }
+            s.slot = pick.slot;
+            s.version = g.version;
+            s.vertexCount = g.vertexCount;
+            s.flags = pick.flags;
+            s.built = false;
+            VkAccelerationStructureGeometryKHR geometry;
+            const VkAccelerationStructureBuildGeometryInfoKHR info = _SkinnedBuildInfo(s, gpu, &geometry);
+            const uint32_t triangles = g.indexCount / 3;
+            VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+            _fn->getBuildSizes(_dev.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &triangles, &sizes);
+            s.blas = _CreateBlas(sizes.accelerationStructureSize);
+            s.buildScratch = sizes.buildScratchSize;
+            s.updateScratch = sizes.updateScratchSize;
+        }
+        _skinnedOrder.push_back(pick.instance);
+    }
+    // Once all have their room (growing rebuilds them all).
+    _skinnedScratch.clear();
+    _skinnedMostVertices = 0;
+    std::vector<uint32_t> table;
+    VkDeviceSize scratch = 0;
+    for (uint32_t instance : _skinnedOrder) {
+        const Skinned &s = _skinned.at(instance);
+        _skinnedScratch.push_back(scratch);
+        scratch += AlignUp(s.built ? s.updateScratch : s.buildScratch, _scratchAlignment);
+        _skinnedMostVertices = std::max(_skinnedMostVertices, s.vertexCount);
+        table.insert(table.end(), {uint32_t(s.blas.address), uint32_t(s.blas.address >> 32), s.slot, s.firstVertex,
+                                   instance, s.vertexCount, s.flags, 0u});
+    }
+    if (!table.empty()) {
+        _dev.Reserve(_skinnedTable, table.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memcpy(_skinnedTable.mapped, table.data(), table.size() * sizeof(uint32_t));
+    }
+    // Posed every frame: the TLAS follows them.
+    _tlasDirty = _tlasDirty || !_skinnedOrder.empty() || _skinnedLast > 0;
+    _skinnedLast = uint32_t(_skinnedOrder.size());
+
+    const VkDescriptorBufferInfo infos[2] = {
+        {_skinnedVertices.buffer ? _skinnedVertices.buffer : _skinnedTable.buffer, 0, VK_WHOLE_SIZE},
+        {_skinnedTable.buffer, 0, VK_WHOLE_SIZE}};
+    VkWriteDescriptorSet writes[2] = {};
+    for (uint32_t i = 0; i < 2; ++i) {
+        writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[i].dstSet = _set;
+        writes[i].dstBinding = 4 + i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].pBufferInfo = &infos[i];
+    }
+    vkUpdateDescriptorSets(_dev.device, 2, writes, 0, nullptr);
+    return scratch;
 }
 
 // The slot table and the TLAS's storage for every instance slot; the
@@ -517,7 +681,7 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
     }
     _tlasDirty = _tlasDirty || gpu.version != _tlasVersion;
 
-    const uint32_t capacity = std::max(gpu.instanceCapacity, 1u);
+    const uint32_t capacity = std::max(gpu.instanceCapacity, 1u) + _work.skinnedCapacity;
     if (capacity <= _tlasCapacity) {
         _ReserveScratch(_tlasScratch);
         return;
@@ -634,7 +798,9 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     _work = work;
     _work.giRays = std::clamp(work.giRays, 16u, kMaxProbeRays);
     _BuildBlases(gpu);
+    const VkDeviceSize skinnedScratch = _PrepareSkinned(gpu);
     _PrepareTlas(gpu);
+    _ReserveScratch(skinnedScratch);  // the skinned BLASes' builds share it with the TLAS's, one after the other
     if ((work.shadows || work.reflections) && (width != _width || height != _height)) {
         _CreateImages(width, height);
     }
@@ -645,6 +811,8 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
     d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);
     d.params[3] = work.sun;
+    d.skinned[0] = gpu.instanceCapacity;
+    d.skinned[1] = uint32_t(_skinnedOrder.size());
     if (!work.gi) {
         return;
     }
@@ -742,6 +910,40 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                         const std::function<void(const char *)> &pass)
 {
     const VkDescriptorSet sets[2] = {set, _set};
+    if (!_skinnedOrder.empty()) {
+        // Pose the skinned instances (skin.comp built this frame's joints
+        // before culling), then build or refit their BLASes.
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _skinPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 2, sets, 0, nullptr);
+        vkCmdDispatch(cmd, (_skinnedMostVertices + 63) / 64, uint32_t(_skinnedOrder.size()), 1);
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR |
+                          VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_READ_BIT);
+        std::vector<VkAccelerationStructureGeometryKHR> geometries(_skinnedOrder.size());
+        std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
+        std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
+        const VkDeviceAddress scratch = AlignUp(_Address(_scratch.buffer), _scratchAlignment);
+        for (size_t i = 0; i < _skinnedOrder.size(); ++i) {
+            const Skinned &s = _skinned.at(_skinnedOrder[i]);
+            infos.push_back(_SkinnedBuildInfo(s, gpu, &geometries[i]));
+            infos.back().scratchData.deviceAddress = scratch + _skinnedScratch[i];
+            ranges.push_back({gpu.slotGeometry[s.slot].indexCount / 3, 0, 0, 0});
+        }
+        std::vector<const VkAccelerationStructureBuildRangeInfoKHR *> rangeInfos;
+        for (const VkAccelerationStructureBuildRangeInfoKHR &r : ranges) {
+            rangeInfos.push_back(&r);
+        }
+        _fn->cmdBuild(cmd, uint32_t(infos.size()), infos.data(), rangeInfos.data());
+        // The TLAS build reads them and reuses the scratch.
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                      VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                      VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                      VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
+        for (uint32_t instance : _skinnedOrder) {
+            _skinned.at(instance).built = true;
+        }
+    }
     if (_tlasDirty) {
         // The instances (tlas.comp), then the TLAS over them.
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _tlasPipeline);
@@ -784,9 +986,12 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
         pass("giProbes");
     }
     if (_work.shadows || _work.reflections) {
-        // Last frame's shading pass is done reading the images.
-        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        // Last frame's shading pass is done reading the images; this
+        // frame's prepass depth is written.
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
         _fn->cmdTraceRays(cmd, &_raygen, &_miss, &_hit, &_callable, _width, _height, 1);
@@ -798,7 +1003,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
 
 VkDeviceSize RayTracing::AccelerationStructureBytes() const
 {
-    VkDeviceSize bytes = _scratch.size + _instances.size + _tlasBuffer.size;
+    VkDeviceSize bytes = _scratch.size + _instances.size + _tlasBuffer.size + _skinnedVertices.size;
     for (const Block &b : _blocks) {
         bytes += b.buffer.size;
     }

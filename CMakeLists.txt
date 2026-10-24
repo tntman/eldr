@@ -24,7 +24,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
-               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag shadow_min.comp)
+               shadow_tint.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag shadow_min.comp
+               rt_skin.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -35,7 +36,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
-                renderer/shaders/displace.glsl)
+                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
@@ -62,7 +63,8 @@ foreach(shader mesh.vert mesh.frag aov.frag)
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
-                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
+                renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl
+                renderer/shaders/skinning.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Materials with lobes beyond the metallic base (LAYERS, brdf.glsl) shade
@@ -89,7 +91,7 @@ add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
     DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
-            renderer/shaders/displace.glsl)
+            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC

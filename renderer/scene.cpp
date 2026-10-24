@@ -276,6 +276,42 @@ bool Scene::SetTagMask(uint32_t mask)
     return changed;
 }
 
+std::vector<Scene::SkinnedInstance> Scene::LargestSkinned(const float eye[3], uint32_t count) const
+{
+    std::vector<std::pair<float, SkinnedInstance>> found;
+    for (const auto &mp : _meshes) {
+        const Mesh &m = *mp;
+        if (m._skinCount == 0 || m._slot >= _gpu.slotGeometry.size() || _gpu.slotGeometry[m._slot].version == 0 ||
+            m._posedMin[0] > m._posedMax[0]) {
+            continue;
+        }
+        const uint32_t flags = (m._skinStride == 2 ? 1u : 0u) | (m.dualQuaternion ? 2u : 0u);
+        float c[3], r2 = 0;
+        for (int k = 0; k < 3; ++k) {
+            c[k] = 0.5f * (m._posedMin[k] + m._posedMax[k]);
+            r2 += 0.25f * (m._posedMax[k] - m._posedMin[k]) * (m._posedMax[k] - m._posedMin[k]);
+        }
+        for (uint32_t i = 0; i < m._instanceCount; ++i) {
+            const float *x = &m.transforms[size_t(i) * 16];  // row-vector order
+            float d2 = 0;
+            for (int k = 0; k < 3; ++k) {
+                const float w = c[0] * x[k] + c[1] * x[4 + k] + c[2] * x[8 + k] + x[12 + k] - eye[k];
+                d2 += w * w;
+            }
+            const float scale2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+            found.push_back({r2 * scale2 / std::max(d2, 1e-12f), {m._instanceBase + i, uint32_t(m._slot), flags}});
+        }
+    }
+    const size_t n = std::min<size_t>(count, found.size());
+    std::partial_sort(found.begin(), found.begin() + n, found.end(),
+                      [](const auto &a, const auto &b) { return a.first > b.first; });
+    std::vector<SkinnedInstance> largest;
+    for (size_t i = 0; i < n; ++i) {
+        largest.push_back(found[i].second);
+    }
+    return largest;
+}
+
 bool Scene::SetEmissiveLights(bool on, float threshold)
 {
     const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
@@ -1602,12 +1638,11 @@ void Scene::Commit()
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
-        // ponytail: ray tracing skips skinned meshes (no per-frame BLAS
-        // refits) and translucent ones (they cast no shadows here either).
+        // ponytail: translucent meshes don't block rays (no traced tints).
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
-        const bool traced = drawable && m._skinCount == 0 && blend != Gpu::kTranslucent;
+        const bool traced = drawable && blend != Gpu::kTranslucent;
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
-                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false};
+                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;

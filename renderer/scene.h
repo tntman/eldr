@@ -649,15 +649,16 @@ public:
         // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
         VkDeviceSize blendWeightsBytes = 0;
 
-        // Ray tracing (RayTracing builds a BLAS per slot from these): per mesh
-        // slot its vertices and triangles in the pools, `version` unique per
-        // upload, 0 for slots ray tracing skips (not drawn, translucent or
-        // skinned).
+        // Ray tracing (RayTracing builds a BLAS per slot from these, per
+        // instance for skinned ones): per mesh slot its vertices and
+        // triangles in the pools, `version` unique per upload, 0 for slots
+        // ray tracing skips (not drawn or translucent).
         struct SlotGeometry {
             uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
             uint64_t version;
             bool cutout;   // alpha-tested: any-hit shaders run
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
+            bool skinned;  // posed per instance (LargestSkinned)
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it
@@ -701,6 +702,16 @@ public:
         uint32_t meshCount = 0;  // mesh slots, the first of the drawCount slots
     };
     const Gpu &GetGpu() const { return _gpu; }
+
+    // Ray tracing: up to `count` instances of skinned meshes it traces
+    // (Gpu::SlotGeometry), the largest as seen from `eye` first (their
+    // posed bounds' radius over the distance to their centre): a crowd's
+    // nearest agents, a character's body before its teeth.
+    struct SkinnedInstance {
+        uint32_t instance, slot;  // instance slot, mesh slot
+        uint32_t flags;           // 1: eight influences, 2: dual quaternions
+    };
+    std::vector<SkinnedInstance> LargestSkinned(const float eye[3], uint32_t count) const;
 
     // Bytes of the GPU pools: per-vertex and per-instance data (skinning,
     // blend shapes, joints and vertex-rate primvars included), and triangle
