@@ -503,6 +503,9 @@ constexpr uint32_t kVisibleLists = 6;
 // kLodMaxError of the mesh's bounding radius.
 constexpr uint32_t kLodMinTriangles = 1000, kMaxLods = 3, kLodMaxInstances = 1u << 20;
 constexpr float kLodMaxError = 0.25f;
+// How much a change of a vertex normal or colour (per component) costs, as
+// the share of the bounding radius the surface would have to move.
+constexpr float kLodNormalWeight = 1.0f, kLodColorWeight = 1.0f;
 
 // Sub-allocates [0, capacity) ranges, first fit, coalescing on free.
 class RangeAllocator {

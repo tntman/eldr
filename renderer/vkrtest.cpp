@@ -2546,6 +2546,39 @@ int main()
             Render(renderer, scene, whole);
             Expect(renderer.GetStats().triangles == 2u * 2048u, "Frame::lodBias -10: every triangle");
         }
+
+        {
+            // Levels of detail keep the shading: a flat 32 x 32 grid filling
+            // the view collapses to a few triangles with one normal, but
+            // keeps them all with a bumpy surface's normals (a smooth-shaded
+            // panel, whose big triangles would interpolate other normals).
+            uint64_t triangles[2] = {};
+            for (int bumpy = 0; bumpy < 2; ++bumpy) {
+                vkr::Scene scene(&device);
+                AddLight(scene, 0, 0, -1);
+                vkr::Mesh *grid = scene.AddMesh();
+                const int n = 32;
+                for (int j = 0; j < n; ++j) {
+                    for (int i = 0; i < n; ++i) {
+                        for (const auto &[di, dj] : {std::pair{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}}) {
+                            const float x = float(i + di) / n * 2 - 1, y = float(j + dj) / n * 2 - 1;
+                            const float nx = bumpy ? 0.3f * std::cos(x * 9) : 0.0f, ny = bumpy ? 0.3f * std::sin(y * 7) : 0.0f;
+                            const float length = std::sqrt(nx * nx + ny * ny + 1);
+                            grid->points.insert(grid->points.end(), {x, y, 0.0f});
+                            grid->normals.insert(grid->normals.end(), {nx / length, ny / length, -1 / length});
+                        }
+                    }
+                }
+                grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1};
+                do {
+                    scene.Commit();
+                } while (scene.LodsPending());
+                Render(renderer, scene);
+                triangles[bumpy] = renderer.GetStats().triangles;
+            }
+            Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
+            Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
+        }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
         return 1;

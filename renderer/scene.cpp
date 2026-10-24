@@ -149,6 +149,14 @@ uint16_t ToHalf(float f)
     return uint16_t(sign | ((uint32_t(exponent) << 10) + (((x & 0x7FFFFFu) + 0x1000u) >> 13)));
 }
 
+// ToHalf's inverse (which has no tiny values).
+float FromHalf(uint16_t h)
+{
+    const int exponent = h >> 10 & 0x1F;
+    const float m = exponent == 0 ? 0.0f : std::ldexp(float((h & 0x3FF) | 0x400), exponent - 25);
+    return h & 0x8000 ? -m : m;
+}
+
 uint32_t PackUnorm16(float a, float b)
 {
     auto q = [](float x) { return uint32_t(std::lround(std::clamp(x, 0.0f, 1.0f) * 65535.0f)); };
@@ -766,9 +774,35 @@ void Scene::_UploadGeometry(Mesh &m)
     // Levels of detail of heavy meshes (lod.h), built on other threads; a
     // later Commit stores them (the mesh draws whole until then).
     if (indexCount / 3 >= kLodMinTriangles) {
-        std::vector<float> positions(vertices.size() * 3);
+        // Position, then the shading attributes as distances (see BuildLods):
+        // normals and colours relative to the bounding radius (a turn of
+        // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
+        // by how far they slide the texture over the surface (its area per
+        // uv area).
+        const float radius = 0.5f * Length(Vec3{m._boundsMax[0] - m._boundsMin[0], m._boundsMax[1] - m._boundsMin[1],
+                                                m._boundsMax[2] - m._boundsMin[2]});
+        double area = 0.0, uvArea = 0.0;
+        for (size_t t = 0; !m.uvs.empty() && t + 2 < indices.size(); t += 3) {
+            const Vertex &a = vertices[indices[t]], &b = vertices[indices[t + 1]], &c = vertices[indices[t + 2]];
+            const Vec3 pa{a.position[0], a.position[1], a.position[2]};
+            area += Length(Cross(Vec3{b.position[0], b.position[1], b.position[2]} - pa,
+                                 Vec3{c.position[0], c.position[1], c.position[2]} - pa));
+            uvArea += std::abs((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]));
+        }
+        const float uvScale = uvArea > 0.0 ? float(std::sqrt(area / uvArea)) : 0.0f;
+        const size_t stride = 3 + (m.normals.empty() ? 0 : 3) + (uvScale > 0.0f ? 2 : 0) + (m.colors.empty() ? 0 : 3);
+        std::vector<float> lodVertices(vertices.size() * stride);
         for (size_t v = 0; v < vertices.size(); ++v) {
-            std::copy_n(vertices[v].position, 3, &positions[v * 3]);
+            float *out = std::copy_n(vertices[v].position, 3, &lodVertices[v * stride]);
+            for (int k = 0; k < 3 && !m.normals.empty(); ++k) {
+                *out++ = vertices[v].normal[k] * radius * kLodNormalWeight;
+            }
+            for (int k = 0; k < 2 && uvScale > 0.0f; ++k) {
+                *out++ = vertices[v].uv[k] * uvScale;
+            }
+            for (int k = 0; k < 3 && !m.colors.empty(); ++k) {
+                *out++ = FromHalf(vertices[v].color[k]) * radius * kLodColorWeight;
+            }
         }
         // Skinned: each vertex's influences (joint, weight), m.influences each.
         std::vector<std::pair<uint32_t, float>> influences;
@@ -782,7 +816,7 @@ void Scene::_UploadGeometry(Mesh &m)
         const uint32_t n = m.influences;
         _pendingLods.push_back(
             {&m, m._lodGeneration,
-             std::async(std::launch::async, [positions = std::move(positions), indices,
+             std::async(std::launch::async, [lodVertices = std::move(lodVertices), stride, indices,
                                              influences = std::move(influences), n] {
                  // Half the L1 distance of two vertices' joint weights.
                  auto difference = [&](uint32_t a, uint32_t b) {
@@ -806,7 +840,7 @@ void Scene::_UploadGeometry(Mesh &m)
                      }
                      return 0.5f * d;
                  };
-                 return BuildLods(positions.data(), 3, positions.size() / 3, indices, kMaxLods, kLodMaxError,
+                 return BuildLods(lodVertices.data(), stride, lodVertices.size() / stride, indices, kMaxLods, kLodMaxError,
                                   influences.empty() ? std::function<float(uint32_t, uint32_t)>() : difference);
              })});
     }
