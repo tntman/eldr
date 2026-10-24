@@ -2629,6 +2629,34 @@ int main()
             Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
                    "half resolution volumes stop at nearer surfaces");
             frame.volume.resolution = 1;
+
+            // Under transparency: black glass (opacity 0.5) in front of the
+            // glowing ball's left half dims it to half; glass behind its
+            // right half leaves it alone. Off, the ball goes over the glass.
+            vkr::Scene glassy(&device);
+            vkr::Volume *glow = glassy.AddVolume();
+            glow->fields["density"] = ball->fields["density"];
+            auto emitting = std::make_shared<vkr::VolumeShading>();
+            std::fill(emitting->scattering, emitting->scattering + 3, 0.0f);
+            std::fill(emitting->absorption, emitting->absorption + 3, 0.2f);
+            std::copy(green, green + 3, emitting->emission);
+            glow->shading = emitting;
+            auto glass = std::make_shared<vkr::Material>();
+            std::fill(glass->baseColor, glass->baseColor + 3, 0.0f);
+            glass->opacity = 0.5f;
+            AddQuad(glassy, -1, -1, 0, 1, -0.5f)->material = glass;
+            AddQuad(glassy, 0, -1, 1, 1, 0.5f)->material = glass;
+            glassy.Commit();
+            const Image under = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = false;
+            const Image over = Render(renderer, glassy, frame);
+            frame.volume.underTransparency = true;
+            const float front = under.At(28, 32, 1), back = under.At(36, 32, 1);
+            Expect(back > 0.2f && std::abs(front - 0.5f * back) < 0.05f * back,
+                   "glass in front of a volume dims it, glass behind doesn't");
+            Expect(std::abs(over.At(28, 32, 1) - back) < 0.05f * back && std::abs(over.At(36, 32, 1) - back) < 1e-3f,
+                   "without volumes under transparency they go over the glass");
+            std::printf("volume behind glass %.3f, in front of glass %.3f, over glass %.3f\n", front, back, over.At(28, 32, 1));
         }
 
         {

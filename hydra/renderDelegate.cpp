@@ -276,6 +276,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
         {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
         {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
+        {"Volumes under Transparency (glass dims and refracts them)", t.volumeUnderTransparency,
+         VtValue(volume.underTransparency)},
     });
 #endif
     return settings;

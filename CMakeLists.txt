@@ -36,7 +36,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
-                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
+                renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/volume.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.

@@ -106,7 +106,22 @@ public:
         float emission = 1.0f;      // emission multiplier (on the material's)
         float anisotropy = 0.2f;    // Henyey-Greenstein g of volumes whose material has none
         uint32_t resolution = 1;    // 1: every pixel, 2: half resolution, upsampled
+        // Under transparency: with translucent meshes in view (and the depth
+        // prepass), the part of each ray behind the nearest translucent
+        // surface is marched before the translucency pass, which then dims
+        // and refracts it, and the part in front after it.
+        bool underTransparency = true;
     };
+
+    // Which part of each ray Record marches: all of it, the part behind
+    // the nearest translucent surface (TranslucentDepth()), or in front.
+    enum Part : uint32_t { kAll, kBehind, kInFront };
+
+    // A depth target for the nearest translucent surfaces, `width` x
+    // `height` (made on first use and on resizes; the GPU must be idle),
+    // bound as binding 67 for kBehind and kInFront; null without one yet.
+    const Image &EnsureTranslucentDepth(uint32_t width, uint32_t height);
+    VkImageView TranslucentDepth() const { return _translucentDepth.view; }
 
     // The half resolution target for a `width` x `height` frame (made on
     // first use and on resizes; the GPU must be idle), bound as binding 66;
@@ -119,7 +134,7 @@ public:
     // DEPTH_READ_ONLY_OPTIMAL and, at half resolution, Half() (66). Returns
     // false (records nothing) without volumes.
     bool Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                uint32_t width, uint32_t height, const Settings &settings);
+                uint32_t width, uint32_t height, const Settings &settings, Part part = kAll);
 
 private:
     Device &_dev;
@@ -128,6 +143,8 @@ private:
     VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
     Image _half;
     uint32_t _halfWidth = 0, _halfHeight = 0;
+    Image _translucentDepth;
+    uint32_t _depthWidth = 0, _depthHeight = 0;
 };
 
 } // namespace vkr

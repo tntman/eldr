@@ -30,7 +30,22 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     float density, emission, anisotropy;
     uint32_t count;
     uint32_t scale;  // 1: full resolution, 2: half
+    uint32_t part;   // VolumePass::Part
+    uint32_t pad[3];
 };
+
+VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
+{
+    VolumeParams p{};
+    p.stepSize = std::max(s.stepSize, 0.05f);
+    p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
+    p.shadowSteps = std::min(s.shadowSteps, 256u);
+    p.density = std::max(s.density, 0.0f);
+    p.emission = std::max(s.emission, 0.0f);
+    p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
+    p.count = count;
+    return p;
+}
 
 // y = m (x, 1): three rows of an affine map.
 struct Affine {
@@ -143,6 +158,20 @@ VolumePass::~VolumePass()
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     _dev.Destroy(_half);
+    _dev.Destroy(_translucentDepth);
+}
+
+const Image &VolumePass::EnsureTranslucentDepth(uint32_t width, uint32_t height)
+{
+    if (width != _depthWidth || height != _depthHeight) {
+        _dev.Destroy(_translucentDepth);
+        _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                             VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        _depthWidth = width;
+        _depthHeight = height;
+    }
+    return _translucentDepth;
 }
 
 VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
@@ -160,7 +189,7 @@ VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
 }
 
 bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                        uint32_t width, uint32_t height, const Settings &s)
+                        uint32_t width, uint32_t height, const Settings &s, Part part)
 {
     if (volumeCount == 0) {
         return false;
@@ -175,14 +204,8 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     dep.pMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
 
-    VolumeParams p{};
-    p.stepSize = std::max(s.stepSize, 0.05f);
-    p.maxSteps = std::clamp(s.maxSteps, 1u, 4096u);
-    p.shadowSteps = std::min(s.shadowSteps, 256u);
-    p.density = std::max(s.density, 0.0f);
-    p.emission = std::max(s.emission, 0.0f);
-    p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
-    p.count = volumeCount;
+    VolumeParams p = Params(s, volumeCount);
+    p.part = part;
     p.scale = s.resolution >= 2 && _half.image ? 2 : 1;
     if (p.scale == 1) {
         DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
