@@ -39,13 +39,14 @@ void main()
 
     // Normals to world space by the inverse transpose; meshes without
     // normals are flat. Both end up facing the ray (everything is
-    // double-sided); kHitBackface remembers the shading normal's side
-    // (meshes without normals have no back: their winding means nothing).
+    // double-sided); kHitBackface remembers the shading normal's side (GI
+    // probes inside closed objects find themselves by it), for meshes
+    // without normals their winding's (USD's counter-clockwise front, as
+    // computed smooth normals assume too).
     vec3 ng = normalize(vec3(cross(p1 - p0, p2 - p0) * gl_WorldToObjectEXT));
     vec3 objectN = n0 * b.x + n1 * b.y + n2 * b.z;
-    bool normals = dot(objectN, objectN) > 1e-12;
-    vec3 n = normals ? normalize(vec3(objectN * gl_WorldToObjectEXT)) : ng;
-    hit.flags = (normals && dot(n, dir) > 0.0 ? kHitBackface : 0u) |
+    vec3 n = dot(objectN, objectN) > 1e-12 ? normalize(vec3(objectN * gl_WorldToObjectEXT)) : ng;
+    hit.flags = (dot(n, dir) > 0.0 ? kHitBackface : 0u) |
                 ((rtSlots[slot].flags & kRtSlotEmitter) != 0u ? kHitEmitter : 0u);
     ng = dot(ng, dir) > 0.0 ? -ng : ng;
     n = dot(n, ng) < 0.0 ? -n : n;

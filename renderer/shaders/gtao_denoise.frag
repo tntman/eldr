@@ -11,10 +11,11 @@ layout(set = 0, binding = 1) uniform sampler2D rawAo;  // visibility, distance (
 
 #ifdef SSGI
 // SSGI (gtao.frag built with SSGI): the same filter over gathered light
-// (rgb) and visibility (a), at full or half resolution; the distances
-// come from the full-resolution depth, so it also upsamples depth-aware.
-// ponytail: depth-aware only; normal-aware weights if light bleeds across
-// creases.
+// (rgb) and visibility (a), at full or half resolution, upsampling it:
+// taps count where their surface (from the full-resolution depth) lies in
+// this pixel's plane, so surfaces seen at grazing angles keep their taps
+// and nothing bleeds across depth edges or creases. Without any, the
+// nearest raw texel.
 layout(set = 0, binding = 0) uniform sampler2D sceneDepth;
 layout(push_constant) uniform GtaoParams {
     mat4 invViewProj;
@@ -25,12 +26,20 @@ layout(push_constant) uniform GtaoParams {
 } pc;
 layout(location = 0) out vec4 outSsgi;  // visibility, gathered irradiance / pi (gba): mesh.frag's AO texture
 
-// Distance to the camera at a depth pixel, 0 for background.
-float Distance(ivec2 q)
+// World position at a depth pixel; w = 0 for background.
+vec4 Position(ivec2 q)
 {
     float depth = texelFetch(sceneDepth, q, 0).r;
     vec4 p = pc.invViewProj * vec4((vec2(q) + 0.5) * pc.params.zw * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-    return depth >= 1.0 ? 0.0 : length(p.xyz / p.w - pc.eye.xyz);
+    return vec4(p.xyz / p.w, depth < 1.0 ? 1.0 : 0.0);
+}
+
+// Of the two one-pixel steps, the shorter one stays on this surface.
+vec3 Tangent(vec3 p, ivec2 q, ivec2 step, ivec2 maxQ)
+{
+    vec3 a = Position(clamp(q + step, ivec2(0), maxQ)).xyz - p;
+    vec3 b = p - Position(clamp(q - step, ivec2(0), maxQ)).xyz;
+    return dot(a, a) < dot(b, b) ? a : b;
 }
 
 void main()
@@ -38,24 +47,25 @@ void main()
     ivec2 q = ivec2(gl_FragCoord.xy);
     int scale = int(pc.ssgi.x);
     ivec2 rawQ = q / scale, maxRaw = textureSize(rawAo, 0) - 1, maxQ = textureSize(sceneDepth, 0) - 1;
-    float center = Distance(q);
-    if (center <= 0.0) {
+    vec4 center = Position(q);
+    if (center.w <= 0.0) {
         outSsgi = vec4(1.0, 0.0, 0.0, 0.0);
         return;
     }
+    vec3 n = normalize(cross(Tangent(center.xyz, q, ivec2(1, 0), maxQ), Tangent(center.xyz, q, ivec2(0, 1), maxQ)));
+    float tolerance = 0.01 * distance(center.xyz, pc.eye.xyz);
     vec4 sum = vec4(0.0);
     float weights = 0.0;
     for (int y = -2; y <= 2; ++y) {
         for (int x = -2; x <= 2; ++x) {
             ivec2 r = clamp(rawQ + ivec2(x, y), ivec2(0), maxRaw);
-            float d = Distance(min(r * scale, maxQ));
-            float tolerance = 0.015 * center * float(max(max(abs(x), abs(y)), 1) * scale);
-            float w = d > 0.0 && abs(d - center) <= tolerance ? 1.0 : 0.0;
+            vec4 tap = Position(min(r * scale, maxQ));
+            float w = tap.w > 0.0 && abs(dot(tap.xyz - center.xyz, n)) <= tolerance ? 1.0 : 0.0;
             sum += texelFetch(rawAo, r, 0) * w;
             weights += w;
         }
     }
-    vec4 s = weights > 0.0 ? sum / weights : vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 s = weights > 0.0 && !any(isnan(n)) ? sum / weights : texelFetch(rawAo, rawQ, 0);
     outSsgi = vec4(s.a, s.rgb);
 }
 #else
