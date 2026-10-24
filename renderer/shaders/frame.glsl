@@ -41,6 +41,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them
 } frame;
 
 // frame.features.x: what the renderer's settings switched on.

@@ -45,6 +45,7 @@ struct FrameData {
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
     float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
+    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them
 };
 
 namespace {
@@ -514,6 +515,8 @@ void Renderer::_CreateDescriptors()
         // filtered, written per level by shadow_min.comp.
         {61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
+        // Light splits (aov.h), stored by the shading pass.
+        {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -531,7 +534,7 @@ void Renderer::_CreateDescriptors()
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels + 1},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1158,6 +1161,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
                               VK_IMAGE_LAYOUT_GENERAL};
     }
     write(62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, shadowMinLevels, kMaxShadowMinLevels);
+    const VkDescriptorImageInfo splits{VK_NULL_HANDLE, _aovs.SplitsView(), VK_IMAGE_LAYOUT_GENERAL};
+    write(67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &splits);
     // Without a probe or planar reflection: placeholders the shaders skip.
     const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
     const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
@@ -2047,6 +2052,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const bool ssgi = frame.ssgi && frame.depthPrepass;
     _gtao.SetSsgi(ssgi, frame.ssgiResolution);
     fd.features[0] |= ssgi ? kFeatureSsgi : 0;
+    // Light splits (aov.h): stored by shading pipelines compiled with them.
+    const bool splits = frame.extraAovs && Aovs::NeedsSplits(out.aovs);
+    _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    fd.aovs[0] = splits ? 1u : 0u;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -2057,7 +2066,10 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         fd.translucency[1] = float(_transparency.BackgroundLevels());
     }
     // The shading pipelines with the code of this frame's optional features.
-    _shadingBase = _ShadingSet(fd.features[0] & kOptionalFeatures) * kVariants;
+    // Bit 0 (kFeatureNormalMaps, never optional) marks the light splits'
+    // code (mesh.frag's kCompiledLightSplits).
+    static_assert((kOptionalFeatures & 1u) == 0, "the light splits' key bit");
+    _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits ? 1u : 0u)) * kVariants;
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
@@ -2368,6 +2380,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         _rt->Record(_cmd, _set, gpu, pass);
     }
 
+    if (splits) {
+        _aovs.ClearSplits(_cmd);
+    }
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
         ImageBarrier(_cmd, img->image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
@@ -2611,6 +2626,9 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
         params.cryptomatte = frame.cryptomatte;
         params.cryptomatteIds = frame.cryptomatteIds;
         std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, params.components);
+        std::copy(frame.viewProj, frame.viewProj + 16, params.viewProj);
+        params.version = gpu.version;
+        params.maxFrames = taa ? taaSamples : 1;
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {

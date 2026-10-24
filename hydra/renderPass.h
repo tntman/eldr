@@ -3,6 +3,8 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/renderPass.h"
 
+#include "renderProducts.h"
+
 namespace vkr {
 class Renderer;
 class Scene;
@@ -26,6 +28,7 @@ protected:
 private:
     vkr::Scene &_scene;
     vkr::Renderer *_renderer;
+    HdVkRenderProducts _products;  // UsdRender products (EXR files)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

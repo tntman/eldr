@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <vector>
 
 namespace vkr {
 
@@ -31,6 +32,7 @@ constexpr VkDeviceSize kMatrixBytes = 2 * 16 * sizeof(float);  // Params' view a
 
 struct Push {  // mirror of aov.comp's
     uint32_t kind, offset, components, cryptomatteIds;
+    float weight;  // of this frame in the average
 };
 
 VkImageSubresourceRange Range(VkImageAspectFlags aspect)
@@ -74,13 +76,18 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 4, 4, 3, 1, 3};
+    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 4, 4, 3, 1, 3, 3, 3, 3, 3, 3, 3};
     return components[kind];
 }
 
 bool Aovs::Any(float *const targets[kCount])
 {
     return std::any_of(targets, targets + kCount, [](const float *t) { return t != nullptr; });
+}
+
+bool Aovs::NeedsSplits(float *const targets[kCount])
+{
+    return std::any_of(targets + kDirectDiffuse, targets + kCombinedGlossy + 1, [](const float *t) { return t; });
 }
 
 bool Aovs::NeedsGeometry(float *const targets[kCount])
@@ -99,13 +106,14 @@ Aovs::Aovs(Device &device)
     Check(vkCreateSampler(d, &sci, nullptr, &_nearest), "vkCreateSampler");
 
     // 0 depth, 1 primId, 2..4 the G-buffer; 5 Params, 6 the output.
-    VkDescriptorSetLayoutBinding bindings[7] = {};
-    for (uint32_t i = 0; i < 7; ++i) {
-        bindings[i] = {i, i < 5 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+    // 7: the light splits.
+    VkDescriptorSetLayoutBinding bindings[8] = {};
+    for (uint32_t i = 0; i < 8; ++i) {
+        bindings[i] = {i, i < 5 || i == 7 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                        VK_SHADER_STAGE_COMPUTE_BIT};
     }
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 7;
+    slci.bindingCount = 8;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
@@ -115,7 +123,7 @@ Aovs::Aovs(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5},
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 1;
@@ -142,7 +150,7 @@ Aovs::~Aovs()
 {
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
-    for (Image *img : {&_normalSt, &_albedo, &_emission}) {
+    for (Image *img : {&_normalSt, &_albedo, &_emission, &_splits}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_params);
@@ -298,23 +306,55 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     _dev.Reserve(_readback, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
 
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[5] = {{_nearest, depthView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+    const VkDescriptorImageInfo images[8] = {{_nearest, depthView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                                              {_nearest, primIdView, ro},
                                              {_nearest, _normalSt.view, ro},
                                              {_nearest, _albedo.view, ro},
-                                             {_nearest, _emission.view, ro}};
+                                             {_nearest, _emission.view, ro},
+                                             {},
+                                             {},
+                                             {_nearest, _splits.view, VK_IMAGE_LAYOUT_GENERAL}};
     const VkDescriptorBufferInfo buffers[2] = {{_params.buffer, 0, VK_WHOLE_SIZE}, {_output.buffer, 0, VK_WHOLE_SIZE}};
-    VkWriteDescriptorSet writes[7] = {};
-    for (uint32_t i = 0; i < 7; ++i) {
+    VkWriteDescriptorSet writes[8] = {};
+    for (uint32_t i = 0; i < 8; ++i) {
+        const bool image = i < 5 || i == 7;
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = _set;
         writes[i].dstBinding = i;
         writes[i].descriptorCount = 1;
-        writes[i].descriptorType = i < 5 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[i].pImageInfo = i < 5 ? &images[i] : nullptr;
-        writes[i].pBufferInfo = i < 5 ? nullptr : &buffers[i - 5];
+        writes[i].descriptorType = image ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i].pImageInfo = image ? &images[i] : nullptr;
+        writes[i].pBufferInfo = image ? nullptr : &buffers[i - 5];
     }
-    vkUpdateDescriptorSets(_dev.device, 7, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 8, writes, 0, nullptr);
+
+    // The average over still frames (as TAA's): this frame's weight; reset
+    // when the camera, the scene, the size or the AOVs asked for change.
+    // ponytail: material and light edits don't reset it; with no new reset
+    // the running average turns into a moving one (1 / maxFrames).
+    std::vector<uint32_t> layout(_offsets, _offsets + kCount);
+    layout.insert(layout.end(), _components, _components + kCount);
+    const bool same = _frames > 0 && std::equal(p.viewProj, p.viewProj + 16, _viewProj) && p.version == _version &&
+                      width == _accumWidth && height == _accumHeight && layout == _accumLayout && _output.buffer == _accumBuffer;
+    _frames = same ? std::min(_frames + 1, std::max(p.maxFrames, 1u)) : 1;
+    std::copy(p.viewProj, p.viewProj + 16, _viewProj);
+    _version = p.version;
+    _accumWidth = width;
+    _accumHeight = height;
+    _accumLayout = std::move(layout);
+    _accumBuffer = _output.buffer;
+    const float weight = 1.0f / float(_frames);
+    // The shading pass stored the light splits; earlier resolves wrote the output.
+    VkMemoryBarrier2 stored{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    stored.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    stored.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    stored.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    stored.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
+                           VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    VkDependencyInfo storedDep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    storedDep.memoryBarrierCount = 1;
+    storedDep.pMemoryBarriers = &stored;
+    vkCmdPipelineBarrier2(cmd, &storedDep);
 
     // Depth: read-only attachment and sampled; primId sampled.
     constexpr VkPipelineStageFlags2 kTests =
@@ -372,7 +412,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
-            const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds};
+            const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds, weight};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }
@@ -399,6 +439,36 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     ImageBarrier(cmd, primId, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, ro,
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+}
+
+void Aovs::EnsureSplits(uint32_t width, uint32_t height)
+{
+    if (_splits.image && width == _splitsWidth && height == _splitsHeight) {
+        return;
+    }
+    _dev.Destroy(_splits);
+    _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 4, 1,
+                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    _splitsWidth = width;
+    _splitsHeight = height;
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    });
+}
+
+void Aovs::ClearSplits(VkCommandBuffer cmd)
+{
+    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
+    ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+    const VkClearColorValue zero{};
+    vkCmdClearColorImage(cmd, _splits.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
+    ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_IMAGE_LAYOUT_GENERAL);
 }
 
 void Aovs::Read(float *const targets[kCount]) const
