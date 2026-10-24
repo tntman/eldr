@@ -138,11 +138,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.proceduralTextures, &frame.proceduralTextures},
                                 {t.lensDistortion, &frame.lensDistortion},
                                 {t.blendShapeMotion, &frame.blendShapeMotion},
-                                {t.extraAovs, &frame.extraAovs}, {t.shareFrame, &frame.shareFrame},
+                                {t.extraAovs, &frame.extraAovs}, {t.renderProducts, &frame.renderProducts}, {t.shareFrame, &frame.shareFrame},
                                 {t.specularWorkflow, &frame.specularWorkflow}, {t.clearcoat, &frame.clearcoat},
                                 {t.sheen, &frame.sheen}, {t.thinFilm, &frame.thinFilm},
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
-                                {t.hairShading, &frame.hairShading}, {t.rtShadows, &frame.rtShadows},
+                                {t.hairShading, &frame.hairShading}, {t.texturedLobes, &frame.texturedLobes},
+                                {t.texturedTransmission, &frame.texturedTransmission}, {t.rtShadows, &frame.rtShadows},
                                 {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
                                 {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
                                 {t.refraction, &frame.refraction},
@@ -154,7 +155,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod}, {t.filmAccumulation, &frame.filmAccumulation},
                                 {t.finalQuality, &frame.finalQuality},
-                                {t.sampleDimensions, &frame.sampleDimensions}}) {
+                                {t.sampleDimensions, &frame.sampleDimensions},
+                                {t.pipelineCache, &frame.pipelineCache},
+                                {t.pipelinePrewarm, &frame.pipelinePrewarm}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -291,14 +294,37 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.cameraPos[1] = float(eye[1]);
     frame.cameraPos[2] = float(eye[2]);
 
+    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
+    // none of the four is read back unless someone maps it.
+    auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
+    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
+    const bool lazy = interop != nullptr;
+    HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
+                                          static_cast<HdVkRenderBuffer *>(primId),
+                                          static_cast<HdVkRenderBuffer *>(instanceId)};
+    vkr::Renderer::Targets out;
+    if (!lazy) {
+        out.color = color ? color->Map() : nullptr;
+        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
+        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
+        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
+    }
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        out.aovComponents[k] = extraComponents[k];
+    }
+    // UsdRender products (renderProducts.h) of the active render settings.
+    _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
+                      &out);
+
     // Cryptomatte: per primId the ids of its rprim's path and material path,
     // and their manifests (GetRenderStats).
     // ponytail: rebuilt every frame these AOVs are bound; instances share
     // their prototype's id.
     std::vector<uint32_t> cryptomatte;
-    if (extra[vkr::Aovs::kCryptoObject] || extra[vkr::Aovs::kCryptoMaterial]) {
+    std::string objects, materials;
+    if (out.aovs[vkr::Aovs::kCryptoObject] || out.aovs[vkr::Aovs::kCryptoMaterial]) {
         HdRenderIndex *index = GetRenderIndex();
-        std::string objects, materials;
         std::unordered_set<SdfPath, SdfPath::Hash> seen;  // materials in the manifest
         auto entry = [](const std::string &list, const SdfPath &name, uint32_t id) {
             return TfStringPrintf("%s\"%s\":\"%08x\"", list.empty() ? "" : ",", name.GetText(), id);
@@ -320,29 +346,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         frame.cryptomatte = cryptomatte.data();
         frame.cryptomatteIds = uint32_t(cryptomatte.size() / 2);
-        static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests("{" + objects + "}",
-                                                                            "{" + materials + "}");
+        objects = "{" + objects + "}";
+        materials = "{" + materials + "}";
+        static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests(objects, materials);
     }
 
-    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
-    // none of the four is read back unless someone maps it.
-    auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
-    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
-    const bool lazy = interop != nullptr;
-    HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
-                                          static_cast<HdVkRenderBuffer *>(primId),
-                                          static_cast<HdVkRenderBuffer *>(instanceId)};
-    vkr::Renderer::Targets out;
-    if (!lazy) {
-        out.color = color ? color->Map() : nullptr;
-        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
-        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
-        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
-    }
-    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
-        out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
-        out.aovComponents[k] = extraComponents[k];
-    }
     bool shared = false;
     try {
         _renderer->Render(_scene, frame, out);
@@ -354,6 +362,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    try {
+        _products.Write(*_renderer, objects, materials);
+    } catch (const std::exception &e) {
+        TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
+    }
     for (int i = 0; i < 4; ++i) {
         if (!buffers[i]) {
             continue;

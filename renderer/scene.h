@@ -124,7 +124,9 @@ struct MaterialProgram {
     enum Input : uint32_t {
         kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity,
         kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
-        kThinFilmThickness
+        kThinFilmThickness, kCoatIor, kThinFilm, kThinFilmIor, kAnisotropyRotation, kIor,
+        kTransmission, kTransmissionColor, kSubsurface, kSubsurfaceColor,
+        kSubsurfaceRadius  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
     };
 
     std::vector<uint32_t> code;      // 4 words per op
@@ -234,7 +236,7 @@ struct Material {
         if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
             return true;
         }
-        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kThinFilmThickness; ++i) {
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSubsurfaceRadius; ++i) {
             if (program.Outputs(MaterialProgram::Input(i))) {
                 return true;  // a textured or graph-driven lobe
             }
@@ -259,6 +261,10 @@ struct Material {
     float subsurface = 0;
     float subsurfaceColor[3] = {1, 1, 1};
     float subsurfaceRadius[3] = {1, 1, 1};
+    // Transmission or subsurface from the constant or the program (textured
+    // weights): the passes these materials need.
+    bool Transmits() const { return transmission > 0 || program.Outputs(MaterialProgram::kTransmission); }
+    bool Scatters() const { return subsurface > 0 || program.Outputs(MaterialProgram::kSubsurface); }
 
     // Displacement (mesh.vert, every pass): an offset along the vertex
     // normal in object units, displacementTex's texel (its channel, scale

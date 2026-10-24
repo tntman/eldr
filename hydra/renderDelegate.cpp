@@ -9,6 +9,7 @@
 #include "mesh.h"
 #include "renderBuffer.h"
 #include "renderPass.h"
+#include "renderProducts.h"
 #include "renderer.h"
 #ifdef HDVK_VOLUMES
 #include "field.h"
@@ -57,6 +58,17 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
         {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
         {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
+        // Light splits as Karma's light path expressions name them. Eldr's
+        // "direct" is its lights' (distant, sphere, rect, disk); the dome,
+        // probes, reflections and GI count as indirect (Karma counts the
+        // dome as a light). Emission seen in reflections isn't tracked.
+        {k.combinedEmission, A::kEmission, HdFormatFloat32Vec3},
+        {k.directDiffuse, A::kDirectDiffuse, HdFormatFloat32Vec3},
+        {k.indirectDiffuse, A::kIndirectDiffuse, HdFormatFloat32Vec3},
+        {k.combinedDiffuse, A::kCombinedDiffuse, HdFormatFloat32Vec3},
+        {k.directGlossy, A::kDirectGlossy, HdFormatFloat32Vec3},
+        {k.indirectGlossy, A::kIndirectGlossy, HdFormatFloat32Vec3},
+        {k.combinedGlossy, A::kCombinedGlossy, HdFormatFloat32Vec3},
         {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
     };
@@ -80,7 +92,7 @@ const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeToke
                                    HdPrimTypeTokens->distantLight, HdPrimTypeTokens->domeLight,
                                    HdPrimTypeTokens->sphereLight,  HdPrimTypeTokens->rectLight,
                                    HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
-const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer,
+const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer, HdPrimTypeTokens->renderSettings,
 #ifdef HDVK_VOLUMES
                                    _openvdbAsset
 #endif
@@ -175,6 +187,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
+        {"Prewarm Pipelines (compile toggles in the background)", t.pipelinePrewarm, VtValue(true)},
+        {"Pipeline Cache on Disk (save compiled shaders)", t.pipelineCache, VtValue(frame.pipelineCache)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
         {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
         {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
@@ -235,6 +249,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Thin Film Iridescence", t.thinFilm, VtValue(frame.thinFilm)},
         {"Anisotropic Specular (brushed metal)", t.anisotropicSpecular, VtValue(frame.anisotropicSpecular)},
         {"Hair Shading (curves)", t.hairShading, VtValue(frame.hairShading)},
+        {"Textured Lobe Inputs (coat, sheen, film, IORs)", t.texturedLobes, VtValue(frame.texturedLobes)},
+        {"Textured Transmission and Subsurface Inputs", t.texturedTransmission, VtValue(frame.texturedTransmission)},
         {"Toon Shading (materials' eldr:toonBands)", t.toon, VtValue(frame.toon)},
         {"Toon Bands for Every Material (0 = off)", t.toonBands, VtValue(int(frame.toonBands))},
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
@@ -268,6 +284,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
+        {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
@@ -369,6 +386,10 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
     if (typeId == HdPrimTypeTokens->renderBuffer) {
         return new HdVkRenderBuffer(bprimId);
     }
+    if (typeId == HdPrimTypeTokens->renderSettings) {
+        _renderSettings.push_back(new HdVkRenderSettings(bprimId));
+        return _renderSettings.back();
+    }
 #ifdef HDVK_VOLUMES
     if (typeId == _openvdbAsset) {
         return new HdVkField(bprimId);
@@ -382,7 +403,21 @@ HdBprim *HdVkRenderDelegate::CreateFallbackBprim(TfToken const &typeId)
     return CreateBprim(typeId, SdfPath::EmptyPath());
 }
 
-void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim) { delete bprim; }
+void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim)
+{
+    _renderSettings.erase(std::remove(_renderSettings.begin(), _renderSettings.end(), bprim), _renderSettings.end());
+    delete bprim;
+}
+
+const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
+{
+    for (const HdRenderSettings *settings : _renderSettings) {
+        if (settings->IsActive()) {
+            return settings;
+        }
+    }
+    return nullptr;
+}
 
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {

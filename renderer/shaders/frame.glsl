@@ -45,6 +45,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     // sampleInfo.x 1 with them on.
     vec4 sampleDims[2];
     uvec4 sampleInfo;
+    uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them
 } frame;
 
 // Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic

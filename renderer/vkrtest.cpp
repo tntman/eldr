@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <tuple>
 #include <vector>
@@ -281,6 +282,16 @@ int main()
                 VK_API_VERSION_MAJOR(info.apiVersion),
                 VK_API_VERSION_MINOR(info.apiVersion),
                 VK_API_VERSION_PATCH(info.apiVersion));
+
+    // Pipelines cache in a folder of this run's (Device::LoadPipelineCache).
+    const std::filesystem::path cacheDir = std::filesystem::temp_directory_path() / "eldr_vkrtest_pipelines";
+    std::error_code cacheError;
+    std::filesystem::remove_all(cacheDir, cacheError);
+#ifdef _WIN32
+    _putenv_s("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str());
+#else
+    setenv("HDVK_PIPELINE_CACHE_DIR", cacheDir.string().c_str(), 1);
+#endif
 
     try {
         vkr::Device device;
@@ -2855,6 +2866,96 @@ int main()
             }
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
+        }
+
+        {
+            // Light splits: a grey quad under a head-on distant light (no
+            // dome): its light is all direct, diffuse and glossy add up to
+            // the colour, and nothing is indirect. Accumulated over TAA's
+            // still frames like the colour.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0)->primId = 1;  // AOVs are 0 where no prim is
+            scene.Commit();
+            using A = vkr::Aovs;
+            std::vector<float> splits[A::kCount];
+            Image img;
+            vkr::Renderer::Targets out;
+            out.color = img.color.data();
+            for (uint32_t k = A::kDirectDiffuse; k <= A::kCombinedGlossy; ++k) {
+                splits[k].assign(64 * 64 * 3, -7.0f);
+                out.aovs[k] = splits[k].data();
+            }
+            renderer.Render(scene, IdentityFrame(), out);
+            auto at = [&](uint32_t k, int c) { return splits[k][(32 * 64 + 32) * 3 + c]; };
+            const float sum = at(A::kCombinedDiffuse, 1) + at(A::kCombinedGlossy, 1);
+            Expect(at(A::kDirectDiffuse, 1) > 0.3f && at(A::kDirectGlossy, 1) > 0.0f &&
+                       std::abs(at(A::kIndirectDiffuse, 1)) < 1e-4f && std::abs(at(A::kIndirectGlossy, 1)) < 1e-4f,
+                   "light splits: a distant light's light is direct");
+            Expect(std::abs(sum - img.At(32, 32, 1)) < 2e-3f, "light splits add up to the colour");
+
+            // Under the film the splits average its jittered samples:
+            // a slanted edge gets values between none and the inside's.
+            vkr::Scene slanted(&device);
+            AddLight(slanted, 0, 0, -1);
+            vkr::Mesh *tri = AddQuad(slanted, 0, 0, 0, 0, 0);
+            tri->points = {-1, -1, 0, 1, -1, 0, -1, 0.6f, 0};
+            tri->uvs.clear();
+            tri->primId = 1;
+            slanted.Commit();
+            vkr::Renderer taaRenderer(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            int frames = 0;
+            do {
+                taaRenderer.Render(slanted, frame, out);
+                ++frames;
+            } while (!taaRenderer.IsConverged() && frames < 200);
+            const float inside = splits[A::kDirectDiffuse][(4 * 64 + 4) * 3 + 1];
+            int partial = 0;
+            for (int i = 0; i < 64 * 64; ++i) {
+                const float v = splits[A::kDirectDiffuse][i * 3 + 1];
+                partial += v > 0.1f * inside && v < 0.9f * inside;
+            }
+            Expect(frames == int(frame.filmSamples) && inside > 0.3f && partial > 20,
+                   "light splits average the film's samples");
+        }
+
+        {
+            // Pipeline cache: what this run compiled is on disk, and a new
+            // device starts with it.
+            device.SavePipelineCache();
+            uintmax_t bytes = 0;
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
+                bytes = entry.path().extension() == ".bin" ? entry.file_size() : bytes;
+            }
+            Expect(bytes > 0, "pipeline cache: saved");
+            vkr::Device second;
+            vkr::Renderer secondRenderer(second);
+            Expect(second.pipelineCacheBytes == bytes, "pipeline cache: a new device starts with it");
+        }
+
+        {
+            // Pipeline prewarm: after a frame a worker compiles the shading
+            // sets one toggle away; turning toon bands on then takes its set
+            // (no compile), which draws as one compiled on the spot.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            scene.Commit();
+            vkr::Renderer warm(device), cold(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.pipelinePrewarm = true;
+            Render(warm, scene, frame);
+            warm.WaitForPrewarm();
+            Expect(warm.GetStats().prewarmedSets == 0, "pipeline prewarm: nothing taken yet");
+            frame.toonBands = 3;
+            const Image prewarmed = Render(warm, scene, frame);
+            Expect(warm.GetStats().prewarmedSets == 1, "pipeline prewarm: the toon set came from the worker");
+            frame.pipelinePrewarm = false;
+            const Image compiled = Render(cold, scene, frame);
+            Expect(cold.GetStats().prewarmedSets == 0 && prewarmed.color == compiled.color,
+                   "pipeline prewarm: the same image as a set compiled when needed");
         }
     } catch (const std::exception &e) {
         std::printf("FAIL: %s\n", e.what());
