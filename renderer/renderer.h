@@ -300,6 +300,7 @@ private:
     VkSampler _samplers[kWrapModes * kWrapModes] = {};  // materials: trilinear, aniso, per wrap s and t
     VkSampler _clampSampler = VK_NULL_HANDLE;   // LUT, environment cube
     VkSampler _shadowSampler = VK_NULL_HANDLE;  // depth compare
+    VkSampler _minSampler = VK_NULL_HANDLE;     // minimum of the bilinear footprint (Device::samplerMinmax)
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkDescriptorPool _descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
@@ -358,6 +359,12 @@ private:
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     Image _shadowMap;                           // kCascades-layer array view
+    // The cascades' nearest depths for soft sun shadows (shadow_min.comp):
+    // level 0 per 4 x 4 texels, mips to 1 x 1, in GENERAL; a view per level.
+    static constexpr uint32_t kMaxShadowMinLevels = 12;
+    Image _shadowMin;
+    std::vector<VkImageView> _shadowMinLevels;
+    VkPipeline _shadowMinPipeline = VK_NULL_HANDLE;
     uint32_t _shadowSize = 0;                   // its width and height (Frame::shadowResolution)
     float _anisotropy = 0;                      // _samplers' (Frame::anisotropy)
     Image _shadowAtlas;                         // local lights, see _PlanLocalShadows

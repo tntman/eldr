@@ -91,6 +91,9 @@ const uint32_t kSkinComp[] =
 const uint32_t kShadowTintFrag[] =
 #include "shadow_tint.frag.inc"
 ;
+const uint32_t kShadowMinComp[] =
+#include "shadow_min.comp.inc"
+;
 
 // FrameData::features[0] (Frame switches the shaders read), as in frame.glsl.
 constexpr uint32_t kFeatureNormalMaps = 1, kFeatureMaterialGraphs = 2, kFeatureClusters = 4;
@@ -341,9 +344,13 @@ Renderer::~Renderer()
     _dev.Destroy(_clusters);
     _dev.Destroy(_lightShadows);
     _dev.Destroy(_shadowTiles);
-    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline}) {
+    for (VkPipeline p : {_skyPipeline, _cullPipeline, _lightsPipeline, _skinPipeline, _shadowMinPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
+    for (VkImageView v : _shadowMinLevels) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+    }
+    _dev.Destroy(_shadowMin);
     for (uint32_t v = 0; v < kVariants; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
                              _shadowCutoutPipeline[v], _tintDepthPipeline[v], _tintColorPipeline[v]}) {
@@ -362,7 +369,7 @@ Renderer::~Renderer()
     for (VkSampler s : _samplers) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
-    for (VkSampler s : {_clampSampler, _shadowSampler}) {
+    for (VkSampler s : {_clampSampler, _shadowSampler, _minSampler}) {
         vkDestroySampler(_dev.device, s, nullptr);
     }
     vkDestroyFence(_dev.device, _fence, nullptr);
@@ -390,6 +397,16 @@ void Renderer::_CreateDescriptors()
     sci.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     sci.maxLod = 0.0f;
     Check(vkCreateSampler(_dev.device, &sci, nullptr, &_shadowSampler), "vkCreateSampler");
+    if (_dev.samplerMinmax) {
+        VkSamplerReductionModeCreateInfo reduction{VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO};
+        reduction.reductionMode = VK_SAMPLER_REDUCTION_MODE_MIN;
+        VkSamplerCreateInfo mci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, &reduction};
+        mci.magFilter = mci.minFilter = VK_FILTER_LINEAR;
+        mci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        mci.maxLod = VK_LOD_CLAMP_NONE;
+        mci.addressModeU = mci.addressModeV = mci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        Check(vkCreateSampler(_dev.device, &mci, nullptr, &_minSampler), "vkCreateSampler");
+    }
 
     constexpr VkShaderStageFlags kFragment = VK_SHADER_STAGE_FRAGMENT_BIT;
     constexpr VkShaderStageFlags kGeometry = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
@@ -479,7 +496,7 @@ void Renderer::_CreateDescriptors()
         // probe, the planar reflection.
         {47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3, VK_SHADER_STAGE_COMPUTE_BIT},
         {48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -490,6 +507,10 @@ void Renderer::_CreateDescriptors()
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        // The cascades' nearest depths (soft sun shadows): read minimum
+        // filtered, written per level by shadow_min.comp.
+        {61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
+        {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
@@ -504,10 +525,10 @@ void Renderer::_CreateDescriptors()
           "vkCreateDescriptorSetLayout");
 
     const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1},
         {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3},
+        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels},
         {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
     };
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -545,7 +566,8 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t set)
     }
     for (auto [code, bytes, pipeline] : {std::tuple{kCullComp, sizeof(kCullComp), &_cullPipeline},
                                          std::tuple{kLightsComp, sizeof(kLightsComp), &_lightsPipeline},
-                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
+                                         std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline},
+                                         std::tuple{kShadowMinComp, sizeof(kShadowMinComp), &_shadowMinPipeline}}) {
         if (!first) {
             break;
         }
@@ -876,6 +898,32 @@ void Renderer::_CreateShadowMap(uint32_t size)
         vkDestroyImageView(_dev.device, v, nullptr);
         v = VK_NULL_HANDLE;
     }
+    for (VkImageView v : _shadowMinLevels) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+    }
+    _shadowMinLevels.clear();
+    _dev.Destroy(_shadowMin);
+    const uint32_t minSize = (size + 3) / 4;
+    uint32_t minLevels = 1;
+    while (minSize >> minLevels) {
+        ++minLevels;
+    }
+    _shadowMin = _dev.CreateImage(VK_FORMAT_R32_SFLOAT, minSize, minSize, kCascades, minLevels,
+                                  VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+                                  VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    for (uint32_t level = 0; level < minLevels; ++level) {
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = _shadowMin.image;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+        vci.format = VK_FORMAT_R32_SFLOAT;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, 0, kCascades};
+        Check(vkCreateImageView(_dev.device, &vci, nullptr, &_shadowMinLevels.emplace_back()), "vkCreateImageView");
+    }
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        ImageBarrier(cmd, _shadowMin.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, minLevels, 0, kCascades},
+                     VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    });
     _dev.Destroy(_shadowMap);
     _shadowMap = _dev.CreateImage(kDepthFormat, size, size, kCascades, 1,
                                   VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -1098,6 +1146,15 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(47, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, fogStorage, 3);
     write(48, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &fogVolume);
     write(49, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowDepth);
+    const VkDescriptorImageInfo shadowMin{_minSampler ? _minSampler : _clampSampler, _shadowMin.view,
+                                          VK_IMAGE_LAYOUT_GENERAL};
+    write(61, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowMin);
+    VkDescriptorImageInfo shadowMinLevels[kMaxShadowMinLevels];
+    for (uint32_t i = 0; i < kMaxShadowMinLevels; ++i) {  // levels past the last: the last again
+        shadowMinLevels[i] = {VK_NULL_HANDLE, _shadowMinLevels[std::min<size_t>(i, _shadowMinLevels.size() - 1)],
+                              VK_IMAGE_LAYOUT_GENERAL};
+    }
+    write(62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, shadowMinLevels, kMaxShadowMinLevels);
     // Without a probe or planar reflection: placeholders the shaders skip.
     const VkImageView probe = _reflections && _reflections->Probe() ? _reflections->Probe() : _blackCube.view;
     const VkImageView planar = _reflections && _reflections->PlanarView() ? _reflections->PlanarView() : _brdfLut.view;
@@ -1883,6 +1940,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     // Soft sun shadows: for a sun with an angle, from its cascades.
     if (frame.softShadows && frame.softSunShadows && shadows && gpu.shadowAngle > 0) {
         fd.features[0] |= kFeatureSoftSun;
+        fd.features[3] = _minSampler ? uint32_t(_shadowMinLevels.size()) : 0;  // shadow_min.comp's levels
     }
     fd.counts[2] = gpu.environmentLevels;
     const bool ibl = gpu.environment && frame.imageBasedLighting;
@@ -2194,6 +2252,23 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
                      kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         pass("sunShadows");
+        // Soft sun shadows: the cascades' nearest depths, level by level.
+        if (fd.features[3] > 0) {
+            const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, fd.features[3], 0, kCascades};
+            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _shadowMinPipeline);
+            vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
+            const uint32_t minSize = (_shadowSize + 3) / 4;
+            for (uint32_t level = 0; level < fd.features[3]; ++level) {
+                vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(level), &level);
+                const uint32_t n = std::max(minSize >> level, 1u);
+                vkCmdDispatch(_cmd, (n + 7) / 8, (n + 7) / 8, cascades);
+                ImageBarrier(_cmd, _shadowMin.image, all, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+            }
+            pass("sunShadowMin");
+        }
     } else {
         ImageBarrier(_cmd, _shadowMap.image, shadowRange, VK_PIPELINE_STAGE_2_NONE, 0,
                      kShadowReaders, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
