@@ -214,6 +214,9 @@ public:
         // (frame.glsl's SampleNoise), so the film converges without screen
         // patterns; off: interleaved gradient noise shifted per frame.
         bool sampleDimensions = true;
+        // While TAA resolves (the camera or the scene moves), the sample
+        // dimensions loop over their first this many samples (1..256).
+        uint32_t interactiveSamples = 8;
     };
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
@@ -267,6 +270,7 @@ public:
         uint32_t instances = 0;   // the camera drew, after culling
         uint32_t drawCalls = 0;   // the camera's indirect calls (each covers many meshes)
         uint32_t taaSamples = 0;  // frames in the TAA average (taaTarget: converged)
+        uint32_t sample = 0;      // the sample dimensions' sample (0: no TAA)
         uint32_t taaTarget = 0;
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)

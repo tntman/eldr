@@ -2040,6 +2040,13 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     const uint32_t filmMode = !film ? 0 : fresh ? 1 : changed || _filmSamples == 0 ? (frame.finalQuality ? 1 : 2) : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
+    // The sample dimensions' sample: the film's, free running; while TAA
+    // resolves (the camera or the scene moves) a loop of the first
+    // interactiveSamples, a periodic pattern TAA's history settles on.
+    const uint32_t noiseSample = film ? _filmSamples
+                               : taa  ? _haltonIndex % std::clamp(frame.interactiveSamples, 1u, 256u) + 1
+                                      : 0;
+    _stats.sample = noiseSample;
     if (taa) {
         sample = film ? _filmSamples : (_haltonIndex % taaSamples) + 1;
         ++_haltonIndex;
@@ -2101,7 +2108,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.sampleDimensions) {
         fd.sampleInfo[0] = 1;
         for (uint32_t d = 0; d < kSampleDims; ++d) {
-            dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(sample > 0 ? sample - 1 : 0, d);
+            dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(noiseSample > 0 ? noiseSample - 1 : 0, d);
         }
     }
     if (localLights > 0) {

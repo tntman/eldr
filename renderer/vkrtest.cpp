@@ -1099,6 +1099,28 @@ int main()
             vkr::Renderer taa(device);
             converge(taa, &frames);
             Expect(frames == int(frame.taaSamples), "film off: TAA converges after taaSamples");
+
+            // Interactive sample loop: while the camera moves the sample
+            // dimensions loop over their first interactiveSamples; still,
+            // the film's samples run on.
+            frame.filmAccumulation = true;
+            frame.filmFilterRadius = 1.5f;
+            frame.interactiveSamples = 4;
+            vkr::Renderer moving(device);
+            uint32_t seen = 0, most = 0;
+            for (int i = 0; i < 12; ++i) {
+                frame.viewProj[12] = (i % 2 ? 1.0f : -1.0f) * 0.01f;
+                frame.invViewProj[12] = -frame.viewProj[12];
+                Render(moving, scene, frame);
+                seen |= 1u << moving.GetStats().sample;
+                most = std::max(most, moving.GetStats().sample);
+            }
+            frame.viewProj[12] = frame.invViewProj[12] = 0.0f;
+            for (int i = 0; i < 12; ++i) {
+                Render(moving, scene, frame);
+            }
+            Expect(seen == 0x1Eu && most == 4 && moving.GetStats().sample > 4,
+                   "moving: the sample dimensions loop over interactiveSamples; still: the film's run on");
         }
 
         {

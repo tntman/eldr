@@ -210,7 +210,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
                                 {t.volumeResolution, &frame.volume.resolution},
-                                {t.filmSamples, &frame.filmSamples}}) {
+                                {t.filmSamples, &frame.filmSamples},
+                                {t.interactiveSamples, &frame.interactiveSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     // 0 allowed: no skinned instance blocks rays.
