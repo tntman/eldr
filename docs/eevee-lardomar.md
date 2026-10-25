@@ -5,6 +5,20 @@ Studie av Blenders EEVEE ("EEVEE Next", Blender 4.2+) på `main`, katalogen
 `shaders/*.bsl.hh` (Blenders nya shaderspråk, GLSL-likt). Blender är GPL, så
 rapporten beskriver bara metoder och idéer. Ingen kod är kopierad.
 
+**Version:** ursprungligen skriven mot EEVEE Next (4.2+), uppdaterad
+2026-10-25 mot Blender 5.1 och 5.2 LTS (och 5.0:s ändringar). Avsnitt som
+beskriver en metod som 5.1/5.2 ändrat är märkta "(ändrat i 5.1/5.2)". Det nya
+materialet samlas i avsnitt 6, "Nytt i Blender 5.0–5.2". Motorn heter numera
+`BLENDER_EEVEE` (inte `BLENDER_EEVEE_NEXT`), och `main` är nu en 5.3-gren där
+shaders portats till BSL (`*.bsl.hh`).
+
+**Källor:** "(kod)" betyder att jag läst filen på `main` (GitHub-spegeln) eller
+en commit. "(noter)" betyder att uppgiften bara kommer från
+developer.blender.org/docs/release_notes/5.x/eevee och inte är verifierad i
+kod. Pull requests på projects.blender.org gick inte att läsa (HTTP 403), så
+PR-texterna (#157059, #156597, #157479, #157763, #157803, #158051, #158150,
+#159921) är bara kända via commitmeddelanden och releasenoter.
+
 Uppskattningarna gäller Claudes arbetstakt: S upp till 30 min, M 30–90 min,
 L 1,5–4 h, XL över 4 h.
 
@@ -142,7 +156,9 @@ L 1,5–4 h, XL över 4 h.
    McGuire–Mara med egna modifieringar, `eevee_ray_trace_screen_lib.bsl.hh`).
    Radiansen vid träffen hämtas från **förra bildrutans** resultat, och
    träffen reprojiceras med `history_persmat`. En träff som var utanför
-   förra vyn räknas som miss. Vid miss används **probe-fallback per stråle**:
+   förra vyn räknas som miss (ändrat i 5.2: den markeras uttryckligen ogiltig
+   så att clamp-to-border inte läcker energi, och hämtningen använder en tap
+   för litet skärmavtryck och en 4-taps box i logrum för stort). Vid miss används **probe-fallback per stråle**:
    sfärproben i strålens riktning med roughness-LOD och parallaxkorrektion
    plus volymprobens SH. Alla radianser klampas med `clamp.surface_indirect`.
 4. *Denoise* (`eevee_ray_denoise.bsl.hh`, enligt "Stochastic All The
@@ -150,12 +166,27 @@ L 1,5–4 h, XL över 4 h.
    - *Spatial*: ray reuse med ratio estimator. Grannarnas strålar
      återanvänds och viktas med BSDF/pdf. Filterkärnan orienteras och
      sträcks i reflektionsriktningen för låg roughness, och storleken skalas
-     med roughness.
+     med roughness. **(ändrat i 5.2)** Allt medelvärdesbildas nu i
+     *logaritmiskt* rum (`log2(1+x)`) i stället för med lokal tonemapping.
+     Träffpunkten för en återanvänd stråle *korrigeras*: grannens träffpunkt
+     förskjuts med ytans skärmderivator (från normalplanet) och riktningen
+     räknas om från den egna ytpunkten. Det håller kontaktkanter skarpa, och
+     korrigeringen tonas ner vid hög roughness. Samplingscentrum jittras så
+     att trilinjär interpolation återfås vid låg spårningsupplösning. Variansen
+     beräknas relativt medelvärdet. (Kod: `eevee_ray_denoise.bsl.hh` och
+     commit 861ef28.)
    - *Temporal*: reprojektion **både av ytan och av träffpunkten**
-     (reflektionsparallax). Historiken klampas mot lokal statistik i YCoCg och
-     blendas med 0,97 (lägre vid låg varians). Variansen bärs vidare i en egen
-     buffert.
-   - *Bilateral*: variansstyrd, med "tonemappade" vikter mot fireflies.
+     (reflektionsparallax). Träffdjupet kommer från närmaste giltiga
+     grannträff i spatialpasset. Historiken klampas mot lokal statistik i YCoCg
+     och blendas med en hög fast faktor (lägre vid låg varians).
+     **(ändrat i 5.2)** Historiken hämtas med `textureGather` och en egen
+     bilinjär vikt, eftersom enskilda historikpixlar kan vara ogiltiga
+     (kontrolleras mot en tile-mask), varje historiksample nedviktas efter
+     avstånd från lokalt medelvärde, och variansen blandas i kvadrerat rum med
+     tak. Variansen bärs vidare i en egen buffert.
+   - *Bilateral*: variansstyrd, och antalet samples styrs nu av variansen och
+     inte bara av roughness **(ändrat i 5.2)**. Ackumulerar i logaritmiskt rum.
+     Släta, bakgrunds- och lågvariansiga pixlar kopieras orörda.
 5. *Fast GI* (horisontskanning) för closures över `trace_max_roughness`.
    Övergången går mjukt via `roughness_mask_scale/bias`, se resolve i
    `eevee_fast_gi.bsl.hh`.
@@ -172,16 +203,39 @@ with Visibility Bitmask", Therrien m.fl.):
   till en **32-bitars synlighetsmask**, och bara sektorer som inte redan är
   ockluderade bidrar med ljus. Det ger korrekt ljus bakom tunna objekt i
   stället för GTAO:s "högsta horisont vinner".
-- **Tjocklek** (`eevee_ray_types_lib.bsl.hh` `ScreenThicknessEstimator`,
-  `eevee_raytrace_shared.hh` `ScreenThicknessParameters`): tjockleken
-  uppskattas från djuplutningens kontinuitet mellan steg. Ett abrupt
-  lutningsbyte betyder ett nytt objekt och kopplar bort. Minsta tjocklek
-  motsvarar pixelns fotavtryck vid samplets djup. Det gör att ytor nästan
-  parallella med vyn inte blir porösa. **Det är kärnan i problemet med
-  strykande vinklar.**
-- Emitterns normal tas med (`facing = dot(normal, -L)`), och baksidor skalas
-  med `backface_hit_scale`. Bakgrund hoppas över så att den inte skuggar.
-  Slicevinkeln jittras inom bitmaskens upplösning mot banding.
+- **Tjocklek (ändrat i 5.2)** (`eevee_ray_types_lib.bsl.hh`
+  `ScreenThicknessEstimator`, `eevee_raytrace_shared.hh`
+  `ScreenThicknessParameters`, commit 3b511a6 "Better screen space thickness
+  heuristic"): tjockleken uppskattas från djuplutningens kontinuitet mellan
+  steg. Estimatorn minns de två senaste lutningarna, och om den nya lutningen
+  skiljer sig mer än den förra lutningens storlek är det ett nytt objekt och
+  tjockleken nollställs. Minsta tjocklek motsvarar pixelns fotavtryck vid
+  samplets djup (`pixel_depth_thickness_at`, härlett ur projektionsmatrisen).
+  Träfftestet utvidgas dessutom med strålens eget djupsteg, så ytan täcker
+  även det strålen rört sig. Det gör att ytor nästan parallella med vyn inte
+  blir porösa. **Det är kärnan i problemet med strykande vinklar.** Samma
+  estimator används nu av SSR, Fast GI, AO och Raycast-noden, med två
+  parameteruppsättningar (en för strålar, en för Fast GI). **Parametern
+  "Far Thickness" i Fast GI är borttagen** (den gav mörka halos); kvar är en
+  enda "Thickness", standard sänkt från 0,2/0,25 till 0,1. (Kod och commit.)
+- Emitterns normal tas med (`facing = dot(normal, -L)`). **(ändrat i 5.2)**
+  Baksidor kastas inte längre bort: träffen skalas med `backface_hit_scale`
+  (standard 0,25, intervall 0–1, avstängbart) och facingvikten är
+  absolutbeloppet. Samma regel gäller SSR-strålar, där en träff på baksida
+  får skalad radians i stället för "stråle misslyckades" (commit 42a6cd5).
+  Baksidetestet använder dessutom en liten negativ epsilon, eftersom fast-math
+  på GPU kan ge ett svagt negativt djupdelta för lika tal (commit 0a9bb88).
+  Bakgrund hoppas över så att den inte skuggar. Slicevinkeln jittras inom
+  bitmaskens upplösning mot banding.
+- **Energikorrigeringar (ändrat i 5.2, commit 5b273c1 och 861ef28, kod):**
+  HiZ samplas med heltals-LOD (stokastiskt `floor(noise + lod)`), SH
+  normaliseras om efter `angle_bias` eftersom skanningen bara täcker en
+  förskjuten kon, slice-SH:n initieras med synlighet 1 för övre halvsfären
+  (fixar AO-läckage från SH), baksidevikten tappade en felaktig faktor 2,
+  LOD-skalan följer precision-reglaget, normalen läses rakt ur g-bufferten, och
+  föregående rutas radians reprojiceras med rätt matris (`history_persmat`).
+  Ingången får även en mip-nedsampling (a6d7356). Resultatet kan bli mörkare
+  än i 5.1.
 - Resultatet lagras som **SH L1 (4 texturer) med synlighet i w**. Resolve
   evaluerar SH:en i varje closures dominanta riktning, så samma skanning
   fungerar för diffus, rough spekulär och SSS. Synligheten fyller sedan i
@@ -224,7 +278,14 @@ with Visibility Bitmask", Therrien m.fl.):
 
 ### Hur Eldr skiljer sig
 
-- SSGI i Eldr är horisontbaserad (högsta horisont), utan tjockleksmodell och
+- *Status 2026-10 (efter sweep 2):* Eldr har nu `hdvk:ssgiThickness`
+  (tjockleksestimator med pixelfotavtryck i SSR och SSGI, commit e9c4636),
+  en synlighetsbitmask i SSGI med en enda objekttjocklek (4313c72), en
+  SSR-denoiser med ratio estimator, temporal och bilateral (6fbb792), samt
+  upp till 4 plana speglar (c099bc5). Rekommendationerna 1, 2 och 4 nedan är
+  alltså gjorda, och avsnitt 6 jämför dem med 5.2:s ändringar. Resten av
+  listan nedan beskriver Eldr *före* sweep 2.
+- SSGI i Eldr var horisontbaserad (högsta horisont), utan tjockleksmodell och
   utan normaltest för träffen. Den har vyberoende radians och ackumuleras bara
   när kameran är still. Det förklarar artefakterna vid strykande vinklar
   (ingen minsta tjocklek, så "porösa" eller felaktiga ockluderare) och efter
@@ -411,6 +472,168 @@ kaskader, och lokala ljus är oskuggade.
 
 ---
 
+## 6. Nytt i Blender 5.0–5.2
+
+Källa per punkt anges som (kod) eller (noter). Estimaten följer skalan
+överst. "Eldr nu" avser läget efter sweep 2. Där jag inte läst Eldrs
+implementation i detalj står "kontrollera".
+
+### 6.1 Screen Space Raytracing-översynen i 5.2 (kod + noter)
+
+Serien (Clément Foucault, PR #157059, #156597, #157479, #157763, #157803,
+#158051, #158150, commits 5b273c1, 861ef28, 42a6cd5, 3b511a6, 0a9bb88) rensar
+upp hela SSR/Fast GI-kedjan. Äldre scener ser oftast lika ut, men
+tjockleksreglagen kan behöva justeras och energikorrigeringar ger ibland
+mörkare bilder än i 5.1.
+
+1. **Backface-alternativ (kod, 42a6cd5).** En träff på en baksida förkastas inte
+   längre. Den räknas som träff med radiansen skalad med en faktor
+   (standard 0,25; 0 = enkelsidigt, 1 = dubbelsidigt; "Disabled" bevarar det
+   gamla beteendet). Det påverkar SSR, SSGI och Fast GI och minskar
+   ljusläckage när strålen går in bakom tunna ytor. Samtidigt rättades
+   baksidetestet som felaktigt flaggade strålar på väg mot kameran (noter:
+   Raycast-noden gav falska träffar för sådana strålar).
+   *Eldr nu:* SSR och SSGI har tjocklek men troligen ingen separat regel för
+   baksidor (kontrollera; `rt.glsl` har `kHitBackface` för RT, inte för
+   skärmrymd). *Rekommendation:* **`ssgiBackface`**, en skala 0–1 för radians
+   vid baksideträff i SSR-marchen och SSGI-bitmasken, med av/på-toggle, plus
+   facingvikten `abs(dot(N, -L))`. **S (20–40 min).**
+2. **Gemensam tjockleksheuristik, Far Thickness borttagen (kod, 3b511a6).**
+   Se avsnitt 2: estimator med lutningskontinuitet, pixelfotavtryck som golv,
+   träfftest som även täcker strålens djupsteg. En enda tjocklek, standard
+   0,1, och två parameteruppsättningar (stråle och Fast GI) som byggs ur
+   projektionen. *Eldr nu:* `hdvk:ssgiThickness` med pixelfotavtryck gör
+   samma sak i grunden. *Rekommendation:* (a) kontrollera att Eldr inte har
+   någon "far"-liknande extratjocklek bakom ockluderare som ger mörka halos;
+   (b) lägg till strålens eget djupsteg i träfftestet om det saknas; (c)
+   separata parametrar för SSR och SSGI/AO. **S (20–40 min)** som granskning
+   plus justering.
+3. **Reflektionsdenoisern bevarar kontaktskärpa (kod, 861ef28 och
+   `eevee_ray_denoise.bsl.hh`).** Det finns ingen särskild kontaktregel. Det
+   är fyra samverkande delar: (i) träffpunkten för en återanvänd stråle
+   korrigeras med ytans skärmderivator och riktningen räknas om från den egna
+   ytpunkten, (ii) temporal reprojektion följer träffdjupet från närmaste
+   giltiga grannträff, (iii) kärnan är nästan noll vid låg roughness och
+   bilateralpasset hoppar över släta pixlar, och (iv) allt medelvärdesbildas i
+   logrum, så ljusa reflektioner inte fläckar ut mörka kontakter. Dessutom
+   nedviktas historiksamples efter avstånd från lokalt medelvärde och ogiltig
+   historik (utanför tile-masken) kastas. Korrigeringen i (i) tonas ner vid
+   hög roughness. *Eldr nu:* SSR-denoisern har ratio estimator, temporal och
+   bilateral. *Rekommendation:* **`ssrDenoiseContact`**: (a)
+   hitposition-korrigering med derivator i spatialpasset, (b) träffdjup från
+   närmaste giltiga granne till temporal reprojektion, (c) logrum i spatial
+   och bilateral, (d) `textureGather`-baserad egen bilinjär historikvikt med
+   validitetsmask. Delvis en granskning av redan byggd kod. **M (60–120 min).**
+4. **Träffens radians: filter efter skärmavtryck och ogiltig historik (kod,
+   861ef28).** En tap vid litet avtryck, 4-taps box i logrum vid stort, och
+   träffar utanför förra vyn markeras ogiltiga. *Rekommendation:*
+   **`ssrHitFetch`**, **S (20–40 min)**.
+5. **Fast GI-energi och precision (kod, 5b273c1; noter om #157479).**
+   Heltals-LOD för HiZ, SH-normalisering efter vinkelbias, synlighet 1 i
+   övre halvsfären, rätt reprojektionsmatris, LOD-skala efter precision.
+   Skanningen optimerades också (mindre brus när precisionsreglaget är under
+   1; bara noter, PR:en inte läst). *Eldr nu:* bitmasken finns.
+   *Rekommendation:* **`ssgiEnergyAudit`**: gå igenom Eldrs bitmask-SSGI mot
+   punktlistan (särskilt synlighet i övre halvsfären mot AO-läckage,
+   SH-normalisering efter skanningens kon, reprojektionsmatris, heltals-LOD).
+   **M (45–90 min)**. Fel här syns som för mörka eller för ljusa hörn.
+6. **Precision i SSR (kod, 0a9bb88 och `eevee_ray_types_lib.bsl.hh`).**
+   Negativ epsilon (-1e-7) i baksidetestet mot fast-math, och ett djupbias som
+   höjts (multiplikator 2 till 7 för 24-bitars djup) mot självträff.
+   *Rekommendation:* **`ssrPrecision`**, samma sorts toleranser i Eldrs SSR.
+   **S (10–20 min).**
+7. **Pseudoslumpad tile-ordning (kod, 861ef28).** Spårningens pixeloffset i
+   halv/kvarts upplösning går genom varje tile fullständigt (Morton-ordning)
+   innan den upprepas, i stället för ett slumpat offset per frame.
+   Konvergerar jämnare. *Rekommendation:* **`traceTileOrder`**, **S (15–30
+   min)**, om Eldr spårar i lägre upplösning.
+8. **Probe-LOD från roughness (kod, 861ef28).** `pdf_to_lod` ersattes av
+   roughness med tak 0,6 för diffust uppslag, så att diffus ljusprob inte blir
+   för oskarp. *Rekommendation:* tak på roughness vid probe-uppslag, **S
+   (10–20 min)**, kan göras tillsammans med `probeNormalize` (punkt 9 i
+   listan).
+
+### 6.2 Ljus och passes (5.1–5.2)
+
+1. **Light passes matchar Cycles (noter, PR #159921, ej läst).** De
+   ackumuleras inte längre per utvärderad BSDF. *Eldr nu:* Karma-liknande
+   ljusuppdelade AOV:er finns. *Rekommendation:* **`aovSumCheck`**: ett test
+   där summan av diffuse/specular/emission osv. (direkt + indirekt) återger
+   beauty inom avrundning, per closure och inte per BSDF-anrop. **S (20–40
+   min).**
+2. **Ljus synliga för kameran (noter, #158416).** EEVEE-ljus får en
+   kameravisibilitetsflagga. *Eldr nu:* kontrollera om ljusformer (rect,
+   disk, sfär) ritas synliga för kameran. *Rekommendation:*
+   **`lightCameraVisibility`**: en per-ljus-flagga (USD:s synlighetsattribut
+   eller en `hdvk:`-primvar) som döljer ljuskroppen för primärstrålen men inte
+   för reflektioner eller belysning. **S (20–40 min).**
+3. **Light Path Intensity (5.1, noter).** Två globala multiplikatorer för
+   direkt och indirekt bidrag som bara påverkar slutpixeln, inte
+   ljustransporten. *Rekommendation:* **`indirectIntensity`**, en
+   feature-toggle i Hydra Settings. **S (15–30 min).**
+4. **Denoising-passes (noter, commit 0cd3691, juli 2026; bara titeln läst).**
+   Albedo- och normal-pass för externa denoisers. *Rekommendation:*
+   kontrollera att albedo, normal och djup finns som rena (ofiltrerade)
+   AOV:er. **S (15–30 min)**, ingen egen post.
+5. **SSS (noter, PR #159156).** Indirekt ljus för SSS utvärderas separat när
+   klampen eller intensiteten inte är standard. Följer av `indirectClamp`;
+   ingen egen åtgärd.
+
+### 6.3 Planara prober och refraktion (5.1, kod + noter)
+
+Planara reflektioner stöder glossy reflektion och refraktion (commit
+7fab3fd3f2, PR #150781; kod). Capturen utvärderade tidigare varje BSDF som
+antingen diffus eller translucent, vilket gav matt glas i skarpa
+reflektioner. Nu slås alla glossy reflektionslager ihop till *ett*
+reflektionsclosure och alla refraktionslager till *ett* refraktionsclosure
+(normal och roughness medelvärdesbildas, viktat med färg). De utvärderas för
+direkt och indirekt ljus tillsammans med diffus och translucent. Författaren
+valde detta framför full deferred-evaluering av kostnads-, kompileringstids-
+och underhållsskäl. Hur proben blurras per roughness vid uppslag har jag
+*inte* läst.
+*Eldr nu:* upp till 4 skarpa speglar. *Rekommendation:* **`mirrorGlossy`**:
+(a) utvärdera ett sammanslaget glossy-closure i spegelcapturen, så att
+metaller och lack syns rätt, **M (60–90 min)**; (b) mip-blur av spegelbilden
+efter roughness vid uppslag, vilket är min egen idé och inte EEVEE:s
+bekräftade metod, **M (45–90 min)**; (c) refraktion via planar probe för
+glas, **L (90–150 min)**. Börja med (a).
+5.2 gör dessutom att planara prober fungerar med Blended-material och
+Shader to RGB (noter, #158483). Det är Blender-specifikt.
+
+### 6.4 Raycast-noden (5.1, noter; träfftestet i 5.2, kod)
+
+Ny shadernod som kastar strålar mot scenen (bara skärmrymd i EEVEE) för
+röntgen, linjerendering och NPR. 5.2 förbättrar precisionen, tar bort falska
+träffar för strålar mot kameran och låter användaren välja vilka objekt som är
+synliga för noden (#157799). Noden delar estimator med SSR (kod).
+*Rekommendation:* **`screenRay`**, en funktion i materialshaders som anropar
+SSR-marchen (träff, avstånd, normal). Intressant för NPR, inte för
+fotorealism. **L (2–3 h)**, låg prioritet.
+
+### 6.5 Övrigt i 5.0–5.2 (noter)
+
+- 5.0: Light Probe Volume-baksidesculling hade inverterad betydelse sedan 4.2
+  och är rättad. Lärdom för Eldrs DDGI: prober ska kunna ignorera ytor som
+  markerats "ska inte ge GI".
+- 5.0: curves får en intern skuggbias mot självskuggning; Eldrs hår kan ha
+  nytta av samma sak. **S**.
+- 5.1: AOV-gränsen höjd till 128. Kontrollera hårda tak i Eldr.
+- 5.2: scenbaserad anisotrop filtrering och konsekvent mip-generering.
+  **`anisotropicFiltering`**, **S (10–20 min)** om samplern inte redan använder
+  maxAnisotropy.
+- 5.1: texturminne återanvänds mellan pass över tid (406 till 245–291 MB på en
+  testscen). Låg prioritet offline, **M**.
+- 5.2: större skuggpool (1,5/2 GB) och snabbare instansering är Blender-interna.
+
+### 6.6 Vad Eldr redan har jämfört med 5.2
+
+- SSGI-bitmask, tjockleksestimator och SSR-denoiser finns (sweep 2) och
+  följer samma källor som EEVEE (Therrien m.fl., Stachowiak).
+- Upp till 4 skarpa planara speglar täcker fler fall än EEVEE:s planara
+  prober i skarphet, men saknar glossy-closure (6.3).
+
+---
+
 ## Prioriterad lista
 
 | # | id | Namn | Ledtråd | min–max (min) |
@@ -430,3 +653,19 @@ kaskader, och lokala ljus är oskuggade.
 | 13 | `ddgiPreconverge` | DDGI som konvergerar före slutbild | K uppdateringar med 1/(n+1) innan ackumulering, plus probe relocation | 45–90 |
 | 14 | `volumeUnderTransparency` | Volymer under transparens | Volym före OIT till inscatter- och transmittansbuffert, transparenta lager komponeras ovanpå per djup | 120–180 |
 | 15 | `motionBlurTimeSamples` | Rörelseoskärpa via tidssamples | Fördela samples över slutartiden (Hydra-tidssamples eller hastighet), vektorblur bara mellan stegen | 90–180 |
+
+### Nya poster från 5.0–5.2 (runda 3)
+
+| # | id | Namn | Ledtråd | min–max (min) |
+|---|----|------|---------|---------------|
+| 16 | `ssgiBackface` | Backface-skala för SSR/SSGI | Träff på baksida ger radians · 0,25 (0–1, av/på), absolut facingvikt | 20–40 |
+| 17 | `ssrDenoiseContact` | Kontaktskärpa i SSR-denoisern | Hitposition-korrigering med derivator, träffdjup från närmaste granne, logrum, gather-historik med validitet | 60–120 |
+| 18 | `ssgiEnergyAudit` | Energi- och precisionsgranskning av SSGI | Synlighet 1 i övre halvsfären, SH-normalisering efter vinkelbias, heltals-LOD, rätt reprojektionsmatris | 45–90 |
+| 19 | `ssrHitFetch` | Träffradians efter skärmavtryck | 1 tap vid litet avtryck, 4-taps logbox vid stort, ogiltig utanför förra vyn | 20–40 |
+| 20 | `aovSumCheck` | Ljus-AOV:er summerar till beauty | Per closure, inte per BSDF-anrop; testscen | 20–40 |
+| 21 | `lightCameraVisibility` | Ljus dolda för kameran | Per-ljus-flagga som döljer formen för primärstrålen | 20–40 |
+| 22 | `indirectIntensity` | Globala intensiteter för direkt/indirekt | Multiplikator på slutpixeln, inte på transporten | 15–30 |
+| 23 | `mirrorGlossy` | Glossy closure i planara speglar | Sammanslaget glossy reflektions- och refraktionsclosure, mip-blur efter roughness | 60–150 |
+| 24 | `ssrPrecision` | Epsilon och djupbias i SSR | Negativ epsilon i baksidetest, djupbias för 24-bitars djup | 10–20 |
+| 25 | `traceTileOrder` | Morton-ordning för spårningsoffset | Fullständig tile-täckning innan upprepning | 15–30 |
+| 26 | `screenRay` | Skärmrymds-ray i material (Raycast) | SSR-marchen som shaderfunktion, objekturval | 120–180 |
