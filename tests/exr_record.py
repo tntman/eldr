@@ -2,6 +2,7 @@
 settings until they converge (tests/test_exr.py's helper; usdrecord has no
 way to set them).
 Run: usdenv.cmd python tests\\exr_record.py <scene> <settings prim> <camera> key=value..."""
+import os
 import sys
 
 from PySide6.QtCore import QSize
@@ -10,7 +11,7 @@ from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL
 
-SIZE = 64
+SIZE = int(os.environ.get("EXR_SIZE", 64))
 scene, settingsPrim, cameraPath = sys.argv[1:4]
 
 app = QApplication(sys.argv)
