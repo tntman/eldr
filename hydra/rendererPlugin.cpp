@@ -26,10 +26,13 @@ public:
         delete delegate;
     }
 
-    // Signature verified against USD 26.08 (HD_API_VERSION 103). Older USD
-    // (incl. possibly Houdini 22's) uses IsSupported(bool) or
-    // IsSupported(HdRendererCreateArgs const&); gate on HD_API_VERSION in step 7.
+    // USD 26.08 (HD_API_VERSION 103) takes the create-args schema; Houdini 22's
+    // USD 26.05 (HD_API_VERSION 97) takes HdRendererCreateArgs.
+#if HD_API_VERSION >= 103
     bool IsSupported(HdRendererCreateArgsSchema const &,
+#else
+    bool IsSupported(HdRendererCreateArgs const &,
+#endif
                      std::string *reasonWhyNot) const override
     {
         // Probe once per process; creating a VkInstance takes tens of ms.

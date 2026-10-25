@@ -14,7 +14,12 @@ find_package(Vulkan REQUIRED)
 # garch (GPU sharing with usdview's OpenGL) links OpenGL::GL.
 find_package(OpenGL REQUIRED)
 # -DCMAKE_PREFIX_PATH=<USD install root>; pxr_DIR alone misses its TBB/OpenSubdiv configs.
-find_package(pxr CONFIG REQUIRED)
+option(HDVK_HOUDINI "Build against Houdini's USD (see docs/houdini.md)" OFF)
+if(HDVK_HOUDINI)
+    include(houdini/houdini.cmake)
+else()
+    find_package(pxr CONFIG REQUIRED)
+endif()
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
