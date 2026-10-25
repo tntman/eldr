@@ -197,6 +197,10 @@ its own shape).
   `finalShadows` (`maps`, `raytraced`, `auto`) traces them in final quality
   without `rtShadows`; `auto` traces dense scenes (2 triangles per pixel and
   shadowed light) whose skinned instances all block rays.
+  Traced rays start 256 ulps of the hit's largest coordinate off the surface,
+  so floors far from the origin don't shadow themselves (until sweep 4,
+  Kitchen_set's sunlit floor came out 37% too dark traced; the shadow maps
+  were right).
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).
