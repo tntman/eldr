@@ -77,6 +77,13 @@ public:
         float focusDistance = 0.0f;
         float sensorWidth = 0.0f;     // horizontal aperture the projection shows
         float shutter = 0.0f;         // open interval in frames (shutter:close - shutter:open)
+        float shutterOpen = 0.0f;     // shutter:open, frames relative to this one
+        // Motion blur time samples (with motionBlur): under the film each
+        // sample renders the scene at a time in the shutter interval, every
+        // pass (shadows, rays) included, instead of the post blur. Motion
+        // is linear from the last frame's to this one's (transforms, joints,
+        // blend shape weights, camera), as the motion vectors are.
+        bool motionBlurTimeSamples = true;
         // Inverse projection's z and w columns over NDC z (row-vector order):
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
@@ -221,6 +228,14 @@ public:
         // (IsConverged). Frames with motion blur stay TAA's.
         bool filmAccumulation = true;
         uint32_t filmSamples = 64;
+        // Upscaling (TAAU), interactive only: under 1, while TAA resolves
+        // (the camera or the scene moving; still too without the film) the
+        // scene renders at this fraction of the width and height (at least
+        // 0.25) and TAA reconstructs the full image into its full-size
+        // history. The film and final quality always render at full size,
+        // as do frames with depth of field, a motion-blur shutter, lens
+        // distortion or extra AOVs (their passes are full size).
+        float renderScale = 1.0f;
         float filmFilterRadius = 1.5f;
         // Final quality (offline renders): the film starts over at the
         // first sample after any change instead of from the TAA image.
@@ -373,6 +388,7 @@ public:
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
+        uint32_t renderWidth = 0, renderHeight = 0;  // the scene's size (Frame::renderScale), else the frame's
     };
     const Stats &GetStats() const { return _stats; }
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
@@ -382,9 +398,9 @@ public:
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
     // has it (RGBA16F) and depth (D32); null before a frame.
     VkImage ColorImage() const { return _frameColor; }
-    VkImage DepthImage() const { return _frameColor ? _depth.image : VK_NULL_HANDLE; }
-    uint32_t Width() const { return _width; }
-    uint32_t Height() const { return _height; }
+    VkImage DepthImage() const { return _frameColor ? (_upscaled ? _up[0].image : _depth.image) : VK_NULL_HANDLE; }
+    uint32_t Width() const { return _outWidth; }
+    uint32_t Height() const { return _outHeight; }
     // Copies the last frame's outputs (as Render's, extra AOVs aside) to
     // host memory, for consumers that ask after Render.
     void Read(const Targets &out);
@@ -413,6 +429,7 @@ private:
     void _PrewarmWorker();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
+    void _ResizeScene(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLight[3], FrameData *data) const;
@@ -527,6 +544,7 @@ private:
     VkPipeline _cullPipeline = VK_NULL_HANDLE;
     VkPipeline _lightsPipeline = VK_NULL_HANDLE;    // light cluster assignment
     VkPipeline _skinPipeline = VK_NULL_HANDLE;      // joint matrices from skinning transforms
+    VkPipeline _shutterPipeline = VK_NULL_HANDLE;   // motion blur time samples (shutter.comp)
     Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
     // Last frame's joint matrices for motion vectors, copied before skin.comp
@@ -567,7 +585,13 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Image _blueNoise;                           // RGBA8, frame.glsl's SampleNoise
     Buffer _readback, _frameData;
-    uint32_t _width = 0, _height = 0;
+    uint32_t _width = 0, _height = 0;        // the scene's targets (Frame::renderScale)
+    uint32_t _outWidth = 0, _outHeight = 0;  // the frame's: TAA's resolve and history, post, outputs
+    // Upscaling: depth, primId, instanceId and velocity blitted (nearest)
+    // to the frame's size for the outputs; whether the formats can be.
+    bool _upscaled = false;
+    int _upscaleBlit = -1;  // -1: not checked yet
+    Image _up[4];
     LensDistortion _distortion{_dev};
     // Blend shape motion: last frame's blend shape weights, copied after
     // each frame's draws from the scene's pool (_prevBlendSource), which
@@ -577,6 +601,23 @@ private:
     Buffer _prevBlendWeights;
     VkBuffer _prevBlendSource = VK_NULL_HANDLE;
     bool _prevBlendValid = false;
+    // Motion blur time samples (Frame::motionBlurTimeSamples): what the
+    // last motion left of the frame before it (shutter.comp's rigid rows per
+    // instance slot, joints, blend shape weights; the camera), kept while
+    // the film samples the shutter, for the scene's pools and version it
+    // was taken of; and this frame's pools, saved to be put back.
+    struct Shutter {
+        bool valid = false;
+        bool joints = false, weights = false;  // joints / weights move too
+        uint64_t version = 0;
+        VkBuffer instances = VK_NULL_HANDLE, jointPool = VK_NULL_HANDLE, weightPool = VK_NULL_HANDLE;
+        uint32_t instanceCapacity = 0;
+        float viewProj[16] = {};
+        float cameraPos[3] = {};
+    } _shutter;
+    Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
+    bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
+    float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing

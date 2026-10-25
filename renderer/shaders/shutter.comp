@@ -1,0 +1,62 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#define JOINTS_WRITABLE
+#define SHUTTER_WRITABLE
+#include "scene.glsl"
+
+// Motion blur time samples (Renderer, Frame::motionBlurTimeSamples): the
+// scene at a time in the shutter, moved in place before culling, shadows,
+// rays and draws read it (the renderer puts this frame's values back
+// after). Motion is linear between the last frame (t = 0) and this one
+// (t = 1), from what a change left (capture): per instance slot the rigid
+// rows it had (motion vectors' rows, else its own), last frame's joints and
+// blend shape weights.
+
+layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
+layout(std430, set = 0, binding = 69) buffer ShutterRows { vec4 shutterRows[]; };  // 3 per instance slot
+layout(std430, set = 0, binding = 70) readonly buffer ShutterJoints { mat4 shutterJoints[]; };
+layout(std430, set = 0, binding = 71) readonly buffer ShutterWeights { float shutterWeights[]; };
+
+layout(push_constant) uniform Params {
+    uint capture;    // 1: take the rows (motion rows or this frame's), 0: move
+    float t;         // 0: last frame .. 1: this one (beyond: extrapolated)
+    uint instances;  // instance slots
+    uint weights;    // blend shape weights with last frame's (0: none)
+    uint joints;     // 1: shutterJoints holds last frame's joints
+    uint objects;    // capture: 1 = rigid motion rows (Frame::objectMotion)
+} pc;
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i < pc.instances) {
+        Instance inst = instances[i];
+        bool used = inst.draw != kFreeSlot;
+        DrawInfo d = draws[used ? inst.draw : 0u];
+        if (pc.capture != 0u) {
+            if (used && pc.objects != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {
+                uint row = (d.motion + uint(inst.index)) * 3u;
+                for (uint r = 0u; r < 3u; ++r) {
+                    shutterRows[i * 3u + r] = motionRows[row + r];
+                }
+            } else {
+                for (uint r = 0u; r < 3u; ++r) {
+                    shutterRows[i * 3u + r] = inst.rows[r];
+                }
+            }
+        } else if (used && d.skin == kFreeSlot) {
+            for (uint r = 0u; r < 3u; ++r) {
+                instances[i].rows[r] = mix(shutterRows[i * 3u + r], inst.rows[r], pc.t);
+            }
+        } else if (used && pc.joints != 0u && inst.joints != kFreeSlot) {
+            for (uint j = inst.joints; j < inst.joints + d.jointCount; ++j) {
+                joints[j] = shutterJoints[j] + (joints[j] - shutterJoints[j]) * pc.t;
+            }
+        }
+    }
+    if (pc.capture == 0u && i < pc.weights) {
+        blendWeights[i] = mix(shutterWeights[i], blendWeights[i], pc.t);
+    }
+}

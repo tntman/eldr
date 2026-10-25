@@ -3,6 +3,7 @@
 #include "fullscreen.h"
 
 #include <algorithm>
+#include <cstddef>
 
 namespace vkr {
 
@@ -10,6 +11,9 @@ namespace {
 
 const uint32_t kTaaFrag[] =
 #include "taa.frag.inc"
+;
+const uint32_t kTaaUpscaleFrag[] =
+#include "taa_upscale.frag.inc"
 ;
 const uint32_t kFilmComp[] =
 #include "film.comp.inc"
@@ -20,6 +24,7 @@ constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 struct TaaParams {  // mirror of the push block in taa.frag
     float reprojection[16];
     float params[4];
+    float upscale[4];  // UPSCALE only
 };
 
 struct FilmParams {  // mirror of the push block in film.comp
@@ -66,6 +71,7 @@ TemporalAA::TemporalAA(Device &device)
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
     _pipeline = CreateFullscreenPipeline(d, _layout, kTaaFrag, sizeof(kTaaFrag), kFormat);
+    _upscale = CreateFullscreenPipeline(d, _layout, kTaaUpscaleFrag, sizeof(kTaaUpscaleFrag), kFormat);
 
     const VkDescriptorSetLayoutBinding film[6] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
@@ -100,6 +106,7 @@ TemporalAA::~TemporalAA()
     vkDeviceWaitIdle(d);
     _Destroy();
     vkDestroyPipeline(d, _pipeline, nullptr);
+    vkDestroyPipeline(d, _upscale, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
     vkDestroyPipeline(d, _film, nullptr);
@@ -120,8 +127,7 @@ void TemporalAA::_Destroy()
     _dev.Destroy(_weights);
 }
 
-void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth,
-                        VkImageView velocity)
+void TemporalAA::Resize(uint32_t width, uint32_t height)
 {
     _Destroy();
     _width = width;
@@ -171,55 +177,75 @@ void TemporalAA::Resize(uint32_t width, uint32_t height, VkImageView color, VkIm
     ai.pSetLayouts = &_setLayout;
     Check(vkAllocateDescriptorSets(_dev.device, &ai, &_set), "vkAllocateDescriptorSets");
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[4] = {
-        {_nearest, color, ro}, {_linear, _history.view, ro},
-        {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {_nearest, velocity, ro}};
-    VkWriteDescriptorSet writes[4] = {};
-    for (uint32_t i = 0; i < 4; ++i) {
-        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet = _set;
-        writes[i].dstBinding = i;
-        writes[i].descriptorCount = 1;
-        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[i].pImageInfo = &images[i];
-    }
-    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
+    const VkDescriptorImageInfo history{_linear, _history.view, ro};
+    const VkWriteDescriptorSet historyWrite{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _set, 1, 0, 1,
+                                            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &history};
+    vkUpdateDescriptorSets(_dev.device, 1, &historyWrite, 0, nullptr);
 
     ai.pSetLayouts = &_filmSetLayout;
     Check(vkAllocateDescriptorSets(_dev.device, &ai, &_filmSet), "vkAllocateDescriptorSets");
     const VkImageLayout general = VK_IMAGE_LAYOUT_GENERAL;
-    const VkDescriptorImageInfo film[5] = {{_nearest, color, ro}, {_nearest, _history.view, ro},
+    const VkDescriptorImageInfo film[5] = {{}, {_nearest, _history.view, ro},
                                            {VK_NULL_HANDLE, _sums.view, general},
                                            {VK_NULL_HANDLE, _weights.view, general},
                                            {VK_NULL_HANDLE, _resolved.view, general}};
     const VkDescriptorBufferInfo active{_active.buffer, 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet filmWrites[6] = {};
-    filmWrites[5] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _filmSet, 5, 0, 1,
+    VkWriteDescriptorSet filmWrites[5] = {};
+    filmWrites[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _filmSet, 5, 0, 1,
                      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &active};
-    for (uint32_t i = 0; i < 5; ++i) {
-        filmWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        filmWrites[i].dstSet = _filmSet;
-        filmWrites[i].dstBinding = i;
-        filmWrites[i].descriptorCount = 1;
-        filmWrites[i].descriptorType = i < 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        filmWrites[i].pImageInfo = &film[i];
+    for (uint32_t i = 1; i < 5; ++i) {
+        filmWrites[i - 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        filmWrites[i - 1].dstSet = _filmSet;
+        filmWrites[i - 1].dstBinding = i;
+        filmWrites[i - 1].descriptorCount = 1;
+        filmWrites[i - 1].descriptorType = i < 2 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                                                 : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        filmWrites[i - 1].pImageInfo = &film[i];
     }
-    vkUpdateDescriptorSets(_dev.device, 6, filmWrites, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 5, filmWrites, 0, nullptr);
 }
 
-void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float alpha)
+void TemporalAA::SetInput(uint32_t width, uint32_t height, VkImageView color, VkImageView depth,
+                          VkImageView velocity)
+{
+    _inWidth = width;
+    _inHeight = height;
+    const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    const VkDescriptorImageInfo images[3] = {
+        {_nearest, color, ro}, {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}, {_nearest, velocity, ro}};
+    VkWriteDescriptorSet writes[4] = {};
+    for (uint32_t i = 0; i < 4; ++i) {
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = i < 3 ? _set : _filmSet;
+        writes[i].dstBinding = i == 0 || i == 3 ? 0 : i + 1;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[i].pImageInfo = &images[i == 3 ? 0 : i];
+    }
+    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
+}
+
+void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2])
 {
     TaaParams params{};
     std::copy(reprojection, reprojection + 16, params.reprojection);
     params.params[0] = alpha;
     params.params[1] = 1.0f / _width;
     params.params[2] = 1.0f / _height;
+    const bool upscale = _inWidth != _width || _inHeight != _height;
+    if (upscale) {
+        params.upscale[0] = offset[0];
+        params.upscale[1] = offset[1];
+        params.upscale[2] = float(_inWidth) / float(_width);
+        params.upscale[3] = float(_inHeight) / float(_height);
+    }
 
     ImageBarrier(cmd, _resolved.image, Color(), VK_PIPELINE_STAGE_2_NONE, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    DrawFullscreen(cmd, _pipeline, _layout, _set, _resolved.view, _width, _height, false,
-                   VK_SHADER_STAGE_FRAGMENT_BIT, &params, sizeof(params));
+    DrawFullscreen(cmd, upscale ? _upscale : _pipeline, _layout, _set, _resolved.view, _width, _height, false,
+                   VK_SHADER_STAGE_FRAGMENT_BIT, &params,
+                   upscale ? sizeof(params) : uint32_t(offsetof(TaaParams, upscale)));
     _CopyToHistory(cmd, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                    VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 }

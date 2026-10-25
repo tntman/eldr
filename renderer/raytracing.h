@@ -41,6 +41,9 @@ public:
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
         uint32_t skinnedCapacity = 0;
+        // The instances moved without a new Scene::Gpu::version (motion
+        // blur time samples): the TLAS is rebuilt.
+        bool moving = false;
         // Displaced meshes' BLASes from their displaced vertices
         // (rt_displace.comp; Scene::Gpu::SlotGeometry::displaced) at this
         // displacement scale; 0: from their rest vertices.
