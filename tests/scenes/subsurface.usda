@@ -8,7 +8,7 @@
 # skin: subsurface 1, subsurface_color, subsurface_radius times
 # subsurface_scale), an OpenPBR jade ball and a thin-walled leaf, with the
 # sun low behind them so it shines through the ears and the leaf. Compare
-# with hdvk:subsurface off: the light under the skin softens, and the
+# with eldr:subsurface off: the light under the skin softens, and the
 # ears and leaf glow.
 
 def Camera "cam"

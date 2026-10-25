@@ -15,7 +15,7 @@ namespace vkr {
 // parallax correction (the probe's box, then the distances), blended by
 // influence over the dome's specular light. There is no UsdLux schema for
 // probes. Authored ones (Frame::authoredProbes) are meshes flagged with
-// primvars:hdvk:reflectionProbe, typically an invisible Cube: never drawn,
+// primvars:eldr:reflectionProbe, typically an invisible Cube: never drawn,
 // their world bounds are the influence and parallax box and its centre the
 // capture point. Without any, one automatic probe at the centre of the
 // scene's bounds (or Frame::probePosition) covers everything. They are
@@ -24,7 +24,7 @@ namespace vkr {
 // frames while it keeps changing).
 //
 // Planar reflections: for each mirror mesh (Scene::Gpu::mirrors: flagged
-// by primvars:hdvk:planarReflection, or the largest flat glossy surface;
+// by primvars:eldr:planarReflection, or the largest flat glossy surface;
 // up to Frame::planarCount) the scene mirrored in its plane, clipped at it
 // (an oblique near plane) and rendered by a renderer of its own at a
 // fraction of the frame's size every frame the mirror is in view; the

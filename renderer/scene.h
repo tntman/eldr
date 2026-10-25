@@ -362,7 +362,7 @@ struct Mesh {
     // but still hiding what's behind it and casting shadows.
     bool holdout = false;
     // Planar reflections: make this (flat) mesh the mirror
-    // (primvars:hdvk:planarReflection), whatever its size and roughness.
+    // (primvars:eldr:planarReflection), whatever its size and roughness.
     bool planarReflection = false;
     // Camera-facing primitives, turned towards each pass's eye by mesh.vert
     // (its Facing): every vertex sits on its curve or point, `normals` hold
@@ -371,7 +371,7 @@ struct Mesh {
     // zero at the centre). Never skinned or displaced.
     enum Facing : uint32_t { kNotFacing, kFacingRibbon, kFacingDisc };
     Facing facing = kNotFacing;
-    // Reflection probes: this mesh only marks one (primvars:hdvk:reflectionProbe):
+    // Reflection probes: this mesh only marks one (primvars:eldr:reflectionProbe):
     // never drawn, its world bounds are the probe's influence box.
     bool reflectionProbe = false;
 

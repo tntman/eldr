@@ -168,7 +168,7 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
     std::vector<int32_t> primId(pixels), instanceId(pixels);
     vkr::Renderer::Targets read;
     read.color = color.data();
-    // Exposed but neither bloomed nor tonemapped, whatever hdvk:tonemapper is.
+    // Exposed but neither bloomed nor tonemapped, whatever eldr:tonemapper is.
     std::vector<uint16_t> linearColor(linear ? pixels * 4 : 0);
     read.linearColor = linear ? linearColor.data() : nullptr;
     read.depth = depth.data();

@@ -215,7 +215,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
-    // Render products at their own framing (hdvk:productResolution): the
+    // Render products at their own framing (eldr:productResolution): the
     // first raster product's resolution, pixel aspect ratio and data window
     // when they aren't the buffers' size (usdrecord sizes them from -w and
     // the camera; husk from the product). The app's colour, depth and ids

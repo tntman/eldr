@@ -84,18 +84,18 @@ public:
         // is linear from the last frame's to this one's (transforms, joints,
         // blend shape weights, camera), as the motion vectors are.
         bool motionBlurTimeSamples = true;
-        // Sampled motion (the Hydra layer's hdvk:sampledMotion): the motion
+        // Sampled motion (the Hydra layer's eldr:sampledMotion): the motion
         // the blur and the time samples use is the scene's own through the
         // shutter, so a first frame blurs too. Meshes carry it as
         // prevTransforms (Mesh::shutterMotion); the camera one frame before
         // is here (viewProj and cameraPos when it doesn't move).
         bool sampledMotion = false;
-        // Deformation blur (hdvk:deformationBlur): meshes with
+        // Deformation blur (eldr:deformationBlur): meshes with
         // Mesh::velocities (point caches, sampled through the shutter)
         // move along them in time samples and motion vectors. Off: they
         // are ignored.
         bool deformationBlur = true;
-        // Residual DOF (hdvk:dofResidualBlur): with dofJitter the post DOF
+        // Residual DOF (eldr:dofResidualBlur): with dofJitter the post DOF
         // still runs on each film sample, its circle of confusion scaled
         // by 1/sqrt(filmSamples), to fill the gaps between lens samples
         // (EEVEE's).
@@ -144,14 +144,14 @@ public:
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
-        // hdvk:productResolution: products render at the first raster
+        // eldr:productResolution: products render at the first raster
         // product's resolution, pixel aspect ratio and data window (the
         // Hydra layer's; the app's buffers get that image resampled).
         bool productResolution = true;
         // Also exposes the beauty without bloom or tonemapping for
         // Renderer::Read (Targets::linearColor): an EXR's linear beauty.
         bool linearColor = false;
-        bool linearBeauty = true;  // hdvk:productLinear: the Hydra layer sets linearColor for products
+        bool linearBeauty = true;  // eldr:productLinear: the Hydra layer sets linearColor for products
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
@@ -248,7 +248,7 @@ public:
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
         uint32_t planarCount = 4;        // mirrors rendered, the largest first (at most 4)
         bool probeNormalize = true;     // probes scaled by local (GI/SSGI) over captured ambient light
-        bool authoredProbes = true;     // meshes flagged primvars:hdvk:reflectionProbe are the probes (probes.h)
+        bool authoredProbes = true;     // meshes flagged primvars:eldr:reflectionProbe are the probes (probes.h)
         bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
         // OpenVDB volumes, raymarched over the shaded image (VolumePass).
         bool volumes = true;

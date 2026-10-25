@@ -9,7 +9,7 @@
 # opacity 0.4) in front of the step3-style texture quad, and a water plane
 # (opacity 0.5) over a checker floor. Highlights stay, diffuse light and the
 # background mix by opacity; translucent meshes cast shadows as dark as
-# they are opaque (hdvk:translucentShadows).
+# they are opaque (eldr:translucentShadows).
 
 def Camera "cam"
 {

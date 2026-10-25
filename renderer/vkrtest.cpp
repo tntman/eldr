@@ -1236,7 +1236,7 @@ int main()
             vkr::Renderer finalRun(device);
             converge(finalRun, &frames);
             Expect(frames == 9 && finalRun.GetStats().filmActivePixels == 0,
-                   "adaptive sampling: on in a final-quality film by hdvk:adaptiveFinalThreshold");
+                   "adaptive sampling: on in a final-quality film by eldr:adaptiveFinalThreshold");
             frame.sceneVersion = 100;
             Render(finalRun, scene, frame);
             converge(finalRun, &frames);
@@ -3405,7 +3405,7 @@ int main()
                                                                     "probeCapture") != 0),
                    "reflection probe: captured once for a still scene");
 
-            // Authored probes (primvars:hdvk:reflectionProbe): a box over
+            // Authored probes (primvars:eldr:reflectionProbe): a box over
             // the mirror's left half reaching back past the emitter. It is
             // never drawn; inside it the probe at its centre reflects the
             // emitter, outside it the (black) dome shows.
@@ -3475,7 +3475,7 @@ int main()
             chrome->roughness = 0.5f;  // no longer glossy: no mirror
             scene.Commit();
             Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflection: only glossy floors");
-            floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
+            floor->planarReflection = true;  // primvars:eldr:planarReflection, at roughness 0.5
             scene.Commit();
             const float flagged = Render(renderer, scene, frame).At(32, 16, 0);
             Expect(flagged > 0.1f, "planar reflection: a flagged mirror");

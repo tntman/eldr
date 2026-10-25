@@ -6,7 +6,7 @@
 
 # Soft sun shadows: a 4 degree sun (inputs:angle; the real one is 0.53)
 # casts contact-hardening shadows, sharp where the posts meet the ground
-# and soft under the high beam. Compare hdvk:softSunShadows on and off.
+# and soft under the high beam. Compare eldr:softSunShadows on and off.
 
 def Camera "cam"
 {

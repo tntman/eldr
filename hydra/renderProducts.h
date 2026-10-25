@@ -32,7 +32,7 @@ protected:
 // Karma's names). Cryptomatte vars become layers <name>00 (rank 0 and 1)
 // with the spec's metadata (cryptomatte/<key>/name, hash, conversion,
 // manifest).
-// With hdvk:productResolution the frame renders at the first raster
+// With eldr:productResolution the frame renders at the first raster
 // product's Framing (renderPass.cpp), and the EXR's display window is the
 // product's resolution, its data window the part rendered.
 // ponytail: one size for all products (the first's); an extra AOV Hydra

@@ -4,10 +4,10 @@
     metersPerUnit = 1
 )
 
-# Cornell box for global illumination (hdvk:gi): a closed room, open at the
+# Cornell box for global illumination (eldr:gi): a closed room, open at the
 # front, lit only by the rect light under its ceiling, so the ceiling, the
 # shadows and the colour on the white walls all come from bounced light.
-# A chrome ball shows ray-traced reflections (hdvk:rtReflections).
+# A chrome ball shows ray-traced reflections (eldr:rtReflections).
 
 def Camera "cam"
 {

@@ -33,10 +33,10 @@ viewProj = frustum.ComputeViewMatrix() * frustum.ComputeProjectionMatrix()
 
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-engine.SetRendererSetting("hdvk:postProcess", False)
+engine.SetRendererSetting("eldr:postProcess", False)
 # The scene's dome is an HDRI with a sun; extracted (the default) it adds a
 # white light the tint checks below weren't made for.
-engine.SetRendererSetting("hdvk:domeSun", False)
+engine.SetRendererSetting("eldr:domeSun", False)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
@@ -88,17 +88,17 @@ def compare(setting, prim, measure=mean):
     return on, off
 
 
-on, off = compare("hdvk:specularWorkflow", "/specularWorkflow")
+on, off = compare("eldr:specularWorkflow", "/specularWorkflow")
 expect(on[0] - on[2] > off[0] - off[2] + 0.02, "specular workflow: orange specularColor highlights", on, off)
 for prim in ("/clearcoat", "/carPaint", "/amberCoat"):
-    on, off = compare("hdvk:clearcoat", prim, peak)
+    on, off = compare("eldr:clearcoat", prim, peak)
     expect(sum(on) > 1.5 * sum(off), prim[1:] + ": the coat's sharp highlight", on, off)
-on, off = compare("hdvk:clearcoat", "/amberCoat")
+on, off = compare("eldr:clearcoat", "/amberCoat")
 expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "amberCoat: the coat colour tints the base", on, off)
-on, off = compare("hdvk:clearcoat", "/previewAmber")
+on, off = compare("eldr:clearcoat", "/previewAmber")
 expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "previewAmber: eldr:clearcoatColor tints the base", on, off)
 for prim in ("/velvet", "/fuzz"):
-    on, off = compare("hdvk:sheen", prim)
+    on, off = compare("eldr:sheen", prim)
     expect(sum(on) > 1.15 * sum(off), prim[1:] + ": sheen brightens the sphere", on, off)
 
 
@@ -107,10 +107,10 @@ def hue(rgb):
 
 
 for prim in ("/oilSlick", "/anodized"):
-    on, off = compare("hdvk:thinFilm", prim)
+    on, off = compare("eldr:thinFilm", prim)
     expect(max(abs(a - b) for a, b in zip(hue(on), hue(off))) > 0.05, prim[1:] + ": the film colours it", on, off)
 for prim in ("/brushedSteel", "/brushedGold"):
-    on, off = compare("hdvk:anisotropicSpecular", prim, lambda image, prim: list(pixels(image, prim)))
+    on, off = compare("eldr:anisotropicSpecular", prim, lambda image, prim: list(pixels(image, prim)))
     change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
     expect(change > 0.1, prim[1:] + ": the highlights stretch (%.2f of the image changes)" % change)
 
@@ -127,20 +127,20 @@ def flat(image, prim):
     return sum(sorted(levels.values())[-3:]) / sum(levels.values())
 
 
-on, off = compare("hdvk:toon", "/toon", flat)
+on, off = compare("eldr:toon", "/toon", flat)
 expect(on > 0.6 and off < 0.3, "toon: eldr:toonBands bands the sphere (%.2f flat, %.2f off)" % (on, off))
 plain = flat(render({}), "/plain")
-everything = flat(render({"hdvk:toonBands": 3}), "/plain")
-engine.SetRendererSetting("hdvk:toonBands", 0)
-expect(everything > 0.6 and plain < 0.3, "hdvk:toonBands bands every material (%.2f flat, %.2f off)" % (everything, plain))
-on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
+everything = flat(render({"eldr:toonBands": 3}), "/plain")
+engine.SetRendererSetting("eldr:toonBands", 0)
+expect(everything > 0.6 and plain < 0.3, "eldr:toonBands bands every material (%.2f flat, %.2f off)" % (everything, plain))
+on, off = compare("eldr:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
 change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
 expect(change > 0.1, "hair: strand highlights (%.2f of the image changes)" % change)
 # primvars:eldr:hair = false: cables and ropes shade as ordinary surfaces,
 # the same with hair shading on and off.
 cables = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/hair"))
 cables.CreatePrimvar("eldr:hair", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
-on, off = compare("hdvk:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
+on, off = compare("eldr:hairShading", "/hair", lambda image, prim: list(pixels(image, prim)))
 cables.RemovePrimvar("eldr:hair")
 change = sum(abs(a - b) for p, q in zip(on, off) for a, b in zip(p, q)) / sum(sum(p) for p in off)
 expect(change < 0.001, "primvars:eldr:hair = false: no hair shading (%.4f of the image changes)" % change)
@@ -162,8 +162,8 @@ def quadrants(image, prim):
 red, green, blue, white = quadrants(render({}), "/texturedSpecular")
 expect(red[0] > 2 * red[1] and green[1] > 2 * green[0] and blue[2] > 2 * blue[0] and min(white) > 0.0,
        "textured specularColor: each quarter reflects in its colour", red, green, blue, white)
-grey = quadrants(render({"hdvk:materialGraphs": False}), "/texturedSpecular")
-engine.SetRendererSetting("hdvk:materialGraphs", True)
+grey = quadrants(render({"eldr:materialGraphs": False}), "/texturedSpecular")
+engine.SetRendererSetting("eldr:materialGraphs", True)
 expect(all(min(q) > 0.2 * max(white) / 25 and max(q) < 1.5 * min(q) for q in grey),
        "textured specularColor without programs: 0.04 grey, not black", *grey)
 
@@ -172,13 +172,13 @@ expect(all(min(q) > 0.2 * max(white) / 25 and max(q) < 1.5 * min(q) for q in gre
 # Textured Lobe Inputs off the weight is its default 0, the same metal
 # everywhere.
 film = quadrants(render({}), "/texturedFilm")
-bare = quadrants(render({"hdvk:texturedLobes": False}), "/texturedFilm")
-engine.SetRendererSetting("hdvk:texturedLobes", True)
+bare = quadrants(render({"eldr:texturedLobes": False}), "/texturedFilm")
+engine.SetRendererSetting("eldr:texturedLobes", True)
 shift = [max(abs(a - b) for a, b in zip(hue(f), hue(g))) for f, g in zip(film, bare)]
 expect(shift[0] > 3 * shift[1] and shift[3] > 3 * shift[2],
        "textured thin_film_weight: film where the texture is high (hue shifts %s)" % [round(x, 3) for x in shift])
 expect(max(abs(a - b) for q in bare for a, b in zip(hue(q), hue(bare[0]))) < 0.01,
-       "hdvk:texturedLobes off: the constant weight everywhere", *bare)
+       "eldr:texturedLobes off: the constant weight everywhere", *bare)
 
 
 # A textured transmission weight: where it is high (bottom-left,
@@ -189,13 +189,13 @@ def luminance(c):
 
 
 clear = quadrants(render({}), "/texturedTransmission")
-opaque = quadrants(render({"hdvk:texturedTransmission": False}), "/texturedTransmission")
-engine.SetRendererSetting("hdvk:texturedTransmission", True)
+opaque = quadrants(render({"eldr:texturedTransmission": False}), "/texturedTransmission")
+engine.SetRendererSetting("eldr:texturedTransmission", True)
 shift = [abs(luminance(a) - luminance(b)) / luminance(b) for a, b in zip(clear, opaque)]
 expect(shift[0] > 3 * shift[1] and shift[3] > 3 * shift[2],
        "textured transmission: see-through where the texture is high (changes %s)" % [round(x, 3) for x in shift])
 expect(max(luminance(q) for q in opaque) < 1.1 * min(luminance(q) for q in opaque),
-       "hdvk:texturedTransmission off: opaque everywhere", *opaque)
+       "eldr:texturedTransmission off: opaque everywhere", *opaque)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

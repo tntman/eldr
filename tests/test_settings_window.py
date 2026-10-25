@@ -28,7 +28,7 @@ glContext.create()
 glContext.makeCurrent(surface)
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-settings = [s for s in engine.GetRendererSettingsList() if str(s.key).startswith("hdvk:")]
+settings = [s for s in engine.GetRendererSettingsList() if str(s.key).startswith("eldr:")]
 
 groups = Groups(settings)
 other = [str(s.key) for title, g in groups if title == "Other" for s in g]
@@ -41,16 +41,16 @@ window = _SettingsWindow(SimpleNamespace(qMainWindow=None), engine)
 window.Rebuild()
 rows = {str(s.key): (s, label, editor) for s, label, editor, _ in window._rows}
 expect(len(rows) == len(settings), "a row per setting")
-_, label, box = rows["hdvk:ssr"]
+_, label, box = rows["eldr:ssr"]
 box.setChecked(False)
-expect(engine.GetRendererSetting("hdvk:ssr") is False and label.font().bold(), "a checkbox sets a flag, marked changed")
-rows["hdvk:shadowResolution"][2].setValue(1024)
-expect(engine.GetRendererSetting("hdvk:shadowResolution") == 1024, "a spin box sets an int")
+expect(engine.GetRendererSetting("eldr:ssr") is False and label.font().bold(), "a checkbox sets a flag, marked changed")
+rows["eldr:shadowResolution"][2].setValue(1024)
+expect(engine.GetRendererSetting("eldr:shadowResolution") == 1024, "a spin box sets an int")
 window._filter.setText("fog")
-expect(rows["hdvk:ssr"][2].isHidden() and not rows["hdvk:fogDensity"][2].isHidden(), "filter")
+expect(rows["eldr:ssr"][2].isHidden() and not rows["eldr:fogDensity"][2].isHidden(), "filter")
 window._filter.setText("")
 window._ResetAll()
-expect(engine.GetRendererSetting("hdvk:ssr") is True and engine.GetRendererSetting("hdvk:shadowResolution") == 2048,
+expect(engine.GetRendererSetting("eldr:ssr") is True and engine.GetRendererSetting("eldr:shadowResolution") == 2048,
        "reset to defaults")
 
 del engine

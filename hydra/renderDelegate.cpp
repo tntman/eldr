@@ -218,7 +218,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Indirect Light Clamp (radiance, 0 = off)", t2.indirectClamp, VtValue(frame.indirectClamp)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
-        {"Linear EXR Beauty (render products ignore hdvk:tonemapper)", t2.productLinear, VtValue(frame.linearBeauty)},
+        {"Linear EXR Beauty (render products ignore eldr:tonemapper)", t2.productLinear, VtValue(frame.linearBeauty)},
         {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
@@ -234,7 +234,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
         {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
         {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},
-        {"Authored Reflection Probes (primvars:hdvk:reflectionProbe)", t2.authoredProbes, VtValue(frame.authoredProbes)},
+        {"Authored Reflection Probes (primvars:eldr:reflectionProbe)", t2.authoredProbes, VtValue(frame.authoredProbes)},
         {"Normalize Reflection Probes (by GI/SSGI light)", t2.probeNormalize, VtValue(frame.probeNormalize)},
         {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
@@ -504,7 +504,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["volumeMemory"] = size_t(_scene->VolumeBytes());  // NanoVDB grids
     stats["hostMemoryUsed"] = size_t(memory.host);
     stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
-    stats["rayTracingSupported"] = _device->rayTracing;  // else the hdvk:rt* settings are ignored
+    stats["rayTracingSupported"] = _device->rayTracing;  // else the eldr:rt* settings are ignored
     stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
     stats["peakMemory"] = size_t(memory.peakDeviceLocal);
     stats["vramSize"] = size_t(memory.heapSize);

@@ -7,14 +7,14 @@ frame is fine for final quality).
 | File | What is in it |
 |---|---|
 | [features.md](features.md) | How the renderer works, area by area: frame pipeline, film and TAA, lighting, GI, reflections, transparency, volumes, materials, geometry, camera, output (AOVs, EXR, Cryptomatte), performance, USD authoring conventions, known limitations. |
-| [settings.md](settings.md) | Every `hdvk:` render setting, in the order of usdview's Eldr > Render Settings window: type, default, effect, when to change it, cost. |
+| [settings.md](settings.md) | Every `eldr:` render setting, in the order of usdview's Eldr > Render Settings window: type, default, effect, when to change it, cost. |
 | [eevee-lardomar.md](eevee-lardomar.md) | Design notes on what Eldr can learn from Blender EEVEE (in Swedish). |
 
 ## Keeping the docs current
 
 - **New or changed setting**: add or edit its row in `settings.md`, in the
   table of the group that `GROUPS` in `usdview/hdvkUsdview/settings.py` puts it
-  in. Give the key in backticks (`hdvk:name`). `tests/test_docs.py` (ctest
+  in. Give the key in backticks (`eldr:name`). `tests/test_docs.py` (ctest
   `docs`) fails when the renderer exposes a key the page lacks, or the page
   names a key the renderer no longer has.
 - **New feature**: describe it in the matching section of `features.md`, with

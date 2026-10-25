@@ -1,6 +1,6 @@
 """Subdivision surfaces: tests/scenes/subdivision.usda refined with the
 render params' complexity (usdview's Complexity menu), within the
-hdvk:subdivision and hdvk:maxRefineLevel settings.
+eldr:subdivision and eldr:maxRefineLevel settings.
 Run: usdenv.cmd python tests\\test_subdivision.py"""
 import os
 import sys
@@ -60,12 +60,12 @@ for complexity, level in ((1.0, 0), (1.1, 1), (1.2, 2), (1.3, 3)):
 expect(engine.GetRenderStats()["meshes"] == 7, "the smooth cube's GeomSubset is a mesh of its own")
 
 # Settings re-sync the meshes without any scene change.
-engine.SetRendererSetting("hdvk:maxRefineLevel", 1)
+engine.SetRendererSetting("eldr:maxRefineLevel", 1)
 expect(triangles(1.3) == expected(1), "maxRefineLevel clamps the level")
-engine.SetRendererSetting("hdvk:subdivision", False)
+engine.SetRendererSetting("eldr:subdivision", False)
 expect(triangles(1.3) == expected(0), "subdivision off draws the cages")
-engine.SetRendererSetting("hdvk:subdivision", True)
-engine.SetRendererSetting("hdvk:maxRefineLevel", 3)
+engine.SetRendererSetting("eldr:subdivision", True)
+engine.SetRendererSetting("eldr:maxRefineLevel", 3)
 expect(triangles(1.2) == expected(2), "back to the display style's level")
 
 del engine  # release GL resources while the context is still current

@@ -1,7 +1,7 @@
 """Holdouts through Hydra: gprims with primvars:karma:object:holdoutmode
 (Karma's) or in the active
 UsdRenderPass's matte collection render black with zero alpha over a red
-wall; hdvk:holdouts off draws them as usual.
+wall; eldr:holdouts off draws them as usual.
 Run: usdenv.cmd python tests\\test_holdout.py"""
 import sys
 
@@ -74,7 +74,7 @@ def expect(ok, what):
 
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-engine.SetRendererSetting("hdvk:postProcess", False)
+engine.SetRendererSetting("eldr:postProcess", False)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
@@ -112,9 +112,9 @@ expect(black(rgb(image, -1, -1)) and rgb(image, 1, -1)[1] > 0.9, "the active ren
 engine.SetActiveRenderPassPrimPath(Sdf.Path())
 image = render()
 expect(rgb(image, -1, -1)[1] > 0.9, "no active render pass: no matte collection")
-engine.SetRendererSetting("hdvk:holdouts", False)
+engine.SetRendererSetting("eldr:holdouts", False)
 image = render()
-expect(rgb(image, -1, 1)[1] > 0.9, "hdvk:holdouts off: drawn as usual")
+expect(rgb(image, -1, 1)[1] > 0.9, "eldr:holdouts off: drawn as usual")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

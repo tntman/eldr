@@ -1,4 +1,4 @@
-"""Light shapes through Hydra: with hdvk:lightShapesVisible two sphere lights
+"""Light shapes through Hydra: with eldr:lightShapesVisible two sphere lights
 show to the camera as their radiance, except one with Karma's
 inputs:karma:light:renderlightgeo = false ("Render Light Geometry").
 Run: usdenv.cmd python tests\test_light_shapes.py"""
@@ -52,8 +52,8 @@ def expect(ok, what):
 
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-engine.SetRendererSetting("hdvk:postProcess", False)
-engine.SetRendererSetting("hdvk:lightShapesVisible", True)
+engine.SetRendererSetting("eldr:postProcess", False)
+engine.SetRendererSetting("eldr:lightShapesVisible", True)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()

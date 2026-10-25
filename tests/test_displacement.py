@@ -29,11 +29,11 @@ frustum = camera.frustum
 
 
 def render(**settings):
-    """An image with these hdvk: settings; noisy features off, so images compare."""
+    """An image with these eldr: settings; noisy features off, so images compare."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     for name, value in dict(taa=False, autoExposure=False, ambientOcclusion=False, ssr=False, **settings).items():
-        engine.SetRendererSetting("hdvk:" + name, value)
+        engine.SetRendererSetting("eldr:" + name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()
