@@ -305,6 +305,65 @@ EnvironmentMaps Prefilter(std::vector<CubeLevel> chain)
 
 EnvironmentMaps BuildEnvironment(const Texture *latlong)
 {
+    return BuildEnvironment(latlong, 0.0f, nullptr);
+}
+
+EnvironmentMaps BuildEnvironment(const Texture *latlong, float threshold, ExtractedSun *sun)
+{
+    // Clamped to the threshold (luminance), so the sun's energy leaves the
+    // cube and the SH and becomes the extracted light.
+    auto clampSun = [threshold](Vec3 c) {
+        const float lum = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+        return threshold > 0.0f && lum > threshold ? c * (threshold / lum) : c;
+    };
+    if (sun) {
+        *sun = ExtractedSun{};
+    }
+    if (latlong && sun && threshold > 0.0f) {
+        // Every texel over the threshold: the light beyond it times the
+        // texel's solid angle, its direction weighted by that light's
+        // luminance; the spread of those directions gives the size.
+        Vec3 irradiance, weighted;
+        double weight = 0, cosSum = 0;
+        std::vector<std::pair<Vec3, float>> hot;
+        const float dPhi = 2 * kPi / latlong->width, dTheta = kPi / latlong->height;
+        for (uint32_t y = 0; y < latlong->height; ++y) {
+            const float theta = (1.0f - (y + 0.5f) / latlong->height) * kPi;  // rows bottom-up
+            const float omega = dPhi * dTheta * std::sin(theta);
+            for (uint32_t x = 0; x < latlong->width; ++x) {
+                const Vec3 c = Texel(*latlong, x, y);
+                const float lum = 0.2126f * c.x + 0.7152f * c.y + 0.0722f * c.z;
+                if (!(lum > threshold)) {
+                    continue;
+                }
+                const float phi = ((x + 0.5f) / latlong->width - 0.25f) * 2 * kPi;
+                const Vec3 d{std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi)};
+                const Vec3 extra = c * ((lum - threshold) / lum * omega);
+                const float w = (lum - threshold) * omega;
+                irradiance = irradiance + extra;
+                weighted = weighted + d * w;
+                weight += w;
+                hot.push_back({d, w});
+            }
+        }
+        if (weight > 0) {
+            const Vec3 dir = Normalize(weighted);
+            for (const auto &[d, w] : hot) {
+                cosSum += double(Dot(d, dir)) * w;
+            }
+            // A uniform disk of half angle a has a mean cosine of
+            // (1 + cos a) / 2 over its area.
+            const float cosHalf = std::clamp(float(2 * cosSum / weight - 1), -1.0f, 1.0f);
+            sun->direction[0] = dir.x;
+            sun->direction[1] = dir.y;
+            sun->direction[2] = dir.z;
+            sun->irradiance[0] = irradiance.x;
+            sun->irradiance[1] = irradiance.y;
+            sun->irradiance[2] = irradiance.z;
+            sun->angle = 2 * std::acos(cosHalf) * 180 / kPi;
+        }
+    }
+
     // Base cube at roughly the source's resolution, at most 128 (Unreal's
     // default sky capture size).
     uint32_t size = 16;
@@ -326,7 +385,7 @@ EnvironmentMaps BuildEnvironment(const Texture *latlong)
                     for (int sx = 0; sx < 4; ++sx) {
                         const Vec3 d = Normalize(CubeDir(face, (x + (sx + 0.5f) / 4) / size,
                                                          (y + (sy + 0.5f) / 4) / size));
-                        sum = sum + SampleLatlong(*latlong, d);
+                        sum = sum + clampSun(SampleLatlong(*latlong, d));
                     }
                 }
                 chain[0].At(face, x, y) = sum * (1.0f / 16);

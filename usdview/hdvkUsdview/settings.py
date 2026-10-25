@@ -11,7 +11,7 @@ GROUPS = [
      "depthPrepass frustumCulling cullPixels lod lodBias subdivision maxRefineLevel displacement "
      "displacementScale anisotropy shareFrame extraAovs renderProducts pipelineCache pipelinePrewarm"),
     ("Lighting",
-     "imageBasedLighting localLights clusteredLights emissiveLights emissiveLightThreshold ambientOcclusion "
+     "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
      "ssgiThickness ssgiBitmask directClamp indirectClamp"),
     ("Shadows",
@@ -19,14 +19,14 @@ GROUPS = [
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
      "rtDisplacement shadowJitter"),
     ("Reflections",
-     "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
-     "planarReflections planarScale"),
+     "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
+     "probeNormalize planarReflections planarScale planarCount"),
     ("Materials",
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "
      "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
     ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts refractionBackFaces multiRefraction refractionLayers holdoutAlpha"),
     ("Fog and volumes",
-     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
+     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",

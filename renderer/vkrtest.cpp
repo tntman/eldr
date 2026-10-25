@@ -2,6 +2,7 @@
 // scenes and checks pixels, depth, row order, PBR normalization, textures,
 // instancing, image-based lighting, shadows and the sky orientation.
 #include "renderer.h"
+#include "vkmath.h"
 
 #include <algorithm>
 #include <array>
@@ -761,6 +762,34 @@ int main()
             const float formFactor = 4.0f / (2.0f * 3.14159265f) * 2.0f * t * std::atan(t);
             Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * formFactor) - 1.0f) < 0.03f,
                    "rect light: exact form factor head-on");
+
+            // Textured (inputs:texture:file), 2 wide: black over its -X
+            // half, white over its +X half. The wall under each half takes
+            // its colour; Frame::lightTextures off: as without one.
+            rect->halfWidth[0] = 1.0f;
+            scene.Commit();
+            const Image plain = Render(renderer, scene);
+            auto halves = std::make_shared<vkr::Texture>();
+            halves->width = 64;
+            halves->height = 2;
+            halves->pixels.assign(64 * 2 * 4, 255);
+            for (int y = 0; y < 2; ++y) {
+                for (int x = 0; x < 32; ++x) {
+                    std::fill_n(&halves->pixels[(y * 64 + x) * 4], 3, uint8_t(0));
+                }
+            }
+            rect->texture = halves;
+            scene.Commit();
+            const Image textured = Render(renderer, scene);
+            Expect(textured.At(16, 32, 0) < 0.2f * textured.At(48, 32, 0) &&
+                       std::abs(textured.At(48, 32, 0) / plain.At(48, 32, 0) - 1.0f) < 0.2f,
+                   "rect light texture: dark under its black half, as bright under its white one");
+            vkr::Renderer::Frame untextured = IdentityFrame();
+            untextured.lightTextures = false;
+            Expect(MaxDifference(Render(renderer, scene, untextured), plain) == 0.0f,
+                   "Frame::lightTextures off: as without a texture");
+            rect->texture = nullptr;
+            rect->halfWidth[0] = 0.25f;
             rect->direction[2] = -1;  // now faces away from the wall
             scene.Commit();
             Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "rect light: dark behind its back");
@@ -990,6 +1019,45 @@ int main()
             const Image one = Render(renderer, scene, coarse);
             Expect(one.At(3, 32, 0) < 0.1f * lit && one.At(51, 32, 0) > 0.9f * lit,
                    "one 512 cascade: still shadowed, still lit beside");
+        }
+
+        {
+            // Dome sun extraction: the shadow scene lit by a dome whose sun
+            // (2x2 texels of radiance 500 towards (1, 0, -1)) the rest
+            // (0.02) can't outshine. Off: the sun is image-based light, no
+            // shadow. On: a distant light with shadows, as bright.
+            vkr::Scene scene(&device);
+            auto tex = std::make_shared<vkr::Texture>();
+            tex->width = 128;
+            tex->height = 64;
+            tex->format = vkr::Texture::Format::RGBA32F;
+            std::vector<float> texels(128 * 64 * 4, 0.02f);
+            for (uint32_t y : {31u, 32u}) {
+                for (uint32_t x : {15u, 16u}) {
+                    std::fill_n(&texels[(y * 128 + x) * 4], 3, 500.0f);
+                }
+            }
+            tex->pixels.resize(texels.size() * sizeof(float));
+            std::memcpy(tex->pixels.data(), texels.data(), tex->pixels.size());
+            scene.AddDome()->texture = tex;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->color[0] = 0.8f;
+            AddQuad(scene, -0.25f, -0.25f, 0.25f, 0.25f, -0.5f);
+            AddQuad(scene, 0.95f, 0.95f, 0.99f, 0.99f, 0.9f);
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.showEnvironment = false;
+            const Image off = Render(renderer, scene, frame);
+            Expect(off.At(3, 32, 0) > 0.8f * off.At(51, 32, 0), "dome sun off: the sun lights the shadow too");
+            Expect(scene.SetDomeSun(true, 10.0f), "dome sun: setting changed");
+            scene.Commit();
+            const Image on = Render(renderer, scene, frame);
+            const float shadowed = on.At(3, 32, 0), lit = on.At(51, 32, 0);
+            Expect(shadowed < 0.2f * lit, "dome sun: extracted, it casts a shadow");
+            Expect(std::abs(lit - off.At(51, 32, 0)) < 0.25f * lit, "dome sun: as bright as the dome's");
+            Expect(!scene.SetDomeSun(true, 10.0f), "dome sun: unchanged");
+            scene.SetDomeSun(false, 10.0f);
+            scene.Commit();
+            Expect(Render(renderer, scene, frame).At(51, 32, 0) == off.At(51, 32, 0), "dome sun off again: as before");
         }
 
         {
@@ -1627,6 +1695,53 @@ int main()
                 }
             }
             Expect(brightest < 0.01f, "GI leaks no sunlight into a closed room");
+
+        }
+
+        if (device.rayTracing) {
+            // Fog in a closed room (walls facing in, the camera inside)
+            // under a white dome: with GI, the dome's light in the fog comes
+            // from the probes, which see only the dark room.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.8f);
+            white->roughness = 1;
+            const vkr::Vec3 center{0, 0, -0.5f};
+            auto wall = [&](std::array<float, 12> c) {
+                vkr::Mesh *m = scene.AddMesh();
+                const vkr::Vec3 a{c[0], c[1], c[2]}, b{c[3], c[4], c[5]}, d{c[6], c[7], c[8]};
+                if (vkr::Dot(vkr::Cross(b - a, d - a), center - a) < 0.0f) {  // front faces towards the centre
+                    std::swap_ranges(c.begin() + 3, c.begin() + 6, c.begin() + 9);
+                }
+                m->points = {c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+                             c[0], c[1], c[2], c[6], c[7], c[8], c[9], c[10], c[11]};
+                m->material = white;
+            };
+            wall({-1, -1, 0.5f, 1, -1, 0.5f, 1, 1, 0.5f, -1, 1, 0.5f});
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, 1, -1.5f, -1, 1, -1.5f});
+            wall({-1, -1, -1.5f, -1, -1, 0.5f, -1, 1, 0.5f, -1, 1, -1.5f});
+            wall({1, -1, -1.5f, 1, -1, 0.5f, 1, 1, 0.5f, 1, 1, -1.5f});
+            wall({-1, -1, -1.5f, 1, -1, -1.5f, 1, -1, 0.5f, -1, -1, 0.5f});
+            wall({-1, 1, -1.5f, 1, 1, -1.5f, 1, 1, 0.5f, -1, 1, 0.5f});
+            scene.AddDome();
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.cameraPos[2] = -1.4f;  // inside, the front wall behind it
+            frame.depthToDistance[1] = -1.4f;
+            frame.gi = true;
+            frame.fog = true;
+            frame.fogDensity = 0.5f;
+            frame.fogAnisotropy = 0.0f;
+            auto haze = [&](bool giAmbient) {
+                frame.fogGiAmbient = giAmbient;
+                Image img;
+                for (int i = 0; i < 40; ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                return img.At(32, 32, 0);
+            };
+            const float open = haze(false), closed = haze(true);
+            Expect(open > 0.2f && closed < 0.25f * open, "fog: the GI probes keep the dome's light out of a room");
         } else {
             std::puts("no ray tracing on this GPU: its tests skipped");
         }
@@ -2858,6 +2973,40 @@ int main()
                                                         std::strcmp(renderer.GetStats().passMs.front().first,
                                                                     "probeCapture") != 0),
                    "reflection probe: captured once for a still scene");
+
+            // Authored probes (primvars:hdvk:reflectionProbe): a box over
+            // the mirror's left half reaching back past the emitter. It is
+            // never drawn; inside it the probe at its centre reflects the
+            // emitter, outside it the (black) dome shows.
+            vkr::Mesh *box = scene.AddMesh();
+            box->points = {-1.3f, -1.2f, -3.2f, 0, 1.2f, 1.2f, 0, -1.2f, 1.2f};
+            box->primId = 9;
+            box->reflectionProbe = true;
+            mirror->primId = 3;
+            scene.Commit();
+            Image authored = Render(renderer, scene, frame);
+            Expect(authored.At(23, 32, 0) > 1.6f && authored.At(40, 32, 0) < 0.01f,
+                   "authored probe: only inside its box");
+            Expect(authored.Prim(16, 20) != 9 && authored.Prim(16, 20) == mirror->primId,
+                   "authored probe: its mesh isn't drawn");
+            frame.authoredProbes = false;  // the automatic probe again: the whole mirror
+            authored = Render(renderer, scene, frame);
+            Expect(authored.At(23, 32, 0) > 1.6f && authored.At(40, 32, 0) < 0.1f && authored.Prim(16, 20) != 9,
+                   "Frame::authoredProbes off: the automatic probe");
+            frame.authoredProbes = true;
+
+            // Probe normalization: with SSGI the mirror's local ambient light
+            // is known, and none reaches it (black dome, nothing lit on
+            // screen), while its probe saw the emitter: its reflection fades.
+            frame.ssgi = true;
+            frame.probeNormalize = false;
+            const float unnormalized = Render(renderer, scene, frame).At(23, 32, 0);
+            frame.probeNormalize = true;
+            const float normalized = Render(renderer, scene, frame).At(23, 32, 0);
+            Expect(unnormalized > 1.6f && normalized < 0.1f * unnormalized,
+                   "probe normalization: no local light, no probe light");
+            frame.ssgi = false;
+            Expect(Render(renderer, scene, frame).At(23, 32, 0) > 1.6f, "probe normalization needs GI or SSGI");
             frame.imageBasedLighting = false;
             Expect(Render(renderer, scene, frame).At(23, 32, 0) < 0.01f,
                    "Frame::imageBasedLighting off: no probe either");
@@ -2897,7 +3046,19 @@ int main()
             Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflection: only glossy floors");
             floor->planarReflection = true;  // primvars:hdvk:planarReflection, at roughness 0.5
             scene.Commit();
-            Expect(Render(renderer, scene, frame).At(32, 16, 0) > 0.1f, "planar reflection: a flagged mirror");
+            const float flagged = Render(renderer, scene, frame).At(32, 16, 0);
+            Expect(flagged > 0.1f, "planar reflection: a flagged mirror");
+            // A second, larger flagged mirror far behind (z = -9): it comes
+            // first, the floor is the second render and image.
+            vkr::Mesh *wall = scene.AddMesh();
+            wall->points = {-15, -15, -9, 15, -15, -9, 15, 15, -9, -15, -15, -9, 15, 15, -9, -15, 15, -9};
+            wall->material = chrome;
+            wall->planarReflection = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene, frame).At(32, 16, 0) - flagged) < 0.02f * flagged,
+                   "planar reflections: two mirrors, each its own");
+            frame.planarCount = 1;
+            Expect(Render(renderer, scene, frame).At(32, 16, 0) < 0.01f, "planar reflections: only the largest");
         }
 
         {

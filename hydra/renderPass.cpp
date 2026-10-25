@@ -166,7 +166,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiThickness, &frame.ssgiThickness},
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
-                                {t2.dofJitter, &frame.dofJitter}}) {
+                                {t2.dofJitter, &frame.dofJitter},
+                                {t2.authoredProbes, &frame.authoredProbes},
+                                {t2.probeNormalize, &frame.probeNormalize},
+                                {t2.domeSun, &frame.domeSun},
+                                {t2.fogGiAmbient, &frame.fogGiAmbient},
+                                {t2.lightTextures, &frame.lightTextures}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -183,6 +188,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
+                                {t2.domeSunThreshold, &frame.domeSunThreshold},
                                 {t.filmFilterRadius, &frame.filmFilterRadius},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
@@ -224,6 +230,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
                                 {t.volumeResolution, &frame.volume.resolution},
+                                {t2.planarCount, &frame.planarCount},
                                 {t.filmSamples, &frame.filmSamples},
                                 {t.interactiveSamples, &frame.interactiveSamples},
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
@@ -282,7 +289,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.sceneVersion = (uint64_t(GetRenderIndex()->GetChangeTracker().GetSceneStateVersion()) << 32) |
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
-    if (_scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold)) {
+    // Either may change the light table: commit once.
+    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
+    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
         _scene.Commit();
     }
     // The scene camera's lens; usdview's free camera has none.

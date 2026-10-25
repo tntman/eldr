@@ -35,11 +35,13 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 fogTemporal;    // x: slice jitter, y: history weight (0: none), z: last frame's fogAlbedo.w,
                          // w: 1 = orthographic camera
     // Reflection probe and planar reflections (probes.glsl).
-    vec4 probe;          // xyz: capture position; w: prefiltered levels - 1
-    vec4 probeMin;       // the scene's bounds when captured (parallax correction)
-    vec4 probeMax;
-    vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
-    uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
+    uvec4 reflections;   // x: probes, z: flags (kProbeNormalize)
+    vec4 probeCenter[8]; // capture position; w: prefiltered levels - 1
+    vec4 probeMin[8];    // influence and parallax box; w: blend distance (0: everywhere)
+    vec4 probeMax[8];
+    vec4 probeSh[32];    // per probe its irradiance SH L0, L1 (rgb)
+    vec4 planarPlane[4]; // the mirrors' planes (unit normal towards the camera, offset)
+    uvec4 planarInfo;    // the mirrors' mesh slots (DrawInfo), kNone: unused
     vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
     // Sample dimensions (SampleNoise): this sample's value per kDim*;
     // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.

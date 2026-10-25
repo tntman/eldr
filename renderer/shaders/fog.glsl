@@ -5,6 +5,7 @@
 // in-scattered light and transmittance from the camera to the far side of
 // slice k.
 layout(set = 0, binding = 48) uniform sampler3D fogVolume;
+const uint kFogGiAmbient = 2u;  // frame.reflections.z: the dome's light from the GI probes
 
 float FogSliceDepth(float t)
 {

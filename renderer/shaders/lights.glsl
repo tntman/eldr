@@ -17,8 +17,9 @@ struct Light {
                       // w: sphere/cylinder shading radius (0 = point/line)
     vec4 halfHeight;  // rect: center to the +Y edge, disk: radius along Y; w: diffuse multiplier
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier
-    vec4 focusTint;
+    vec4 focusTint;   // w: rect/disk: the texture's bindless index (-1: none)
 };
+const uint kLightTextures = 4u;  // frame.reflections.z: lights' textures on
 layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 
 // 16 x 9 screen tiles x 24 slices, logarithmic in depth. Each cluster is a

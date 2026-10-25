@@ -54,6 +54,7 @@ public:
         bool frustumCulling = true;      // off: every instance is drawn (small-object culling too)
         bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
+        bool lightTextures = true;       // rect and disk lights' inputs:texture:file
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
         bool normalMaps = true;
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
@@ -148,6 +149,11 @@ public:
         // GI picks up every emissive surface's light regardless.
         bool emissiveLights = true;
         float emissiveLightThreshold = 4.0f;  // scene-referred radiance of the brightest channel
+        // The dome's sun (Scene::SetDomeSun, applied by the caller too): its
+        // texels over the threshold (scene radiance, luminance) leave the
+        // image-based light and become a distant light with shadows.
+        bool domeSun = false;
+        float domeSunThreshold = 10.0f;
         // Translucency (transparency.h): weighted blended OIT, its weights
         // falling with distance to this power (0: a plain average); off:
         // sorted per mesh, blended over.
@@ -182,6 +188,7 @@ public:
         float fogHeightFalloff = 0.0f;  // density * exp(-falloff * (height - fogHeight)); 0: uniform
         float fogAnisotropy = 0.6f;     // Henyey-Greenstein g: 0 even, towards 1 forward (shafts towards lights)
         float fogColor[3] = {1, 1, 1};  // scattering albedo
+        bool fogGiAmbient = true;       // with GI: the dome's light in the fog from its probes (interiors: less)
         float fogMaxDistance = 0.0f;    // view depth the froxels reach (then constant); 0: the scene's far end
         uint32_t fogGridSize = 160;     // froxels across (16..512); rows by aspect, 64 slices
         bool fogZUp = false;            // heights along Z (Z-up stages)
@@ -191,6 +198,9 @@ public:
         float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        uint32_t planarCount = 4;        // mirrors rendered, the largest first (at most 4)
+        bool probeNormalize = true;     // probes scaled by local (GI/SSGI) over captured ambient light
+        bool authoredProbes = true;     // meshes flagged primvars:hdvk:reflectionProbe are the probes (probes.h)
         bool skinning = true;            // false: skinned meshes keep the last frame's joints (reflection renders)
         // OpenVDB volumes, raymarched over the shaded image (VolumePass).
         bool volumes = true;
