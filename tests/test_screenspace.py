@@ -1,6 +1,6 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
-denoised glossy SSR, its footprint-filtered hits and back-face hits.
+denoised glossy SSR, its footprint-filtered hits, its precision and back-face hits.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -141,6 +141,32 @@ sharp = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": False}), *edges)
 blurred = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": True}), *edges)
 print("SSR hit filter: steps across the column's reflection %.2f without, %.2f with" % (sharp, blurred))
 expect(blurred < 0.8 * sharp, "hdvk:ssrHitFilter blurs glossy reflections by the ray's footprint")
+
+# SSR's precision (EEVEE 5.2's fix): a mirror facing the camera, far from
+# it, has nothing in front of it to reflect: its rays head back towards the
+# camera over its own depth, where equal depths rounded apart would hit it
+# again. SSR on then looks like SSR off.
+from pxr import Sdf, UsdShade
+stage = Usd.Stage.CreateInMemory()
+mirror = UsdGeom.Mesh.Define(stage, "/mirror")
+mirror.CreatePointsAttr([(-50, -50, 0), (50, -50, 0), (50, 50, 0), (-50, 50, 0)])
+mirror.CreateFaceVertexCountsAttr([4])
+mirror.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+mirror.AddRotateXYZOp().Set(Gf.Vec3f(10, 25, 0))
+chrome = UsdShade.Material.Define(stage, "/chrome")
+pbr = UsdShade.Shader.Define(stage, "/chrome/pbr")
+pbr.CreateIdAttr("UsdPreviewSurface")
+pbr.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(1.0)
+pbr.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.0)
+chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
+UsdShade.MaterialBindingAPI.Apply(mirror.GetPrim()).Bind(chrome)
+UsdLux.DomeLight.Define(stage, "/dome").CreateTextureFileAttr("StinsonBeach.hdr")
+UsdGeom.Camera.Define(stage, "/cam").AddTranslateOp().Set(Gf.Vec3d(0, 0, 100))
+off, on = render(stage, {"hdvk:ssr": False}), render(stage, {"hdvk:ssr": True})
+selfHits = sum(abs(on.pixelColor(x, y).green() - off.pixelColor(x, y).green()) > 2
+               for y in range(0, SIZE, 2) for x in range(0, SIZE, 2))
+print("SSR over a mirror facing the camera: %d pixels (of a quarter) hit something" % selfHits)
+expect(selfHits == 0, "SSR: rays towards the camera don't hit their own surface")
 
 # Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
 # from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan

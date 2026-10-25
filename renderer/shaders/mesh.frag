@@ -544,6 +544,16 @@ float SceneDepth(vec2 ndc)
     return texelFetch(sceneDepth, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
 }
 
+// Whether a ray at window depth z is behind the depth buffer's `scene`
+// (EEVEE 5.2's precision fix): by more than 7 steps of the depth's
+// precision (2^-24 near 1, D32F as 24-bit), so a ray leaving its surface
+// towards the camera doesn't hit it again where the depths round alike,
+// nor where fast math puts an equal depth a hair behind.
+bool Behind(float z, float scene)
+{
+    return scene < 1.0 && z - scene > 7.0 / 16777216.0;
+}
+
 // Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
 // GGX-sampled ray per pixel, for the denoiser.
 layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
@@ -628,7 +638,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             break;  // beyond the far plane: only sky, which the dome provides
         }
         float scene = SceneDepth(s.xy);
-        if (estimator && i > 0 && !wasBehind && !(scene < 1.0 && z > scene)) {
+        if (estimator && i > 0 && !wasBehind && !Behind(z, scene)) {
             // Across a jump in depth between two steps (an edge, the end
             // of a thin strip of surface seen edge-on) a thin feature can
             // hide in front of the ray: search the pixels in between.
@@ -640,7 +650,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                     float uk = mix(uPrev, u, float(k) / float(between + 1));
                     vec3 sk = mix(s0, s1, uk);
                     float dk = SceneDepth(sk.xy);
-                    if (dk < 1.0 && sk.z * 0.5 + 0.5 > dk) {
+                    if (Behind(sk.z * 0.5 + 0.5, dk)) {
                         u = uk;
                         s = sk;
                         z = sk.z * 0.5 + 0.5;
@@ -661,7 +671,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         // refined first and judged where it crosses: at grazing angles a
         // whole step can land far behind a surface it did pass through
         // (otherwise a miss that TAA's clipping keeps as grain).
-        bool behind = scene < 1.0 && z > scene, crossed = false;
+        bool behind = Behind(z, scene), crossed = false;
         float lo = uPrev, hi = u;
         if (behind) {
             float stepLength = length(Unproject(s) - Unproject(sPrev));
@@ -669,7 +679,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                 for (int k = 0; k < 5; ++k) {
                     float mid = 0.5 * (lo + hi);
                     vec3 m = mix(s0, s1, mid);
-                    if (m.z * 0.5 + 0.5 > SceneDepth(m.xy)) {
+                    if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
                         hi = mid;
                     } else {
                         lo = mid;
@@ -703,7 +713,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             for (int k = 0; k < 5; ++k) {
                 float mid = 0.5 * (lo + hi);
                 vec3 m = mix(s0, s1, mid);
-                if (m.z * 0.5 + 0.5 > SceneDepth(m.xy)) {
+                if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
                     hi = mid;
                 } else {
                     lo = mid;
@@ -735,7 +745,9 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             // Met from behind (the ray went behind an object): the light of
             // its unseen side is guessed as a share of the front's
             // (Frame::screenBackface).
-            if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 0.0) {
+            // A small tolerance: grazing hits (normal from depth across
+            // the ray, rounding either way) count as front faces.
+            if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
                 hit.rgb *= frame.screenTrace.y;
             }
             // Fade towards the screen edges, beyond which the ray is blind.
