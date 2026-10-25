@@ -162,6 +162,36 @@ engine.SetRendererSetting("hdvk:materialGraphs", True)
 expect(all(min(q) > 0.2 * max(white) / 25 and max(q) < 1.5 * min(q) for q in grey),
        "textured specularColor without programs: 0.04 grey, not black", *grey)
 
+# A textured thin_film_weight: the film colours the quarters where the
+# texture's red is high (bottom-left, top-right), barely the others; with
+# Textured Lobe Inputs off the weight is its default 0, the same metal
+# everywhere.
+film = quadrants(render({}), "/texturedFilm")
+bare = quadrants(render({"hdvk:texturedLobes": False}), "/texturedFilm")
+engine.SetRendererSetting("hdvk:texturedLobes", True)
+shift = [max(abs(a - b) for a, b in zip(hue(f), hue(g))) for f, g in zip(film, bare)]
+expect(shift[0] > 3 * shift[1] and shift[3] > 3 * shift[2],
+       "textured thin_film_weight: film where the texture is high (hue shifts %s)" % [round(x, 3) for x in shift])
+expect(max(abs(a - b) for q in bare for a, b in zip(hue(q), hue(bare[0]))) < 0.01,
+       "hdvk:texturedLobes off: the constant weight everywhere", *bare)
+
+
+# A textured transmission weight: where it is high (bottom-left,
+# top-right) the quad lets the dome through, where it is low it stays
+# nearly the opaque white it is everywhere with Textured Transmission off.
+def luminance(c):
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+clear = quadrants(render({}), "/texturedTransmission")
+opaque = quadrants(render({"hdvk:texturedTransmission": False}), "/texturedTransmission")
+engine.SetRendererSetting("hdvk:texturedTransmission", True)
+shift = [abs(luminance(a) - luminance(b)) / luminance(b) for a, b in zip(clear, opaque)]
+expect(shift[0] > 3 * shift[1] and shift[3] > 3 * shift[2],
+       "textured transmission: see-through where the texture is high (changes %s)" % [round(x, 3) for x in shift])
+expect(max(luminance(q) for q in opaque) < 1.1 * min(luminance(q) for q in opaque),
+       "hdvk:texturedTransmission off: opaque everywhere", *opaque)
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

@@ -3,17 +3,20 @@
 #include "frame.glsl"
 #include "lights.glsl"
 #include "fog.glsl"
+#include "gi.glsl"
 
 // Volumetric fog, one invocation per froxel: the medium at a depth jittered
 // within the slice (height fog: density * exp(-falloff * (height - base)))
 // and the light it scatters towards the camera (Henyey-Greenstein): every
 // distant light (the shadow-casting one through its cascades), the local
 // lights of the froxel's cluster as points (through their atlas tiles) and
-// the dome's average radiance. Blended with last frame's grid reprojected
-// to the same point, so the jitter averages out over frames.
+// the dome's average radiance, or with GI (kFogGiAmbient) the probes'
+// light there, so interiors, whose probes see walls rather than sky, get
+// less haze. Blended with last frame's grid reprojected to the same point,
+// so the jitter averages out over frames.
 // ponytail: single-tap shadows (no PCF: the jitter and the history blur
-// them); local lights as points of their area's intensity; no dome
-// occlusion.
+// them); local lights as points of their area's intensity; without GI the
+// dome's light is unoccluded.
 
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 layout(set = 0, binding = 47, rgba16f) uniform image3D fogImages[3];  // this frame's, last frame's, integrated
@@ -24,6 +27,7 @@ struct ShadowTile {
     mat4 viewProj;
     vec4 rect;
     vec4 params;
+    vec4 origin;
 };
 layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
@@ -54,7 +58,7 @@ float LocalShadow(uint index, Light light, vec3 p)
     if (tile == kNone) {
         return 1.0;
     }
-    vec3 fromLight = p - light.position.xyz;
+    vec3 fromLight = p - shadowTiles[tile].origin.xyz;
     if (light.shaping.y > kSpotShadowCone) {
         vec3 a = abs(fromLight);
         tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
@@ -134,8 +138,15 @@ void main()
         return;
     }
     vec3 grid = vec3(frame.fogGrid.xyz);
-    vec2 ndc = (vec2(id.xy) + 0.5) / grid.xy * 2.0 - 1.0;
-    float depth = FogSliceDepth((float(id.z) + frame.fogTemporal.x) / grid.z);
+    vec3 jitter = vec3(0.5, 0.5, frame.fogTemporal.x);
+    if (frame.sampleInfo.y != 0u) {  // a film sample: a point of the froxel's own (sample dimensions)
+        vec2 q = vec2(id.xy) + vec2(id.z * 17u, id.z * 29u);
+        jitter = vec3(SampleNoise(kDimFog, q, float(frame.localLights.y)),
+                      SampleNoise(kDimFog, q + vec2(31.0, 7.0), float(frame.localLights.y) + 3.0),
+                      SampleNoise(kDimFog, q + vec2(11.0, 47.0), float(frame.localLights.y) + 7.0));
+    }
+    vec2 ndc = (vec2(id.xy) + jitter.xy) / grid.xy * 2.0 - 1.0;
+    float depth = FogSliceDepth((float(id.z) + jitter.z) / grid.z);
     vec3 a = Unproject(vec3(ndc, -1.0)), b = Unproject(vec3(ndc, 0.0));
     vec3 forward = frame.cameraForward.xyz;
     float fa = dot(a - frame.cameraPos.xyz, forward), fb = dot(b - frame.cameraPos.xyz, forward);
@@ -162,7 +173,16 @@ void main()
         }
     }
     if (frame.envRadiance.w > 0.0) {
-        light += max(frame.envSh[0].rgb, 0.0) * (0.282095 / PI) * frame.envRadiance.rgb;  // average radiance
+        vec3 ambient = max(frame.envSh[0].rgb, 0.0) * (0.282095 / PI) * frame.envRadiance.rgb;  // average radiance
+        if ((frame.reflections.z & kFogGiAmbient) != 0u) {
+            // ponytail: the up and down hemispheres' irradiance / pi for
+            // the sphere's average radiance; their own light where the
+            // probes don't see p.
+            const vec3 up = frame.fogGrid.w != 0u ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+            vec4 a = GiIrradiance(p, up, toCamera), b = GiIrradiance(p, -up, toCamera);
+            ambient = mix(ambient, 0.5 * (a.rgb + b.rgb), 0.5 * (a.a + b.a));
+        }
+        light += ambient;
     }
     vec4 current = vec4(density * frame.fogAlbedo.rgb * light, density);
 

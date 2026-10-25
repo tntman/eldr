@@ -24,6 +24,21 @@ struct EnvironmentMaps {
 // Null means a uniform environment of radiance 1.
 EnvironmentMaps BuildEnvironment(const Texture *latlong);
 
+// A sun found in a latlong (dome sun extraction): the light of the texels
+// whose luminance is over a threshold, beyond it. Direction (towards it)
+// in the dome's local space, the irradiance it gave in texture units, its
+// angular diameter in degrees (from the texels' spread); none: zero
+// irradiance.
+struct ExtractedSun {
+    float direction[3] = {0, 1, 0};
+    float irradiance[3] = {0, 0, 0};
+    float angle = 0;
+};
+
+// BuildEnvironment with every texel's luminance clamped to `threshold`
+// (texture units) and what that took away as `sun` (when not null).
+EnvironmentMaps BuildEnvironment(const Texture *latlong, float threshold, ExtractedSun *sun);
+
 // The same from a cube: `faces` is RGBA floats (alpha ignored) in the
 // layout of `data`'s level 0, `size` a power of two (reflection probes).
 EnvironmentMaps BuildEnvironment(const float *faces, uint32_t size);

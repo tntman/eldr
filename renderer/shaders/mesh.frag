@@ -29,6 +29,7 @@ struct ShadowTile {
     mat4 viewProj;
     vec4 rect;    // atlas uv offset, uv scale
     vec4 params;  // x: shadow texel size per unit of distance from the light, y/z: near/far, w: light size
+    vec4 origin;  // xyz: where the tile sees from (the light's centre, or its jittered point)
 };
 layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
@@ -80,6 +81,18 @@ layout(location = 2) out int outInstanceId;
 // camera saw it (camera motion comes from depth in TAA). Static geometry
 // writes exactly zero: both positions are the same bits.
 layout(location = 3) out vec2 outVelocity;
+
+// Light splits (aov.h): the visible opaque surface's direct and indirect
+// diffuse and glossy light, layers in Aovs::kSplit* order. Only pipelines
+// compiled with them (kCompiledLightSplits, a bit of the shading set's key
+// that is no optional feature, Renderer::_ShadingSet) have this code.
+layout(set = 0, binding = 67, rgba16f) uniform writeonly image2DArray lightSplits;
+const uint kCompiledLightSplits = 1u;
+bool LightSplits()
+{
+    return (kCompiledFeatures & kCompiledLightSplits) != 0u && frame.aovs.x != 0u;
+}
+vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
 
 #include "brdf.glsl"
 #include "transparency.glsl"
@@ -178,7 +191,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     if (tile == kNone) {
         return 1.0;
     }
-    vec3 fromLight = p - light.position.xyz;
+    vec3 fromLight = p - shadowTiles[tile].origin.xyz;
     if (light.shaping.y > kSpotShadowCone) {
         vec3 a = abs(fromLight);
         tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
@@ -210,8 +223,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float uvPerUnit = 1.0 / (t.params.x * atlasSize);  // atlas uv per unit of the plane at distance 1
     float receiver = clip.w;                           // distance along the tile's axis
     float maxUv = 24.0 / atlasSize;
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimShadow, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
 
     float searchUv = min(size * 3.0 / receiver * uvPerUnit, maxUv);
@@ -316,6 +328,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 r = reflect(-v, n);
     float diffuseE, specularE, sourceRadius;
     vec3 l;
+    vec3 diffuseTint = vec3(1.0), specularTint = vec3(1.0);  // a rect or disk light's texture
     if (uint(light.position.w) == kLightSphere) {
         float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
         diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
@@ -370,12 +383,36 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
         uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
         l = normalize(toLight + hw * uv.x + hh * uv.y);
+        int tex = int(light.focusTint.w);
+        if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
+            // The texture where the specular representative point is, and
+            // above p (its foot on the plane) for diffuse, each at the mip
+            // of what it gathers: the lobe's footprint at the light, and
+            // the light seen from its height over the plane.
+            // ponytail: two taps; no prefiltered form factor (Heitz's
+            // filtered polygon lights would get the wide lobes right).
+            float extent = length(hw) + length(hh);
+            float texels = float(max(textureSize(textures[nonuniformEXT(tex)], 0).x,
+                                     textureSize(textures[nonuniformEXT(tex)], 0).y));
+            float aLobe = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+            float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
+            specularTint = textureLod(textures[nonuniformEXT(tex)], uv * 0.5 + 0.5, lobeLod).rgb;
+            vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
+            foot = rect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
+            float height = abs(dot(toLight, light.axis.xyz));
+            float footLod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
+            diffuseTint = textureLod(textures[nonuniformEXT(tex)], foot * 0.5 + 0.5, footLod).rgb;
+        }
     }
     float aWide = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
-    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w;
+    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w * diffuseTint;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
                     (a * a) / (aWide * aWide) * light.shaping.w;
     specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
+    specular *= specularTint;
+    if (LightSplits()) {
+        splitDirectDiffuse += radiance * diffuse * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+    }
     return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
 }
 
@@ -405,8 +442,7 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
     vec2 grad = -dot(gz, l) / max(dot(ng, l), 0.2) * vec2(dot(ng, gx) / dot(gx, gx), dot(ng, gy) / dot(gy, gy));
     float size = float(textureSize(shadowMap, 0).x);
     float maxUv = 0.05;
-    float angle = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * float(frame.localLights.y),
-                                                           vec2(0.06711056, 0.00583715))));
+    float angle = 6.2831853 * SampleNoise(kDimSunShadow, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
     int samples = int(frame.features.z);
 
@@ -474,7 +510,7 @@ float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
-    if (Feature(kFeatureSoftSun) && tanHalf > 0.0) {
+    if (Feature(kFeatureSoftSun) && tanHalf > 0.0 && frame.shadowJitter.x == 0u) {
         return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
     }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);
@@ -508,13 +544,21 @@ float SceneDepth(vec2 ndc)
     return texelFetch(sceneDepth, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
 }
 
+// Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
+// GGX-sampled ray per pixel, for the denoiser.
+layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
+layout(set = 0, binding = 73, rgba16f) uniform writeonly image2D ssrDirections;  // octahedral, hit distance, GGX alpha
+layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;     // octahedral
+layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1
+float ssrHitDistance = -1.0;  // TraceReflection's last hit, world units
+
 // Screen-space reflection: marches the ray linearly through NDC (where
 // it stays a straight line with affine depth) against the prepass depth,
 // refines the first crossing by bisection and shades it with last frame's
 // result reprojected to the hit. Returns the hit's weight (0 = miss) and
 // its premultiplied radiance in `hit`.
-// ponytail: mirror rays only, faded out from roughness 0.3 to 0.6; glossy
-// SSR would jitter the ray by GGX sampling and let TAA average it.
+// Without the denoiser (Frame::ssrDenoise): mirror rays only, faded out
+// from roughness 0.3 to 0.6.
 float TraceReflection(vec3 p, vec3 r, out vec4 hit)
 {
     int steps = int(frame.features.y);
@@ -541,19 +585,57 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
         return 0.0;  // heads (almost) straight into or out of the screen
     }
     float uStart = 1.5 * uEnd / pixels;  // past the starting pixel
-    float noise = fract(52.9829189 * fract(dot(gl_FragCoord.xy + 5.588238 * frame.ssr.y,
-                                               vec2(0.06711056, 0.00583715))));
+    float noise = SampleNoise(kDimSsr, gl_FragCoord.xy, frame.ssr.y);
     float uPrev = 0.0;
     vec3 sPrev = s0;
     bool wasBehind = false;
+    // The thickness estimator (Frame::ssgiThickness): every step at least
+    // a pixel on; jumps in depth between steps searched pixel by pixel.
+    // ponytail: EEVEE also spreads the steps quadratically; here that cost
+    // the crowd 1.4 ms for nothing the pixel search doesn't already catch.
+    bool estimator = frame.screenTrace.x > 0.0;
+    float prevScene = 1.0;
+    int budget = 128;  // pixels searched between steps, per ray
+    vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     for (int i = 0; i < steps; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
+        if (estimator) {
+            u = max(u, uPrev + uEnd / pixels);
+            if (u > uEnd) {
+                break;
+            }
+        }
         vec3 s = mix(s0, s1, u);
         float z = s.z * 0.5 + 0.5;
         if (z >= 1.0) {
             break;  // beyond the far plane: only sky, which the dome provides
         }
         float scene = SceneDepth(s.xy);
+        if (estimator && i > 0 && !wasBehind && !(scene < 1.0 && z > scene)) {
+            // Across a jump in depth between two steps (an edge, the end
+            // of a thin strip of surface seen edge-on) a thin feature can
+            // hide in front of the ray: search the pixels in between.
+            float a = 1.0 - prevScene, b = 1.0 - scene;  // ~ 1 / distance
+            if ((prevScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b)) {
+                int between = min(int((u - uPrev) * pixels / uEnd), budget);
+                budget -= between;
+                for (int k = 1; k <= between; ++k) {
+                    float uk = mix(uPrev, u, float(k) / float(between + 1));
+                    vec3 sk = mix(s0, s1, uk);
+                    float dk = SceneDepth(sk.xy);
+                    if (dk < 1.0 && sk.z * 0.5 + 0.5 > dk) {
+                        u = uk;
+                        s = sk;
+                        z = sk.z * 0.5 + 0.5;
+                        scene = dk;
+                        break;
+                    }
+                    uPrev = uk;
+                    sPrev = sk;
+                }
+            }
+        }
+        prevScene = scene;
         // Behind this pixel's surface by about a step: the ray went through
         // it. Further behind, it passes behind a separate object. Surfaces
         // seen at grazing angles put a crossing ray far behind along the
@@ -582,6 +664,22 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             vec3 surface = Unproject(vec3(c.xy, SceneDepth(c.xy) * 2.0 - 1.0));
             float thickness = max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
             crossed = length(ray - surface) <= thickness;
+            if (estimator && !crossed) {
+                // At least the depth one pixel of this surface spans along
+                // the ray (the nearer neighbour: not across an edge), and
+                // a crossing of one continuous surface (no jump in depth
+                // between the refined steps around it) is a hit at any
+                // depth: grazing surfaces aren't porous.
+                vec3 ahead = Unproject(vec3(c.xy + pixelNdc, SceneDepth(c.xy + pixelNdc) * 2.0 - 1.0));
+                vec3 back = Unproject(vec3(c.xy - pixelNdc, SceneDepth(c.xy - pixelNdc) * 2.0 - 1.0));
+                float footprint = min(length(ahead - surface), length(back - surface));
+                crossed = length(ray - surface) <= footprint;
+                if (!wasBehind && !crossed) {
+                    vec3 l = mix(s0, s1, lo);
+                    vec3 before = Unproject(vec3(l.xy, SceneDepth(l.xy) * 2.0 - 1.0));
+                    crossed = length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
+                }
+            }
         }
         wasBehind = behind;
         if (crossed) {
@@ -595,12 +693,15 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                 }
             }
             vec2 ndc = mix(s0.xy, s1.xy, hi);
-            vec4 prev = frame.prevViewProj * vec4(Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0)), 1.0);
+            vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
+            ssrHitDistance = length(hitPos - p);
+            vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
             vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
             if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
                 return 0.0;
             }
             hit = textureLod(previousColor, prevUv, 0.0);
+            hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
             // Fade towards the screen edges, beyond which the ray is blind.
             vec2 edge = 1.0 - abs(ndc);
             return smoothstep(0.0, 0.1, min(edge.x, edge.y));
@@ -714,6 +815,11 @@ void main()
             radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
+        if (LightSplits()) {
+            vec3 d = diffuseColor / PI * NoL * light.halfHeight.w * light.color.rgb;
+            splitDirectDiffuse += i == frame.counts.y
+                ? d * Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l) : d;
+        }
     }
 
     // Sphere and rect lights from this pixel's cluster (without clusters:
@@ -732,6 +838,12 @@ void main()
         }
     }
 
+    if (frame.lightClamp.x > 0.0) {
+        const vec3 lit = color - emissive, clamped = BrightnessClamp(lit, frame.lightClamp.x);
+        splitDirectDiffuse *= dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the split follows
+        color = emissive + clamped;
+    }
+    vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
     color += SubsurfaceTransmission(inWorldPos, n);
 
     // Image-based lighting from the dome, if any.
@@ -746,27 +858,61 @@ void main()
     // Reflections beyond the screen (probes.glsl): the mirror reflects the
     // planar reflection (below, over the dome's sky), other surfaces the
     // reflection probe's captured surroundings instead of the dome.
-    bool mirror = OnMirror(instances[inSlot].draw, inWorldPos);
-    if (Feature(kFeatureProbe) && !mirror) {
-        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual);
-    }
-    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
+    Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
+    int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
+    bool mirror = mirrorIndex >= 0;
+    if (Feature(kFeatureProbe) && !mirror) {
+        // The local ambient light probes are normalized by (GI or SSGI's).
+        specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
+                                 Lavg * diffuseAO + SsgiDiffuse());
+    }
     float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
     specular *= MultiBounce(specularAO, f0);
     // The mirror's planar reflection, elsewhere screen-space reflections:
     // they replace the dome (or probe) where they hit something; where the
     // hit is partly background the dome shows through.
     if (mirror) {
-        specular = PlanarSpecular(specular, inWorldPos, n, perceptual);
+        specular = PlanarSpecular(mirrorIndex, specular, inWorldPos, n, perceptual);
     }
     float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
 #ifdef LAYERS
     ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
 #endif
-    if (ssrWeight > 0.0) {
+    if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
+        // Denoised: one GGX-sampled ray (glossy up to roughness 0.8), its
+        // radiance (the probe's or dome's where it misses) and pdf for the
+        // denoiser, which adds FssEss times the weight times its estimate.
+        ssrWeight = 1.0 - smoothstep(0.5, 0.8, perceptual);
+#ifdef LAYERS
+        ssrWeight *= 1.0 - layers.anisotropy;
+#endif
+        vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
+        vec3 ve = vec3(dot(v, tx), dot(v, ty), NoV);
+        // Interleaved gradient noise, two lookups shifted per frame.
+        vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
+        vec2 u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
+                                                dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        vec3 h = SampleGgxVndf(ve, a, u);
+        h = tx * h.x + ty * h.y + n * h.z;
+        vec3 l = reflect(-v, h);
+        if (dot(l, ng) <= 0.0) {
+            h = n;  // below the surface: the mirror direction
+            l = reflect(-v, n);
+        }
+        // The visible normals' pdf: D(h) G1(v) / (4 NoV).
+        float pdf = D_GGX(max(dot(n, h), 0.0), a) * 2.0 / (NoV + sqrt(a * a + (1.0 - a * a) * NoV * NoV)) / 4.0;
+        vec4 hit;
+        float w = TraceReflection(inWorldPos, l, hit);
+        ivec2 px = ivec2(gl_FragCoord.xy);
+        imageStore(ssrRays, px, vec4(mix(specular, hit.rgb + (1.0 - hit.a) * specular, w), pdf));
+        imageStore(ssrDirections, px, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
+        imageStore(ssrNormals, px, vec4(OctEncode(n), 0.0, 0.0));
+        imageStore(ssrFactor, px, vec4(FssEss * ssrWeight, 1.0));
+        specular *= 1.0 - ssrWeight;
+    } else if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
@@ -777,11 +923,16 @@ void main()
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
     // With SSGI the bounces are traced: the visibility hides the rest alone.
+    vec3 splitAmbient = color;
     color += FssEss * specular + (Fms * Ems + kd) * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
                                                                                                      : diffuseColor) +
                                                     SsgiDiffuse() * occlusion);
+    vec3 splitIndirectGlossy = FssEss * specular;
+    vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
+        splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        splitIndirectGlossy += color - splitAmbient;
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
@@ -801,6 +952,15 @@ void main()
     // half-float range it turns Inf in the RGBA16F target.
     color = any(isnan(color)) || any(isinf(color)) ? vec3(0.0) : min(color, vec3(60000.0));
     outColor = vec4(color, alpha);
+    // ponytail: opaque surfaces only (the translucent pass would overwrite
+    // what is behind); a pixel's last surface at equal depth wins.
+    if (LightSplits() && kShadingPass == 0u && alpha >= 1.0) {
+        ivec2 pixel = ivec2(gl_FragCoord.xy);
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy, 1.0));
+    }
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
     vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);

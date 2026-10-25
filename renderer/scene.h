@@ -7,6 +7,7 @@
 
 #include <future>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <string>
@@ -124,8 +125,11 @@ struct MaterialProgram {
     enum Input : uint32_t {
         kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity,
         kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
-        kThinFilmThickness,
-        kDisplacement  // Material::displacementProgram's offset (mesh.vert)
+        kThinFilmThickness, kCoatIor, kThinFilm, kThinFilmIor, kAnisotropyRotation, kIor,
+        kTransmission, kTransmissionColor, kSubsurface, kSubsurfaceColor,
+        kSubsurfaceRadius,  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
+        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 26)
+
     };
 
     std::vector<uint32_t> code;      // 4 words per op
@@ -235,7 +239,7 @@ struct Material {
         if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
             return true;
         }
-        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kThinFilmThickness; ++i) {
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSubsurfaceRadius; ++i) {
             if (program.Outputs(MaterialProgram::Input(i))) {
                 return true;  // a textured or graph-driven lobe
             }
@@ -260,6 +264,10 @@ struct Material {
     float subsurface = 0;
     float subsurfaceColor[3] = {1, 1, 1};
     float subsurfaceRadius[3] = {1, 1, 1};
+    // Transmission or subsurface from the constant or the program (textured
+    // weights): the passes these materials need.
+    bool Transmits() const { return transmission > 0 || program.Outputs(MaterialProgram::kTransmission); }
+    bool Scatters() const { return subsurface > 0 || program.Outputs(MaterialProgram::kSubsurface); }
 
     // Displacement (mesh.vert, every pass): an offset along the vertex
     // normal in object units, displacementTex's texel (its channel, scale
@@ -355,6 +363,9 @@ struct Mesh {
     // zero at the centre). Never skinned or displaced.
     enum Facing : uint32_t { kNotFacing, kFacingRibbon, kFacingDisc };
     Facing facing = kNotFacing;
+    // Reflection probes: this mesh only marks one (primvars:hdvk:reflectionProbe):
+    // never drawn, its world bounds are the probe's influence box.
+    bool reflectionProbe = false;
 
 private:
     friend class Scene;
@@ -430,6 +441,10 @@ struct Light {
     bool visible = true;
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
+    // Rect, disk: an image over the emitting surface (UsdLux
+    // inputs:texture:file) multiplying the radiance; st (0, 0) at the -X -Y
+    // corner (the disk's square around it).
+    std::shared_ptr<Texture> texture;
 
 private:
     friend class Scene;
@@ -566,6 +581,11 @@ public:
     // lights the scene as a sphere light around it, of the same power
     // (pi x radiance x area), casting shadows. Returns whether it changed.
     bool SetEmissiveLights(bool on, float threshold);
+    // Dome sun extraction: the dome texture's light over `threshold` (scene
+    // radiance, luminance) leaves its image-based lighting and lights the
+    // scene as a distant light with shadows, of the texels' size. Returns
+    // whether it changed (Commit again).
+    bool SetDomeSun(bool on, float threshold);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -627,6 +647,11 @@ public:
         // world bounds' centres (xyz).
         std::vector<uint32_t> translucent;
         std::vector<uint8_t> translucentVariant;
+        // Per translucent slot: kRefracts (a material that refracts or
+        // tints what's behind it, see refraction).
+        // kHoldout: Mesh::holdout.
+        enum : uint8_t { kRefracts = 1, kHoldout = 2 };
+        std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
@@ -649,6 +674,10 @@ public:
             float extent;
             float radius;            // sphere radius: the shadow near plane stays outside it
             float size;              // emitter radius for soft shadows (0: point, hard)
+            // Its shape (Frame::shadowJitter): a sphere of radius size, a
+            // rect or disk of these half extents, a cylinder's axis.
+            enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
+            float halfWidth[3], halfHeight[3];
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,
@@ -676,6 +705,7 @@ public:
             bool cutout;   // alpha-tested: any-hit shaders run
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
             bool skinned;  // posed per instance (LargestSkinned)
+            bool displaced = false;  // its material displaces (Gpu::kDisplaced)
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it
@@ -692,20 +722,28 @@ public:
         // depends on besides geometry (the light and material tables, the
         // dome), so their histories and captures know when to start over.
         uint64_t lightingHash = 0;
-        // Planar reflections: the mirror, the flat mesh flagged by
-        // Mesh::planarReflection or else the largest flat, glossy (roughness
-        // up to 0.3), opaque one at least a third of the scene's size; kNone:
-        // none. Its first instance's plane (unit normal n, n . x + d = 0) and
-        // world bounds.
-        uint32_t mirrorSlot = kNone;
-        float mirrorPlane[4] = {};
-        float mirrorMin[3] = {}, mirrorMax[3] = {};
+        // Planar reflections: the mirrors, the flat meshes flagged by
+        // Mesh::planarReflection (the largest kMaxMirrors), or else the
+        // largest flat, glossy (roughness up to 0.3), opaque one at least a
+        // third of the scene's size. Each its first instance's plane (unit
+        // normal n, n . x + d = 0) and world bounds; largest first.
+        static constexpr uint32_t kMaxMirrors = 4;
+        struct Mirror {
+            uint32_t slot = kNone;
+            float plane[4] = {};
+            float min[3] = {}, max[3] = {};
+        };
+        std::vector<Mirror> mirrors;
+        // Reflection probes authored as meshes (Mesh::reflectionProbe): their
+        // world bounds, min xyz then max xyz.
+        std::vector<std::array<float, 6>> probeBoxes;
 
         // Volumes: a GpuVolume per drawn instance, and the NanoVDB grids
         // they read (both bound even when empty).
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
         VkBuffer displacements = VK_NULL_HANDLE;
@@ -789,6 +827,10 @@ private:
     // Environment built from this texture (kept alive so the pointer stays unique).
     std::shared_ptr<Texture> _envSource;
     bool _envBuilt = false;
+    float _envThreshold = 0;          // the sun extraction it was built with (texture units, 0: none)
+    bool _domeSunOn = false;
+    float _domeSunThreshold = 0;
+    ExtractedSun _domeSun;            // of the environment built (dome-local, texture units)
     uint32_t _tagMask = ~0u;
     bool _emissiveLights = true;
     float _emissiveThreshold = 4.0f;

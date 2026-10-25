@@ -36,7 +36,7 @@ assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
-for _ in range(40):  # until TAA converges
+for _ in range(200):  # until the film converges
     engine.Render(stage.GetPseudoRoot(), params)
     if engine.IsConverged():
         break
@@ -56,7 +56,7 @@ expect(stats.get("trianglesTotal") == 24 and stats.get("trianglesDrawn") == 12, 
 expect(stats.get("instancesTotal") == 2 and stats.get("instancesDrawn") == 1, "instances drawn after culling")
 expect(stats.get("gpuTimeMs", 0) > 0 and "shading" in stats.get("gpuPassMs", {}), "GPU time per pass")
 expect(abs(sum(stats["gpuPassMs"].values()) - stats["gpuTimeMs"]) < 1e-3, "passes add up to the frame")
-expect(stats.get("numCompletedSamples") == stats.get("taaTarget") == 16, "TAA samples")
+expect(stats.get("numCompletedSamples") == stats.get("taaTarget") == 64, "film samples")
 expect(stats.get("percentDone") == 100.0 and stats.get("rendererStage") == "converged", "converged")
 expect(stats.get("gpuMemoryUsed", 0) > stats.get("primvar", 0) > 0, "graphics memory")
 rows = dict(hdvkUsdview.Rows(stats))

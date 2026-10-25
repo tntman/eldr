@@ -41,6 +41,10 @@ public:
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
         uint32_t skinnedCapacity = 0;
+        // Displaced meshes' BLASes from their displaced vertices
+        // (rt_displace.comp; Scene::Gpu::SlotGeometry::displaced) at this
+        // displacement scale; 0: from their rest vertices.
+        float displacement = 0.0f;
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -70,6 +74,14 @@ private:
         VkAccelerationStructureKHR as = VK_NULL_HANDLE;
         uint32_t block = 0, offset = 0, units = 0;  // in _blocks, kUnit bytes each
         VkDeviceAddress address = 0;
+        float displacement = 0.0f;  // the Work::displacement it was built with (displaced meshes)
+    };
+    // A displaced BLAS Record builds: from the slot's rest vertices displaced
+    // into _displacedVertices at firstVertex.
+    struct DisplacedBuild {
+        VkAccelerationStructureKHR as;
+        uint32_t slot, firstVertex;
+        VkDeviceSize scratch;  // offset in the scratch buffer
     };
     struct Block {
         Buffer buffer;
@@ -90,6 +102,7 @@ private:
     void _BuildBlases(const Scene::Gpu &gpu);
     void _DestroyBlas(Blas &blas);
     VkDeviceSize _PrepareSkinned(const Scene::Gpu &gpu);
+    void _PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<uint32_t> &slots);
     void _DestroySkinned(Skinned &s);
     VkAccelerationStructureBuildGeometryInfoKHR _SkinnedBuildInfo(const Skinned &s, const Scene::Gpu &gpu,
                                                                   VkAccelerationStructureGeometryKHR *geometry) const;
@@ -112,6 +125,7 @@ private:
     VkPipeline _pipeline = VK_NULL_HANDLE;  // ray tracing: shaders/rt*
     VkPipeline _tlasPipeline = VK_NULL_HANDLE;
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
+    VkPipeline _displacePipeline = VK_NULL_HANDLE;  // rt_displace.comp
     Buffer _sbt;  // shader binding table: raygen, miss and hit regions
     VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _miss{}, _hit{}, _callable{};
 
@@ -138,6 +152,11 @@ private:
     Buffer _skinnedVertices;    // posed position and normal per vertex
     RangeAllocator _skinnedRanges;
     Buffer _skinnedTable;       // RtSkinned per entry (rt.glsl)
+    // Displaced BLASes to build this frame, their displaced vertices
+    // (3 floats each) and table (RtDisplaced, rt_displace.comp).
+    std::vector<DisplacedBuild> _displacedBuilds;
+    uint32_t _displacedMostVertices = 0;
+    Buffer _displacedVertices, _displacedTable;
 
     Work _work;
     uint32_t _frame = 0;

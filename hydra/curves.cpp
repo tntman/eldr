@@ -387,18 +387,18 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         Builder out{m, colors.interp != HdInterpolationConstant, curves};
         m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
         HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
-        const auto &t = *HdVkRenderSettingsTokens;
+        const auto &t2 = *HdVkRenderSettingsTokens2;
         if constexpr (curves) {
             const Primvar<GfVec3f> normals(sceneDelegate, id, HdTokens->normals);
             // Curves with normals are ribbons already, oriented by them.
             const bool facing = normals.values.empty() &&
                                 BoolPrimvar(sceneDelegate, id, "eldr:ribbons",
-                                            delegate->GetRenderSetting<bool>(t.curveRibbons, kHdVkCurveRibbons));
+                                            delegate->GetRenderSetting<bool>(t2.curveRibbons, kHdVkCurveRibbons));
             m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
         } else {
             const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites",
-                                            delegate->GetRenderSetting<bool>(t.pointSprites, kHdVkPointSprites));
+                                            delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites));
             m.facing = facing ? vkr::Mesh::kFacingDisc : vkr::Mesh::kNotFacing;
             Spheres(points, widths, colors, color, facing, out);
         }

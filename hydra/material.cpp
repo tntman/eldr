@@ -97,6 +97,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (specularColor)
     (clearcoat)
     (clearcoatRoughness)
+    (clearcoatColor)
     (ior)
     (coat)
     (coat_color)
@@ -1238,8 +1239,11 @@ float IorToF0(float ior)
 // other uv sets. Where a connected input's graph can't be compiled, or
 // programs are off, its constant is the default, except specularColor:
 // 0.04 grey (a dielectric, as the metallic workflow), not black.
-// ponytail: connected IORs, coat colour of UsdPreviewSurface, thin film
-// weight and IOR, and the anisotropy's rotation keep their constants.
+// UsdPreviewSurface has no clearcoat colour (Storm's is white); Eldr reads
+// an authored `clearcoatColor` as standard_surface's coat_color.
+// ponytail: textured IORs refract and reflect per pixel, but whether a
+// UsdPreviewSurface refracts is decided per material (a connected ior
+// does).
 void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &graph)
 {
     using P = vkr::MaterialProgram;
@@ -1281,8 +1285,14 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->clearcoatRoughness, 0.01f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->ior, 1.5f));
+        color(_tokens->clearcoatColor, m->coatColor);
         program(_tokens->clearcoat, P::kCoat);
         program(_tokens->clearcoatRoughness, P::kCoatRoughness);
+        program(_tokens->clearcoatColor, P::kCoatColor);
+        if (program(_tokens->ior, P::kCoatIor)) {
+            program(_tokens->ior, P::kIor);
+            m->opacityRefracts = true;
+        }
     } else if (id == _tokens->ND_standard_surface_surfaceshader) {
         m->coat = ReadOr(p, _tokens->coat, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
@@ -1305,6 +1315,15 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->sheen_color, P::kSheenColor);
         program(_tokens->sheen_roughness, P::kSheenRoughness);
         program(_tokens->specular_anisotropy, P::kAnisotropy);
+        program(_tokens->coat_IOR, P::kCoatIor);
+        program(_tokens->thin_film_IOR, P::kThinFilmIor);
+        program(_tokens->specular_rotation, P::kAnisotropyRotation);
+        program(_tokens->specular_IOR, P::kIor);
+        program(_tokens->transmission, P::kTransmission);
+        program(_tokens->transmission_color, P::kTransmissionColor);
+        program(_tokens->subsurface, P::kSubsurface);
+        program(_tokens->subsurface_color, P::kSubsurfaceColor);
+        program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_scale
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1329,6 +1348,15 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->fuzz_roughness, P::kSheenRoughness);
         program(_tokens->thin_film_thickness, P::kThinFilmThickness, 1000.0f);
         program(_tokens->specular_roughness_anisotropy, P::kAnisotropy);
+        program(_tokens->coat_ior, P::kCoatIor);
+        program(_tokens->thin_film_weight, P::kThinFilm);
+        program(_tokens->thin_film_ior, P::kThinFilmIor);
+        program(_tokens->specular_ior, P::kIor);
+        program(_tokens->transmission_weight, P::kTransmission);
+        program(_tokens->transmission_color, P::kTransmissionColor);
+        program(_tokens->subsurface_weight, P::kSubsurface);
+        program(_tokens->subsurface_color, P::kSubsurfaceColor);
+        program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_radius_scale
     }
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
@@ -1444,8 +1472,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // their own inputs; UsdPreviewSurface refracts what its opacity lets
     // through once it has an ior ("for translucent objects"; Hydra hands
     // over authored inputs only).
-    // ponytail: constants only; textured or graph-driven transmission keeps
-    // its constant.
+    // Connected weights, colours and the radius (not its scale) are computed
+    // by the material program (ReadLobes); their constants here are the
+    // defaults they fall back to.
+    // ponytail: transmission_depth, thin_walled and the radius scale stay
+    // constants.
     const bool openPbr = surface.nodeTypeId == _tokens->ND_open_pbr_surface_surfaceshader;
     if (openPbr || surface.nodeTypeId == _tokens->ND_standard_surface_surfaceshader) {
         Read(surface.parameters, openPbr ? _tokens->transmission_weight : _tokens->transmission, &m->transmission);

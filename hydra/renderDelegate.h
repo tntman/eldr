@@ -56,6 +56,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((blendShapeMotion, "hdvk:blendShapeMotion"))            \
     ((extraAovs, "hdvk:extraAovs"))                          \
     ((shareFrame, "hdvk:shareFrame"))                        \
+    ((renderProducts, "hdvk:renderProducts"))                \
     ((specularWorkflow, "hdvk:specularWorkflow"))            \
     ((clearcoat, "hdvk:clearcoat"))                          \
     ((sheen, "hdvk:sheen"))                                  \
@@ -64,6 +65,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((toon, "hdvk:toon"))                                    \
     ((toonBands, "hdvk:toonBands"))                          \
     ((hairShading, "hdvk:hairShading"))                      \
+    ((texturedLobes, "hdvk:texturedLobes"))                  \
+    ((texturedTransmission, "hdvk:texturedTransmission"))    \
     ((rtShadows, "hdvk:rtShadows"))                          \
     ((rtShadowSamples, "hdvk:rtShadowSamples"))              \
     ((rtReflections, "hdvk:rtReflections"))                  \
@@ -83,11 +86,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((oitDepthWeight, "hdvk:oitDepthWeight"))              \
     ((refraction, "hdvk:refraction"))                        \
     ((refractionSamples, "hdvk:refractionSamples"))              \
+    ((refractionBackFaces, "hdvk:refractionBackFaces"))              \
+    ((multiRefraction, "hdvk:multiRefraction"))              \
+    ((refractionLayers, "hdvk:refractionLayers"))              \
     ((translucentShadows, "hdvk:translucentShadows"))        \
     ((translucentShadowDivisor, "hdvk:translucentShadowDivisor")) \
     ((subsurface, "hdvk:subsurface"))                        \
     ((subsurfaceSamples, "hdvk:subsurfaceSamples"))              \
-    ((holdouts, "hdvk:holdouts")) \
+    ((holdouts, "hdvk:holdouts"))              \
+    ((holdoutAlpha, "hdvk:holdoutAlpha")) \
     ((softSunShadows, "hdvk:softSunShadows"))                \
     ((fog, "hdvk:fog"))                                      \
     ((fogDensity, "hdvk:fogDensity"))                        \
@@ -111,18 +118,52 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeEmission, "hdvk:volumeEmission"))                \
     ((volumeAnisotropy, "hdvk:volumeAnisotropy"))            \
     ((volumeResolution, "hdvk:volumeResolution"))            \
+    ((volumeUnderTransparency, "hdvk:volumeUnderTransparency")) \
+    ((volumeShadows, "hdvk:volumeShadows")) \
     ((subdivision, "hdvk:subdivision"))                      \
     ((maxRefineLevel, "hdvk:maxRefineLevel"))                \
     ((displacement, "hdvk:displacement"))                    \
     ((displacementScale, "hdvk:displacementScale"))          \
     ((lod, "hdvk:lod"))                                      \
     ((lodBias, "hdvk:lodBias"))                              \
-    ((curveRibbons, "hdvk:curveRibbons"))                    \
-    ((pointSprites, "hdvk:pointSprites"))                    \
-    ((lodFade, "hdvk:lodFade"))                              \
+    ((filmAccumulation, "hdvk:filmAccumulation"))            \
+    ((filmSamples, "hdvk:filmSamples"))                      \
+    ((filmFilterRadius, "hdvk:filmFilterRadius"))            \
+    ((finalQuality, "hdvk:finalQuality"))                    \
+    ((sampleDimensions, "hdvk:sampleDimensions"))            \
+    ((interactiveSamples, "hdvk:interactiveSamples"))        \
+    ((adaptiveThreshold, "hdvk:adaptiveThreshold"))          \
+    ((adaptiveMinSamples, "hdvk:adaptiveMinSamples"))        \
+    ((giPreconverge, "hdvk:giPreconverge"))                  \
+    ((fogFilmJitter, "hdvk:fogFilmJitter"))                  \
+    ((pipelinePrewarm, "hdvk:pipelinePrewarm"))              \
+    ((pipelineCache, "hdvk:pipelineCache"))
+
+// MSVC cannot expand one token list of more than about 140 names (C1009), so the
+// settings of later lanes live in a second one.
+#define HDVK_RENDER_SETTING_TOKENS2                          \
+    ((directClamp, "hdvk:directClamp"))                      \
+    ((indirectClamp, "hdvk:indirectClamp"))                  \
+    ((ssgiThickness, "hdvk:ssgiThickness"))                  \
+    ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
+    ((rtDisplacement, "hdvk:rtDisplacement"))                \
+    ((ssrDenoise, "hdvk:ssrDenoise"))                        \
+    ((shadowJitter, "hdvk:shadowJitter"))                    \
+    ((dofJitter, "hdvk:dofJitter")) \
+    ((lightTextures, "hdvk:lightTextures")) \
+    ((domeSun, "hdvk:domeSun")) \
+    ((domeSunThreshold, "hdvk:domeSunThreshold")) \
+    ((fogGiAmbient, "hdvk:fogGiAmbient")) \
+    ((authoredProbes, "hdvk:authoredProbes")) \
+    ((probeNormalize, "hdvk:probeNormalize")) \
+    ((planarCount, "hdvk:planarCount")) \
+    ((curveRibbons, "hdvk:curveRibbons")) \
+    ((pointSprites, "hdvk:pointSprites")) \
+    ((lodFade, "hdvk:lodFade")) \
     ((displacementGraphs, "hdvk:displacementGraphs"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
+TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
 
 // Karma's names for what Eldr's extra AOVs hold: the source names of the
 // render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
@@ -137,6 +178,13 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
     ((baseColor, "export_basecolor"))                       \
     ((diffuseAlbedo, "lpe:CDA"))                            \
     ((directEmission, "lpe:CO"))                            \
+    ((combinedEmission, "lpe:C.*O"))                        \
+    ((directDiffuse, "lpe:C<RD>L"))                         \
+    ((indirectDiffuse, "lpe:C<RD>.+L"))                     \
+    ((combinedDiffuse, "lpe:C<RD>.*L"))                     \
+    ((directGlossy, "lpe:C<RG>L"))                          \
+    ((indirectGlossy, "lpe:C<RG>.+L"))                      \
+    ((combinedGlossy, "lpe:C<RG>.*[LO]"))                   \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))
 
@@ -164,6 +212,7 @@ void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type
 
 class HdVkTextureCache;
 class HdVkGLInterop;
+class HdRenderSettings;
 class Hgi;
 
 class HdVkRenderDelegate final : public HdRenderDelegate
@@ -218,6 +267,8 @@ public:
     HdVkGLInterop *GLInterop();
     // After it failed: read back from then on.
     void DisableGLInterop();
+    // The active render settings prim (UsdRenderSettings), if any.
+    const HdRenderSettings *ActiveRenderSettings() const;
     // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
     void SetFrameShared(bool shared) { _frameShared = shared; }
 
@@ -235,6 +286,7 @@ private:
     // GPU sharing; declared last: released before the renderer and device.
     Hgi *_hgi = nullptr;
     bool _interopTried = false, _frameShared = false;
+    std::vector<HdRenderSettings *> _renderSettings;  // render settings Bprims
     std::unique_ptr<HdVkGLInterop> _interop;
 };
 

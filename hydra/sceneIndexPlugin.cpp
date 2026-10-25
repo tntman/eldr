@@ -26,6 +26,7 @@
 #include "pxr/imaging/hd/sceneIndexPrimView.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hdsi/implicitSurfaceSceneIndex.h"
+#include "pxr/imaging/hdsi/renderSettingsFilteringSceneIndex.h"
 
 #include <set>
 #include <vector>
@@ -318,8 +319,10 @@ protected:
         HdDataSourceBaseHandle const toMesh =
             HdRetainedTypedSampledDataSource<TfToken>::New(
                 HdsiImplicitSurfaceSceneIndexTokens->toMesh);
+        // The active render settings prim (the scene globals') is marked
+        // active, so the render products are written (renderProducts.h).
         return _SettingsSceneIndex::New(HdsiImplicitSurfaceSceneIndex::New(
-            _SkinningSceneIndex::New(inputScene),
+            _SkinningSceneIndex::New(HdsiRenderSettingsFilteringSceneIndex::New(inputScene, nullptr)),
             HdRetainedContainerDataSource::New(
                 HdPrimTypeTokens->sphere, toMesh,
                 HdPrimTypeTokens->cube, toMesh,

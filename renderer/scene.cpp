@@ -4,6 +4,7 @@
 #include "lod.h"
 
 #include <algorithm>
+#include <tuple>
 #include <chrono>
 #include <atomic>
 #include <cmath>
@@ -67,7 +68,7 @@ struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
-    float focusTint[4];
+    float focusTint[4] = {0, 0, 0, -1};  // w: rect/disk: the texture's bindless index (-1: none)
 };
 
 constexpr VkBufferUsageFlags kPoolUsage =
@@ -311,6 +312,14 @@ std::vector<Scene::SkinnedInstance> Scene::LargestSkinned(const float eye[3], ui
         largest.push_back(found[i].second);
     }
     return largest;
+}
+
+bool Scene::SetDomeSun(bool on, float threshold)
+{
+    const bool changed = on != _domeSunOn || (on && threshold != _domeSunThreshold);
+    _domeSunOn = on;
+    _domeSunThreshold = threshold;
+    return changed;
 }
 
 bool Scene::SetEmissiveLights(bool on, float threshold)
@@ -1289,10 +1298,14 @@ void Scene::_UpdateEnvironment(const Dome *dome)
     const Texture *source = dome->texture.get();
     const bool usable = source && source->width > 0 && source->height > 0 &&
         source->pixels.size() == size_t(source->width) * source->height * BytesPerPixel(source->format);
-    if (_envBuilt && _envSource.get() == (usable ? source : nullptr)) {
+    // The sun's threshold in texture units (the dome multiplies them).
+    const float scale = 0.2126f * dome->radiance[0] + 0.7152f * dome->radiance[1] + 0.0722f * dome->radiance[2];
+    const float threshold = _domeSunOn && usable && scale > 0.0f ? _domeSunThreshold / scale : 0.0f;
+    if (_envBuilt && _envSource.get() == (usable ? source : nullptr) && threshold == _envThreshold) {
         return;
     }
-    const EnvironmentMaps maps = BuildEnvironment(usable ? source : nullptr);
+    const EnvironmentMaps maps = BuildEnvironment(usable ? source : nullptr, threshold, &_domeSun);
+    _envThreshold = threshold;
     _DestroyEnvironment();
 
     const VkDevice device = _device->device;
@@ -1558,6 +1571,7 @@ void Scene::Commit()
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
     _gpu.translucent.clear();
     _gpu.translucentVariant.clear();
+    _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
     _gpu.slotGeometry.resize(slots);
     _gpu.refraction = false;
@@ -1573,7 +1587,7 @@ void Scene::Commit()
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
         const bool drawable = m.visible && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
-                              (m._skinCount == 0 || m._skinXformSlots > 0);
+                              (m._skinCount == 0 || m._skinXformSlots > 0) && !m.reflectionProbe;
         DrawInfo &d = draws[slot];
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
@@ -1633,17 +1647,20 @@ void Scene::Commit()
         if (drawable && m.material && m.material->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
         } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->transmission > 0 ||
+                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->Transmits() ||
                     (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
-            _gpu.refraction = _gpu.refraction || m.material->transmission > 0 || m.material->opacityRefracts;
+            _gpu.refraction = _gpu.refraction || m.material->Transmits() || m.material->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
+            _gpu.translucentFlags.push_back(
+                (m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0) |
+                (m.holdout ? Gpu::kHoldout : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
-        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->subsurface > 0) {
+        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
             _gpu.subsurfaceVariant.push_back(variant >> 2);
         }
@@ -1668,7 +1685,8 @@ void Scene::Commit()
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         const bool traced = drawable && blend != Gpu::kTranslucent;
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
-                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0};
+                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
+                                   (variant & Gpu::kDisplaced) != 0};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;
@@ -1769,12 +1787,19 @@ void Scene::Commit()
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(displacements.begin(), displacements.end(), static_cast<GpuDisplacement *>(_displacements.mapped));
     _gpu.displacements = _displacements.buffer;
-    // Planar reflections' mirror: a flagged flat mesh, else the largest
-    // glossy one (its world bounds' diagonal) spanning a third of the scene.
-    // ponytail: one mirror, from its first instance.
-    _gpu.mirrorSlot = kNone;
+    _gpu.probeBoxes.clear();
+    for (const auto &m : _meshes) {
+        if (m->reflectionProbe && m->_instanceCount > 0 && m->_worldMin[0] <= m->_worldMax[0]) {
+            _gpu.probeBoxes.push_back({m->_worldMin[0], m->_worldMin[1], m->_worldMin[2], m->_worldMax[0],
+                                       m->_worldMax[1], m->_worldMax[2]});
+        }
+    }
+    // Planar reflections' mirrors: the flagged flat meshes, else the
+    // largest glossy one (its world bounds' diagonal) spanning a third of
+    // the scene. ponytail: each mesh from its first instance, one render
+    // each (coplanar mirrors don't share one).
+    std::vector<std::tuple<bool, float, Gpu::Mirror>> mirrors;  // flagged, size
     const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
-    float mirrorScore = 0.0f;
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
@@ -1786,8 +1811,7 @@ void Scene::Commit()
                             !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
         const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],
                                        m._worldMax[2] - m._worldMin[2]});
-        const float score = m.planarReflection ? 1e30f : glossy && size >= sceneSize / 3.0f ? size : 0.0f;
-        if (score <= mirrorScore) {
+        if (!m.planarReflection && !(glossy && size >= sceneSize / 3.0f && size > 0.0f)) {
             continue;
         }
         const float *x = m.transforms.data();  // row-vector order
@@ -1801,12 +1825,24 @@ void Scene::Commit()
         if (Dot(n, n) < 0.5f) {
             continue;
         }
-        mirrorScore = score;
-        _gpu.mirrorSlot = uint32_t(slot);
+        Gpu::Mirror mirror;
+        mirror.slot = uint32_t(slot);
         const float plane[4] = {n.x, n.y, n.z, -Dot(n, p[0])};
-        std::copy(plane, plane + 4, _gpu.mirrorPlane);
-        std::copy(m._worldMin, m._worldMin + 3, _gpu.mirrorMin);
-        std::copy(m._worldMax, m._worldMax + 3, _gpu.mirrorMax);
+        std::copy(plane, plane + 4, mirror.plane);
+        std::copy(m._worldMin, m._worldMin + 3, mirror.min);
+        std::copy(m._worldMax, m._worldMax + 3, mirror.max);
+        mirrors.push_back({m.planarReflection, size, mirror});
+    }
+    std::sort(mirrors.begin(), mirrors.end(), [](const auto &a, const auto &b) {
+        return std::tie(std::get<0>(a), std::get<1>(a)) > std::tie(std::get<0>(b), std::get<1>(b));
+    });
+    const bool flagged = !mirrors.empty() && std::get<0>(mirrors[0]);
+    _gpu.mirrors.clear();
+    for (const auto &[isFlagged, size, mirror] : mirrors) {
+        if (_gpu.mirrors.size() == (flagged ? Gpu::kMaxMirrors : 1u) || isFlagged != flagged) {
+            break;
+        }
+        _gpu.mirrors.push_back(mirror);
     }
 
     _device->Reserve(_materials, materials.size() * sizeof(GpuMaterial),
@@ -1834,7 +1870,40 @@ void Scene::Commit()
     }
 
     const std::vector<Emitter> emitters = _FindEmitters();
-    _device->Reserve(_lightBuffer, (_lights.size() + 2 * emitters.size()) * sizeof(GpuLight),
+    // The dome's environment first: its extracted sun (SetDomeSun) lights
+    // the scene as the last distant light (a scene's own sun keeps the
+    // cascades).
+    const auto dome = std::find_if(_domes.begin(), _domes.end(), [](const auto &d) { return d->visible; });
+    if (dome != _domes.end()) {
+        _UpdateEnvironment(dome->get());
+    }
+    Light domeSun;
+    const bool hasDomeSun = dome != _domes.end() && _envThreshold > 0.0f &&
+                            _domeSun.irradiance[0] + _domeSun.irradiance[1] + _domeSun.irradiance[2] > 0.0f;
+    if (hasDomeSun) {
+        // Dome-local to world: the rotation's transpose (USD row-vector order).
+        const float *m = (*dome)->worldToLocal;
+        const float *d = _domeSun.direction;
+        float w[3];
+        for (int k = 0; k < 3; ++k) {
+            w[k] = m[k * 4 + 0] * d[0] + m[k * 4 + 1] * d[1] + m[k * 4 + 2] * d[2];
+        }
+        const float len = std::max(std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]), 1e-20f);
+        for (int k = 0; k < 3; ++k) {
+            domeSun.direction[k] = w[k] / len;
+            domeSun.irradiance[k] = _domeSun.irradiance[k] * (*dome)->radiance[k];
+        }
+        domeSun.angle = std::max(_domeSun.angle, 0.1f);
+        domeSun.castShadows = true;
+    }
+    std::vector<const Light *> sceneLights;
+    for (const auto &l : _lights) {
+        sceneLights.push_back(l.get());
+    }
+    if (hasDomeSun) {
+        sceneLights.push_back(&domeSun);
+    }
+    _device->Reserve(_lightBuffer, (sceneLights.size() + 2 * emitters.size()) * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
@@ -1842,7 +1911,7 @@ void Scene::Commit()
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     for (const bool distant : {true, false}) {  // distant lights first
-        for (const auto &l : _lights) {
+        for (const Light *l : sceneLights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
                 continue;
             }
@@ -1877,6 +1946,9 @@ void Scene::Commit()
             g.shaping[1] = cone;
             g.shaping[2] = l->focus;
             std::copy(l->focusTint, l->focusTint + 3, g.focusTint);
+            const bool flat = l->type == Light::Type::Rect || l->type == Light::Type::Disk;
+            const uint32_t clamp = uint32_t(Wrap::Clamp) * (1 + kWrapModes);
+            g.focusTint[3] = flat ? float(_TextureIndex(l->texture.get(), clamp)) : -1.0f;  // its bindless index
             if (l->castShadows) {
                 // Mirrors LightRange() in shaders/lights.glsl.
                 Scene::Gpu::ShadowCaster c{};
@@ -1884,6 +1956,12 @@ void Scene::Commit()
                 std::copy(l->position, l->position + 3, c.position);
                 std::copy(l->direction, l->direction + 3, c.axis);
                 c.coneAngle = cone;
+                c.shape = sphere ? Scene::Gpu::ShadowCaster::Shape::Sphere
+                        : cylinder ? Scene::Gpu::ShadowCaster::Shape::Cylinder
+                        : l->type == Light::Type::Rect ? Scene::Gpu::ShadowCaster::Shape::Rect
+                                                       : Scene::Gpu::ShadowCaster::Shape::Disk;
+                std::copy(l->halfWidth, l->halfWidth + 3, c.halfWidth);
+                std::copy(l->halfHeight, l->halfHeight + 3, c.halfHeight);
                 const float radiance = std::max({l->radiance[0], l->radiance[1], l->radiance[2]}) *
                                        std::max(l->diffuse, l->specular);
                 if (sphere) {
@@ -1949,6 +2027,9 @@ void Scene::Commit()
                     c.extent += (e.wide[k] + e.high[k]) * (e.wide[k] + e.high[k]);
                 }
                 g.position[3] = 2.0f;
+                c.shape = Scene::Gpu::ShadowCaster::Shape::Rect;
+                std::copy(e.wide, e.wide + 3, c.halfWidth);
+                std::copy(e.high, e.high + 3, c.halfHeight);
                 const float area = 4.0f * std::sqrt(e.wide[0] * e.wide[0] + e.wide[1] * e.wide[1] + e.wide[2] * e.wide[2]) *
                                    std::sqrt(e.high[0] * e.high[0] + e.high[1] * e.high[1] + e.high[2] * e.high[2]);
                 c.rangeIntensity = peak * area / 3.14159265f;  // as for rect lights above
@@ -1973,8 +2054,6 @@ void Scene::Commit()
         _gpu.slotGeometry[mesh->_slot].emitter = instances == mesh->_instanceCount;
     }
 
-    const auto dome = std::find_if(_domes.begin(), _domes.end(),
-                                   [](const auto &d) { return d->visible; });
     _gpu.environment = VK_NULL_HANDLE;
     _gpu.environmentLatlong = kNone;
     if (dome != _domes.end()) {

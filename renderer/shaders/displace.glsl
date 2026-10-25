@@ -80,6 +80,21 @@ vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, uint slot, mat4 model, 
     }
     return position + normalize(normal) * offset * frame.geometry.x;
 }
+#elif !defined(DISPLACE_FRAGMENT)
+// Compute stages (rt_displace.comp): the same for texture and constant
+// displacement.
+// ponytail: graphs don't displace there (ray tracing sees their rest
+// surface); running the program needs mesh.vert's inputs.
+vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, vec2 uv)
+{
+    if (!kDisplacement || (frame.features.x & kFeatureDisplacement) == 0u || draw.material == 0xFFFFFFFFu ||
+        dot(normal, normal) < 1e-12) {
+        return position;
+    }
+    Displacement d = displacements[draw.material];
+    rtUvFootprint = draw.uvSpacing;
+    return position + normalize(normal) * Fetch(d.tex, d.params.xxxx, uv).r * frame.geometry.x;
+}
 #endif
 #ifdef DISPLACE_FRAGMENT
 // The displaced surface's shading normal: n bumped by the height map's
