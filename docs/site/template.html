@@ -50,6 +50,10 @@ th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align
 tr:last-child td { border-bottom: 0; }
 td:first-child { min-width: 180px; }
 td:first-child code { white-space: nowrap; }
+.yn { font-weight: 600; font-size: 12.5px; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+.yn.yes { color: #1f7a3a; background: #e3f4e8; } .yn.partial { color: #8a5a00; background: #fbf0d9; } .yn.no { color: #a33232; background: #f9e4e4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .yn.yes { color: #7ddc98; background: #183323; } :root:not([data-theme="light"]) .yn.partial { color: #f0c46b; background: #33280f; } :root:not([data-theme="light"]) .yn.no { color: #f29a9a; background: #3a1c1c; } }
+:root[data-theme="dark"] .yn.yes { color: #7ddc98; background: #183323; } :root[data-theme="dark"] .yn.partial { color: #f0c46b; background: #33280f; } :root[data-theme="dark"] .yn.no { color: #f29a9a; background: #3a1c1c; }
 mark { background: var(--mark); color: inherit; border-radius: 2px; }
 .hidden { display: none !important; }
 #menu { display: none; }
@@ -90,6 +94,11 @@ for (const d of DOCS) {
   sec.querySelectorAll("a[href]").forEach(a => {
     const m = a.getAttribute("href").match(/^([\w-]+)\.md(?:#(.*))?$/) || a.getAttribute("href").match(/^()#(.*)$/);
     if (m) a.setAttribute("href", "#" + (m[1] || d.id) + (m[2] ? "-" + m[2] : ""));
+  });
+  // Comparison cells that start with Yes / Partial / No get a coloured badge.
+  sec.querySelectorAll("td").forEach(td => {
+    const m = td.innerHTML.match(/^(Yes|Partial|No)\b/);
+    if (m) td.innerHTML = td.innerHTML.replace(m[1], `<span class="yn ${m[1].toLowerCase()}">${m[1]}</span>`);
   });
   sec.querySelectorAll("table").forEach(t => { const w = document.createElement("div"); w.className = "tw"; t.replaceWith(w); w.append(t); });
   // Group each h2 with what follows it, so search can hide whole parts.
