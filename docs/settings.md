@@ -104,7 +104,7 @@ reflections.
 | Sun Shadow Resolution<br>`eldr:shadowResolution` | int, 2048 | Texels per cascade side (256-8192). Raise for large scenes with fine contact detail. | Memory and time grow with the square. |
 | Sun Shadow Cascades<br>`eldr:shadowCascades` | int, 4 | 1-4. One cascade saves about 12 ms on the crowd (early measurement) but spreads the resolution thin. | |
 | Local Light Shadows<br>`eldr:localShadows` | flag, on | Shadows for sphere, rect, disk and spot lights from a 4096x4096 atlas (spots with a cone up to 80 degrees get one tile, others six cube faces). Lights nearest the camera get tiles first; the rest stay unshadowed. | Atlas is cached while the scene is still. |
-| Local Light Shadow Resolution<br>`eldr:localShadowResolution` | int, 512 | Texels per tile (64-2048). Lower resolution means more lights get tiles. | |
+| Local Light Shadow Resolution<br>`eldr:localShadowResolution` | int, 512 | Texels per tile (64-2048). Tiles halve automatically (to 64) when the lights would not otherwise fit, so every shadowed light gets one. | |
 | Soft Shadows (PCSS)<br>`eldr:softShadows` | flag, on | Contact-hardening penumbrae for local lights from their size. Off uses 3x3 PCF. | Related: *Soft Shadow Samples*, *Jittered Light Shape*. |
 | Soft Sun Shadows<br>`eldr:softSunShadows` | flag, on | The same for the sun from the distant light's `inputs:angle`. A sun without an angle keeps 3x3 PCF. | Crowd 1.27 ms (was 2.74 ms before the blocker search was bounded). |
 | Soft Shadow Samples<br>`eldr:softShadowSamples` | int, 16 | Blocker search and filter taps (1-16). | Linear. |

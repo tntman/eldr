@@ -191,8 +191,10 @@ its own shape).
   offset and slope bias. Soft penumbrae from the light's angle (PCSS with a
   bounded blocker search), or 3x3 PCF.
 - Local lights: a 4096x4096 atlas of tiles; spots get one perspective tile,
-  others six cube faces; lights nearest the camera get tiles first; the atlas
-  redraws only when the scene or the shadowed tiles change.
+  others six cube faces; lights nearest the camera get tiles first. When the
+  requested tile size would not fit every shadowed light, all tiles halve (down
+  to 64 texels, about 680 point lights) so none goes unshadowed; past that the
+  farthest go unshadowed. The atlas redraws only when the scene or the shadowed tiles change.
 - Translucent casters and volumes tint shadows through colour maps beside the
   shadow maps.
 - Ray-traced shadows (`rtShadows`) replace maps for the sun and the three most
