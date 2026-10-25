@@ -53,6 +53,9 @@ public:
     // Whether the next Record/RecordFilm builds the history's mips.
     void SetHistoryMips(bool on) { _mipsOn = on; }
 
+    // The film's per-pixel weight and sample count (GENERAL).
+    VkImageView FilmWeights() const { return _weights.view; }
+
 private:
     void _Destroy();
     void _CopyToHistory(VkCommandBuffer cmd, VkImageLayout layout, VkPipelineStageFlags2 stage,

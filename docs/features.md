@@ -149,8 +149,16 @@ Ids, depth and Cryptomatte are one unfiltered sample's: under the film the
 one nearest the pixel centre so far (kept while later samples land farther
 out, so id edges don't move with the last sample's jitter; the jitter is
 the same for every pixel), else the frame's (TAA: its jittered sample).
-Extra AOVs from depth (P, camera depth) still average the samples (not
-the one nearest the pixel centre).
+The extra AOVs follow the same split. Surface data (normal, st, P, camera
+depth) is the nearest sample's too, not an average. The colour AOVs
+(albedo, emission, diffuse albedo and the light splits) are reconstructed
+as the beauty is: the film's Gaussian filter (`eldr:filmFilterRadius`,
+3x3 gather around the pixel, each sample at its jittered position), summed
+as weighted values and weights per pixel (aov.comp), with the same NaN/Inf
+and negative rejection, and a pixel the adaptive film stopped takes no more
+samples there either. So the splits keep summing to the beauty with noisy
+per-sample content (traced refraction). Without the film (TAA) they stay a
+running mean of the frames.
 
 ## Lighting and shadows
 
@@ -566,7 +574,7 @@ mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
 SSGI, multi-bounce, probes and reflections add beyond that. Direct and
 indirect add up to the combined value, and with the emission to the linear beauty
 (tests/test_aov_sums.py), for every closure (diffuse, coat, sheen, emissive, subsurface,
-transmission), plain and under GI and the denoised SSR, to within 3%. Where the
+transmission), plain and under GI, the denoised SSR and ray-traced refraction, to within 3%. Where the
 light is added after the shading it joins the splits there: a transmissive surface's
 refracted light (what it samples from the background) counts as indirect glossy
 (there is no separate refraction AOV); the denoised SSR's rays go to indirect glossy when the pass adds them; the
