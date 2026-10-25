@@ -2,6 +2,8 @@
 1 unit a frame along x past a camera whose shutter is open half a frame.
 - A render product is written again for the next time code when that frame
   converges at once (the post motion blur's), not left at the last one's.
+- Sampled motion: a single frame (usdrecord) blurs by the motion through
+  the shutter that Hydra's transform samples give, with no frame before it.
 Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
@@ -109,6 +111,31 @@ render([1, 2], {"hdvk:finalQuality": True, "hdvk:motionBlurTimeSamples": False})
 then = int(SIZE / 2 - PIXELS_PER_UNIT)  # the cube's centre at time 1
 expect(red(32, 32) > 0.1 and red(then, 32) < 0.02,
        "the product shows time 2 (cube at the centre: %.3f, where it was at 1: %.3f)" % (red(32, 32), red(then, 32)))
+
+
+
+def ramp(row):
+    """Pixels of row `row` between 10% and 90% of the cube's brightest: its
+    blurred edges (a sharp, antialiased cube has a pixel or two per edge)."""
+    values = [red(x, row) for x in range(SIZE)]
+    top = max(values)
+    return sum(0.1 * top < v < 0.9 * top for v in values)
+
+
+# Sampled motion: one usdrecord frame, no frame before it, is blurred by the
+# cube's motion through the shutter (time samples: 0.5 units, about 11
+# pixels per edge here).
+if os.path.exists(exrPath):
+    os.remove(exrPath)
+subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+                "--frames", "2", "-w", str(SIZE), scenePath, os.path.join(folder, "unused.#.png")], check=True,
+               shell=True)
+blurred = ramp(32)
+expect(blurred >= 12, "a single usdrecord frame is motion blurred (%d edge pixels)" % blurred)
+# hdvk:sampledMotion off: the same first frame stays sharp.
+render([2], {"hdvk:sampledMotion": False})
+sharp = ramp(32)
+expect(sharp <= 4, "hdvk:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

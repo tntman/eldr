@@ -307,6 +307,9 @@ struct Mesh {
     // The transforms they replace, when they change (motion vectors of
     // rigid meshes); Commit uploads and clears them.
     std::vector<float> prevTransforms;
+    // prevTransforms are the transforms one frame before as the shutter's
+    // samples continue (sampled motion): valid for new geometry too.
+    bool shutterMotion = false;
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
@@ -553,8 +556,9 @@ public:
     Volume *AddVolume();
     void RemoveVolume(Volume *volume);
 
-    // Uploads dirty data. The GPU must be idle.
-    void Commit();
+    // Uploads dirty data. The GPU must be idle. keepMotion: another commit
+    // for the frame the last one was for (the motion stays for it).
+    void Commit(bool keepMotion = false);
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
@@ -814,6 +818,9 @@ private:
     bool _emissiveLights = true;
     float _emissiveThreshold = 4.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
+    std::vector<float> _keptMotion;            // the last Commit's motion rows (Commit's keepMotion)
+    std::vector<uint32_t> _keptMotionBase;
+    bool _keptMoved = false;
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     VkImage _envImage = VK_NULL_HANDLE;
     VkDeviceMemory _envMemory = VK_NULL_HANDLE;

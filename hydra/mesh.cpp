@@ -355,14 +355,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
-        std::vector<float> transforms = HdVkWorldTransforms(sceneDelegate, id, GetInstancerId());
-        // Animated skinned prototypes arrive with their instancer dirty every
-        // frame; re-upload thousands of instances only when they moved.
-        if (transforms != m.transforms) {
-            m.prevTransforms = std::move(m.transforms);  // motion vectors
-            m.transforms = std::move(transforms);
-            m.transformsDirty = true;
-        }
+        HdVkSetTransforms(sceneDelegate, id, GetInstancerId(), m);
     }
     // Per-instance primvars (the instancer's), in the transforms' order.
     if (programNamesChanged || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
@@ -519,7 +512,8 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         // Compared, not flagged: a new subset mesh needs them even when
         // _mesh's were uploaded long ago.
         if (d.transforms != m.transforms) {
-            d.prevTransforms = std::move(d.transforms);
+            d.prevTransforms = m.shutterMotion ? m.prevTransforms : std::move(d.transforms);
+            d.shutterMotion = m.shutterMotion;
             d.transforms = m.transforms;
             d.transformsDirty = true;
         }

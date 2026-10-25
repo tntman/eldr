@@ -59,7 +59,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         tagMask |= HdVkRenderTagBit(tag);
     }
     if (_scene.SetTagMask(tagMask)) {
-        _scene.Commit();
+        _scene.Commit(true);  // the frame's second: its motion stays
     }
 
     vkr::Renderer::Frame frame;
@@ -294,7 +294,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Either may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
     if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
-        _scene.Commit();
+        _scene.Commit(true);  // the frame's second: its motion stays
     }
     // The scene camera's lens; usdview's free camera has none.
     if (camera) {
@@ -317,6 +317,25 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);
     frame.cameraPos[2] = float(eye[2]);
+    // Sampled motion: rprims sample over this camera's shutter (from the next
+    // sync on; a first frame's take the open camera that synced), and the
+    // camera's own motion comes from its samples.
+    float shutterOpen, shutterClose;
+    static_cast<HdVkRenderDelegate *>(delegate)->SetActiveCamera(camera ? camera->GetId() : SdfPath());
+    frame.sampledMotion = frame.shutter > 0.0f &&
+                          static_cast<HdVkRenderDelegate *>(delegate)->SampledMotionShutter(&shutterOpen, &shutterClose);
+    std::copy(viewProjF.data(), viewProjF.data() + 16, frame.prevViewProj);
+    std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
+    GfMatrix4d prevCamera;
+    if (const auto *vkCamera = dynamic_cast<const HdVkCamera *>(camera);
+        frame.sampledMotion && vkCamera && vkCamera->GetPrevTransform(&prevCamera)) {
+        const GfMatrix4f prevViewProjF(prevCamera.GetInverse() * projection);
+        std::copy(prevViewProjF.data(), prevViewProjF.data() + 16, frame.prevViewProj);
+        const GfVec3d prevEye = prevCamera.ExtractTranslation();
+        for (int i = 0; i < 3; ++i) {
+            frame.prevCameraPos[i] = float(prevEye[i]);
+        }
+    }
 
     // GPU sharing: colour and depth go to the app's OpenGL as textures, and
     // none of the four is read back unless someone maps it.
