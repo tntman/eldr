@@ -1991,20 +1991,19 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         firstTile[c.light] = uint32_t(tiles.size());
         Vec3 position{c.position[0], c.position[1], c.position[2]};
         float n = std::max(c.radius * 1.05f, cand.range * 1e-4f);
+        Vec3 offset{};  // the sample point's offset from the light's centre
         if (shapeSample && frame.softShadows) {
             // Uniform over a rect's or disk's area, a cylinder's axis; in a
             // sphere with density 1 / sqrt(1 - r^2), whose projection along
             // any direction is uniform over the disc it shows a receiver
             // (the Abel transform of (1 - r^2)^-1/2 is constant).
             // ponytail: a cylinder only along its axis (across, its radius
-            // stays hard); the near plane clears the sphere from the offset
-            // point, so casters within a radius of a sphere light's surface
-            // drop out of its shadow.
+            // stays hard). A sphere's near plane clears its own radius along
+            // each face axis from the offset point, no more (see add()).
             using Shape = Scene::Gpu::ShadowCaster::Shape;
             const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
             const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
             const Vec3 hh{c.halfHeight[0], c.halfHeight[1], c.halfHeight[2]};
-            Vec3 offset;
             if (c.shape == Shape::Sphere) {
                 // Radius sin(t): its CDF is (2t - sin 2t) / pi, inverted by Newton.
                 float t = 0.7853982f;
@@ -2015,7 +2014,6 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
                 }
                 const float z = 1.0f - 2.0f * u, r = std::sqrt(std::max(1.0f - z * z, 0.0f));
                 offset = Vec3{r * std::cos(phi), r * std::sin(phi), z} * (std::sin(t) * c.size);
-                n += c.size;
             } else if (c.shape == Shape::Rect) {
                 offset = hw * (2.0f * u - 1.0f) + hh * (2.0f * v - 1.0f);
             } else if (c.shape == Shape::Disk) {
@@ -2025,21 +2023,26 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             }
             position = position + offset;
         }
-        const float f = std::max(cand.range, n * 2.0f);
+        const float f = std::max(cand.range, (n + c.radius) * 2.0f);
+        const bool sphereJitter = shapeSample && frame.softShadows && c.shape == Scene::Gpu::ShadowCaster::Shape::Sphere;
         // A few texels of margin: PCF near a tile's (or cube face's) edge
         // must not read the neighbour.
         const float margin = 1.0f + 6.0f / float(tileSize);
         const float tanHalf = (spot ? std::tan(c.coneAngle) : 1.0f) * margin;
         auto add = [&](Vec3 direction) {
             ShadowTile t{};
-            const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, n, f);
+            // The sphere reaches radius - offset.direction in front of the
+            // sample point along this axis; clear that and not more.
+            const float nf = sphereJitter ? std::max(c.radius * 1.05f - Dot(offset, direction), cand.range * 1e-4f)
+                                         : n;
+            const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, nf, f);
             std::memcpy(t.viewProj, viewProj.m, sizeof(t.viewProj));
             const uint32_t k = uint32_t(tiles.size());
             t.rect[0] = float(k % perRow) * tileUv;
             t.rect[1] = float(k / perRow) * tileUv;
             t.rect[2] = t.rect[3] = tileUv;
             t.params[0] = 2.0f * tanHalf / float(tileSize);
-            t.params[1] = n;
+            t.params[1] = nf;
             t.params[2] = f;
             t.params[3] = frame.softShadows && !shapeSample ? c.size : 0.0f;
             t.origin[0] = position.x;
