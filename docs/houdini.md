@@ -84,6 +84,25 @@ copy `eldr.json` to `Documents/houdini22.0/packages/`, or set
 `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`. Then pick Eldr in the Solaris
 viewport's renderer menu or on a Render Settings LOP.
 
+## Solaris UI (Eldr tabs)
+
+Solaris builds a renderer's tab on the Render Settings LOP from
+`<HOUDINI_PATH>/soho/parameters/<RendererPlugin>_Global.ds`, on the Render
+Geometry Settings LOP from `..._Geometry.ds` (`loputils.addRendererParmFolders`,
+run when the node is created or "Rebuild Renderer-Specific Parameters" is
+picked), and the viewport's Display Options from `..._Viewport.ds`
+(`uiscope viewport`). For Eldr that is `HdVkRendererPlugin_*.ds`.
+
+`houdini/gen_ui.py` writes the three files into `build-h22/houdini/soho/parameters`
+(CMake target `eldrHoudiniUi`, part of the Houdini build, run with hython) from
+the renderer's own `GetRendererSettingsList()`, grouped as usdview's settings
+window (`GROUPS` in `usdview/hdvkUsdview/settings.py`). The Render Settings tab
+authors every `eldr:*` setting (each with Karma's Do Nothing / Set or Create /
+Block menu); the Geometry tab the per-prim primvars (`primvars:eldr:reflectionProbe`,
+`planarReflection`, `hair`, `ribbons`, `sprites`). `hython tests\houdini_ui.py`
+creates both LOPs, sets parameters and checks the authored attributes. Nodes
+made before Eldr was installed need "Rebuild Renderer-Specific Parameters".
+
 ## Volumes, tested
 
 - `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
