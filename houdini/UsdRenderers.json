@@ -4,6 +4,7 @@
         "menulabel": "Eldr",
         "menupriority": 30,
         "depthstyle": "opengl",
+        "needsselection": true,
         "statsdatapaths": {
             "percentDone": "$.percentDone",
             "peakMemory": "$.peakMemory",
