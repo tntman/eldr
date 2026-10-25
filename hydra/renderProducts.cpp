@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <utility>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -246,7 +247,12 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
                 }
             }
         }
-        std::unique_ptr<OIIO::ImageOutput> file = OIIO::ImageOutput::create(product.path);
+        // Written under a temporary name (the extension picks the format) and renamed
+        // into place, so a reader never sees a half-written file.
+        const std::filesystem::path finalPath(product.path);
+        const std::string tmpPath = (finalPath.parent_path() / (finalPath.stem().string() + ".tmp" +
+                                                                finalPath.extension().string())).string();
+        std::unique_ptr<OIIO::ImageOutput> file = OIIO::ImageOutput::create(tmpPath);
         OIIO::ImageSpec spec(int(_width), int(_height), int(n), OIIO::TypeDesc::FLOAT);
         // At the product's framing: the data window inside its resolution
         // (EXR windows run top down).
@@ -263,10 +269,19 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
         for (const auto &[key, value] : metadata) {
             spec.attribute(key, value);
         }
-        if (!file || !file->open(product.path, spec) || !file->write_image(OIIO::TypeDesc::FLOAT, image.data()) ||
+        if (!file || !file->open(tmpPath, spec) || !file->write_image(OIIO::TypeDesc::FLOAT, image.data()) ||
             !file->close()) {
             TF_RUNTIME_ERROR("HdVk: writing %s failed: %s", product.path.c_str(),
                              file ? file->geterror().c_str() : OIIO::geterror().c_str());
+            std::error_code ignored;
+            std::filesystem::remove(tmpPath, ignored);
+        } else {
+            std::error_code ec;
+            std::filesystem::rename(tmpPath, finalPath, ec);
+            if (ec) {
+                TF_RUNTIME_ERROR("HdVk: renaming %s to %s failed: %s", tmpPath.c_str(), product.path.c_str(),
+                                 ec.message().c_str());
+            }
         }
     }
 #else
