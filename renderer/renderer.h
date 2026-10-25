@@ -90,6 +90,16 @@ public:
         // prevTransforms (Mesh::shutterMotion); the camera one frame before
         // is here (viewProj and cameraPos when it doesn't move).
         bool sampledMotion = false;
+        // Deformation blur (hdvk:deformationBlur): meshes with
+        // Mesh::velocities (point caches, sampled through the shutter)
+        // move along them in time samples and motion vectors. Off: they
+        // are ignored.
+        bool deformationBlur = true;
+        // Residual DOF (hdvk:dofResidualBlur): with dofJitter the post DOF
+        // still runs on each film sample, its circle of confusion scaled
+        // by 1/sqrt(filmSamples), to fill the gaps between lens samples
+        // (EEVEE's).
+        bool dofResidualBlur = true;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):
@@ -128,6 +138,10 @@ public:
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
+        // hdvk:productResolution: products render at the first raster
+        // product's resolution, pixel aspect ratio and data window (the
+        // Hydra layer's; the app's buffers get that image resampled).
+        bool productResolution = true;
         // Also exposes the beauty without bloom or tonemapping for
         // Renderer::Read (Targets::linearColor): an EXR's linear beauty.
         bool linearColor = false;
@@ -606,6 +620,11 @@ private:
     Stats _stats;
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
+    // Film: primId, instanceId and depth of the sample nearest the pixel
+    // centre so far (GENERAL; made with the first film frame), and its
+    // distance from the centre (the jitter is the same for every pixel).
+    Image _filmIds[3];
+    float _filmIdDistance = 0.0f;
     Image _shadowMap;                           // kCascades-layer array view
     // The cascades' nearest depths for soft sun shadows (shadow_min.comp):
     // level 0 per 4 x 4 texels, mips to 1 x 1, in GENERAL; a view per level.

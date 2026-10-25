@@ -150,7 +150,7 @@ add_library(hdVk SHARED
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
     hydra/camera.cpp hydra/renderProducts.cpp)
-target_link_libraries(hdVk PRIVATE ar garch hd hdsi hgi hio pxOsd sdr vkrenderer)
+target_link_libraries(hdVk PRIVATE ar cameraUtil garch hd hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
 # which installs OpenVDB and its NanoVDB headers beside USD): the volume

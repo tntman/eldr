@@ -175,7 +175,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((splitDomeDirect, "hdvk:splitDomeDirect")) \
     ((directIntensity, "hdvk:directIntensity")) \
     ((indirectIntensity, "hdvk:indirectIntensity")) \
-    ((sampledMotion, "hdvk:sampledMotion"))
+    ((sampledMotion, "hdvk:sampledMotion")) \
+    ((deformationBlur, "hdvk:deformationBlur")) \
+    ((dofResidualBlur, "hdvk:dofResidualBlur")) \
+    ((productResolution, "hdvk:productResolution"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);

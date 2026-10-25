@@ -145,8 +145,12 @@ reference (RMSE): sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004,
 Kitchen_set 0.0068 to 0.0004. Convergence at 64 samples takes 0.2-0.5 s on
 those scenes.
 
-Ids, depth and Cryptomatte are the last sample's (one jittered sample,
-unfiltered).
+Ids, depth and Cryptomatte are one unfiltered sample's: under the film the
+one nearest the pixel centre so far (kept while later samples land farther
+out, so id edges don't move with the last sample's jitter; the jitter is
+the same for every pixel), else the frame's (TAA: its jittered sample).
+Extra AOVs from depth (P, camera depth) still average the samples (not
+the one nearest the pixel centre).
 
 ## Lighting and shadows
 
@@ -432,7 +436,9 @@ has no lens (no DOF, no blur).
   largest near-field circle so blurred foreground spreads, background never
   bleeds over sharper foreground. Film: `dofJitter` instead moves the camera
   across the aperture per sample, shearing the view so the focus plane stays
-  (true bokeh with occlusion; the post DOF is skipped).
+  (true bokeh with occlusion). With `dofResidualBlur` (on) the post DOF
+  still runs per sample at 1/√(film samples) of the circle of confusion,
+  filling the gaps between lens samples, as EEVEE does.
 - **Motion blur.** Interactive: McGuire's reconstruction along each pixel's
   motion (camera reprojection plus object motion vectors including skinning and
   blend shapes) after TAA. Film: `motionBlurTimeSamples` renders the scene at a
@@ -443,8 +449,11 @@ has no lens (no DOF, no blur).
   crowd). With `sampledMotion` (on) rigid prims, instances and the camera
   take their motion from the scene's transform samples at shutter open and
   close (continued linearly to a frame), not from the last rendered frame, so
-  a single usdrecord or husk frame is blurred too. Deforming points and
-  skinned joints still need a rendered frame before.
+  a single usdrecord or husk frame is blurred too. With `deformationBlur`
+  (on) meshes whose points move (point caches) get a velocity per point
+  from Hydra's point samples at shutter open and close, which time samples
+  and motion vectors follow (ray tracing still sees the frame's points).
+  Skinned joints still need a rendered frame before.
 - **Upscaling** (`renderScale` below 1): while TAA resolves, render at that
   fraction (min 0.25) and reconstruct into a full-size history (Gaussian
   weights from the 3x3 samples' sub-pixel positions). Interactive only: the
@@ -523,10 +532,16 @@ layout:
 - Cryptomatte vars become `<var>00` layers (rank 0 and 1) with the spec's
   metadata (`cryptomatte/<key>/name`, `hash` MurmurHash3_32,
   `conversion` uint32_to_float32, `manifest` JSON of name to hex id). The
-  manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the latest
-  frame's value; they are not averaged.
-- Files are zip-compressed float32 EXR at the frame's size (the product's own
-  resolution is ignored).
+  manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the film
+  sample's nearest the pixel centre; they are not averaged.
+- Files are zip-compressed float32 EXR. With `productResolution` (on) the
+  frame renders at the first raster product's `resolution`, conformed to its
+  `pixelAspectRatio` by its `aspectRatioConformPolicy` and cut to its
+  `dataWindowNDC`, when that isn't the app's buffer size (usdrecord sizes
+  its buffers from `-w` and the camera): the EXR's display window is the
+  resolution, its data window the part rendered, with `PixelAspectRatio`.
+  The app's colour, depth and ids get that frame resampled; its other AOVs
+  stay empty. Off: the frame's size.
 
 **Colour in the EXR.** By default (`productLinear`) the beauty is linear and
 untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
@@ -613,8 +628,8 @@ ceiling). Each is a candidate for later work.
 
 Output and Hydra
 
-- Render products are written at the frame's size, not the product's
-  resolution, and the data window and collection are ignored. Vars Eldr cannot
+- Render products all render at the first raster product's framing; the
+  collection is ignored. Vars Eldr cannot
   fill are left out with a warning. No `elementId` AOV (face picking).
 - Cryptomatte has one sample per pixel: edges do not blend.
 - Volumes are not pickable. A field prim's own transform is ignored (as in

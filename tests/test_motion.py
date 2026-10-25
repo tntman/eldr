@@ -4,6 +4,8 @@
   converges at once (the post motion blur's), not left at the last one's.
 - Sampled motion: a single frame (usdrecord) blurs by the motion through
   the shutter that Hydra's transform samples give, with no frame before it.
+- Deformation blur: the same for a mesh whose points move (a point cache),
+  through Hydra's primvar samples.
 Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
@@ -136,6 +138,31 @@ expect(blurred >= 12, "a single usdrecord frame is motion blurred (%d edge pixel
 render([2], {"hdvk:sampledMotion": False})
 sharp = ramp(32)
 expect(sharp <= 4, "hdvk:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
+
+# Deformation blur: the same cube as a mesh whose points move (no transform
+# animation), one usdrecord frame.
+cube.GetPrim().SetActive(False)
+mesh = UsdGeom.Mesh.Define(stage, "/deforming")
+corners = [Gf.Vec3f(x, y, z) for z in (-0.5, 0.5) for y in (-0.5, 0.5) for x in (-0.5, 0.5)]
+mesh.CreateFaceVertexCountsAttr([4] * 6)
+mesh.CreateFaceVertexIndicesAttr([0, 2, 3, 1, 4, 5, 7, 6, 0, 1, 5, 4, 2, 6, 7, 3, 0, 4, 6, 2, 1, 3, 7, 5])
+mesh.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
+mesh.CreateSubdivisionSchemeAttr("none")
+points = mesh.CreatePointsAttr()
+for t, dx in ((1, -1.0), (3, 1.0)):
+    points.Set([p + Gf.Vec3f(dx, 0, 0) for p in corners], t)
+stage.GetRootLayer().Save()
+if os.path.exists(exrPath):
+    os.remove(exrPath)
+subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+                "--frames", "2", "-w", str(SIZE), scenePath, os.path.join(folder, "unused.#.png")], check=True,
+               shell=True)
+blurred = ramp(32)
+expect(blurred >= 12, "a single usdrecord frame of moving points is blurred (%d edge pixels)" % blurred)
+render([2], {"hdvk:deformationBlur": False, "hdvk:finalQuality": True})
+sharp = ramp(32)
+expect(sharp <= 4, "hdvk:deformationBlur off: moving points stay sharp (%d edge pixels)" % sharp)
+print("deformation blur: %d edge pixels on, %d off" % (blurred, sharp))
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

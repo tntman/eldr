@@ -3130,6 +3130,80 @@ int main()
             const Image post = film(frame);
             frame.dofJitter = false;
             Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
+            // Residual DOF (Frame::dofResidualBlur, on above): a post DOF of
+            // 1/sqrt(samples) the circle between the lens samples. At 4
+            // samples it is nearer the converged spot (256 samples) than
+            // lens jitter alone; at 64 it converges to what jitter alone does.
+            frame.dofJitter = true;
+            frame.filmAccumulation = true;
+            auto error = [](const Image &a, const Image &b) {
+                double e = 0;
+                for (int y = 0; y < 42; ++y) {
+                    for (int x = 0; x < 64; ++x) {
+                        const double d = a.At(x, y, 1) - b.At(x, y, 1);
+                        e += d * d;
+                    }
+                }
+                return float(std::sqrt(e / (42 * 64)));
+            };
+            frame.filmSamples = 4;
+            const Image residual4 = film(frame);
+            frame.filmSamples = 64;
+            const Image residual64 = film(frame);
+            frame.dofResidualBlur = false;
+            const Image jitter64 = film(frame);
+            frame.filmSamples = 4;
+            const Image jitter4 = film(frame);
+            float rms64 = 0, jitterRms64 = 0;
+            const float sum64 = spot(residual64, &rms64), jitterSum64 = spot(jitter64, &jitterRms64);
+            std::printf("dof residual: 64 samples spot sum %.2f (jitter alone %.2f), RMS radius %.2f px (%.2f)\n",
+                        sum64, jitterSum64, rms64, jitterRms64);
+            std::printf("dof residual: 4 samples RMSE %.4f (jitter alone %.4f), 64 samples %.4f (%.4f), "
+                        "residual vs jitter at 64 %.4f, RMS radius %.2f px\n",
+                        error(residual4, jittered), error(jitter4, jittered), error(residual64, jittered),
+                        error(jitter64, jittered), error(residual64, jitter64), rms64);
+            Expect(error(residual4, jittered) < 0.8f * error(jitter4, jittered),
+                   "dof residual: fills the gaps between 4 lens samples");
+            Expect(error(residual64, jitter64) < 0.5f * error(jitter4, jittered) &&
+                       std::abs(rms64 / expected - 1.0f) < 0.08f && std::abs(sum64 / jitterSum64 - 1.0f) < 0.1f,
+                   "dof residual: 64 samples converge to lens jitter's image");
+        }
+
+        {
+            // Film ids: primId and depth come from the film sample nearest
+            // the pixel centre, not the last one. A quad in front of a
+            // backdrop ends a quarter pixel outside the centres of columns
+            // 20 and 40, so every jittered sample farther out than that
+            // (the last one, 0.49 pixels off, on one side) misses it there.
+            vkr::Scene scene(&device);
+            const float px = 2.0f / 64.0f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->primId = 2;
+            AddQuad(scene, -1.0f + 20.5f * px - 0.25f * px, -0.8f, -1.0f + 40.5f * px + 0.25f * px, 0.8f, 0.0f)->primId =
+                1;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.finalQuality = true;
+            frame.filmSamples = 64;
+            vkr::Renderer r(device);
+            Image img;
+            for (int i = 0; i < 200; ++i) {
+                img = Render(r, scene, frame);
+                if (r.IsConverged()) {
+                    break;
+                }
+            }
+            bool ids = true;
+            for (int y = 16; y < 48; ++y) {
+                ids = ids && img.Prim(20, y) == 1 && img.Prim(40, y) == 1 && img.Prim(19, y) == 2 &&
+                      img.Prim(41, y) == 2 && img.depth[y * 64 + 20] == img.depth[y * 64 + 30] &&
+                      img.depth[y * 64 + 40] == img.depth[y * 64 + 30];
+            }
+            std::printf("film ids: columns 19..21 %d %d %d, 39..41 %d %d %d after %u samples\n", img.Prim(19, 32),
+                        img.Prim(20, 32), img.Prim(21, 32), img.Prim(39, 32), img.Prim(40, 32), img.Prim(41, 32),
+                        r.GetStats().taaSamples);
+            Expect(ids, "film ids: primId and depth of the sample nearest the pixel centre");
         }
 
         {

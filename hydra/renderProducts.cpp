@@ -12,6 +12,8 @@
 #include <OpenImageIO/imageio.h>
 #endif
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
@@ -37,6 +39,40 @@ bool IsCryptomatte(uint32_t kind)
 }
 
 } // namespace
+
+bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *framing)
+{
+    if (!settings || !settings->IsActive()) {
+        return false;
+    }
+    for (const HdRenderSettings::RenderProduct &rp : settings->GetRenderProducts()) {
+        if (rp.type != TfToken("raster") || rp.name.IsEmpty() || rp.resolution[0] <= 0 || rp.resolution[1] <= 0) {
+            continue;
+        }
+        // UsdRenderSettingsBase's fallback when neither the product nor the
+        // settings author one: the app's size, as before.
+        // ponytail: an authored 2048 x 1080 is taken for the fallback too
+        // (the flattened product doesn't say what was authored).
+        if (rp.resolution == GfVec2i(2048, 1080)) {
+            return false;
+        }
+        framing->resolution = rp.resolution;
+        framing->pixelAspectRatio = rp.pixelAspectRatio > 0.0f ? rp.pixelAspectRatio : 1.0f;
+        framing->conformPolicy = rp.aspectRatioConformPolicy;
+        // The data window in whole pixels, at least one, inside the image
+        // (ponytail: no overscan beyond it).
+        const GfRange2f ndc = rp.dataWindowNDC.IsEmpty() ? GfRange2f(GfVec2f(0), GfVec2f(1)) : rp.dataWindowNDC;
+        for (int k = 0; k < 2; ++k) {
+            const int size = rp.resolution[k];
+            const int lo = std::clamp(int(std::lround(ndc.GetMin()[k] * size)), 0, size - 1);
+            const int hi = std::clamp(int(std::lround(ndc.GetMax()[k] * size)), lo + 1, size);
+            framing->window[k] = lo;
+            framing->window[k + 2] = hi;
+        }
+        return true;
+    }
+    return false;
+}
 
 void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height,
                                  vkr::Renderer::Targets *out)
@@ -217,6 +253,15 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
         }
         std::unique_ptr<OIIO::ImageOutput> file = OIIO::ImageOutput::create(product.path);
         OIIO::ImageSpec spec(int(_width), int(_height), int(n), OIIO::TypeDesc::FLOAT);
+        // At the product's framing: the data window inside its resolution
+        // (EXR windows run top down).
+        if (_framing.resolution[0] > 0 && _framing.Width() == _width && _framing.Height() == _height) {
+            spec.full_width = _framing.resolution[0];
+            spec.full_height = _framing.resolution[1];
+            spec.x = _framing.window[0];
+            spec.y = _framing.resolution[1] - _framing.window[3];
+            spec.attribute("PixelAspectRatio", _framing.pixelAspectRatio);
+        }
         spec.channelnames = channels;
         spec.alpha_channel = beauty ? 3 : -1;
         spec.attribute("compression", "zip");

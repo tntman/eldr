@@ -388,6 +388,7 @@ void HdVkSplitIndexed(vkr::Mesh const &m, std::vector<size_t> const &tris, vkr::
     gather(m.normals, 3, &d->normals);
     gather(m.uvs, 2, &d->uvs);
     gather(m.colors, 3, &d->colors);
+    gather(m.velocities, 3, &d->velocities);
     gather(m.jointIndices, m.influences, &d->jointIndices);
     gather(m.jointWeights, m.influences, &d->jointWeights);
     gather(m.blendRanges, 2, &d->blendRanges);
@@ -506,6 +507,15 @@ bool HdVkMesh::_FlattenRefined()
     }
     perVertex(inputs[0], &m.uvs);
     perVertex(inputs[1], &m.colors);
+    // Velocities refine as the points do (limit stencils are linear).
+    m.velocities.clear();
+    VtVec3fArray velocities, unused;
+    if (!_velocities.empty() && sub.RefinePoints(_velocities, &velocities, &unused)) {
+        m.velocities.resize(vertices * 3);
+        for (size_t o = 0; o < vertices; ++o) {
+            std::copy_n(velocities[tri.vertex[o]].data(), 3, &m.velocities[o * 3]);
+        }
+    }
     // The programs' primvars: per mesh, triangle or vertex.
     m.primvars.clear();
     for (size_t i = 0; i < _programPrimvars.size(); ++i) {

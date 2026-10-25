@@ -60,6 +60,7 @@ struct FrameData {
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
     float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
+    float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on
 };
 
 namespace {
@@ -558,7 +559,8 @@ Renderer::~Renderer()
         vkDestroyImageView(_dev.device, v, nullptr);
     }
     for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_shadowMap, &_shadowAtlas, &_brdfLut,
-                       &_blackCube, &_blueNoise, &_up[0], &_up[1], &_up[2], &_up[3]}) {
+                       &_blackCube, &_blueNoise, &_up[0], &_up[1], &_up[2], &_up[3], &_filmIds[0], &_filmIds[1],
+                       &_filmIds[2]}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
@@ -707,6 +709,8 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        // Deformation blur: point velocities (Scene::Gpu::velocities).
+        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1481,13 +1485,15 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
 // while upscaling (TAA's history stays, at the frame's size).
 void Renderer::_ResizeScene(uint32_t width, uint32_t height)
 {
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_up[0], &_up[1], &_up[2], &_up[3]}) {
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_up[0], &_up[1], &_up[2], &_up[3],
+                       &_filmIds[0], &_filmIds[1], &_filmIds[2]}) {
         _dev.Destroy(*img);
     }
     _width = width;
     _height = height;
-    constexpr VkImageUsageFlags kTarget = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                                          VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // TRANSFER_DST: the film puts its nearest sample's ids back (_filmIds).
+    constexpr VkImageUsageFlags kTarget = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     _color = _dev.CreateImage(kColorFormat, width, height, 1, 1, kTarget,
                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _primId = _dev.CreateImage(kIdFormat, width, height, 1, 1, kTarget,
@@ -1500,7 +1506,7 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _depth = _dev.CreateImage(kDepthFormat, width, height, 1, 1,
                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                  VK_IMAGE_USAGE_SAMPLED_BIT,
+                                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _gtao.Resize(width, height, _depth.view);
     _taa.SetInput(width, height, _color.view, _depth.view, _velocity.view);
@@ -1567,6 +1573,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo velocities{gpu.velocities, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo displacements{gpu.displacements, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lods{gpu.lods, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lodState{_lodState.buffer, 0, VK_WHOLE_SIZE};
@@ -1634,6 +1641,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &velocities, nullptr);
     write(39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &displacements, nullptr);
     write(40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lods, nullptr);
     write(41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lodState, nullptr);
@@ -2750,6 +2758,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);
     const float shutterT = timeSample ? 1.0f + frame.shutterOpen + frame.shutter * shutterU : 1.0f;
+    // Deformation blur: point velocities (mesh.vert) move by this.
+    fd.deform[0] = shutterT - 1.0f;
+    fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
             lensed.viewProj[i] = _shutter.viewProj[i] + (appFrame.viewProj[i] - _shutter.viewProj[i]) * shutterT;
@@ -3653,8 +3664,18 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     constexpr VkPipelineStageFlags2 kPostStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
-    // The camera's lens: depth of field when it has an fStop (motion blur above).
-    const bool dof = dofLens && !lensJitter;
+    // The camera's lens: depth of field when it has an fStop (motion blur
+    // above); under lens jitter only the residual blur between its samples,
+    // when its largest circle (at infinity) reaches 1.5 pixels: below, the
+    // lens samples leave no gaps and the gather's uneven edges (pixels
+    // under half a pixel of circle keep their colour, their neighbours
+    // take some) would only add light to small highlights.
+    const float cocPixels = dofLens ? 0.5f * frame.focalLength * frame.focalLength /
+                                          (frame.fStop * (frame.focusDistance - frame.focalLength)) *
+                                          float(frame.width) / frame.sensorWidth
+                                    : 0.0f;
+    const float residualScale = 1.0f / std::sqrt(float(std::max(frame.filmSamples, 1u)));
+    const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
     Lens::Params lens{};
     if (dof || postBlur) {
         const Mat4 back = postBlur ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj) : Mat4();
@@ -3663,9 +3684,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         if (dof) {
             // Thin lens: a circle of confusion f^2 / (N (S - f)) * |D - S| / D
             // across on the sensor, as a radius in pixels.
-            const float f = frame.focalLength, s = frame.focusDistance;
-            lens.cocScale = 0.5f * f * f / (frame.fStop * (s - f)) * float(frame.width) / frame.sensorWidth;
-            lens.focusDistance = s;
+            lens.cocScale = cocPixels * (lensJitter ? residualScale : 1.0f);
+            lens.focusDistance = frame.focusDistance;
         }
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
         lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);
@@ -3784,6 +3804,57 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
+    // Film: ids, Cryptomatte and depth come from the sample nearest the
+    // pixel centre so far, not the last: a nearer one is kept in _filmIds,
+    // a farther one gets the kept ones back (the ids before the extra
+    // AOVs' Cryptomatte, depth after them: their G-buffer and the
+    // positions they average are this sample's).
+    const bool filmNearer = film && (filmMode != 0 || std::hypot(filmOffset[0], filmOffset[1]) < _filmIdDistance);
+    auto filmIds = [&](uint32_t first, uint32_t count) {
+        if (!film) {
+            return;
+        }
+        Image *frameIds[3] = {&_primId, &_instanceId, &_depth};
+        for (uint32_t i = first; i < first + count; ++i) {
+            const VkImageAspectFlags aspect = i == 2 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            if (!_filmIds[i].image) {
+                _filmIds[i] = _dev.CreateImage(i == 2 ? kDepthFormat : kIdFormat, _width, _height, 1, 1,
+                                               VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                                   VK_IMAGE_USAGE_SAMPLED_BIT,  // the view CreateImage makes
+                                               aspect, VK_IMAGE_VIEW_TYPE_2D);
+                ImageBarrier(_cmd, _filmIds[i].image, Range(aspect), VK_PIPELINE_STAGE_2_NONE, 0,
+                             VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                             VK_IMAGE_LAYOUT_GENERAL);
+            } else {  // the last frame's copy
+                ImageBarrier(_cmd, _filmIds[i].image, Range(aspect), VK_PIPELINE_STAGE_2_COPY_BIT,
+                             VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                             VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                             VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+            }
+            VkImageCopy region{};
+            region.srcSubresource = region.dstSubresource = {aspect, 0, 0, 1};
+            region.extent = {_width, _height, 1};
+            if (filmNearer) {
+                vkCmdCopyImage(_cmd, frameIds[i]->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _filmIds[i].image,
+                               VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+                continue;
+            }
+            ImageBarrier(_cmd, frameIds[i]->image, Range(aspect), VK_PIPELINE_STAGE_2_COPY_BIT,
+                         VK_ACCESS_2_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            vkCmdCopyImage(_cmd, _filmIds[i].image, VK_IMAGE_LAYOUT_GENERAL, frameIds[i]->image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            ImageBarrier(_cmd, frameIds[i]->image, Range(aspect), VK_PIPELINE_STAGE_2_COPY_BIT,
+                         VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                         VK_ACCESS_2_MEMORY_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        }
+    };
+    if (filmNearer) {
+        _filmIdDistance = std::hypot(filmOffset[0], filmOffset[1]);
+    }
+    filmIds(0, 2);
+
     // Extra AOVs (aov.h), before the lens bends depth and the ids.
     if (frame.extraAovs && Aovs::Any(out.aovs)) {
         Aovs::Params params;
@@ -3811,6 +3882,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                      geometry);
         pass("aovs");
     }
+
+    filmIds(2, 1);
 
     // Lens distortion warps everything read back.
     if (frame.lensDistortion && frame.distortion.Active()) {

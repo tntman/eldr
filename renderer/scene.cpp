@@ -116,6 +116,7 @@ struct VertexKey {
     Vertex v;
     SkinVertex skin, skin2;  // skin2: influences 4..7, zero with four
     float primvars[4];       // vertex-rate primvars, zero without
+    float velocity[3];       // Mesh::velocities, zero without
     bool operator==(const VertexKey &o) const { return std::memcmp(this, &o, sizeof(VertexKey)) == 0; }
 };
 struct VertexKeyHash {
@@ -260,7 +261,7 @@ Scene::~Scene()
     if (_device) {
         for (Buffer *b : {&_vertices, &_indices, &_instances, &_visible, &_skin, &_joints, &_skinXforms,
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
-                          &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices,
+                          &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices, &_velocities,
                           &_programCode, &_programConstants, &_primvarTable, &_primvarData, &_volumeTable,
                           &_volumeGrids}) {
             _device->Destroy(*b);
@@ -463,7 +464,7 @@ VkDeviceSize Scene::VertexBytes() const
 {
     VkDeviceSize bytes = 0;
     for (const Buffer *b : {&_vertices, &_instances, &_visible, &_skin, &_joints, &_skinXforms, &_jointBoundsPool,
-                            &_blendOffsets, &_blendWeights, &_primvarVertices}) {
+                            &_blendOffsets, &_blendWeights, &_primvarVertices, &_velocities}) {
         bytes += b->size;
     }
     return bytes;
@@ -484,6 +485,7 @@ void Scene::RemoveMesh(Mesh *mesh)
         _blendAlloc.Free(mesh->_blendBase, mesh->_blendSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
         _primvarVertexAlloc.Free(mesh->_primvarVertexOffset, mesh->_primvarVertexCount);
+        _velocityAlloc.Free(mesh->_velocityOffset, mesh->_velocityCount);
         _indexAlloc.Free(mesh->_lodFirstIndex, mesh->_lodIndexCount);
         _FreeInstances(*mesh);
         for (PendingLods &p : _pendingLods) {
@@ -617,8 +619,10 @@ void Scene::_UploadGeometry(Mesh &m)
     _skinAlloc.Free(m._skinOffset, m._skinCount);
     _blendAlloc.Free(m._blendBase, m._blendSlots);
     _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
+    _velocityAlloc.Free(m._velocityOffset, m._velocityCount);
     _indexAlloc.Free(m._lodFirstIndex, m._lodIndexCount);
     m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = m._lodIndexCount = 0;
+    m._velocityCount = 0;
     m._lods.clear();
     ++m._lodGeneration;  // levels still building for the last upload don't fit
     m._jointBounds.clear();
@@ -644,6 +648,7 @@ void Scene::_UploadGeometry(Mesh &m)
     if (!valid || corners == 0) {
         return;
     }
+    const bool moving = !skinned && m.velocities.size() == m.points.size();
     // Planar reflections: is the mesh flat? Its first proper triangle,
     // and every point within a thousandth of its size of that plane.
     m._flat = false;
@@ -718,6 +723,7 @@ void Scene::_UploadGeometry(Mesh &m)
     std::vector<Vertex> vertices;
     std::vector<SkinVertex> skin;
     std::vector<float> primvarVertices;  // 4 per vertex, with vertex-rate primvars
+    std::vector<float> velocities;       // 4 per vertex, with Mesh::velocities
     std::vector<uint32_t> indices = indexed ? m.indices : std::vector<uint32_t>(corners);
     std::unordered_map<VertexKey, uint32_t, VertexKeyHash> unique;
     unique.reserve(indexed ? 0 : corners);
@@ -742,6 +748,9 @@ void Scene::_UploadGeometry(Mesh &m)
             if (m._primvarComponents[p] != kNone) {
                 std::copy_n(&pv.values[i * pv.components], pv.components, key.primvars + m._primvarComponents[p]);
             }
+        }
+        if (moving) {
+            std::copy_n(&m.velocities[i * 3], 3, key.velocity);
         }
         if (skinned) {
             const uint16_t *j = &m.jointIndices[i * m.influences];
@@ -784,6 +793,9 @@ void Scene::_UploadGeometry(Mesh &m)
             if (packed > 0) {
                 primvarVertices.insert(primvarVertices.end(), key.primvars, key.primvars + 4);
             }
+            if (moving) {
+                velocities.insert(velocities.end(), {key.velocity[0], key.velocity[1], key.velocity[2], 0.0f});
+            }
             if (skinned) {
                 skin.push_back(key.skin);
                 if (m.influences == 8) {
@@ -791,8 +803,10 @@ void Scene::_UploadGeometry(Mesh &m)
                 }
             }
             // Camera-facing: as far as the half width or radius reaches.
+            // Moving points: a frame's velocity either way.
+            // ponytail: a shutter past one frame from this one leaves the bounds.
             const float reach = m.facing == Mesh::kNotFacing
-                                    ? 0.0f
+                                    ? Length(Vec3{key.velocity[0], key.velocity[1], key.velocity[2]})
                                     : Length(Vec3{key.v.normal[0], key.v.normal[1], key.v.normal[2]});
             for (int k = 0; k < 3; ++k) {
                 m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k] - reach);
@@ -911,6 +925,16 @@ void Scene::_UploadGeometry(Mesh &m)
         _copies.push_back({_primvarVertices.buffer, VkDeviceSize(m._primvarVertexOffset) * 4 * sizeof(float),
                            _Stage(primvarVertices.data(), primvarVertices.size() * sizeof(float)),
                            primvarVertices.size() * sizeof(float)});
+    }
+    if (moving) {
+        while (!_velocityAlloc.Allocate(vertexCount, &m._velocityOffset)) {
+            _EnsureCapacity(_velocities, _velocityAlloc, vertexCount, 4 * sizeof(float),
+                            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+        }
+        m._velocityCount = vertexCount;
+        _copies.push_back({_velocities.buffer, VkDeviceSize(m._velocityOffset) * 4 * sizeof(float),
+                           _Stage(velocities.data(), velocities.size() * sizeof(float)),
+                           velocities.size() * sizeof(float)});
     }
     if (skinned) {
         const uint32_t skinCount = uint32_t(skin.size());
@@ -1440,7 +1464,8 @@ void Scene::Commit(bool keepMotion)
             _UpdateWorldBounds(*m);
         }
         changed = changed || geometry || transforms || joints;
-        _gpu.moved = _gpu.moved || (joints && !geometry);
+        // New points with velocities (deformation blur) move too.
+        _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
     // A second commit for the same frame (keepMotion) keeps the first's
@@ -1625,6 +1650,7 @@ void Scene::Commit(bool keepMotion)
         // program's fallback.
         d.primvars = kNone;
         d.primvarVertices = m._primvarVertexCount > 0 ? m._primvarVertexOffset : kNone;
+        d.velocities = m._velocityCount > 0 ? m._velocityOffset : kNone;
         const bool displacementProgram = drawable && m.material && !m.material->displacementProgram.Empty();
         if ((program || displacementProgram) && !m.material->program.primvars.empty()) {
             d.primvars = uint32_t(primvarTable.size() / 4);
@@ -1879,6 +1905,9 @@ void Scene::Commit(bool keepMotion)
         _EnsureCapacity(_primvarVertices, _primvarVertexAlloc, 1, 4 * sizeof(float),
                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     }
+    if (!_velocities.buffer) {  // the same for velocities
+        _EnsureCapacity(_velocities, _velocityAlloc, 1, 4 * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
+    }
 
     const std::vector<Emitter> emitters = _FindEmitters();
     // The dome's environment first: its extracted sun (SetDomeSun) lights
@@ -2106,6 +2135,7 @@ void Scene::Commit(bool keepMotion)
     _gpu.primvarTable = _primvarTable.buffer;
     _gpu.primvarData = _primvarData.buffer;
     _gpu.primvarVertices = _primvarVertices.buffer;
+    _gpu.velocities = _velocities.buffer;
     _gpu.udimTiles = _udimTiles.buffer;
     _gpu.lights = _lightBuffer.buffer;
     _gpu.skin = _skin.buffer;
