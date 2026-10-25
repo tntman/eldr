@@ -201,6 +201,13 @@ its own shape).
   so floors far from the origin don't shadow themselves (until sweep 4,
   Kitchen_set's sunlit floor came out 37% too dark traced; the shadow maps
   were right).
+  The traced image covers opaque pixels only, so a traced sun keeps its
+  cascades while volumes, fog, translucent surfaces or subsurface materials
+  are in the scene: smoke and fog in a room are lit only in the window's beam,
+  and glass is shadowed by the maps (until sweep 4 they saw no shadow, and the
+  sun shone through walls). Costs the cascades again: 1.05 ms on volume.usda
+  at 1280x720; the crowd, without such users, traces only. Traced local lights
+  still leave translucent surfaces unshadowed.
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).

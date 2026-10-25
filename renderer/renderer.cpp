@@ -3002,7 +3002,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         toSun[1] = j.y;
         toSun[2] = j.z;
     }
-    const bool shadows = frame.shadows && !rtSun && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
+    // A traced sun still gets its cascades when something reads them that
+    // the traced image (opaque pixels only) cannot cover: volumes and fog in
+    // the medium, translucent surfaces (RtTraced falls back to the maps off
+    // the prepass depth) and subsurface's thickness. Else the walls let the
+    // sun through to smoke and fog.
+    // ponytail: the maps' resolution, not the rays'; a traced 3D sun
+    // visibility grid would match the surfaces' sharpness.
+    const bool cascadeUsers = (frame.volumes && gpu.volumeCount > 0) || (frame.fog && frame.fogDensity > 0.0f) ||
+                              (frame.translucency && !gpu.translucent.empty()) ||
+                              (frame.subsurface && !gpu.subsurface.empty());
+    const bool shadows = frame.shadows && (!rtSun || cascadeUsers) && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          _FitCascades(gpu, frame, toSun, &fd);
     const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
     const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
