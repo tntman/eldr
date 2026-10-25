@@ -296,7 +296,8 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
   depth, ids and shadows. Translucent holdouts (`holdoutAlpha`) cut colour and
-  alpha by their opacity.
+  alpha by their opacity, also one a MaterialX graph computes (the matte pass runs the
+  material program, per pixel).
 - **Subsurface** (`subsurface`): see Materials.
 
 Screen-space limits: only what is on screen is refracted, and OIT is an

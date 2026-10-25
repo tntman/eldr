@@ -113,6 +113,9 @@ const uint32_t kShadowTintFrag[] =
 const uint32_t kMatteFrag[] =
 #include "matte.frag.inc"
 ;
+const uint32_t kMatteGraphFrag[] =
+#include "matte_graph.frag.inc"
+;
 const uint32_t kShadowMinComp[] =
 #include "shadow_min.comp.inc"
 ;
@@ -857,6 +860,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule tintFrag = CreateShaderModule(device, kShadowTintFrag, sizeof(kShadowTintFrag));
     VkShaderModule matteFrag = CreateShaderModule(device, kMatteFrag, sizeof(kMatteFrag));
+    VkShaderModule matteGraphFrag = CreateShaderModule(device, kMatteGraphFrag, sizeof(kMatteGraphFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
     auto stage = [](VkShaderStageFlagBits s, VkShaderModule m) {
@@ -971,7 +975,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     std::vector<Job> jobs;
     jobs.reserve(5 * kVariants);  // no reallocation: the infos point into the jobs
     auto queueMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
-                         uint32_t pass = 0) {
+                         uint32_t pass = 0, VkShaderModule programFrag = VK_NULL_HANDLE) {
         for (uint32_t v = 0; v < kVariants; ++v) {
             if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced) {
                 continue;  // not this pass's or call's; noise comes with a program
@@ -984,7 +988,10 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
             std::copy(info.pStages, info.pStages + info.stageCount, j.stages);
             j.stages[0].pSpecializationInfo = &j.vertexSpec;  // the vertex stage comes first
             j.stages[1].pSpecializationInfo = &j.fragmentSpec;
-            if (v & (4 | 16)) {  // shading pipelines only
+            if (programFrag && (v & 4)) {  // a program's pass with a fragment stage of its own (matte)
+                j.stages[0].module = graphVert;
+                j.stages[1].module = programFrag;
+            } else if (v & (4 | 16)) {  // shading pipelines only
                 const bool program = v & 4;
                 const VkShaderModule frags[4] = {meshFrag, graphFrag, layersFrag, graphLayersFrag};
                 j.stages[0].module = program ? graphVert : meshVert;
@@ -1019,8 +1026,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         jobs.clear();
         return res.load();
     };
-    auto createMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants) {
-        queueMesh(info, out, variants);
+    auto createMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
+                          VkShaderModule programFrag = VK_NULL_HANDLE) {
+        queueMesh(info, out, variants, 0, programFrag);
         return compile();
     };
     VkResult r = VK_SUCCESS;
@@ -1177,7 +1185,8 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         mci.pDepthStencilState = &depthReadOnly;
         mci.pColorBlendState = &matteBlend;
         if (r == VK_SUCCESS) {
-            r = createMesh(mci, _mattePipeline, kDepthVariants);
+            // Materials with a program (bit 4, with noise bit 8) run it for their opacity.
+            r = createMesh(mci, _mattePipeline, kDepthVariants | 4 | 8, matteGraphFrag);
         }
     }
 
@@ -1192,7 +1201,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     }
 
     for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
-                             maskFrag, skyVert, skyFrag, tintFrag, matteFrag}) {
+                             maskFrag, skyVert, skyFrag, tintFrag, matteFrag, matteGraphFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -2414,7 +2423,7 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         bound = VK_NULL_HANDLE;
         for (const auto &[distance, i] : order) {
             if (gpu.translucentFlags[i] & Scene::Gpu::kHoldout) {
-                const VkPipeline pipeline = _mattePipeline[gpu.translucentVariant[i] & kDepthVariants];
+                const VkPipeline pipeline = _mattePipeline[gpu.translucentVariant[i] & (kDepthVariants | 4 | 8)];
                 if (pipeline != bound) {
                     bound = pipeline;
                     vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);

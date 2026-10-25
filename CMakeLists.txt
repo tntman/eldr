@@ -78,7 +78,7 @@ add_custom_command(OUTPUT ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/gtao.frag
     DEPENDS renderer/shaders/gtao.frag)
 list(APPEND shader_incs ${spv})
-foreach(shader mesh.vert mesh.frag aov.frag)
+foreach(shader mesh.vert mesh.frag aov.frag matte.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
     add_custom_command(OUTPUT ${spv}

@@ -2820,6 +2820,18 @@ int main()
             const Image uncut = Render(renderer, scene, frame);
             Expect(std::abs(uncut.At(16, 32, 0) - uncut.At(48, 32, 0)) < 1e-3f && uncut.At(16, 32, 3) == 1.0f,
                    "Frame::holdoutAlpha off: a translucent holdout leaves what's behind it alone");
+            // Opacity from a material program (the u coordinate): the matte
+            // pass runs it, so the cut grows from left to right per pixel.
+            auto graph = std::make_shared<vkr::Material>();
+            graph->program.Emit(vkr::MaterialProgram::kTexcoord, 0);
+            graph->program.Emit(vkr::MaterialProgram::kOutput, 0, {0}, vkr::MaterialProgram::kOpacity);
+            matte->material = graph;
+            scene.Commit();
+            const Image programmed = Render(renderer, scene);
+            const float leftCut = 1.0f - (8.5f / 32.0f), rightCut = 1.0f - (24.5f / 32.0f);
+            Expect(std::abs(programmed.At(8, 32, 3) - leftCut) < 0.03f && std::abs(programmed.At(24, 32, 3) - rightCut) < 0.03f &&
+                       std::abs(programmed.At(8, 32, 0) - leftCut * programmed.At(48, 32, 0)) < 0.03f,
+                   "holdout with an opacity program: the matte cuts alpha by the program's opacity per pixel");
         }
 
         {
