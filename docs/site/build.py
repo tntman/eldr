@@ -10,6 +10,7 @@ DOCS = [
     ("goals.md", "Goals"),
     ("features.md", "How Eldr works"),
     ("settings.md", "Render settings"),
+    ("comparison.md", "Eldr vs EEVEE and Unreal"),
     ("houdini.md", "Houdini"),
     ("eevee-lardomar.md", "EEVEE study (Swedish)"),
 ]
