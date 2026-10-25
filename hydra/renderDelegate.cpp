@@ -575,6 +575,11 @@ void HdVkRenderDelegate::SetDrivers(HdDriverVector const &drivers)
 
 HdVkGLInterop *HdVkRenderDelegate::GLInterop()
 {
+#ifdef HDVK_HOUDINI
+    // Houdini's viewport hands delegates an OpenGL Hgi but composites with
+    // Vulkan: a shared GL texture shows nothing there, so it reads back.
+    return nullptr;
+#endif
     if (!_interopTried && _device) {
         _interopTried = true;
         try {
