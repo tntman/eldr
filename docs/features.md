@@ -471,8 +471,13 @@ A bound buffer of any float format gets as many components as it has. Only one
 buffer per kind: if two names for the same kind are bound, the last wins.
 
 **Light splits.** "Direct" is the lights' (distant, sphere, rect, disk,
-cylinder); the dome, probes, reflections and GI count as indirect (Karma counts
-the dome as a light, so a Karma and an Eldr split will differ there). They are
+cylinder) and, as in Karma, the dome's directly visible light
+(`splitDomeDirect`, on): its diffuse irradiance under the AO's or SSGI's
+visibility, and its reflection under specular occlusion where no probe,
+mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
+SSGI, multi-bounce, probes and reflections add beyond that. Direct and
+indirect always add up to the combined value. The denoised glossy SSR's rays
+are not in the splits. They are
 only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
 lights test scene. They accumulate like the colour: over TAA frames, or the film.
