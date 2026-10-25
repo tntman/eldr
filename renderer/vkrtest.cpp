@@ -763,8 +763,8 @@ int main()
             Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * formFactor) - 1.0f) < 0.03f,
                    "rect light: exact form factor head-on");
 
-            // Textured (inputs:texture:file), 2 wide: black over its -X
-            // half, white over its +X half. The wall under each half takes
+            // Textured (inputs:texture:file), 2 wide; st (0,0) is at +X +Y (UsdLux): black over its +X
+            // half (texture u < 0.5), white over its -X half. The wall under each half takes
             // its colour; Frame::lightTextures off: as without one.
             rect->halfWidth[0] = 1.0f;
             scene.Commit();
@@ -781,8 +781,8 @@ int main()
             rect->texture = halves;
             scene.Commit();
             const Image textured = Render(renderer, scene);
-            Expect(textured.At(16, 32, 0) < 0.2f * textured.At(48, 32, 0) &&
-                       std::abs(textured.At(48, 32, 0) / plain.At(48, 32, 0) - 1.0f) < 0.2f,
+            Expect(textured.At(48, 32, 0) < 0.2f * textured.At(16, 32, 0) &&
+                       std::abs(textured.At(16, 32, 0) / plain.At(16, 32, 0) - 1.0f) < 0.2f,
                    "rect light texture: dark under its black half, as bright under its white one");
             vkr::Renderer::Frame untextured = IdentityFrame();
             untextured.lightTextures = false;

@@ -178,8 +178,8 @@ UsdGeom.PrimvarsAPI(probe).CreatePrimvar("hdvk:reflectionProbe", Sdf.ValueTypeNa
 lit = render(stage, {**linear, "hdvk:reflectionProbe": True})
 expect(gray(lit, 8, 32) > 150 and gray(lit, 48, 32) < 10, "hdvk:authoredProbes: a Cube flagged as a probe")
 
-# A textured rect light (inputs:texture:file): black over its -X half,
-# white over its +X half, close to the wall: the wall is dark under the
+# A textured rect light (inputs:texture:file; st (0,0) at +X +Y): black over its +X half,
+# white over its -X half, close to the wall: the wall is dark under the
 # black half, lit under the white one; hdvk:lightTextures off: lit evenly.
 pattern = QImage(64, 2, QImage.Format_RGB32)
 pattern.fill(QColor(255, 255, 255))
@@ -196,7 +196,7 @@ panel.CreateIntensityAttr(4)
 panel.CreateTextureFileAttr(patternFile)
 panel.AddTranslateOp().Set(Gf.Vec3d(0, 0, 0.3))
 image = render(stage, linear)
-expect(gray(image, 12, 32) < 0.2 * gray(image, 52, 32) and gray(image, 52, 32) > 50,
+expect(gray(image, 52, 32) < 0.2 * gray(image, 12, 32) and gray(image, 12, 32) > 50,
        "rect light texture: the wall is dark under its black half")
 image = render(stage, {**linear, "hdvk:lightTextures": False})
 expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "hdvk:lightTextures off: lit evenly")
