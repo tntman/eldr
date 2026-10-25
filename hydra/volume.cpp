@@ -20,7 +20,6 @@ namespace {
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
-    (openvdbAsset)
     // MaterialX (pbrlib, stdlib) and UsdPreviewSurface nodes and inputs.
     (ND_volume)
     (ND_anisotropic_vdf)
@@ -217,8 +216,10 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     if (*dirtyBits & HdChangeTracker::DirtyVolumeField) {
         v.fields.clear();
         for (const HdVolumeFieldDescriptor &d : sceneDelegate->GetVolumeFieldDescriptors(id)) {
-            if (d.fieldPrimType != _tokens->openvdbAsset) {
-                continue;  // ponytail: OpenVDB assets only (no Field3D, no Houdini's live fields)
+            // The field types the delegate makes HdVkFields of: openvdbAsset,
+            // and houdiniFieldAsset in the Houdini build (no Field3D).
+            if (!sceneDelegate->GetRenderIndex().IsBprimTypeSupported(d.fieldPrimType)) {
+                continue;
             }
             if (const auto *field = static_cast<const HdVkField *>(
                     sceneDelegate->GetRenderIndex().GetBprim(d.fieldPrimType, d.fieldId))) {

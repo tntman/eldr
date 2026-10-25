@@ -12,7 +12,8 @@ struct VolumeGrid;
 PXR_NAMESPACE_OPEN_SCOPE
 
 // An openvdbAsset field (UsdVolOpenVDBAsset): one grid of a .vdb file
-// (filePath, fieldName, fieldIndex) converted to NanoVDB for the GPU.
+// (filePath, fieldName, fieldIndex) converted to NanoVDB for the GPU. The
+// Houdini build also makes them of houdiniFieldAsset fields (houdini/field.cpp).
 // Volumes hold Grid(); a change of the field reloads it in place, so they
 // see it without syncing again. Float and double grids load as float,
 // Vec3f and Vec3d ones as Vec3f.
@@ -21,7 +22,9 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdVkField final : public HdField
 {
 public:
-    explicit HdVkField(SdfPath const &id);
+    // houdiniField: a houdiniFieldAsset (Houdini build), whose fieldIndex is
+    // a primitive number.
+    explicit HdVkField(SdfPath const &id, bool houdiniField = false);
     ~HdVkField() override;
 
     HdDirtyBits GetInitialDirtyBitsMask() const override { return AllDirty; }
@@ -32,6 +35,7 @@ public:
 
 private:
     std::shared_ptr<vkr::VolumeGrid> _grid;
+    bool _houdiniField;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
