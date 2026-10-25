@@ -72,17 +72,22 @@ std::vector<uint32_t> ToNano(const openvdb::GridBase::ConstPtr &base)
 
 } // namespace
 
+PXR_NAMESPACE_CLOSE_SCOPE
+
 #ifndef HDVK_HOUDINI
-openvdb::GridBase::ConstPtr HdVkReadGrid(const std::string &path, const std::string &name, int index)
+openvdb::GridBase::ConstPtr HdVkReadGrid(const std::string &path, const std::string &name, int index, bool)
 {
-    const openvdb::GridPtrVecPtr grids = HioOpenVDBGridsFromAsset(path);
+    const openvdb::GridPtrVecPtr grids = PXR_NS::HioOpenVDBGridsFromAsset(path);
     return grids ? HdVkPickGrid(*grids, name, index) : nullptr;
 }
 #endif
 
-HdVkField::HdVkField(SdfPath const &id)
+PXR_NAMESPACE_OPEN_SCOPE
+
+HdVkField::HdVkField(SdfPath const &id, bool houdiniField)
     : HdField(id)
     , _grid(std::make_shared<vkr::VolumeGrid>())
+    , _houdiniField(houdiniField)
 {
 }
 
@@ -98,7 +103,8 @@ void HdVkField::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         const int index = sceneDelegate->Get(id, _tokens->fieldIndex).GetWithDefault(0);
         std::vector<uint32_t> words;
         try {
-            const openvdb::GridBase::ConstPtr grid = path.empty() ? nullptr : HdVkReadGrid(path, name, index);
+            const openvdb::GridBase::ConstPtr grid =
+                path.empty() ? nullptr : HdVkReadGrid(path, name, index, _houdiniField);
             if (grid) {
                 words = ToNano(grid);
             } else {

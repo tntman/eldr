@@ -38,6 +38,41 @@ is the same, and the GPU reader (`third_party/nanovdb/PNanoVDB.h`, 32.4)
 reads it unchanged.
 
 - `OpenVDBAsset` fields with `.vdb` files: as in the normal build.
+- SOP volumes in Solaris, without files: a SOP Import LOP turns VDB primitives into `OpenVDBAsset` fields and Houdini
+  volume primitives into `HoudiniFieldAsset` fields, both with an
+  `op:<sop>.sop.volumes:SDF_FORMAT_ARGS:...` `filePath`. Eldr takes the
+  `houdiniFieldAsset` Bprim (Houdini's `HD_HoudiniFieldAssetAdapter` makes
+  it) as well as `openvdbAsset`, and `houdini/field.cpp` gets the detail
+  from `XUSD_LockedGeoRegistry::getGeometry` (key: the layer path without
+  `HUSD_Constants::getVolumeSopSuffix()`, plus the format arguments). That
+  is the geometry the LOP already cooked and holds while its stage refers
+  to it: no cooking from the render thread. A VDB primitive's grid is used
+  in place; a Houdini volume is converted with
+  `GU_PrimVDB::buildFromPrimVolume`. Both then go through the same NanoVDB
+  conversion as files.
+- Field numbering follows what SOP Import writes: a `HoudiniFieldAsset`'s
+  `fieldIndex` is the primitive number; an `OpenVDBAsset`'s counts the VDB
+  primitives named `fieldName` (UsdVol's rule).
+- Saved stages: a USD ROP writes these volumes to
+  `<layer>.volumes/N.vdb` (`OpenVDBAsset`) and `N.bgeo.sc`
+  (`HoudiniFieldAsset`). Eldr reads the `.bgeo.sc` files with
+  `GU_Detail::load`, so husk renders saved scenes too.
+- Eldr binds fields by name and shades `density` (and `temperature`, see
+  docs/features.md). SOP Import names a nameless volume's field `field_0`,
+  so give Houdini volumes a `name` (Name SOP, Pyro's `density`).
+
+Limitations:
+
+- `op:` paths only resolve in the Houdini session whose LOP network holds
+  the geometry (the Solaris viewport, hython). husk on a USD file that
+  still has `op:` paths has no SOP geometry; Eldr warns "no locked SOP
+  geometry" and skips the field. Save with a USD ROP instead.
+- Scalar fields only: a vector Houdini volume (`vel.x/.y/.z` primitives)
+  reads as three float fields; Eldr doesn't use velocity anyway.
+- Each Houdini volume is converted on every field sync (a SOP change);
+  large dense volumes cost a conversion each time.
+- Tf warnings from Eldr don't reach hython's console (Houdini takes Tf
+  diagnostics), so a missing field shows up as a missing volume.
 
 ## Install
 
@@ -64,6 +99,11 @@ viewport's renderer menu or on a Render Settings LOP.
   `bin\usd_plugins\hdx\resources\textures` so `@StinsonBeach.hdr@` resolves.
 - husk (needs a licence above Apprentice): `husk -R HdVkRendererPlugin -c /cam
   --res 256 256 -o out.png tests\scenes\volume.usda` renders the volumes.
+- SOP volumes: `hython tests\houdini_sop_volumes.py out.png` builds a VDB
+  and a Houdini volume in SOPs, imports them with SOP Import (no files) and
+  renders the LOP stage with Eldr; it fails unless both volumes show.
+- The same network saved by a USD ROP (`.vdb` and `.bgeo.sc` volume files)
+  renders both volumes in husk.
 
 ## Not verified
 

@@ -82,6 +82,11 @@ namespace {
 // UsdVol's OpenVDB fields (with volumes: built against a USD with OpenVDB).
 const TfToken _openvdbAsset("openvdbAsset");
 #endif
+#ifdef HDVK_HOUDINI
+// Houdini's own fields (HoudiniFieldAsset: SOP volumes, .bgeo files),
+// read by houdini/field.cpp.
+const TfToken _houdiniFieldAsset("houdiniFieldAsset");
+#endif
 
 const TfTokenVector _rprimTypes = {HdPrimTypeTokens->mesh, HdPrimTypeTokens->basisCurves,
                                    HdPrimTypeTokens->points,
@@ -95,7 +100,10 @@ const TfTokenVector _sprimTypes = {HdPrimTypeTokens->camera,      HdPrimTypeToke
                                    HdPrimTypeTokens->diskLight,    HdPrimTypeTokens->cylinderLight};
 const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer, HdPrimTypeTokens->renderSettings,
 #ifdef HDVK_VOLUMES
-                                   _openvdbAsset
+                                   _openvdbAsset,
+#endif
+#ifdef HDVK_HOUDINI
+                                   _houdiniFieldAsset,
 #endif
 };
 
@@ -462,6 +470,11 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
 #ifdef HDVK_VOLUMES
     if (typeId == _openvdbAsset) {
         return new HdVkField(bprimId);
+    }
+#endif
+#ifdef HDVK_HOUDINI
+    if (typeId == _houdiniFieldAsset) {
+        return new HdVkField(bprimId, true);
     }
 #endif
     return nullptr;
