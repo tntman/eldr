@@ -434,7 +434,11 @@ has no lens (no DOF, no blur).
   linear from the previous frame to this one for instances, joints, blend
   shapes and the camera), so shadows, rays, refraction and DOF all see the
   moving geometry. Costs one shutter pass per sample (1.7-2.1 ms on the 20k
-  crowd).
+  crowd). With `sampledMotion` (on) rigid prims, instances and the camera
+  take their motion from the scene's transform samples at shutter open and
+  close (continued linearly to a frame), not from the last rendered frame, so
+  a single usdrecord or husk frame is blurred too. Deforming points and
+  skinned joints still need a rendered frame before.
 - **Upscaling** (`renderScale` below 1): while TAA resolves, render at that
   fraction (min 0.25) and reconstruct into a full-size history (Gaussian
   weights from the 3x3 samples' sub-pixel positions). Interactive only: the
@@ -479,8 +483,13 @@ A bound buffer of any float format gets as many components as it has. Only one
 buffer per kind: if two names for the same kind are bound, the last wins.
 
 **Light splits.** "Direct" is the lights' (distant, sphere, rect, disk,
-cylinder); the dome, probes, reflections and GI count as indirect (Karma counts
-the dome as a light, so a Karma and an Eldr split will differ there). They are
+cylinder) and, as in Karma, the dome's directly visible light
+(`splitDomeDirect`, on): its diffuse irradiance under the AO's or SSGI's
+visibility, and its reflection under specular occlusion where no probe,
+mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
+SSGI, multi-bounce, probes and reflections add beyond that. Direct and
+indirect always add up to the combined value. The denoised glossy SSR's rays
+are not in the splits. They are
 only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
 lights test scene. They accumulate like the colour: over TAA frames, or the film.

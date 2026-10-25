@@ -9,7 +9,7 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 GROUPS = [
     ("Performance and geometry",
      "depthPrepass frustumCulling cullPixels lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons "
-     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs renderProducts pipelineCache "
+     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect renderProducts pipelineCache "
      "pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
@@ -31,7 +31,7 @@ GROUPS = [
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",
-     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter motionBlur motionBlurTimeSamples lensDistortion postProcess "
+     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter motionBlur motionBlurTimeSamples sampledMotion lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),
 ]
 

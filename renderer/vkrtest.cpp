@@ -1437,7 +1437,9 @@ int main()
             std::fill(white->emissive, white->emissive + 3, 1.0f);
             vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 0);
             quad->material = white;
-            auto ramp = [&](bool timeSamples, bool moveCamera, int *frames) {
+            // sampled: the motion comes with the first frame (Frame::sampledMotion,
+            // Mesh::shutterMotion, Frame::prevViewProj), no frame before it.
+            auto ramp = [&](bool timeSamples, bool moveCamera, int *frames, bool sampled = false) {
                 vkr::Renderer renderer(device);
                 vkr::Renderer::Frame frame = IdentityFrame();
                 frame.postProcess = true;
@@ -1453,7 +1455,15 @@ int main()
                 quad->transforms[12] = 0.0f;
                 quad->transformsDirty = true;
                 scene.Commit();
-                Render(renderer, scene, frame);
+                if (sampled) {
+                    frame.sampledMotion = true;
+                    std::copy(frame.viewProj, frame.viewProj + 16, frame.prevViewProj);
+                    std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
+                    quad->shutterMotion = !moveCamera;
+                    quad->geometryDirty = true;  // as new geometry
+                } else {
+                    Render(renderer, scene, frame);
+                }
                 if (moveCamera) {
                     frame.viewProj[12] = -0.25f;
                     frame.invViewProj[12] = 0.25f;
@@ -1491,6 +1501,17 @@ int main()
             Expect(mirrored, "time samples: the camera's motion blurs the same");
             const std::vector<float> off = ramp(false, false, &frames);
             Expect(frames == 1 && off[34] > 0.9f, "time samples off: the post blur's frame is final at once");
+            bool sampledLinear = true, sampledMirrored = true;
+            const std::vector<float> first = ramp(true, false, &frames, true);
+            const std::vector<float> firstCamera = ramp(true, true, &frames, true);
+            for (int x = 33; x < 40; ++x) {
+                sampledLinear = sampledLinear && std::abs(first[x] - rigid[x]) < 0.02f;
+            }
+            for (int x = 25; x < 32; ++x) {
+                sampledMirrored = sampledMirrored && std::abs(firstCamera[x] - camera[x]) < 0.02f;
+            }
+            Expect(sampledLinear && sampledMirrored,
+                   "sampled motion: a first frame blurs as one after a rendered frame (rigid and camera)");
         }
 
         {
@@ -3593,6 +3614,23 @@ int main()
                        std::abs(at(A::kIndirectDiffuse, 1)) < 1e-4f && std::abs(at(A::kIndirectGlossy, 1)) < 1e-4f,
                    "light splits: a distant light's light is direct");
             Expect(std::abs(sum - img.At(32, 32, 1)) < 2e-3f, "light splits add up to the colour");
+
+            // Under a white dome alone (Karma's convention): its light is
+            // direct; Frame::splitDomeDirect off: indirect. Both add up.
+            vkr::Scene sky(&device);
+            sky.AddDome();
+            AddQuad(sky, -1, -1, 1, 1, 0)->primId = 1;
+            sky.Commit();
+            for (bool domeDirect : {true, false}) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.splitDomeDirect = domeDirect;
+                renderer.Render(sky, frame, out);
+                const float direct = at(A::kDirectDiffuse, 1) + at(A::kDirectGlossy, 1);
+                const float indirect = at(A::kIndirectDiffuse, 1) + at(A::kIndirectGlossy, 1);
+                Expect((domeDirect ? direct : indirect) > 0.5f && std::abs(domeDirect ? indirect : direct) < 1e-3f &&
+                           std::abs(direct + indirect - img.At(32, 32, 1)) < 2e-3f,
+                       domeDirect ? "light splits: the dome's light is direct" : "splitDomeDirect off: the dome's is indirect");
+            }
 
             // Under the film the splits average its jittered samples:
             // a slanted edge gets values between none and the inside's.

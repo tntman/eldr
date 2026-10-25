@@ -1,7 +1,10 @@
 #include "camera.h"
+#include "renderDelegate.h"
 
 #include "pxr/base/tf/token.h"
+#include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
+#include "pxr/imaging/hd/timeSampleArray.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -19,7 +22,25 @@ void HdVkCamera::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam
                                               : 0.0f;
         }
     }
+    const HdDirtyBits bits = *dirtyBits;
     HdCamera::Sync(sceneDelegate, renderParam, dirtyBits);
+    if (!(bits & (DirtyTransform | DirtyParams))) {
+        return;
+    }
+    auto *delegate = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+    const float open = float(GetShutterOpen()), close = float(GetShutterClose());
+    delegate->NoteCameraShutter(GetId(), open, close);
+    _moving = false;
+    float a, b;
+    if (delegate->SampledMotionShutter(&a, &b) && close > open) {
+        HdTimeSampleArray<GfMatrix4d, 4> samples;
+        sceneDelegate->SampleTransform(GetId(), open, close, &samples);
+        if (samples.count > 1) {
+            const GfMatrix4d at = samples.Resample(open), bt = samples.Resample(close);
+            _moving = at != bt;
+            _prevTransform = GetTransform() - (bt - at) * (1.0 / double(close - open));
+        }
+    }
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -53,7 +53,7 @@ struct FrameData {
     // stochastic effect (kDim*); x of sampleInfo 1 with them on.
     float sampleDims[2][4];
     uint32_t sampleInfo[4];
-    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them
+    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
     float screenTrace[4];    // thickness estimator (SSR) on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
@@ -2647,8 +2647,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // or the scene moved. That frame is final as it is: still frames after
     // it would only average the blur away (usdrecord renders until converged).
     const bool cameraMoved = _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
-    const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && _historyValid &&
-                            (cameraMoved || gpu.moved);
+    // The camera the motion starts from: the last frame's, or with sampled
+    // motion the scene's own one frame before (then no history is needed).
+    const float *motionViewProj = frame.sampledMotion ? appFrame.prevViewProj : _prevViewProj;
+    const float *motionCameraPos = frame.sampledMotion ? appFrame.prevCameraPos : _prevCameraPos;
+    const bool motionHistory = _historyValid || frame.sampledMotion;
+    const bool cameraMotion = motionHistory && std::memcmp(appFrame.viewProj, motionViewProj, sizeof(_prevViewProj)) != 0;
+    const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && motionHistory &&
+                            (cameraMotion || gpu.moved);
     // Film: anything the image depends on besides the camera (the app's
     // scene and settings, the renderer's geometry, lights and probe) starts
     // it over; a fresh history (first frame, resize) starts it at once.
@@ -2698,7 +2704,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // (0) to this one (1), until a change other than motion moves the
     // scene's pools. The camera moves for this frame (`frame`, before the
     // lens jitter), the scene in its pools (below).
-    const bool shutterCapture = shutterOn && _historyValid && (cameraMoved || gpu.moved) && gpu.instanceCapacity > 0 &&
+    const bool shutterCapture = shutterOn && motionHistory && (cameraMotion || gpu.moved) && gpu.instanceCapacity > 0 &&
                                 gpu.drawCount > 0;
     if (shutterCapture) {
         _shutter.valid = true;
@@ -2707,8 +2713,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _shutter.jointPool = gpu.joints;
         _shutter.weightPool = gpu.blendWeights;
         _shutter.instanceCapacity = gpu.instanceCapacity;
-        std::memcpy(_shutter.viewProj, _prevViewProj, sizeof(_shutter.viewProj));
-        std::memcpy(_shutter.cameraPos, _prevCameraPos, sizeof(_shutter.cameraPos));
+        std::memcpy(_shutter.viewProj, motionViewProj, sizeof(_shutter.viewProj));
+        std::memcpy(_shutter.cameraPos, motionCameraPos, sizeof(_shutter.cameraPos));
     }
     _shutter.valid = _shutter.valid && shutterOn && gpu.version == _shutter.version &&
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
@@ -3042,6 +3048,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool splits = frame.extraAovs && Aovs::NeedsSplits(out.aovs);
     _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
     fd.aovs[0] = splits ? 1u : 0u;
+    fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -3617,7 +3624,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool dof = dofLens && !lensJitter;
     Lens::Params lens{};
     if (dof || postBlur) {
-        const Mat4 back = postBlur ? ToMat4(appFrame.invViewProj) * ToMat4(_prevViewProj) : Mat4();
+        const Mat4 back = postBlur ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj) : Mat4();
         std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
         std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
         if (dof) {

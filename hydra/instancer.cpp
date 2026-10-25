@@ -1,4 +1,6 @@
 #include "instancer.h"
+#include "renderDelegate.h"
+#include "scene.h"
 
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -18,6 +20,7 @@
 #include "pxr/base/gf/vec4i.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
+#include "pxr/imaging/hd/timeSampleArray.h"
 #include "pxr/imaging/hd/tokens.h"
 
 #include <type_traits>
@@ -121,19 +124,36 @@ void HdVkInstancer::Sync(HdSceneDelegate *delegate, HdRenderParam *, HdDirtyBits
 // Same composition order as hdEmbree: instancer transform, then translate,
 // rotate, scale and per-instance transform applied on top (row-vector).
 // Instance indices past the end of a primvar array leave that term out.
-VtMatrix4dArray HdVkInstancer::ComputeInstanceTransforms(SdfPath const &prototypeId)
+VtMatrix4dArray HdVkInstancer::ComputeInstanceTransforms(SdfPath const &prototypeId, const HdVkShutterTime *at)
 {
     if (!_visible) {
         return {};
     }
     HdSceneDelegate *delegate = GetDelegate();
-    const GfMatrix4d instancerTransform = delegate->GetInstancerTransform(GetId());
+    GfMatrix4d instancerTransform = delegate->GetInstancerTransform(GetId());
+    if (at) {
+        HdTimeSampleArray<GfMatrix4d, 4> samples;
+        delegate->SampleInstancerTransform(GetId(), at->open, at->close, &samples);
+        instancerTransform = samples.count > 0 ? samples.Resample(at->time) : instancerTransform;
+    }
     const VtIntArray indices = delegate->GetInstanceIndices(GetId(), prototypeId);
     VtMatrix4dArray transforms(indices.size(), instancerTransform);
 
+    std::map<TfToken, VtValue> sampled;  // at `at`
     auto primvar = [&](TfToken const &name) -> VtValue const * {
         const auto it = _primvars.find(name);
-        return it == _primvars.end() ? nullptr : &it->second;
+        if (it == _primvars.end()) {
+            return nullptr;
+        }
+        if (at) {
+            HdTimeSampleArray<VtValue, 4> samples;
+            delegate->SamplePrimvar(GetId(), name, at->open, at->close, &samples);
+            if (samples.count > 0) {
+                VtValue &v = sampled[name] = samples.Resample(at->time);
+                return v.IsEmpty() ? &it->second : &v;
+            }
+        }
+        return &it->second;
     };
     auto valid = [](int i, size_t size) { return i >= 0 && size_t(i) < size; };
 
@@ -182,7 +202,7 @@ VtMatrix4dArray HdVkInstancer::ComputeInstanceTransforms(SdfPath const &prototyp
     if (!TF_VERIFY(parent)) {
         return transforms;
     }
-    const VtMatrix4dArray parentTransforms = parent->ComputeInstanceTransforms(GetId());
+    const VtMatrix4dArray parentTransforms = parent->ComputeInstanceTransforms(GetId(), at);
     VtMatrix4dArray result(parentTransforms.size() * transforms.size());
     for (size_t i = 0; i < parentTransforms.size(); ++i) {
         for (size_t j = 0; j < transforms.size(); ++j) {
@@ -239,13 +259,19 @@ bool HdVkToFloats(VtValue const &v, std::vector<float> *out, uint32_t *component
            TryFloats<GfVec4i>(v, out, components);
 }
 
-std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId)
+std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId,
+                                       const HdVkShutterTime *at)
 {
-    const GfMatrix4d xf = delegate->GetTransform(id);
+    GfMatrix4d xf = delegate->GetTransform(id);
+    if (at) {
+        HdTimeSampleArray<GfMatrix4d, 4> samples;
+        delegate->SampleTransform(id, at->open, at->close, &samples);
+        xf = samples.count > 0 ? samples.Resample(at->time) : xf;
+    }
     VtMatrix4dArray instances(1, GfMatrix4d(1));
     if (!instancerId.IsEmpty()) {
         auto *instancer = static_cast<HdVkInstancer *>(delegate->GetRenderIndex().GetInstancer(instancerId));
-        instances = instancer ? instancer->ComputeInstanceTransforms(id) : VtMatrix4dArray();
+        instances = instancer ? instancer->ComputeInstanceTransforms(id, at) : VtMatrix4dArray();
     }
     std::vector<float> transforms(instances.size() * 16);
     for (size_t i = 0; i < instances.size(); ++i) {
@@ -253,6 +279,39 @@ std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const 
         std::copy(world.data(), world.data() + 16, transforms.data() + i * 16);
     }
     return transforms;
+}
+
+void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &m)
+{
+    std::vector<float> transforms = HdVkWorldTransforms(delegate, id, instancerId);
+    // Animated skinned prototypes arrive with their instancer dirty every
+    // frame; re-upload thousands of instances only when they moved.
+    // (New geometry may start where the default transform is: it still
+    // needs its motion.)
+    if (transforms == m.transforms && !m.geometryDirty) {
+        return;
+    }
+    m.prevTransforms = std::move(m.transforms);  // motion vectors
+    m.transforms = std::move(transforms);
+    m.transformsDirty = true;
+    float open, close;
+    auto *vk = static_cast<HdVkRenderDelegate *>(delegate->GetRenderIndex().GetRenderDelegate());
+    if (!vk->SampledMotionShutter(&open, &close)) {
+        return;
+    }
+    const HdVkShutterTime atOpen{open, open, close}, atClose{close, open, close};
+    const std::vector<float> a = HdVkWorldTransforms(delegate, id, instancerId, &atOpen);
+    const std::vector<float> b = HdVkWorldTransforms(delegate, id, instancerId, &atClose);
+    if (a == b || a.size() != m.transforms.size() || b.size() != a.size()) {
+        return;  // still through the shutter: the motion is since the last transforms
+    }
+    // ponytail: rigid transforms only; deforming points (and joints) keep
+    // last frame's motion.
+    m.prevTransforms.resize(a.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        m.prevTransforms[i] = m.transforms[i] - (b[i] - a[i]) / (close - open);
+    }
+    m.shutterMotion = true;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

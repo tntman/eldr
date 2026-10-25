@@ -84,6 +84,14 @@ public:
         // is linear from the last frame's to this one's (transforms, joints,
         // blend shape weights, camera), as the motion vectors are.
         bool motionBlurTimeSamples = true;
+        // Sampled motion (the Hydra layer's hdvk:sampledMotion): the motion
+        // the blur and the time samples use is the scene's own through the
+        // shutter, so a first frame blurs too. Meshes carry it as
+        // prevTransforms (Mesh::shutterMotion); the camera one frame before
+        // is here (viewProj and cameraPos when it doesn't move).
+        bool sampledMotion = false;
+        float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
@@ -102,6 +110,11 @@ public:
         // cameraDepth; row-vector order) and per primId its Cryptomatte
         // object and material ids (CryptomatteHash), 2 per id.
         bool extraAovs = true;
+        // Light splits (Karma's convention): the dome's directly visible
+        // light (its irradiance under the AO's or SSGI's visibility, its
+        // reflection where nothing replaces it) counts as direct; off: as
+        // indirect, with GI, probes and reflections.
+        bool splitDomeDirect = true;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;

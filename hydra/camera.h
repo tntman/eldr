@@ -18,9 +18,19 @@ public:
 
     // k3, k4, k5, k6, p1, p2 (0: none).
     const float *GetLensDistortionOpenCvTerms() const { return _terms; }
+    // Sampled motion: the camera's transform one frame before, as its
+    // samples at shutter open and close continue linearly; false when it
+    // doesn't move through its shutter (or sampled motion is off).
+    bool GetPrevTransform(GfMatrix4d *prev) const
+    {
+        *prev = _prevTransform;
+        return _moving;
+    }
 
 private:
     float _terms[6] = {};
+    GfMatrix4d _prevTransform{1.0};
+    bool _moving = false;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

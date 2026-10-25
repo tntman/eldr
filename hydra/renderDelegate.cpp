@@ -315,8 +315,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
          VtValue(frame.motionBlurTimeSamples)},
+        {"Sampled Motion (shutter samples: first frames blur too)", t2.sampledMotion, VtValue(true)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
+        {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
@@ -557,6 +559,36 @@ void HdVkRenderDelegate::SetCryptomatteManifests(std::string object, std::string
 {
     _cryptomatteObject = std::move(object);
     _cryptomatteMaterial = std::move(material);
+}
+
+void HdVkRenderDelegate::NoteCameraShutter(SdfPath const &camera, float open, float close)
+{
+    std::lock_guard<std::mutex> lock(_shutterMutex);
+    _shutters[camera] = GfVec2f(open, close);
+    _lastOpenCamera = close > open ? camera : _lastOpenCamera;
+}
+
+void HdVkRenderDelegate::SetActiveCamera(SdfPath const &camera)
+{
+    std::lock_guard<std::mutex> lock(_shutterMutex);
+    _activeCamera = camera;
+    _activeKnown = true;
+}
+
+bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)
+{
+    if (!GetRenderSetting<bool>(HdVkRenderSettingsTokens2->sampledMotion, true)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(_shutterMutex);
+    // A render pass without a scene camera (usdview's free camera): none.
+    const auto it = _shutters.find(_activeKnown ? _activeCamera : _lastOpenCamera);
+    if (it == _shutters.end() || !(it->second[1] > it->second[0])) {
+        return false;
+    }
+    *open = it->second[0];
+    *close = it->second[1];
+    return true;
 }
 
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)

@@ -1363,7 +1363,7 @@ void Scene::_UpdateEnvironment(const Dome *dome)
     std::memcpy(_gpu.environmentSh, maps.sh, sizeof(maps.sh));
 }
 
-void Scene::Commit()
+void Scene::Commit(bool keepMotion)
 {
     if (!_device) {
         return;
@@ -1414,7 +1414,7 @@ void Scene::Commit()
     std::vector<uint32_t> motionBase(_meshes.size(), kNone);
     for (const auto &m : _meshes) {
         const bool geometry = m->geometryDirty, transforms = m->transformsDirty || geometry;
-        if (transforms && !geometry && m->jointIndices.empty() && !m->transforms.empty() &&
+        if (transforms && (!geometry || m->shutterMotion) && m->jointIndices.empty() && !m->transforms.empty() &&
             m->prevTransforms.size() == m->transforms.size()) {
             motionBase[m->_slot] = uint32_t(motion.size() / 12);
             for (size_t i = 0; i < m->prevTransforms.size(); i += 16) {
@@ -1425,6 +1425,7 @@ void Scene::Commit()
             }
         }
         m->prevTransforms.clear();
+        m->shutterMotion = false;
         const bool joints = !m->jointIndices.empty() && (m->jointsDirty || transforms);
         if (geometry) {
             _UploadGeometry(*m);
@@ -1442,6 +1443,16 @@ void Scene::Commit()
         _gpu.moved = _gpu.moved || (joints && !geometry);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
+    // A second commit for the same frame (keepMotion) keeps the first's
+    // motion when it moved nothing itself.
+    if (keepMotion && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
+        motion = _keptMotion;
+        motionBase = _keptMotionBase;
+        _gpu.moved = _keptMoved;
+    }
+    _keptMotion = motion;
+    _keptMotionBase = motionBase;
+    _keptMoved = _gpu.moved;
     // Levels of detail that finished building, for meshes they still fit.
     for (auto it = _pendingLods.begin(); it != _pendingLods.end();) {
         if (it->levels.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {

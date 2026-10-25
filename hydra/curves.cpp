@@ -411,12 +411,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
-        std::vector<float> transforms = HdVkWorldTransforms(sceneDelegate, id, this->GetInstancerId());
-        if (transforms != m.transforms) {
-            m.prevTransforms = std::move(m.transforms);  // motion vectors
-            m.transforms = std::move(transforms);
-            m.transformsDirty = true;
-        }
+        HdVkSetTransforms(sceneDelegate, id, this->GetInstancerId(), m);
     }
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         this->_UpdateVisibility(sceneDelegate, dirtyBits);

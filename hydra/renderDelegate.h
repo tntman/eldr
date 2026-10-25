@@ -6,7 +6,12 @@
 #include "pxr/imaging/hd/types.h"
 #include "pxr/imaging/hd/sceneIndex.h"
 
+#include "pxr/base/gf/vec2f.h"
+#include "pxr/usd/sdf/path.h"
+
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -162,7 +167,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((curveRibbons, "hdvk:curveRibbons")) \
     ((pointSprites, "hdvk:pointSprites")) \
     ((lodFade, "hdvk:lodFade")) \
-    ((displacementGraphs, "hdvk:displacementGraphs"))
+    ((displacementGraphs, "hdvk:displacementGraphs")) \
+    ((splitDomeDirect, "hdvk:splitDomeDirect")) \
+    ((sampledMotion, "hdvk:sampledMotion"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -273,6 +280,13 @@ public:
     const HdRenderSettings *ActiveRenderSettings() const;
     // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
     void SetFrameShared(bool shared) { _frameShared = shared; }
+    // Sampled motion (hdvk:sampledMotion): the shutter (frame-relative open,
+    // close) rprims sample their transforms over. Cameras note theirs when
+    // they sync, before rprims do; the render pass names the one it uses.
+    // False when off or without an open shutter.
+    void NoteCameraShutter(SdfPath const &camera, float open, float close);
+    void SetActiveCamera(SdfPath const &camera);
+    bool SampledMotionShutter(float *open, float *close);
 
 private:
     HdResourceRegistrySharedPtr _resourceRegistry;
@@ -290,6 +304,13 @@ private:
     bool _interopTried = false, _frameShared = false;
     std::vector<HdRenderSettings *> _renderSettings;  // render settings Bprims
     std::unique_ptr<HdVkGLInterop> _interop;
+    // Sampled motion: the active camera's shutter, else the last synced
+    // open one's (a first frame's camera hasn't been named yet).
+    // ponytail: a shutter edit doesn't re-sync the rprims.
+    std::mutex _shutterMutex;
+    std::unordered_map<SdfPath, GfVec2f, SdfPath::Hash> _shutters;
+    SdfPath _activeCamera, _lastOpenCamera;
+    bool _activeKnown = false;  // a render pass named its camera
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

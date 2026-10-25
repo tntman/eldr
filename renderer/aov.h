@@ -22,8 +22,7 @@ uint32_t CryptomatteHash(const std::string &name);
 // ponytail: Cryptomatte has one sample per pixel, so rank 0 holds the
 // pixel's id at coverage 1 and edges don't blend; average jittered frames'
 // ranks when mattes need soft edges. They show the view before lens
-// distortion. Lighting splits (diffuse, specular) would need mesh.frag's
-// light loops to keep their terms apart.
+// distortion.
 class Aovs {
 public:
     enum Kind : uint32_t {
@@ -39,9 +38,11 @@ public:
         kPositionWorld,   // world-space position (Karma's P)
         kDepth,           // distance along the view axis, positive (Karma's depth, ray:hitPz)
         kDiffuseAlbedo,   // base colour * (1 - metallic), rgb (Karma's albedodiffuse, lpe:CDA)
-        // Light splits, stored by the shading pass (mesh.frag): the lights'
-        // (distant, sphere, rect, disk) diffuse and glossy light, and the
-        // rest (dome, probes, reflections, GI) as indirect; combined: both.
+        // Light splits, stored by the shading pass (mesh.frag): direct is
+        // the lights' (distant, sphere, rect, disk) diffuse and glossy light
+        // and, with Frame::splitDomeDirect (Karma's convention), the dome's
+        // unblocked light; indirect the rest (GI, SSGI, probes,
+        // reflections); combined: both.
         kDirectDiffuse, kIndirectDiffuse, kCombinedDiffuse,
         kDirectGlossy, kIndirectGlossy, kCombinedGlossy,
         kCount
