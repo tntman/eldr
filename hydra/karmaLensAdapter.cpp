@@ -1,4 +1,6 @@
-// Karma's lens distortion for Eldr's cameras. Houdini's Karma binds a lens
+// Karma's lens distortion for Eldr's cameras. Solaris embeds the lens in the
+// camera: karma:camera:lensshader holds the Karma Physical Lens VOP as
+// "opdef:/Vop/kma_physicallens?VflCode <parm value> ..." (read below). Houdini's Karma also binds a lens
 // material to a camera (karma:camera:material:binding, used when
 // karma:camera:use_lensshader is on); its Karma Physical Lens shader
 // (kma_physicallens) holds OpenCV's model: opencv_enabled, opencv_k1..k6,
@@ -24,6 +26,8 @@
 #include "pxr/usdImaging/usdImaging/dataSourceAttribute.h"
 #include "pxr/usdImaging/usdImaging/dataSourceStageGlobals.h"
 
+#include <cstdlib>
+#include <string>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -34,6 +38,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     ((useLensShader, "karma:camera:use_lensshader"))
     ((lensMaterial, "karma:camera:material:binding"))
+    ((lensShader, "karma:camera:lensshader"))
     ((karmaCamera, "karma:camera:"))
     ((enabled, "inputs:opencv_enabled")));
 
@@ -61,6 +66,38 @@ public:
         if (!subprim.IsEmpty() || !prim.IsA<UsdGeomCamera>() ||
             !IsOn(prim.GetAttribute(_tokens->useLensShader), stageGlobals.GetTime())) {
             return nullptr;
+        }
+        // What Solaris authors: the lens VOP compiled into a string,
+        // "opdef:/Vop/kma_physicallens?VflCode <parm value> ...", with the
+        // parameters that aren't at their defaults.
+        std::string code;
+        if (prim.GetAttribute(_tokens->lensShader).Get(&code, stageGlobals.GetTime()) &&
+            code.compare(0, 27, "opdef:/Vop/kma_physicallens") == 0) {
+            const auto term = [&](const char *name, float *value) {
+                const std::string key = std::string(" ") + name + " ";
+                const size_t at = code.find(key);
+                *value = at == std::string::npos ? 0.0f : std::strtof(code.c_str() + at + key.size(), nullptr);
+                return at != std::string::npos;
+            };
+            float on = 0.0f;
+            if (!term("opencv_enabled", &on) || on == 0.0f) {
+                return nullptr;
+            }
+            std::vector<TfToken> names = {HdLensDistortionSchemaTokens->type};
+            std::vector<HdDataSourceBaseHandle> values = {
+                HdRetainedTypedSampledDataSource<TfToken>::New(HdLensDistortionSchemaTokens->standard)};
+            for (const char *name : {"k1", "k2", "k3", "k4", "k5", "k6", "p1", "p2"}) {
+                float value;
+                if (term((std::string("opencv_") + name).c_str(), &value)) {
+                    names.push_back(TfToken(name));
+                    values.push_back(HdRetainedTypedSampledDataSource<float>::New(value));
+                }
+            }
+            return HdRetainedContainerDataSource::New(
+                HdCameraSchemaTokens->camera,
+                HdRetainedContainerDataSource::New(
+                    HdLensDistortionSchemaTokens->lensDistortion,
+                    HdRetainedContainerDataSource::New(names.size(), names.data(), values.data())));
         }
         SdfPathVector targets;
         const UsdRelationship binding = prim.GetRelationship(_tokens->lensMaterial);

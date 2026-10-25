@@ -65,5 +65,9 @@ expect(same, "eldr:lensDistortion off: the plain view")
 expect(all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(barrel, karma) for k in (0, 8, 16)),
        "Karma's lens material: the same warp as lensDistortion:k1, k2")
 
+solaris, _ = Render("/solaris")
+expect(all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(barrel, solaris) for k in (0, 8, 16)),
+       "Solaris's lens string (karma:camera:lensshader): the same warp as lensDistortion:k1, k2")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
