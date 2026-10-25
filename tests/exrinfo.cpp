@@ -35,13 +35,11 @@ int main(int argc, char **argv)
         std::vector<float> pixels(size_t(spec.width) * spec.height * spec.nchannels);
         const int x = std::atoi(argv[2]), y = std::atoi(argv[3]);
         if (x < 0 || y < 0 || x >= spec.width || y >= spec.height) {
-            std::fprintf(stderr, "pixel %d %d is outside the %dx%d data window
-", x, y, spec.width, spec.height);
+            std::fprintf(stderr, "pixel %d %d is outside the %dx%d data window\n", x, y, spec.width, spec.height);
             return 1;
         }
         if (!in->read_image(0, 0, 0, spec.nchannels, OIIO::TypeDesc::FLOAT, pixels.data())) {
-            std::fprintf(stderr, "can't read %s: %s
-", argv[1], in->geterror().c_str());
+            std::fprintf(stderr, "can't read %s: %s\n", argv[1], in->geterror().c_str());
             return 1;
         }
         for (int c = 0; c < spec.nchannels; ++c) {
