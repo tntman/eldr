@@ -290,7 +290,7 @@ public:
         // this fraction of the pixels has stopped (the rest of the noisy
         // ones would only run it to filmSamples).
         float adaptiveFinalThreshold = 0.01f;
-        float adaptivePixelFraction = 0.99f;
+        float adaptivePixelFraction = 0.999f;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
