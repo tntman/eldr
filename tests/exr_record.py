@@ -32,7 +32,16 @@ engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatr
 engine.SetActiveRenderSettingsPrimPath(Sdf.Path(settingsPrim))
 for pair in sys.argv[4:]:
     key, value = pair.split("=", 1)
-    engine.SetRendererSetting(key, {"true": True, "false": False}.get(value, value))
+    try:  # ints and floats as such (int settings ignore strings)
+        value = {"true": True, "false": False}[value]
+    except KeyError:
+        for kind in (int, float):
+            try:
+                value = kind(value)
+                break
+            except ValueError:
+                pass
+    engine.SetRendererSetting(key, value)
 params = UsdImagingGL.RenderParams()
 for _ in range(400):
     engine.Render(stage.GetPseudoRoot(), params)
