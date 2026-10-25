@@ -38,8 +38,8 @@ Read it with these limits in mind:
 | Light shapes visible to the camera | Yes | Yes | Yes | Eldr reads Karma's `renderlightgeo` per light. |
 | Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample in final quality. |
 | Virtual shadow maps | No | Yes | Yes | Eldr uses cascades and an atlas; ray-traced shadows cover final frames. |
-| Ray-traced shadows | Yes | No | Yes | Being made a full final-quality mode in round 4. |
-| Coloured shadows through glass | Yes | Partial | Yes | |
+| Ray-traced shadows | Yes | No | Yes | Final quality: one ray per light and film sample, the sun plus 15 lights, through glass and volumes (`eldr:finalShadows`). |
+| Coloured shadows through glass | Yes | Partial | Yes | With shadow maps and ray-traced shadows alike. |
 | Volumes casting shadows | Yes | Yes | Yes | Eldr: sun and local lights. |
 | Sun extracted from an HDRI dome | Yes | Yes | No | |
 
