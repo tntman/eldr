@@ -551,6 +551,18 @@ void Device::SavePipelineCache()
         }
     }
     std::filesystem::rename(temp, path, error);
+    if (error) {
+        return;
+    }
+    // Only the newest per driver stays: caches of other shader builds (the
+    // same driver's UUID, another hash) are stale.
+    const std::string prefix = path.filename().string().substr(0, path.filename().string().rfind('-') + 1);
+    for (const auto &entry : std::filesystem::directory_iterator(path.parent_path(), error)) {
+        const std::string file = entry.path().filename().string();
+        if (entry.path() != path && file.compare(0, prefix.size(), prefix) == 0 && entry.path().extension() == ".bin") {
+            std::filesystem::remove(entry.path(), error);
+        }
+    }
 }
 
 } // namespace vkr

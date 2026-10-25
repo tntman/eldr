@@ -3580,7 +3580,25 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
+            // Saving prunes the other shader builds' caches of this driver
+            // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
+            std::filesystem::path current;
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
+                if (entry.path().extension() == ".bin") {
+                    current = entry.path();
+                }
+            }
+            const std::string name = current.filename().string();
+            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
+                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            std::filesystem::copy_file(current, stale, cacheError);
+            std::filesystem::copy_file(current, other, cacheError);
+            device.SavePipelineCache();
+            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
+                       std::filesystem::exists(other),
+                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
                 bytes = entry.path().extension() == ".bin" ? entry.file_size() : bytes;
