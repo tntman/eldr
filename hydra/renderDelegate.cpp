@@ -282,6 +282,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
         {"TAA Samples (still camera)", t.taaSamples, VtValue(int(frame.taaSamples))},
+        {"Render Scale (interactive: TAA upscales from it; < 1 = on, 0.25-1)", t2.renderScale,
+         VtValue(frame.renderScale)},
         {"Film Accumulation (still camera: plain average, no TAA clipping)", t.filmAccumulation,
          VtValue(frame.filmAccumulation)},
         {"Film Samples (still camera, final frames)", t.filmSamples, VtValue(int(frame.filmSamples))},

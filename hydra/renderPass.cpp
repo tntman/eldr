@@ -183,7 +183,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
-                                {t.filmFilterRadius, &frame.filmFilterRadius},
+                                {t.filmFilterRadius, &frame.filmFilterRadius}, {t2.renderScale, &frame.renderScale},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);

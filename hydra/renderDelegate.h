@@ -148,7 +148,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
     ((rtDisplacement, "hdvk:rtDisplacement"))                \
     ((ssrDenoise, "hdvk:ssrDenoise"))                        \
-    ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples"))
+    ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples"))  \
+    ((renderScale, "hdvk:renderScale"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);

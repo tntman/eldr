@@ -218,6 +218,14 @@ public:
         // (IsConverged). Frames with motion blur stay TAA's.
         bool filmAccumulation = true;
         uint32_t filmSamples = 64;
+        // Upscaling (TAAU), interactive only: under 1, while TAA resolves
+        // (the camera or the scene moving; still too without the film) the
+        // scene renders at this fraction of the width and height (at least
+        // 0.25) and TAA reconstructs the full image into its full-size
+        // history. The film and final quality always render at full size,
+        // as do frames with depth of field, a motion-blur shutter, lens
+        // distortion or extra AOVs (their passes are full size).
+        float renderScale = 1.0f;
         float filmFilterRadius = 1.5f;
         // Final quality (offline renders): the film starts over at the
         // first sample after any change instead of from the TAA image.
@@ -357,6 +365,7 @@ public:
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
+        uint32_t renderWidth = 0, renderHeight = 0;  // the scene's size (Frame::renderScale), else the frame's
     };
     const Stats &GetStats() const { return _stats; }
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
@@ -366,9 +375,9 @@ public:
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color
     // has it (RGBA16F) and depth (D32); null before a frame.
     VkImage ColorImage() const { return _frameColor; }
-    VkImage DepthImage() const { return _frameColor ? _depth.image : VK_NULL_HANDLE; }
-    uint32_t Width() const { return _width; }
-    uint32_t Height() const { return _height; }
+    VkImage DepthImage() const { return _frameColor ? (_upscaled ? _up[0].image : _depth.image) : VK_NULL_HANDLE; }
+    uint32_t Width() const { return _outWidth; }
+    uint32_t Height() const { return _outHeight; }
     // Copies the last frame's outputs (as Render's, extra AOVs aside) to
     // host memory, for consumers that ask after Render.
     void Read(const Targets &out);
@@ -397,6 +406,7 @@ private:
     void _PrewarmWorker();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
+    void _ResizeScene(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
@@ -552,7 +562,13 @@ private:
     Image _blackCube;                           // bound when there is no dome
     Image _blueNoise;                           // RGBA8, frame.glsl's SampleNoise
     Buffer _readback, _frameData;
-    uint32_t _width = 0, _height = 0;
+    uint32_t _width = 0, _height = 0;        // the scene's targets (Frame::renderScale)
+    uint32_t _outWidth = 0, _outHeight = 0;  // the frame's: TAA's resolve and history, post, outputs
+    // Upscaling: depth, primId, instanceId and velocity blitted (nearest)
+    // to the frame's size for the outputs; whether the formats can be.
+    bool _upscaled = false;
+    int _upscaleBlit = -1;  // -1: not checked yet
+    Image _up[4];
     LensDistortion _distortion{_dev};
     // Blend shape motion: last frame's blend shape weights, copied after
     // each frame's draws from the scene's pool (_prevBlendSource), which

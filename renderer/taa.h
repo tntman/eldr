@@ -13,16 +13,22 @@ public:
     TemporalAA(const TemporalAA &) = delete;
     TemporalAA &operator=(const TemporalAA &) = delete;
 
-    // (Re)creates the targets; `color`, `depth` and `velocity` (motion
-    // vectors, see mesh.frag) must stay valid until the next Resize. History
-    // starts empty.
-    void Resize(uint32_t width, uint32_t height, VkImageView color, VkImageView depth, VkImageView velocity);
+    // (Re)creates the targets at the frame's size; history starts empty.
+    // Then SetInput.
+    void Resize(uint32_t width, uint32_t height);
+    // This frame's `color`, `depth` and `velocity` (motion vectors, see
+    // mesh.frag), `width` x `height`: the frame's size, or smaller to
+    // upscale (TAAU; the film needs the frame's); they must stay valid
+    // until the next SetInput. The history stays.
+    void SetInput(uint32_t width, uint32_t height, VkImageView color, VkImageView depth, VkImageView velocity);
 
     // Expects color and velocity in SHADER_READ_ONLY_OPTIMAL, depth in
     // DEPTH_READ_ONLY_OPTIMAL, and leaves Output() in SHADER_READ_ONLY_OPTIMAL. `alpha` is the current frame's blend weight
     // (1 ignores history); `reprojection` maps current jittered NDC to the
-    // previous frame's clip space (row-vector order).
-    void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha);
+    // previous frame's clip space (row-vector order); upscaling, unjittered
+    // NDC, and `offset` is where this frame's samples are from their input
+    // pixels' centres (input pixels).
+    void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2]);
 
     // Film accumulation instead (shaders/film.comp), same layouts: adds
     // this sample, its pixels' samples `offset` pixels from their centres,
@@ -52,6 +58,7 @@ private:
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;
+    VkPipeline _upscale = VK_NULL_HANDLE;  // taa.frag built with UPSCALE
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _resolved, _history;
@@ -63,6 +70,7 @@ private:
     Image _sums, _weights;
     Buffer _active;  // film.comp's count of pixels still sampling (host-visible)
     uint32_t _width = 0, _height = 0;
+    uint32_t _inWidth = 0, _inHeight = 0;  // SetInput's
 };
 
 } // namespace vkr

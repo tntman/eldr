@@ -110,6 +110,13 @@ foreach(variant layers graph_layers)
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Upscaling (TAAU): taa.frag reconstructing a larger history (UPSCALE).
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/taa_upscale.frag.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DUPSCALE -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/taa.frag
+    DEPENDS renderer/shaders/taa.frag)
+list(APPEND shader_incs ${spv})
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}
