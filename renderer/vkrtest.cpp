@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     return frame;
 }
 
@@ -1222,6 +1223,35 @@ int main()
             converge(coarse, &frames);
             Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
                    "adaptive sampling: done once every pixel's noise is under the threshold");
+
+            // Final quality samples adaptively by default: with only
+            // adaptiveFinalThreshold set, a fresh film (final) stops at the
+            // minimum; the film that took over from TAA after a change
+            // (interactive) still runs to filmSamples. The converged pixel
+            // fraction ends the noisy-edge film early (6% of the pixels
+            // are its edge).
+            frame.adaptiveThreshold = 0.0f;
+            frame.adaptiveFinalThreshold = 0.5f;
+            vkr::Renderer finalRun(device);
+            converge(finalRun, &frames);
+            Expect(frames == 9 && finalRun.GetStats().filmActivePixels == 0,
+                   "adaptive sampling: on in a final-quality film by hdvk:adaptiveFinalThreshold");
+            frame.sceneVersion = 100;
+            Render(finalRun, scene, frame);
+            converge(finalRun, &frames);
+            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1,
+                   "adaptive sampling: not in a film that took over from TAA");
+            frame.adaptiveFinalThreshold = 0.002f;
+            frame.adaptivePixelFraction = 0.9f;
+            vkr::Renderer fraction(device);
+            converge(fraction, &frames);
+            Expect(frames >= 8 && frames < 32, "adaptive sampling: converged once 90% of the pixels stopped");
+            frame.adaptivePixelFraction = 0.99f;
+            vkr::Renderer edge(device);
+            converge(edge, &frames);
+            Expect(frames == 32, "adaptive sampling: 6% noisy pixels keep the film running at 99%");
+            frame.adaptiveFinalThreshold = 0.0f;
+            frame.adaptiveThreshold = 0.002f;
         }
 
         {

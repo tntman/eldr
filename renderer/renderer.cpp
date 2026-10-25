@@ -2676,7 +2676,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                               : changed || _filmSamples == 0 ? (frame.finalQuality || _freshRun ? 1 : 2)
                                                                : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
-    _filmAdaptive = film && frame.adaptiveThreshold > 0.0f;
+    // A run is final if it started so (filmMode 1); one that started from
+    // the TAA image (2) stays interactive.
+    _filmFinal = film && (filmMode == 1 || (filmMode == 0 && _filmFinal));
+    const float adaptiveThreshold = frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
+                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
+                                                                    : 0.0f;
+    _filmAdaptive = film && adaptiveThreshold > 0.0f;
     _filmRuns += filmMode != 0 ? 1 : 0;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
@@ -3675,7 +3681,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             // From a TAA image: as much as 4 samples, a small bias that keeps
             // the switch from TAA from showing one sample's noise.
             _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f,
-                            std::max(frame.adaptiveThreshold, 0.0f), frame.adaptiveMinSamples,
+                            adaptiveThreshold, frame.adaptiveMinSamples,
                             frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation));
             pass("film");
         } else {
@@ -3923,7 +3929,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Adaptive film: converged once no pixel took a sample (every pixel
     // takes the minimum first).
     _stats.filmActivePixels = _filmAdaptive ? _taa.ActivePixels() : 0;
-    if (_filmAdaptive && _stats.filmActivePixels == 0) {
+    if (_filmAdaptive && _stats.filmActivePixels <= (1.0f - std::clamp(frame.adaptivePixelFraction, 0.0f, 1.0f)) *
+                                                        float(_width) * float(_height)) {
         _taaConverged = true;
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();

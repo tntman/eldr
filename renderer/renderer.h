@@ -265,6 +265,13 @@ public:
         // flat areas (try 0.002).
         float adaptiveThreshold = 0.0f;
         uint32_t adaptiveMinSamples = 16;
+        // Final quality (finalQuality, or a film that started fresh, as
+        // usdrecord's): adaptive sampling at this threshold when
+        // adaptiveThreshold is 0 (0: off). And the film is converged once
+        // this fraction of the pixels has stopped (the rest of the noisy
+        // ones would only run it to filmSamples).
+        float adaptiveFinalThreshold = 0.01f;
+        float adaptivePixelFraction = 0.99f;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
@@ -476,6 +483,7 @@ private:
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
     bool _filmAdaptive = false;
+    bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
     bool _freshRun = false;
     bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)

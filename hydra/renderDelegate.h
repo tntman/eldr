@@ -160,7 +160,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples")) \
     ((renderScale, "hdvk:renderScale")) \
     ((productLinear, "hdvk:productLinear")) \
-    ((ssgiBitmaskThickness, "hdvk:ssgiBitmaskThickness"))
+    ((ssgiBitmaskThickness, "hdvk:ssgiBitmaskThickness")) \
+    ((adaptiveFinalThreshold, "hdvk:adaptiveFinalThreshold")) \
+    ((adaptivePixelFraction, "hdvk:adaptivePixelFraction"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
