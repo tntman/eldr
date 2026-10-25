@@ -27,6 +27,9 @@ const uint32_t kClosestHit[] =
 const uint32_t kAnyHit[] =
 #include "rt.rahit.inc"
 ;
+const uint32_t kShadowAnyHit[] =
+#include "rt_shadow.rahit.inc"
+;
 const uint32_t kTlasComp[] =
 #include "tlas.comp.inc"
 ;
@@ -53,7 +56,7 @@ constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors,
 
 
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
-constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2, kSlotRefracts = 4;
+constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2, kSlotTranslucent = 4;
 
 // BLASes are placed in 16 MB blocks at the required 256-byte alignment.
 constexpr VkDeviceSize kUnit = 256;
@@ -134,7 +137,7 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     _CreatePipelines(sceneLayout);
     // Placeholders until a frame needs the real sizes: every descriptor
     // stays valid.
-    _CreateImages(1, 1);
+    _CreateImages(1, 1, 1);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, 8, 8);
     _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, 16, 16);
 }
@@ -204,13 +207,15 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     // the displaced meshes' vertices and table (partially bound: written
     // once they exist).
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
+    const VkShaderStageFlags hits = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
     const VkDescriptorSetLayoutBinding bindings[8] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
-        {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
-        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
+        // Skinned posed vertices and table: hits, and rt_refraction.rgen's.
+        {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
         {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
     };
@@ -283,7 +288,8 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
 
     // Shader groups: the ray generation shaders, misses (closest surface,
     // shadow), hit groups (closest surface: closest hit + cutout any hit;
-    // shadow: the any hit only). Rays pick the shadow ones by SBT offset 1.
+    // shadow: rt_shadow.rahit, cutouts and translucent casters). Rays pick
+    // the shadow ones by SBT offset 1.
     struct Stage {
         const uint32_t *code;
         size_t bytes;
@@ -296,6 +302,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {kClosestHit, sizeof(kClosestHit), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
         {kAnyHit, sizeof(kAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
         {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kShadowAnyHit, sizeof(kShadowAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
         {kRefractionRgen, sizeof(kRefractionRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
     constexpr uint32_t kStages = sizeof(stages) / sizeof(stages[0]);
@@ -319,9 +326,9 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 1, kUnused, kUnused),  // miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 2, kUnused, kUnused),  // shadow miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, 3, 4),
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 4),
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 6),
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 5, kUnused, kUnused),  // probes
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 6, kUnused, kUnused),  // refraction
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 7, kUnused, kUnused),  // refraction
     };
     constexpr uint32_t kGroups = sizeof(groups) / sizeof(groups[0]);
     VkRayTracingPipelineCreateInfoKHR rci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
@@ -408,12 +415,13 @@ Image RayTracing::_CreateAtlas(VkFormat format, uint32_t width, uint32_t height)
 
 // The per-pixel results, in GENERAL layout for good (written by ray
 // generation, read by mesh.frag).
-void RayTracing::_CreateImages(uint32_t width, uint32_t height)
+void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers)
 {
     _dev.Destroy(_shadowImage);
     _dev.Destroy(_reflectionImage);
     _dev.Destroy(_refractionImage);
-    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height);
+    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
+    _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     if (_work.refraction) {
         _refractionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
@@ -469,6 +477,9 @@ VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertic
 {
     VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
     geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    // A translucent caster's any hit multiplies the shadow ray's colour:
+    // once per surface.
+    geometry.flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
     VkAccelerationStructureGeometryTrianglesDataKHR &t = geometry.geometry.triangles;
     t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -492,8 +503,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
     _displacedBuilds.clear();
     for (uint32_t s = 0; s < gpu.slotGeometry.size(); ++s) {
         const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[s];
-        if (g.version == 0 || g.skinned || g.indexCount < 3 || (g.refracts && !_work.refraction) ||
-            !used.insert(g.version).second) {
+        if (g.version == 0 || g.skinned || g.indexCount < 3 || !used.insert(g.version).second) {
             continue;
         }
         // A displaced mesh's BLAS follows the displacement (scale, on or off).
@@ -765,7 +775,8 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
         words[s * 4 + 0] = uint32_t(address);
         words[s * 4 + 1] = uint32_t(address >> 32);
         words[s * 4 + 2] = g.firstIndex;
-        words[s * 4 + 3] = (g.cutout ? kSlotCutout : 0) | (g.emitter ? kSlotEmitter : 0) | (g.refracts ? kSlotRefracts : 0);
+        words[s * 4 + 3] = (g.cutout ? kSlotCutout : 0) | (g.emitter ? kSlotEmitter : 0) |
+                           (g.translucent ? kSlotTranslucent : 0);
     }
     if (words != _slotWords) {
         _dev.Reserve(_slots, words.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -895,13 +906,29 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     const VkDeviceSize skinnedScratch = _PrepareSkinned(gpu);
     _PrepareTlas(gpu);
     _ReserveScratch(skinnedScratch);  // the skinned BLASes' builds share it with the TLAS's, one after the other
+    // Shadow layers grow (four grey lights or one colour one each) and stay.
+    uint32_t lights = 0;
+    while (work.shadows && lights < kMaxRtShadowLights && work.shadowLights[lights] != kNone) {
+        ++lights;
+    }
+    const uint32_t perTexel = work.shadowColor ? 1 : 4;
+    const uint32_t layers = std::max((lights + perTexel - 1) / perTexel, std::max(_shadowLayers, 1u));
     if ((work.shadows || work.reflections || work.refraction) &&
-        (width != _width || height != _height || work.refraction != (_refractionImage.view != VK_NULL_HANDLE))) {
-        _CreateImages(width, height);
+        (width != _width || height != _height || layers != _shadowLayers ||
+         work.refraction != (_refractionImage.view != VK_NULL_HANDLE))) {
+        _CreateImages(width, height, layers);
     }
     RayTracingData &d = *static_cast<RayTracingData *>(_uniforms.mapped);
     d = RayTracingData{};
-    std::copy(work.shadowLights, work.shadowLights + 4, d.shadowLights);
+    std::copy(work.shadowLights, work.shadowLights + kMaxRtShadowLights, d.shadowLights);
+    d.shadowSample[0] = work.shadowSample[0];
+    d.shadowSample[1] = work.shadowSample[1];
+    d.shadowSample[3] = float(height);
+    d.shadowInfo[0] = kRtMaskSurfaces | (work.shadowColor ? kRtMaskTranslucent : 0);
+    d.shadowInfo[1] = work.shadowVolumes;
+    d.shadowInfo[2] = perTexel;
+    d.shadowVolume[0] = work.volumeStep;
+    d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;
     d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
     d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);

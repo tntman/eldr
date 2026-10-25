@@ -1,11 +1,11 @@
 // The ray generation shaders' tracing and shading (rt_pixels.rgen,
 // rt_probes.rgen). Include after frame.glsl, lights.glsl, scene.glsl,
-// material.glsl, rt.glsl and gi.glsl.
+// material.glsl, rt.glsl, gi.glsl and volume.glsl.
 
 layout(set = 0, binding = 5) uniform samplerCube envCube;
 
 layout(location = 0) rayPayloadEXT RtHit hit;
-layout(location = 1) rayPayloadEXT float unoccluded;
+layout(location = 1) rayPayloadEXT vec4 shadowRay;  // rt_shadow.rmiss, rt_shadow.rahit
 
 // Closest surface along a ray, cone: its spread angle in radians; of the
 // instances in `mask` (rt.glsl's kMask*).
@@ -17,16 +17,25 @@ void TraceMask(vec3 origin, vec3 dir, float cone, uint mask)
 
 void Trace(vec3 origin, vec3 dir, float cone)
 {
-    TraceMask(origin, dir, cone, kMaskOpaque);
+    TraceMask(origin, dir, cone, kRtMaskSurfaces);
 }
 
-// 1 if nothing is in the way up to tMax.
-float TraceShadow(vec3 origin, vec3 dir, float tMax)
+// What reaches origin from tMax along dir: 0 behind an opaque surface,
+// else what the translucent casters (rt.shadowInfo.x) and the volumes
+// (rt.shadowInfo.y) on the way let through.
+vec3 TraceShadow(vec3 origin, vec3 dir, float tMax)
 {
-    unoccluded = 0.0;
-    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, kMaskOpaque, 1, 0, 1,
+    shadowRay = vec4(1.0, 1.0, 1.0, 0.0);
+    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, rt.shadowInfo.x, 1, 0, 1,
                 origin, 0.0, dir, tMax, 1);
-    return unoccluded;
+    vec3 through = shadowRay.rgb * shadowRay.a;
+    if (rt.shadowInfo.y > 0u && shadowRay.a > 0.0) {
+        // ponytail: a sun's ray marches 1e4 units (the volumes' boxes clip it).
+        float weighted;
+        through *= exp(-VolumeOpticalDepth(origin, dir * min(tMax, 1e4), rt.shadowInfo.y, rt.shadowVolume.x,
+                                           rt.shadowVolume.y, weighted));
+    }
+    return through;
 }
 
 // Ray origin just off a surface on the side of normal ng, robust at any
@@ -36,9 +45,17 @@ vec3 OffsetRay(vec3 p, vec3 ng)
     ivec3 o = ivec3(256.0 * ng);
     vec3 pi = intBitsToFloat(floatBitsToInt(p) + ivec3(p.x < 0.0 ? -o.x : o.x, p.y < 0.0 ? -o.y : o.y,
                                                        p.z < 0.0 ? -o.z : o.z));
+    // Plus 256 ulps of the largest coordinate along the normal: per
+    // component alone, Kitchen_set's floor (z = 0.04 at x, y up to 300) got
+    // 1e-6, under both the hit point's error (rt.rchit's origin + t * dir)
+    // and the intersector's from x and y, and shadowed itself: 47% of its
+    // sunlit pixels lost over 10% of the sun.
+    // ponytail: a hit near the origin seen from far away (t >> |p|) can
+    // still fall short; then compute rt.rchit's position from the corners.
+    float scale = max(max(abs(p.x), abs(p.y)), abs(p.z));
     return vec3(abs(p.x) < 1.0 / 32.0 ? p.x + ng.x / 65536.0 : pi.x,
                 abs(p.y) < 1.0 / 32.0 ? p.y + ng.y / 65536.0 : pi.y,
-                abs(p.z) < 1.0 / 32.0 ? p.z + ng.z / 65536.0 : pi.z);
+                abs(p.z) < 1.0 / 32.0 ? p.z + ng.z / 65536.0 : pi.z) + ng * (scale * 3.05e-5);
 }
 
 // Random numbers: a hash (PCG3D, Jarzynski and Olano 2020) per pixel and
@@ -117,17 +134,19 @@ vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
     return toPoint / max(dist, 1e-20);
 }
 
-// Fraction of the light visible from p (normal ng) over `samples` rays.
-float LightVisibility(uint index, vec3 p, vec3 ng, uvec3 seed, uint samples)
+// Fraction of the light reaching p (normal ng) over `samples` rays (its
+// colour through translucent casters and volumes): points u, then R2 steps
+// from it, on the light's shape.
+vec3 LightVisibility(uint index, vec3 p, vec3 ng, vec2 u, uint samples)
 {
     Light light = lights[index];
     vec3 origin = OffsetRay(p, ng);
-    float sum = 0.0;
+    vec3 sum = vec3(0.0);
     for (uint s = 0u; s < samples; ++s) {
         float dist;
-        vec3 dir = SampleLight(light, p, Random2(seed + uvec3(0u, 0u, index * 64u), s), dist);
+        vec3 dir = SampleLight(light, p, fract(u + vec2(0.7548776662, 0.5698402910) * float(s)), dist);
         // Short of the light: its own surface (a rect on a ceiling) is not a blocker.
-        sum += dot(dir, ng) > 0.0 ? TraceShadow(origin, dir, dist * 0.999) : 0.0;
+        sum += dot(dir, ng) > 0.0 ? TraceShadow(origin, dir, dist * 0.999) : vec3(0.0);
     }
     return sum / float(samples);
 }
@@ -172,7 +191,7 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
         Light light = lights[i];
         float NoL = dot(n, light.position.xyz);
         if (NoL > 0.0) {
-            float shadow = i == rt.params.w ? LightVisibility(i, p, hit.geometric, seed, 1u) : 1.0;
+            vec3 shadow = i == rt.params.w ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : vec3(1.0);
             irradiance += light.color.rgb * (NoL * light.halfHeight.w * shadow);
         }
     }

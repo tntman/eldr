@@ -11,16 +11,24 @@
 namespace vkr {
 
 // std140 mirror of RayTracingData in shaders/gi.glsl.
+// Traced shadows: the sun and up to 15 local lights, four per layer of the
+// shadow image (stacked down it, `shadowSample` w rows apart).
+constexpr uint32_t kMaxRtShadowLights = 16;
 struct RayTracingData {
-    uint32_t shadowLights[4];
+    uint32_t shadowLights[kMaxRtShadowLights];
     uint32_t params[4];  // frame, shadow rays per light, reflection rays, light shadowed at hits
     float giOrigin[4];
     uint32_t giCounts[4];
     float giParams[4];
     float giRotation[16];
     uint32_t skinned[4];  // the TLAS's first skinned instance, how many
+    float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
+    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
+    float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces)
 };
+// TLAS instance masks (shaders/gi.glsl).
+constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2;
 
 // Hardware ray tracing (Device::rayTracing): a BLAS per rigid opaque or
 // cutout mesh, a TLAS over the instance pool, and the passes tracing them.
@@ -42,13 +50,18 @@ public:
     struct Work {
         bool shadows = false;      // traced shadows of shadowLights
         bool reflections = false;  // traced reflections
-        // Traced refraction (rt_refraction.rgen): refracting translucent
-        // meshes get BLASes (rays of the other effects skip them by mask)
-        // and each pixel's refracted ray through them, up to this many
-        // interfaces.
+        // Traced refraction (rt_refraction.rgen): each pixel's refracted
+        // ray through the translucent meshes, up to this many interfaces.
         bool refraction = false;
         uint32_t refractionBounces = 4;
-        uint32_t shadowLights[4] = {kNone, kNone, kNone, kNone};  // per channel of the shadow image
+        uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
+        float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
+        // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):
+        // colour per light in the shadow image, and the first shadowVolumes
+        // volumes are marched along the rays at volumeStep, volumeDensity.
+        bool shadowColor = false;
+        uint32_t shadowVolumes = 0;
+        float volumeStep = 1.0f, volumeDensity = 1.0f;
         uint32_t shadowSamples = 1, reflectionSamples = 1;          // rays per light / pixel
         uint32_t sun = kNone;  // the distant light shadowed at hits
         bool gi = false;            // global illumination probes
@@ -133,7 +146,7 @@ private:
     VkDeviceAddress _Address(VkBuffer buffer) const;
     void _ReserveScratch(VkDeviceSize bytes);
     Image _CreateAtlas(VkFormat format, uint32_t width, uint32_t height);  // storage + sampled, GENERAL, zero
-    void _CreateImages(uint32_t width, uint32_t height);
+    void _CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers);
     void _CreatePipelines(VkDescriptorSetLayout sceneLayout);
     void _FitProbes(const Scene::Gpu &gpu);
 
@@ -185,7 +198,7 @@ private:
     Buffer _uniforms;  // RayTracingData
     Image _shadowImage, _reflectionImage;
     Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
-    uint32_t _width = 0, _height = 0;
+    uint32_t _width = 0, _height = 0, _shadowLayers = 0;
     Image _giIrradiance, _giVisibility;
     VkSampler _sampler = VK_NULL_HANDLE;
     VkPipeline _giUpdate[2] = {};  // gi_update.comp for irradiance, visibility

@@ -24,6 +24,9 @@ layout(set = 0, binding = 86, rgba16f) uniform readonly image2D rtRefractionImag
 // what's behind it) and the fraction it refracts (sampled from the
 // background by TransmissionEnd).
 float gStraight = 0.0, gRefracted = 0.0;
+// The light TransmissionEnd added from the background (the light splits'
+// indirect glossy: Karma counts refraction with the specular lobes).
+vec3 gRefractedLight = vec3(0.0);
 
 // Before shading: `alpha` (opacity) becomes the fraction that reflects
 // diffusely and emits.
@@ -129,6 +132,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
             vec3 transmitted = through * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;
+            gRefractedLight += transmitted * traced.rgb;  // indirect glossy (light splits)
             return 1.0 - gStraight - (traced.a < 0.0 ? dot(transmitted, vec3(1.0 / 3.0)) : 0.0);
         }
     }
@@ -151,6 +155,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         vec4 background = RefractedBackground(r, thickness, spread);
         vec3 transmitted = through * tint;
         color += transmitted * background.rgb;
+        gRefractedLight += transmitted * background.rgb;
         lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
     }
     if (inside) {
@@ -158,6 +163,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
         vec3 reflected = gRefracted * F * tint;
         color += reflected * mirrored.rgb;
+        gRefractedLight += reflected * mirrored.rgb;
         lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
     }
     return 1.0 - gStraight - lost;
@@ -198,6 +204,10 @@ vec3 TintLookup(sampler2DArray tint, sampler2DArray tintDepth, sampler2D atlas, 
 // distant light (direction l), looked up as Shadow() does in mesh.frag.
 vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 {
+    vec3 traced;
+    if (RtShadowTint(frame.counts.y, traced)) {
+        return traced;
+    }
     if (!Feature(kFeatureTranslucentShadows)) {
         return vec3(1.0);
     }
@@ -220,6 +230,10 @@ vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 // The same for local light `index`, looked up as LocalShadow() does.
 vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 {
+    vec3 traced;
+    if (RtShadowTint(index, traced)) {
+        return traced;
+    }
     uint tile = lightShadow[index];
     if (!Feature(kFeatureTranslucentShadows) || tile == kNone) {
         return vec3(1.0);

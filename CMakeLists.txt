@@ -14,7 +14,12 @@ find_package(Vulkan REQUIRED)
 # garch (GPU sharing with usdview's OpenGL) links OpenGL::GL.
 find_package(OpenGL REQUIRED)
 # -DCMAKE_PREFIX_PATH=<USD install root>; pxr_DIR alone misses its TBB/OpenSubdiv configs.
-find_package(pxr CONFIG REQUIRED)
+option(HDVK_HOUDINI "Build against Houdini's USD (see docs/houdini.md)" OFF)
+if(HDVK_HOUDINI)
+    include(houdini/houdini.cmake)
+else()
+    find_package(pxr CONFIG REQUIRED)
+endif()
 
 # Renderer layer: plain Vulkan, must never include USD headers.
 # Shaders compile to SPIR-V word lists that renderer.cpp #includes.
@@ -41,14 +46,17 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
-foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit)
+foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
+        rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
-                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+                -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
-                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl)
+                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+                renderer/shaders/program.glsl renderer/shaders/noise.glsl
+                third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
@@ -78,7 +86,7 @@ add_custom_command(OUTPUT ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/gtao.frag
     DEPENDS renderer/shaders/gtao.frag)
 list(APPEND shader_incs ${spv})
-foreach(shader mesh.vert mesh.frag aov.frag)
+foreach(shader mesh.vert mesh.frag aov.frag matte.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
     add_custom_command(OUTPUT ${spv}
@@ -224,6 +232,8 @@ if(WIN32)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME settings COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_settings_window.py)
     set_tests_properties(settings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME viewport COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_viewport.py)
+    set_tests_properties(viewport PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>" TIMEOUT 600)
     add_test(NAME docs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_docs.py)
     set_tests_properties(docs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME light_shapes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_light_shapes.py)

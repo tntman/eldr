@@ -114,6 +114,9 @@ const uint32_t kShadowTintFrag[] =
 const uint32_t kMatteFrag[] =
 #include "matte.frag.inc"
 ;
+const uint32_t kMatteGraphFrag[] =
+#include "matte_graph.frag.inc"
+;
 const uint32_t kShadowMinComp[] =
 #include "shadow_min.comp.inc"
 ;
@@ -376,7 +379,7 @@ uint32_t NestedUniformScramble(uint32_t x, uint32_t seed)
 // a (0, 2)-sequence: a disc's or sphere's projections converge about twice
 // as fast as through the sample dimensions' unscrambled pairs (measured on
 // 128 samples: 0.02-0.03 worst error in a slab's share, not 0.06-0.08).
-constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4;
+constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4, kSeedRtShadow = 5;
 void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
 {
     index = NestedUniformScramble(index, HashU32(seed));
@@ -548,6 +551,7 @@ Renderer::~Renderer()
     if (_prewarmThread.joinable()) {
         _prewarmThread.join();
     }
+    _MergePrewarmCache();
     for (const Prewarmed &p : _prewarmed) {
         for (VkPipeline pipeline : p.pipelines) {
             vkDestroyPipeline(_dev.device, pipeline, nullptr);
@@ -685,7 +689,7 @@ void Renderer::_CreateDescriptors()
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting},
         {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
         {6, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment},
+        {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment | kRt},  // kRt: rt_refraction.rgen
         {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry | kFragment | kRt},
         {9, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
@@ -706,11 +710,13 @@ void Renderer::_CreateDescriptors()
         {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex | VK_SHADER_STAGE_COMPUTE_BIT},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
-        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},  // also displacement programs (displace.glsl)
-        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
-        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
-        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
-        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        // Also displacement programs (displace.glsl) and traced refraction's
+        // hits (rt_refraction.rgen).
+        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
+        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
+        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
+        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
+        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt},
         // Deformation blur: point velocities (Scene::Gpu::velocities).
         {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
@@ -742,8 +748,8 @@ void Renderer::_CreateDescriptors()
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Scene::Gpu::kMaxMirrors, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},  // traced shadows march the volumes too
+        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
@@ -860,6 +866,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule tintFrag = CreateShaderModule(device, kShadowTintFrag, sizeof(kShadowTintFrag));
     VkShaderModule matteFrag = CreateShaderModule(device, kMatteFrag, sizeof(kMatteFrag));
+    VkShaderModule matteGraphFrag = CreateShaderModule(device, kMatteGraphFrag, sizeof(kMatteGraphFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule skyFrag = CreateShaderModule(device, kSkyFrag, sizeof(kSkyFrag));
     auto stage = [](VkShaderStageFlagBits s, VkShaderModule m) {
@@ -974,7 +981,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     std::vector<Job> jobs;
     jobs.reserve(5 * kVariants);  // no reallocation: the infos point into the jobs
     auto queueMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
-                         uint32_t pass = 0) {
+                         uint32_t pass = 0, VkShaderModule programFrag = VK_NULL_HANDLE) {
         for (uint32_t v = 0; v < kVariants; ++v) {
             if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced) {
                 continue;  // not this pass's or call's; noise comes with a program
@@ -987,7 +994,10 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
             std::copy(info.pStages, info.pStages + info.stageCount, j.stages);
             j.stages[0].pSpecializationInfo = &j.vertexSpec;  // the vertex stage comes first
             j.stages[1].pSpecializationInfo = &j.fragmentSpec;
-            if (v & (4 | 16)) {  // shading pipelines only
+            if (programFrag && (v & 4)) {  // a program's pass with a fragment stage of its own (matte)
+                j.stages[0].module = graphVert;
+                j.stages[1].module = programFrag;
+            } else if (v & (4 | 16)) {  // shading pipelines only
                 const bool program = v & 4;
                 const VkShaderModule frags[4] = {meshFrag, graphFrag, layersFrag, graphLayersFrag};
                 j.stages[0].module = program ? graphVert : meshVert;
@@ -1022,8 +1032,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         jobs.clear();
         return res.load();
     };
-    auto createMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants) {
-        queueMesh(info, out, variants);
+    auto createMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
+                          VkShaderModule programFrag = VK_NULL_HANDLE) {
+        queueMesh(info, out, variants, 0, programFrag);
         return compile();
     };
     VkResult r = VK_SUCCESS;
@@ -1180,7 +1191,8 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         mci.pDepthStencilState = &depthReadOnly;
         mci.pColorBlendState = &matteBlend;
         if (r == VK_SUCCESS) {
-            r = createMesh(mci, _mattePipeline, kDepthVariants);
+            // Materials with a program (bit 4, with noise bit 8) run it for their opacity.
+            r = createMesh(mci, _mattePipeline, kDepthVariants | 4 | 8, matteGraphFrag);
         }
     }
 
@@ -1195,7 +1207,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     }
 
     for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
-                             maskFrag, skyVert, skyFrag, tintFrag, matteFrag}) {
+                             maskFrag, skyVert, skyFrag, tintFrag, matteFrag, matteGraphFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -1261,6 +1273,7 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
 // first queues.
 void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
 {
+    _MergePrewarmCache();
     if (features == _prewarmFor) {
         return;
     }
@@ -1329,7 +1342,6 @@ void Renderer::_PrewarmWorker()
         Prewarmed p{_prewarmQueue.front(), std::vector<VkPipeline>(5 * kVariants, VK_NULL_HANDLE)};
         _prewarmQueue.erase(_prewarmQueue.begin());
         _prewarmCurrent = p.job.features;
-        const bool save = _prewarmSave;
         lock.unlock();
         VkPipeline *base = p.pipelines.data();
         const ShadingTargets targets{base, base + kVariants, base + 2 * kVariants, base + 3 * kVariants,
@@ -1343,11 +1355,8 @@ void Renderer::_PrewarmWorker()
         } catch (const std::exception &) {
             ok = false;  // the frame that needs it compiles it (and reports why)
         }
-        if (_dev.pipelineCache && vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) ==
-                                      VK_SUCCESS && save && ok && !_prewarmStop) {
-            _dev.SavePipelineCache();
-        }
         lock.lock();
+        _prewarmMerge = true;  // the render thread merges (_MergePrewarmCache)
         _prewarmCurrent = kNone;
         if (ok && !_prewarmStop) {
             _prewarmed.push_back(std::move(p));
@@ -1357,6 +1366,26 @@ void Renderer::_PrewarmWorker()
             }
         }
         _prewarmChanged.notify_all();
+    }
+}
+
+// Merges what the worker compiled into the device's cache. Only the render
+// thread (and the destructor, after the join) does: vkMergePipelineCaches needs
+// its destination externally synchronized, and the render thread creates
+// pipelines (and saves) with that cache, so the worker merging into it raced.
+void Renderer::_MergePrewarmCache()
+{
+    bool save;
+    {
+        std::lock_guard<std::mutex> lock(_prewarmMutex);
+        if (!_prewarmMerge || !_dev.pipelineCache) {
+            return;
+        }
+        _prewarmMerge = false;
+        save = _prewarmSave;
+    }
+    if (vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) == VK_SUCCESS && save) {
+        _dev.SavePipelineCache();
     }
 }
 
@@ -2006,6 +2035,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         Vec3 position{c.position[0], c.position[1], c.position[2]};
         float n = std::max(c.radius * 1.05f, cand.range * 1e-4f);
         Vec3 offset{};  // the sample point's offset from the light's centre
+        using Shape = Scene::Gpu::ShadowCaster::Shape;
         if (shapeSample && frame.softShadows) {
             // Uniform over a rect's or disk's area, a cylinder's axis; in a
             // sphere with density 1 / sqrt(1 - r^2), whose projection along
@@ -2014,9 +2044,9 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             // A cylinder: uniform along its axis, and across it the disc
             // of its section with density 1 / sqrt(1 - r^2) (the same
             // Abel pair, one dimension down: every chord integrates to pi).
-            // A sphere's near plane clears its own radius along each face
-            // axis from the offset point, no more (see add()).
-            using Shape = Scene::Gpu::ShadowCaster::Shape;
+            // A sphere's near plane clears its own radius (a cylinder's, its
+            // section's) along each face axis from the offset point, no
+            // more (see add()).
             const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
             const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
             const Vec3 hh{c.halfHeight[0], c.halfHeight[1], c.halfHeight[2]};
@@ -2040,12 +2070,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
                 const float w = 1.0f - shapeSample[1], r = std::sqrt(std::max(1.0f - w * w, 0.0f)) * c.cylinderRadius,
                             ang = 6.2831853f * shapeSample[2];
                 offset = hw * (2.0f * u - 1.0f) + b * (r * std::cos(ang)) + Cross(a, b) * (r * std::sin(ang));
-                n += c.cylinderRadius;
             }
             position = position + offset;
         }
         const float f = std::max(cand.range, (n + c.radius) * 2.0f);
-        const bool sphereJitter = shapeSample && frame.softShadows && c.shape == Scene::Gpu::ShadowCaster::Shape::Sphere;
+        const bool jitter = shapeSample && frame.softShadows;
+        const Vec3 tubeAxis = Normalize(Vec3{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]});
         // A few texels of margin: PCF near a tile's (or cube face's) edge
         // must not read the neighbour.
         const float margin = 1.0f + 6.0f / float(tileSize);
@@ -2053,9 +2083,18 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         auto add = [&](Vec3 direction) {
             ShadowTile t{};
             // The sphere reaches radius - offset.direction in front of the
-            // sample point along this axis; clear that and not more.
-            const float nf = sphereJitter ? std::max(c.radius * 1.05f - Dot(offset, direction), cand.range * 1e-4f)
-                                         : n;
+            // sample point along this axis, a cylinder's section through
+            // the sample point its projected radius - the radial offset's
+            // share; clear that and not more.
+            const float along = Dot(tubeAxis, direction);
+            const float extent = c.shape == Shape::Sphere ? c.radius
+                               : c.shape == Shape::Cylinder
+                                   ? c.cylinderRadius * std::sqrt(std::max(1.0f - along * along, 0.0f))
+                                   : -1.0f;
+            const Vec3 own = c.shape == Shape::Cylinder ? offset - tubeAxis * Dot(offset, tubeAxis) : offset;
+            const float nf = jitter && extent >= 0.0f
+                                 ? std::max(extent * 1.05f - Dot(own, direction), cand.range * 1e-4f)
+                                 : n;
             const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, nf, f);
             std::memcpy(t.viewProj, viewProj.m, sizeof(t.viewProj));
             const uint32_t k = uint32_t(tiles.size());
@@ -2417,7 +2456,7 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         bound = VK_NULL_HANDLE;
         for (const auto &[distance, i] : order) {
             if (gpu.translucentFlags[i] & Scene::Gpu::kHoldout) {
-                const VkPipeline pipeline = _mattePipeline[gpu.translucentVariant[i] & kDepthVariants];
+                const VkPipeline pipeline = _mattePipeline[gpu.translucentVariant[i] & (kDepthVariants | 4 | 8)];
                 if (pipeline != bound) {
                     bound = pipeline;
                     vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
@@ -2504,7 +2543,7 @@ void Renderer::_RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewP
 // lobe only, into Subsurface's targets (testing the opaque depth), which
 // it then blurs into the colour.
 void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
-                                 const float *invViewProj, VkRenderingAttachmentInfo depth)
+                                 const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits)
 {
     // The opaque pass's ids, velocity and colour are written before this
     // pass loads (and the blur adds to) them.
@@ -2557,7 +2596,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
                                  sizeof(VkDrawIndexedIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
-    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples);
+    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits);
 }
 
 bool Renderer::IsConverged() const
@@ -2661,6 +2700,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
+    // No cascades (traced sun, shadows off): every split behind the camera, so
+    // lookups (volume.frag, fog, translucency) see no shadow instead of an
+    // empty cascade 0 (cameraForward is 0 too, so depth 0 fell into it).
+    std::fill_n(fd.cascadeSplits, kCascades, -1.0f);
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
                      (frame.clusteredLights ? kFeatureClusters : 0);
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
@@ -2897,14 +2940,50 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     RayTracing::Work rt;
     const bool rtScene = _rt && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          gpu.instanceCapacity <= kMaxRtInstances - kMaxRtSkinned;
-    rt.shadows = rtScene && frame.depthPrepass && frame.rtShadows;
+    // Final quality (Frame::finalShadows) may trace them without rtShadows,
+    // one ray per light and film sample, and up to kMaxRtShadowLights.
+    // Auto traces when the maps would cost more: a final sample redraws every
+    // shadow view (jittered light shapes) over the scene's triangles, while
+    // tracing costs a ray per pixel and shadowed light. So: at least
+    // kAutoTriangles triangles per pixel and shadowed light (960 x 540, 64
+    // samples: City 94 per pixel, 5 lights, traced 2.2 against maps 4.5 s of
+    // GPU; Kitchen_set 1.0, 6 lights, traced 0.93 against 0.64 s), and every
+    // skinned instance blocking rays (the crowd's 20000 agents exceed
+    // rtSkinnedInstances: its traced shadows would miss most of them).
+    // ponytail: triangles before culling stand in for what each shadow view
+    // draws; a measured per-frame cost would place the switch better.
+    constexpr double kAutoTriangles = 2.0;
+    const bool finalRun = film && _filmFinal;
+    using FinalShadows = Frame::FinalShadows;
+    auto autoTraced = [&] {
+        const size_t local = frame.localShadows && frame.localLights ? gpu.shadowCasters.size() : 0;
+        const size_t lights = std::min<size_t>(local + (gpu.shadowLight != kNone ? 1 : 0), kMaxRtShadowLights);
+        const uint32_t skinCap = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
+        return lights > 0 && double(gpu.triangleCount) >= kAutoTriangles * double(_width) * _height * double(lights) &&
+               scene.LargestSkinned(frame.cameraPos, skinCap + 1).size() <= skinCap;
+    };
+    const bool tracedShadows =
+        frame.rtShadows ||
+        (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
+                      (frame.finalShadows == FinalShadows::Auto && autoTraced())));
+    rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
     rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
     // Traced refraction: in final quality (or always), for scenes with
     // refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
                     (frame.rtRefraction >= 2 || (frame.rtRefraction == 1 && film && _filmFinal));
     rt.refractionBounces = frame.rtRefractionBounces;
-    rt.shadowSamples = frame.rtShadowSamples;
+    rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
+    std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
+    // Through glass and smoke: translucent casters colour each light's
+    // shadow (a texel per light), volumes are marched (grey).
+    const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
+    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
+    rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows
+                           ? gpu.volumeCount : 0;
+    rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
+    rt.volumeDensity = std::max(frame.volume.density, 0.0f);
+    ScrambledSobol(sobolIndex, kSeedRtShadow, rt.shadowSample, 2);
     rt.reflectionSamples = frame.rtReflectionSamples;
     rt.sun = gpu.shadowLight;
     rt.gi = rtScene && frame.gi;
@@ -2958,9 +3037,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _FitClusters(gpu, frame, &fd);
     }
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0,
+        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun,
+                          rt.shadows ? (finalRun ? kMaxRtShadowLights : 4) - rtSun : 0,
                           shapeJitter ? shapeSample : nullptr);
-    rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
+    rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
@@ -3651,12 +3731,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     pass("shading");
     if (ssrDenoise) {
         _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
-                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f);
+                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits);
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;
     if (fd.features[0] & kFeatureSubsurface) {
-        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt);
+        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt, splits);
         pass("subsurface");
     }
     if (volumesUnder) {

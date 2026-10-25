@@ -39,7 +39,11 @@ public:
     // direction and adds blurred minus unblurred light to `color` (in
     // COLOR_ATTACHMENT_OPTIMAL). `invViewProj` (row-vector order) maps the
     // depth's NDC to world space.
-    void Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples);
+    // With `moveSplits` the same difference moves in the light splits
+    // `splits` (Aovs::SplitsView), shared between direct and indirect
+    // diffuse by their unblurred shares.
+    void Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
+              VkImageView splits, bool moveSplits);
 
 private:
     void _Destroy();

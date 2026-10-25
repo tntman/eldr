@@ -723,7 +723,7 @@ public:
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
             bool skinned;  // posed per instance (LargestSkinned)
             bool displaced = false;  // its material displaces (Gpu::kDisplaced)
-            bool refracts = false;   // translucent and refracting: traced refraction only (RayTracing::Work)
+            bool translucent = false;  // blended: only traced shadows that tint see it
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

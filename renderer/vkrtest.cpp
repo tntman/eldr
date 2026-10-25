@@ -1744,6 +1744,31 @@ int main()
             frame.rtShadows = true;
             const Image img = Render(renderer, scene, frame);
             Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
+
+            // Interactive frames trace three local lights, final quality up
+            // to 15: with six the atlas is drawn, then not.
+            for (int i = 0; i < 5; ++i) {
+                AddSphereLight(scene, 0.6f, -0.6f + 0.3f * float(i), 0, 0.02f, 50.0f)->castShadows = true;
+            }
+            scene.Commit();
+            auto atlasDrawn = [](const vkr::Renderer::Stats &stats) {
+                return std::any_of(stats.passMs.begin(), stats.passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "localShadows") == 0; });
+            };
+            Render(renderer, scene, frame);
+            Expect(atlasDrawn(renderer.GetStats()), "rtShadows: interactive frames trace three local lights");
+            vkr::Renderer::Frame finalFrame = frame;
+            finalFrame.rtShadows = false;
+            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+            finalFrame.finalQuality = true;
+            finalFrame.postProcess = true;
+            finalFrame.post.autoExposure = false;
+            vkr::Renderer fresh(device);
+            Render(fresh, scene, finalFrame);
+            Expect(!atlasDrawn(fresh.GetStats()), "final shadows raytraced: six local lights all traced");
+            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Auto;
+            Render(fresh, scene, finalFrame);
+            Expect(atlasDrawn(fresh.GetStats()), "final shadows auto: maps with shadowed local lights");
         }
 
         if (device.rayTracing) {
@@ -2692,6 +2717,21 @@ int main()
             const Image quarter = Render(renderer, scene, frame);
             Expect(std::abs(quarter.At(3, 32, 1) / quarter.At(10, 32, 1) - 0.18f) < 0.04f,
                    "Frame::translucentShadowDivisor 4: still tinted");
+            if (device.rayTracing) {
+                // Traced: the shadow rays go on through the glass, its colour.
+                frame = IdentityFrame();
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, scene, frame);
+                const float tr = traced.At(3, 32, 0) / traced.At(10, 32, 0), tg = traced.At(3, 32, 1) / traced.At(10, 32, 1);
+                std::printf("translucent shadows: red glass traced %.3f %.3f, maps %.3f %.3f\n", tr, tg, r, g);
+                Expect(std::abs(tr - r) < 0.03f && std::abs(tg - g) < 0.03f,
+                       "translucent shadows traced: red glass casts the maps' red shadow");
+                frame.rtTranslucentShadows = false;
+                const Image clear = Render(renderer, scene, frame);
+                Expect(clear.At(3, 32, 1) > 0.97f * clear.At(10, 32, 1),
+                       "Frame::rtTranslucentShadows off: traced shadows ignore the glass");
+                frame = IdentityFrame();
+            }
             glass->transmission = 0;
             glass->opacity = 0.5f;
             glass->ior = 1.0f;
@@ -2699,6 +2739,13 @@ int main()
             const Image half = Render(renderer, scene);
             Expect(std::abs(half.At(3, 32, 1) / half.At(10, 32, 1) - 0.5f) < 0.04f,
                    "an opacity 0.5 occluder lets half the light through");
+            if (device.rayTracing) {
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, scene, frame);
+                Expect(std::abs(traced.At(3, 32, 1) / traced.At(10, 32, 1) - 0.5f) < 0.03f,
+                       "translucent shadows traced: an opacity 0.5 occluder lets half through");
+                frame = IdentityFrame();
+            }
 
             scene.RemoveLight(sun);
             glass->opacity = 0.25f;
@@ -2820,6 +2867,18 @@ int main()
             const Image uncut = Render(renderer, scene, frame);
             Expect(std::abs(uncut.At(16, 32, 0) - uncut.At(48, 32, 0)) < 1e-3f && uncut.At(16, 32, 3) == 1.0f,
                    "Frame::holdoutAlpha off: a translucent holdout leaves what's behind it alone");
+            // Opacity from a material program (the u coordinate): the matte
+            // pass runs it, so the cut grows from left to right per pixel.
+            auto graph = std::make_shared<vkr::Material>();
+            graph->program.Emit(vkr::MaterialProgram::kTexcoord, 0);
+            graph->program.Emit(vkr::MaterialProgram::kOutput, 0, {0}, vkr::MaterialProgram::kOpacity);
+            matte->material = graph;
+            scene.Commit();
+            const Image programmed = Render(renderer, scene);
+            const float leftCut = 1.0f - (8.5f / 32.0f), rightCut = 1.0f - (24.5f / 32.0f);
+            Expect(std::abs(programmed.At(8, 32, 3) - leftCut) < 0.03f && std::abs(programmed.At(24, 32, 3) - rightCut) < 0.03f &&
+                       std::abs(programmed.At(8, 32, 0) - leftCut * programmed.At(48, 32, 0)) < 0.03f,
+                   "holdout with an opacity program: the matte cuts alpha by the program's opacity per pixel");
         }
 
         {
@@ -3002,6 +3061,18 @@ int main()
             std::printf("shadow jitter: sun penumbra error %.3f over %.0f pixels (PCSS %.3f over %.0f)\n", jittered,
                         jitteredPartial, pcss, pcssPartial);
             Expect(jittered < 0.03f && jitteredPartial >= 8, "shadow jitter: the film converges to the sun's penumbra");
+            if (device.rayTracing) {
+                // Traced instead (Frame::finalShadows, without rtShadows):
+                // one ray per film sample, a new point of the disc each
+                // (the sample dimensions), converges to the same penumbra.
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                float tracedPartial = 0;
+                const float traced = error(film(scene, frame), &tracedPartial);
+                std::printf("final shadows: traced sun penumbra error %.3f over %.0f pixels\n", traced, tracedPartial);
+                Expect(traced < 0.03f && tracedPartial >= 8,
+                       "final shadows raytraced: the film converges to the sun's penumbra");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             // Off the film (TAA frames, film off) and for a point sun nothing changes.
             frame.filmAccumulation = false;
             const Image taaOff = film(scene, frame);
@@ -3032,6 +3103,20 @@ int main()
             // penumbra is up to about 0.1 away from PCSS.)
             Expect(MaxDifference(interactiveJitter, interactivePcss) < 0.01f,
                    "shadow jitter: only in final quality (an interactive film keeps PCSS)");
+            if (device.rayTracing) {
+                // (Its first frame is a fresh, final one, which traces.)
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                vkr::Renderer r(device);
+                Render(r, scene, frame);
+                vkr::Renderer::Frame changed = frame;
+                changed.sceneVersion = 7;
+                for (int i = 0; i < 400 && !r.IsConverged(); ++i) {
+                    Render(r, scene, changed);
+                }
+                Expect(r.GetStats().accelerationStructureBytes == 0,
+                       "final shadows raytraced: an interactive film keeps the maps");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             frame.shadowJitter = true;
             frame.finalQuality = true;
             sun->angle = 0.0f;
@@ -3083,6 +3168,16 @@ int main()
                         localJittered, jitteredPartial, localPcss, pcssPartial);
             Expect(localJittered < 0.03f && jitteredPartial >= 4,
                    "shadow jitter: the film converges to a sphere light's penumbra");
+            if (device.rayTracing) {
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                float tracedPartial = 0;
+                const float traced = localError(film(local, frame), &tracedPartial);
+                std::printf("final shadows: traced sphere light penumbra error %.3f over %.0f pixels\n", traced,
+                            tracedPartial);
+                Expect(traced < 0.03f && tracedPartial >= 4,
+                       "final shadows raytraced: the film converges to a sphere light's penumbra");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             frame.filmAccumulation = false;
             const Image localTaa = film(local, frame);
             frame.shadowJitter = true;
@@ -3146,6 +3241,25 @@ int main()
             std::printf("shadow jitter: floor behind a ceiling near a bulb lit to %.3f\n", worstLeak);
             Expect(leakOpen.At(57, 32, 0) > 0.01f && worstLeak < 0.02f,
                    "shadow jitter: a caster just outside a sphere light still shadows");
+            // The same with a tube of radius 0.05 along y in the bulb's place
+            // (a fluorescent tube just under a shelf). Clearing its radius
+            // past the sample point dropped the ceiling.
+            bulb->type = vkr::Light::Type::Cylinder;
+            bulb->halfWidth[0] = 0.0f;
+            bulb->halfWidth[1] = 0.5f;
+            bulb->castShadows = false;
+            leak.Commit();
+            const Image tubeLeakOpen = film(leak, frame);
+            bulb->castShadows = true;
+            leak.Commit();
+            const Image tubeLeakOn = film(leak, frame);
+            float worstTubeLeak = 0.0f;
+            for (int x = 56; x < 59; ++x) {
+                worstTubeLeak = std::max(worstTubeLeak, tubeLeakOn.At(x, 32, 0) / tubeLeakOpen.At(x, 32, 0));
+            }
+            std::printf("shadow jitter: floor behind a ceiling near a tube lit to %.3f\n", worstTubeLeak);
+            Expect(tubeLeakOpen.At(57, 32, 0) > 0.01f && worstTubeLeak < 0.02f,
+                   "shadow jitter: a caster just outside a cylinder light still shadows");
         }
 
         {
@@ -3673,6 +3787,22 @@ int main()
                    "without volume shadows the ground is as without volumes");
             std::printf("volume shadow %.3f (expected %.3f) on ground %.3f, glass beside it %.3f\n", ratio,
                         std::exp(-1.48f), uncast.At(3, 32, 0), uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
+            if (device.rayTracing) {
+                // Traced: the sun's shadow rays march the volume and pass the glass.
+                frame.rtShadows = true;
+                const Image traced = Render(renderer, shadowed, frame);
+                const float tracedRatio = traced.At(3, 32, 0) / uncast.At(3, 32, 0);
+                const float tracedGlass = traced.At(3, 52, 0) / noVolumes.At(3, 20, 0);
+                std::printf("translucent shadows: volume traced %.3f, maps %.3f; glass traced %.3f, maps %.3f\n",
+                            tracedRatio, ratio, tracedGlass, uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
+                Expect(std::abs(tracedRatio - ratio) < 0.05f && std::abs(tracedGlass - uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0)) < 0.05f,
+                       "translucent shadows traced: a volume's transmittance and glass beside it, as the maps'");
+                frame.rtTranslucentShadows = false;
+                Expect(Render(renderer, shadowed, frame).At(3, 32, 0) > 0.98f * uncast.At(3, 32, 0),
+                       "Frame::rtTranslucentShadows off: traced shadows ignore the volume");
+                frame.rtTranslucentShadows = true;
+                frame.rtShadows = false;
+            }
 
             // The same from a small sphere light on the sun's line, 8 away
             // from the ground point (the ray to pixel 3 crosses the ball
@@ -3697,6 +3827,14 @@ int main()
                    "a volume shadows surfaces from a local light by its transmittance");
             Expect(std::abs(lampLit.At(40, 32, 0) / lampUnlit.At(40, 32, 0) - 1.0f) < 0.02f,
                    "local volume shadows leave the ground out of the smoke's shadow alone");
+            if (device.rayTracing) {
+                frame.rtShadows = true;
+                const float tracedLamp = Render(renderer, lamp, frame).At(3, 32, 0) / lampUnlit.At(3, 32, 0);
+                frame.rtShadows = false;
+                std::printf("translucent shadows: local volume traced %.3f, maps %.3f\n", tracedLamp, lampRatio);
+                Expect(std::abs(tracedLamp - lampRatio) < 0.06f,
+                       "translucent shadows traced: a volume shadows a local light's light as the maps do");
+            }
         }
 
         {

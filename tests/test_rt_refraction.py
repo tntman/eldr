@@ -5,7 +5,10 @@ orthographic camera:
   space (rtRefraction 0) can't show it;
 - a slab of glass (ior 1.5, thickness 1) turned 45 degrees in front of a
   white/black edge shifts the edge sideways by t sin(45 - r) / cos(r), r the
-  refracted angle (0.329 units).
+  refracted angle (0.329 units); with its ior from a material graph (2,
+  where the constant would be 1.5) by 0.440;
+- glass seen through glass takes its transmission colour from its graph
+  (red, where the constant would be white).
 Needs a GPU with ray tracing.
 Run: usdenv.cmd python tests\\test_rt_refraction.py"""
 import math
@@ -172,6 +175,59 @@ expected = math.sin(math.radians(45) - r) / math.cos(r)
 shift = edge(render(stage, frustum, True))
 print("edge shift: traced", shift, "expected", round(expected, 3))
 expect(shift is not None and abs(abs(shift) - expected) < 0.05, "the slab shifts the edge by t sin(45 - r) / cos(r)")
+
+
+
+def mtlx_glass(stage, path, inputs, graphs):
+    """standard_surface glass; graphs: input -> (node id, output type, {input: value})."""
+    mat = UsdShade.Material.Define(stage, path)
+    shader = UsdShade.Shader.Define(stage, path + "/surface")
+    shader.CreateIdAttr("ND_standard_surface_surfaceshader")
+    for name, (type, value) in dict(inputs, base=(F, 0.0), transmission=(F, 1.0)).items():
+        shader.CreateInput(name, type).Set(value)
+    for name, (node, type, args) in graphs.items():
+        g = UsdShade.Shader.Define(stage, path + "/" + name)
+        g.CreateIdAttr(node)
+        for arg, value in args.items():
+            g.CreateInput(arg, type).Set(value)
+        shader.CreateInput(name, type).ConnectToSource(g.CreateOutput("out", type).GetAttr().GetPath())
+    mat.CreateSurfaceOutput("mtlx").ConnectToSource(shader.CreateOutput("out", Sdf.ValueTypeNames.Token))
+    return mat
+
+
+# The same slab with its ior from a graph: 1 + 1.
+graphIor = mtlx_glass(stage, "/mtl/graphIor", {"specular_roughness": (F, 0.0)},
+                      {"specular_IOR": ("ND_add_float", F, {"in1": 1.0, "in2": 1.0})})
+UsdShade.MaterialBindingAPI(slab.GetPrim()).Bind(graphIor)
+r = math.asin(math.sin(math.radians(45)) / 2.0)
+expected = math.sin(math.radians(45) - r) / math.cos(r)
+shift = edge(render(stage, frustum, True))
+print("edge shift, ior from a graph: traced", shift, "expected", round(expected, 3))
+expect(shift is not None and abs(abs(shift) - expected) < 0.05, "the first refraction bends by the program's ior")
+
+# Glass behind glass: a clear pane in front of a pane whose transmission
+# colour is a graph's red (1, 0, 0); the white card behind both shows red.
+stage, frustum, glass = stage_with_camera()
+
+
+def box(path, z0, z1, mat):
+    corners = [(x, y, z) for x in (-1.5, 1.5) for y in (-1.5, 1.5) for z in (z0, z1)]
+    points, indices = [], []
+    for f in faces:
+        indices += [len(points) + k for k in range(4)]
+        points += [corners[k] for k in f]
+    return mesh(stage, path, points, [4] * 6, indices, mat)
+
+
+red = mtlx_glass(stage, "/mtl/red", {"specular_roughness": (F, 0.0)},
+                 {"transmission_color": ("ND_add_color3", C, {"in1": (0.5, 0, 0), "in2": (0.5, 0, 0)})})
+box("/front", 0.5, 1.0, glass)
+box("/back", -1.0, -0.5, red)
+white = material(stage, "/mtl/white", {"diffuseColor": (C, (0, 0, 0)), "emissiveColor": (C, (1, 1, 1))})
+quad(stage, "/card", -4, -4, 4, 4, -3, white)
+c = pixel(render(stage, frustum, True), 0.1, 0.1)
+print("through both panes:", [round(x, 3) for x in c])
+expect(c[0] > 0.3 and c[1] < 0.1 * c[0] and c[2] < 0.1 * c[0], "the second pane tints by its graph's colour")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

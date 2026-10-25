@@ -49,7 +49,7 @@ A sensible final-quality starting point:
 | Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
 | True soft shadows, bokeh, motion blur | leave `shadowJitter`, `dofJitter`, `motionBlurTimeSamples` on (defaults) |
 | Indirect light | `eldr:gi` and `eldr:ssgi` (and `eldr:ssgiBitmask` for thin occluders) |
-| Accurate shadows and reflections off screen | `eldr:rtShadows`, `eldr:rtReflections` with 1 ray (the film averages) |
+| Accurate shadows and reflections off screen | `eldr:finalShadows` `raytraced` (or `auto`), `eldr:rtReflections` with 1 ray (the film averages) |
 | Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off, `--complexity veryhigh` (or `eldr:maxRefineLevel`) |
 | Fireflies | `eldr:directClamp` / `eldr:indirectClamp` |
 
@@ -188,8 +188,19 @@ its own shape).
 - Translucent casters and volumes tint shadows through colour maps beside the
   shadow maps.
 - Ray-traced shadows (`rtShadows`) replace maps for the sun and the three most
-  important local lights, soft from the light's size, with a skinned-character
-  cap (`rtSkinnedInstances`).
+  important local lights (15 in final quality), soft from the light's size,
+  with a skinned-character cap (`rtSkinnedInstances`). In final quality they
+  take one ray per light and film sample at the sample dimensions' point of
+  the light's shape, so the film converges to the exact penumbra.
+  Traced shadow rays pass translucent casters, taking their colour, and march
+  the volumes (`rtTranslucentShadows`), as the tint maps do.
+  `finalShadows` (`maps`, `raytraced`, `auto`) traces them in final quality
+  without `rtShadows`; `auto` traces dense scenes (2 triangles per pixel and
+  shadowed light) whose skinned instances all block rays.
+  Traced rays start 256 ulps of the hit's largest coordinate off the surface,
+  so floors far from the origin don't shadow themselves (until sweep 4,
+  Kitchen_set's sunlit floor came out 37% too dark traced; the shadow maps
+  were right).
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).
@@ -293,25 +304,32 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   colour is copied again after each, so glass behind glass shows (up to
   `refractionLayers` copies).
 - **Ray-traced refraction** (`rtRefraction`, needs ray tracing and the
-  prepass; on in final quality by default): refracting meshes join the TLAS
-  under a mask of their own (shadow, reflection and GI rays still pass
-  through them). Per pixel a ray finds the nearest refracting surface and
+  prepass; on in final quality by default): refraction rays see the
+  translucent meshes' TLAS instances (kRtMaskTranslucent, which traced
+  shadows also tint through; reflection and GI rays pass them), skinned ones
+  among `rtSkinnedInstances` included. Per pixel a ray finds the nearest
+  refracting surface (through translucent ones that don't refract) and
   follows its refracted ray through the glass, up to `rtRefractionBounces`
   interfaces: into and out of each medium, glass behind glass, total internal
   reflection, a Fresnel choice between reflecting and refracting after the
   first surface, Beer-Lambert absorption over `transmission_depth`, and a GGX
   microfacet normal per sample by the roughness (rough glass converges over
-  the film). It is shaded at its hit as traced reflections are, so what is
-  off screen or behind other objects shows through glass. The front surface
-  keeps its own Fresnel, tint and reflections; other refracting fragments at
-  the pixel stay screen space. Interfaces after the first use the materials'
-  constants and textures (not programs), the first the hit's interpolated
-  normal and constant ior.
+  the film). Each surface's material is evaluated at the hit as shading does
+  (textures, material programs and their lobe inputs, normal maps), so the
+  first surface bends by its fragment's normal and ior, and later ones by
+  their own ior, transmission colour, weight, opacity, depth and thin walls
+  (after the first, each lets the ray through straight, refracts it, or ends
+  it on its diffuse surface, by its fractions). It is shaded at its hit as
+  traced reflections are, so what is off screen or behind other objects
+  shows through glass, and counts as indirect glossy light in the light
+  splits. The front surface keeps its own Fresnel, tint and reflections;
+  other refracting fragments at the pixel stay screen space.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
   depth, ids and shadows. Translucent holdouts (`holdoutAlpha`) cut colour and
-  alpha by their opacity.
+  alpha by their opacity, also one a MaterialX graph computes (the matte pass runs the
+  material program, per pixel).
 - **Subsurface** (`subsurface`): see Materials.
 
 Screen-space limits (without ray-traced refraction): only what is on screen is refracted, and OIT is an
@@ -534,11 +552,14 @@ visibility, and its reflection under specular occlusion where no probe,
 mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
 SSGI, multi-bounce, probes and reflections add beyond that. Direct and
 indirect add up to the combined value, and with the emission to the linear beauty
-(tests/test_aov_sums.py), for diffuse, coat, sheen and emissive surfaces, plain and under
-GI, to within 3%. Not in the splits: the denoised glossy SSR's rays (6-7% of a lit sphere
-with `ssrDenoise`), a transmissive surface's refracted light, and for subsurface
-materials the profile blur (up to 10% across light and shadow edges) and the
-thin-walled transmission; the splits are the light before them. A sheen or coat's
+(tests/test_aov_sums.py), for every closure (diffuse, coat, sheen, emissive, subsurface,
+transmission), plain and under GI and the denoised SSR, to within 3%. Where the
+light is added after the shading it joins the splits there: a transmissive surface's
+refracted light (what it samples from the background) counts as indirect glossy
+(there is no separate refraction AOV); the denoised SSR's rays go to indirect glossy when the pass adds them; the
+subsurface blur moves the same light in the diffuse splits (shared between direct and
+indirect by their unblurred shares); the sun's light through thin subsurface parts is
+direct diffuse. A sheen or coat's
 dome light counts as dome light (direct with `splitDomeDirect`), also under GI. They are
 only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
@@ -703,7 +724,8 @@ Transparency
 
 - OIT and sorting are per mesh; one mesh's triangles keep their order.
 - Refraction is screen space outside final quality (ray-traced refraction
-  traces only the nearest refracting surface's ray, and skips skinned glass);
+  traces only the nearest refracting surface's ray; displacement doesn't
+  bend its rays, and skinned glass beyond `rtSkinnedInstances` isn't traced);
   the translucent depth for volumes covers whole
   meshes and only the nearest layer splits a volume ray.
 - Holdout mattes cut everything at the pixel (also layers in front); the
@@ -720,8 +742,7 @@ Materials
 - Coat: no coat normal, anisotropy or screen-space reflection; OpenPBR
   `coat_darkening` is not modelled. Thin film assumes air above it. Hair has no
   TT lobe (backlit hair gets no glow) and a closed curve's u jumps at its weld.
-- A textured `thin_walled` or `transmission_depth` acts per pixel in shading,
-  but ray-traced refraction reads their constants. With the textured setting
+- With the textured setting
   off, a material with a textured weight is still drawn in the translucent or
   subsurface pass (weight 0).
 - Displacement: top mip only; vector displacement drops tangential

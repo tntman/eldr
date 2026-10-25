@@ -161,6 +161,32 @@ engine.SetRendererSetting("eldr:volumes", False)
 image = render()
 expect(brightness(image, 0, 0) > 0.9 * wallLevel, "eldr:volumes switches volumes off")
 
+# Ray-traced sun shadows skip the cascades: volumes look no darker for it
+# (volume.frag's cascade lookup fell into an empty cascade 0: mean 24.3
+# against 31.0 on volume.usda).
 del engine  # release GL resources while the context is still current
+scene = Usd.Stage.Open(os.path.join(os.path.dirname(VDB), "volume.usda"))
+sceneCam = UsdGeom.Camera(scene.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum
+
+
+def mean(**settings):
+    engine = UsdImagingGL.Engine()
+    engine.SetRendererPlugin("HdVkRendererPlugin")
+    engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
+    engine.SetCameraState(sceneCam.ComputeViewMatrix(), sceneCam.ComputeProjectionMatrix())
+    for key, value in {"eldr:autoExposure": False, **settings}.items():
+        engine.SetRendererSetting(key, value)
+    for _ in range(60):
+        engine.Render(scene.GetPseudoRoot(), params)
+        if engine.IsConverged():
+            break
+    image = fbo.toImage()
+    del engine
+    return sum(image.pixelColor(x, y).green() for x in range(SIZE) for y in range(SIZE)) / SIZE ** 2
+
+
+maps, traced = mean(), mean(**{"eldr:rtShadows": True})
+expect(traced > 0.95 * maps, "ray-traced sun: volumes as bright as with maps (%.1f, %.1f)" % (maps, traced))
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

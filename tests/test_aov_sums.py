@@ -1,8 +1,7 @@
 """Light-split AOVs against the beauty: direct + indirect, diffuse + glossy, plus
 emission, must add up to the linear EXR beauty (eldr:productLinear) for the
 layered materials too: coat, sheen, subsurface and transmission, plain and
-under GI and the denoised SSR. KNOWN lists what the splits do not hold yet
-(docs/features.md, "Light splits"); the test tolerates exactly those.
+under GI and the denoised SSR, each to within TOLERANCE.
 Run: usdenv.cmd python tests\\test_aov_sums.py <exrinfo>"""
 import os
 import subprocess
@@ -67,19 +66,7 @@ for name, source, datatype in [("C", "C.*[LO]", "color4f"), ("directdiffuse", "C
 text.append(' }\n}\n')
 open(scenePath, "w").write("".join(text))
 
-# What the splits do not hold (docs/features.md, "Light splits"): the residual
-# (beauty - splits - emission, per channel over the beauty's brightness) of a
-# material and variant may be at most this; anything else must add up to
-# TOLERANCE (film noise at edges). Transmission: the refracted light
-# (TransmissionEnd) is added after the splits. Subsurface: the splits hold the
-# diffuse light before the profile blur, which moves up to 10% of the
-# brightness across light and shadow edges (20% with the SSR), and the thin-walled transmission
-# is added after them. The denoised SSR: its rays join the colour in their
-# own pass (7% of a diffuse sphere's, 6% of an emissive one's). Sheen and the other lobes'
-# dome light are in the splits (on the dome's side, a sheen under GI too).
-KNOWN = {"transmission": 1.0, "subsurface": 0.2}
-KNOWN_SSR = 0.12
-TOLERANCE = 0.03
+TOLERANCE = 0.03  # film noise at edges
 POINTS = [(12, -8), (-20, 0), (0, 18)]  # pixels from a sphere's centre: lit, terminator, below
 
 failures = []
@@ -113,10 +100,9 @@ for variant, settings in VARIANTS.items():
             for i, c in enumerate("RGB"):
                 residual = (beauty[i] - sum(p.get(f"{v}.{c}", 0) for v in SPLITS)) / brightness
                 worst = residual if abs(residual) > abs(worst) else worst
-        allowed = max(KNOWN.get(name, 0), KNOWN_SSR if variant == "ssrDenoise" else TOLERANCE)
-        print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} (allowed {allowed})")
+        print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
-        expect(abs(worst) <= allowed, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
+        expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
