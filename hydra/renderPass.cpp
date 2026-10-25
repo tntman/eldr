@@ -62,17 +62,21 @@ GfMatrix4d ProductProjection(GfMatrix4d projection, HdVkRenderProducts::Framing 
 // names ("C", "depth", "primid") and carries UsdRender's source in the
 // binding's settings; that source (as UsdRender names it: lpe: or primvars:
 // prefixed, else raw) wins. usdview and usdrecord bind by Hydra's names.
+// A string (or token) setting of an AOV binding, "" when absent.
+std::string BindingText(HdRenderPassAovBinding const &b, const char *key)
+{
+    const auto it = b.aovSettings.find(TfToken(key));
+    if (it == b.aovSettings.end()) {
+        return std::string();
+    }
+    return it->second.IsHolding<TfToken>()       ? it->second.UncheckedGet<TfToken>().GetString()
+           : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
+                                                 : std::string();
+}
+
 TfToken BoundAov(HdRenderPassAovBinding const &b)
 {
-    const auto text = [&](const char *key) {
-        const auto it = b.aovSettings.find(TfToken(key));
-        if (it == b.aovSettings.end()) {
-            return std::string();
-        }
-        return it->second.IsHolding<TfToken>()       ? it->second.UncheckedGet<TfToken>().GetString()
-               : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
-                                                     : std::string();
-    };
+    const auto text = [&](const char *key) { return BindingText(b, key); };
     const std::string name = text("sourceName"), type = text("sourceType");
     if (name.empty()) {
         return b.aovName;
@@ -128,10 +132,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // ponytail: one buffer per kind; of two names for the same (normal and
     // ray:hitN) bound at once, the last one gets it.
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
+    // husk's var name of the extra AOVs it binds ("driver:parameters:aov:husk:name").
+    std::string huskName[vkr::Aovs::kCount];
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b);
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            extra[aov.kind] = aovName == aov.name ? b.renderBuffer : extra[aov.kind];
+            if (aovName == aov.name) {
+                extra[aov.kind] = b.renderBuffer;
+                huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
+            }
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -584,6 +593,28 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests(objects, materials);
     }
 
+#ifdef HDVK_HOUDINI
+    // husk's Cryptomatte vars: Eldr renders (id, coverage, id, coverage) to
+    // the layer <name>00 husk writes (HdVkRenderBuffer::SetCrypto) and copies
+    // the first components to the var's own buffer after.
+    float *cryptoPrimary[vkr::Aovs::kCount] = {}, *cryptoPlane[vkr::Aovs::kCount] = {};
+    for (uint32_t k : {vkr::Aovs::kCryptoObject, vkr::Aovs::kCryptoMaterial}) {
+        if (!extra[k] || huskName[k].empty() || !out.aovs[k]) {
+            continue;
+        }
+        char hash[16];
+        std::snprintf(hash, sizeof(hash), "%08x", vkr::CryptomatteHash(huskName[k]));
+        const std::string prefix = "cryptomatte/" + std::string(hash, 7) + "/";
+        cryptoPrimary[k] = out.aovs[k];
+        cryptoPlane[k] = out.aovs[k] = static_cast<HdVkRenderBuffer *>(extra[k])->SetCrypto(
+            huskName[k], {{prefix + "name", huskName[k]},
+                          {prefix + "hash", "MurmurHash3_32"},
+                          {prefix + "conversion", "uint32_to_float32"},
+                          {prefix + "manifest", k == vkr::Aovs::kCryptoObject ? objects : materials}});
+        out.aovComponents[k] = 4;
+    }
+#endif
+
     bool shared = false;
     try {
         _renderer->Render(_scene, frame, out);
@@ -623,6 +654,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         colorFloat32->Unmap();
     }
+#ifdef HDVK_HOUDINI
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        if (!cryptoPlane[k]) {
+            continue;
+        }
+        const size_t pixels = size_t(frame.width) * frame.height, n = std::min<size_t>(extraComponents[k], 4);
+        for (size_t p = 0; p < pixels; ++p) {
+            std::copy(cryptoPlane[k] + p * 4, cryptoPlane[k] + p * 4 + n, cryptoPrimary[k] + p * extraComponents[k]);
+        }
+    }
+#endif
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
         static int frames = 0;
         if (++frames % 60 == 1 && color && mapped[0]) {
