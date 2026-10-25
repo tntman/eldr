@@ -17,6 +17,6 @@ frame taking 0.1 s or 10 s is fine as long as the image is good.
 
 - **No Houdini dependency.** Eldr builds and runs against plain OpenUSD.
   Houdini-only code lives in optional modules of the Houdini build.
-- **Every render feature gets a Hydra render setting** (`hdvk:*`), so it can
+- **Every render feature gets a Hydra render setting** (`eldr:*`), so it can
   be A/B tested and turned off for performance.
 - **The display name is Eldr; ids stay HdVk** (plugin, tokens, settings).

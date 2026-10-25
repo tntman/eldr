@@ -4,12 +4,12 @@
     metersPerUnit = 1
 )
 
-# Reflections beyond the screen. Turn on hdvk:planarReflections: the
+# Reflections beyond the screen. Turn on eldr:planarReflections: the
 # polished floor (flat, glossy, large) mirrors the columns, the arch and
 # the ball, also where they leave the view (SSR can't). Turn on
-# hdvk:reflectionProbe: the chrome ball shows the room behind the camera
+# eldr:reflectionProbe: the chrome ball shows the room behind the camera
 # (the red wall), which the dome can't. The small blue tile is flagged
-# with primvars:hdvk:planarReflection, which would make it the mirror
+# with primvars:eldr:planarReflection, which would make it the mirror
 # instead of the floor.
 
 def Camera "cam"
@@ -148,7 +148,7 @@ def Mesh "tile"
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(2, 0.01, 4), (2, 0.01, 5), (3, 0.01, 5), (3, 0.01, 4)]
     color3f[] primvars:displayColor = [(0.1, 0.2, 0.6)]
-    bool primvars:hdvk:planarReflection = 0 (
+    bool primvars:eldr:planarReflection = 0 (
         interpolation = "constant"
     )
 }

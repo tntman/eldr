@@ -58,7 +58,7 @@ def pixels(image, x, y):
     return out
 
 
-eldr = render("HdVkRendererPlugin", {"hdvk:postProcess": False})
+eldr = render("HdVkRendererPlugin", {"eldr:postProcess": False})
 storm = render("HdStormRendererPlugin", {})
 failures = []
 quads = {"noise2d": (-3.6, 2.4), "noise3d (object space, transformed quad)": (-1.2, 2.4),
@@ -88,7 +88,7 @@ if max(c[0] for c in flat) - min(c[0] for c in flat) < 0.05:
     print("FAIL: noise2d on default texture coordinates is flat")
 
 # Procedural Textures off: the noise reads 0, so noise2d is its pivot.
-off = render("HdVkRendererPlugin", {"hdvk:postProcess": False, "hdvk:proceduralTextures": False})
+off = render("HdVkRendererPlugin", {"eldr:postProcess": False, "eldr:proceduralTextures": False})
 if any(abs(c - 0.5) > 0.01 for p in pixels(off, -3.6, 2.4) for c in p):
     failures.append("Procedural Textures off")
     print("FAIL: Procedural Textures off: noise2d isn't its pivot 0.5")

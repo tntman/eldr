@@ -1,4 +1,4 @@
-"""GPU sharing with OpenGL: with hdvk:shareFrame the frame reaches the GL
+"""GPU sharing with OpenGL: with eldr:shareFrame the frame reaches the GL
 framebuffer as a texture (no readback) and looks the same as with the
 readback; picking still finds the prims (ids and depth read back when
 mapped); a new size re-imports the shared images.
@@ -51,7 +51,7 @@ def Render(engine, size):
 def Engine(share):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    engine.SetRendererSetting("hdvk:shareFrame", share)
+    engine.SetRendererSetting("eldr:shareFrame", share)
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     return engine
 
@@ -61,7 +61,7 @@ gpu, mode = Render(shared, 64)
 expect(mode == "OpenGL", "frames go to OpenGL on the GPU (got %s)" % mode)
 readback = Engine(False)
 cpu, mode = Render(readback, 64)
-expect(mode == "readback", "hdvk:shareFrame off: read back")
+expect(mode == "readback", "eldr:shareFrame off: read back")
 worst = max(abs(getattr(gpu.pixelColor(x, y), c)() - getattr(cpu.pixelColor(x, y), c)())
             for x in range(64) for y in range(64) for c in ("red", "green", "blue", "alpha"))
 expect(gpu.pixelColor(32, 32).getRgb() != (0, 0, 0, 0), "the shared frame shows the scene")

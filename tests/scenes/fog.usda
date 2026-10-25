@@ -6,7 +6,7 @@
 
 # Volumetric fog: a low sun behind a colonnade throws shafts of light
 # towards the camera, a spot light draws its cone. Fog is a render
-# setting: turn on hdvk:fog (Volumetric Fog in usdview's Hydra Settings),
+# setting: turn on eldr:fog (Volumetric Fog in usdview's Hydra Settings),
 # e.g. density 0.03, height falloff 0.15.
 
 def Camera "cam"

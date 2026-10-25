@@ -13,7 +13,7 @@
 #   /cone:  in the matte collection of /passes/holdouts, a UsdRenderPass,
 #           while that pass is active (usdview: right-click the pass, "Set
 #           As Active Render Pass"; usdrecord --renderPassPrimPath)
-# hdvk:holdouts off draws them as usual.
+# eldr:holdouts off draws them as usual.
 
 def Camera "cam"
 {

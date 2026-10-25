@@ -42,7 +42,7 @@ def Groups(settings):
     where = {}
     for i, (_, keys) in enumerate(GROUPS):
         for k in keys.split():
-            where["hdvk:" + k] = i
+            where["eldr:" + k] = i
     out = [(title, []) for title, _ in GROUPS] + [("Other", [])]
     for s in settings:
         out[where.get(str(s.key), len(GROUPS))][1].append(s)
@@ -89,7 +89,7 @@ class _SettingsWindow(QtWidgets.QWidget):
 
     def Rebuild(self):
         engine = self._Engine()
-        settings = [s for s in engine.GetRendererSettingsList() if str(s.key).startswith("hdvk:")] if engine else []
+        settings = [s for s in engine.GetRendererSettingsList() if str(s.key).startswith("eldr:")] if engine else []
         page = QtWidgets.QWidget()
         column = QtWidgets.QVBoxLayout(page)
         self._rows = []

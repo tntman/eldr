@@ -28,8 +28,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (st)
     ((eldrMatte, "eldr:matte"))
     ((karmaHoldout, "karma:object:holdoutmode"))
-    ((planarReflection, "hdvk:planarReflection"))
-    ((reflectionProbe, "hdvk:reflectionProbe")));
+    ((planarReflection, "eldr:planarReflection"))
+    ((reflectionProbe, "eldr:reflectionProbe")));
 
 // Finds a primvar's interpolation; false if the prim doesn't have it. An
 // empty name finds the first texture coordinate (float2) primvar.
@@ -335,7 +335,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         }
         _programPrimvarNames = programNames;
     }
-    // Planar reflections: primvars:hdvk:planarReflection (bool or int)
+    // Planar reflections: primvars:eldr:planarReflection (bool or int)
     // makes this mesh the mirror.
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->planarReflection)) {
         const VtValue flag = sceneDelegate->Get(id, _tokens->planarReflection);
@@ -343,7 +343,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                            : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
                                                     : false;
     }
-    // Reflection probes: primvars:hdvk:reflectionProbe (bool or int) makes
+    // Reflection probes: primvars:eldr:reflectionProbe (bool or int) makes
     // this mesh a probe's influence box instead of geometry.
     if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, _tokens->reflectionProbe)) {
         const VtValue flag = sceneDelegate->Get(id, _tokens->reflectionProbe);
@@ -582,7 +582,7 @@ bool HdVkMesh::_Skinned() const
     return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
 }
 
-// Deformation blur (hdvk:deformationBlur, with sampled motion's shutter):
+// Deformation blur (eldr:deformationBlur, with sampled motion's shutter):
 // the points' velocity per frame from their samples at shutter open and
 // close, continued linearly as the camera's and the transforms' are. Empty
 // when they don't move through it, when skinned (joints move those) or

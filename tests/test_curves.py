@@ -62,12 +62,12 @@ engine = None
 
 
 def start(**settings):
-    """A fresh engine with these hdvk: settings, rendered once; its triangles."""
+    """A fresh engine with these eldr: settings, rendered once; its triangles."""
     global engine
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     for name, value in settings.items():
-        engine.SetRendererSetting("hdvk:" + name, value)
+        engine.SetRendererSetting("eldr:" + name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     engine.Render(root, params)
@@ -113,7 +113,7 @@ def expectAll():
 
 tubes = start()
 expectAll()
-# Camera-facing ribbons (hdvk:curveRibbons): as wide, far fewer triangles;
+# Camera-facing ribbons (eldr:curveRibbons): as wide, far fewer triangles;
 # a curve's primvars:eldr:ribbons = false keeps its tube.
 ribbons = start(curveRibbons=True)
 expectAll()
@@ -124,7 +124,7 @@ print(f"triangles: tubes {tubes}, ribbons {ribbons}, ribbons but one tube {oneTu
 if not ribbons * 3 < tubes or not ribbons < oneTube < tubes:
     failures.append("triangles")
     print("FAIL: ribbons should draw far fewer triangles, and the primvar keep a tube")
-# Points as camera-facing discs (hdvk:pointSprites): the point is as wide
+# Points as camera-facing discs (eldr:pointSprites): the point is as wide
 # (the picks above), 8 triangles instead of a sphere's 20; a point's
 # primvars:eldr:sprites = false keeps its sphere.
 sprites = start(curveRibbons=True, pointSprites=True)

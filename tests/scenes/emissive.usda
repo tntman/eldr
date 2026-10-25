@@ -7,7 +7,7 @@
 
 # The Cornell box lit by emissive surfaces only: its rect light off, a
 # glowing panel under the ceiling and a small warm bulb on the floor. They
-# light the room as lights (hdvk:emissiveLights) and through GI (hdvk:gi).
+# light the room as lights (eldr:emissiveLights) and through GI (eldr:gi).
 
 over RectLight "light"
 {

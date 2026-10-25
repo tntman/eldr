@@ -36,7 +36,7 @@ def render(stage, settings={}):
     """The stage through /cam with HdVk, as a QImage; no TAA, fixed exposure."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"hdvk:taa": False, "hdvk:autoExposure": False, **settings}.items():
+    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, **settings}.items():
         engine.SetRendererSetting(key, value)
     frustum = UsdGeom.Camera(stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
@@ -85,8 +85,8 @@ expect(gray(image, 54, 32) > 2 * gray(image, 32, 54), "cylinder light along x: a
 rotate.Set(90)
 image = render(stage)
 expect(gray(image, 32, 54) > 2 * gray(image, 54, 32), "rotated cylinder light: a vertical band")
-image = render(stage, {"hdvk:localLights": False})
-expect(gray(image, 32, 32) < 5, "hdvk:localLights off: no cylinder light")
+image = render(stage, {"eldr:localLights": False})
+expect(gray(image, 32, 32) < 5, "eldr:localLights off: no cylinder light")
 
 # Soft sun shadows: a square floating one unit over the ground, seen from
 # above, under a 10 degree sun: its shadow's edges spread over a penumbra
@@ -112,7 +112,7 @@ def penumbra(image):
     return sum(0.15 * lit < gray(image, x, 32) < 0.85 * lit for x in range(2, 30))
 
 
-soft, hard = penumbra(render(stage)), penumbra(render(stage, {"hdvk:softSunShadows": False}))
+soft, hard = penumbra(render(stage)), penumbra(render(stage, {"eldr:softSunShadows": False}))
 expect(soft >= hard + 2, "soft sun shadows from the distant light's angle")
 sun.CreateAngleAttr(0)
 expect(penumbra(render(stage)) <= hard + 1, "a sun without angle casts hard shadows")
@@ -124,17 +124,17 @@ stage = wall_stage()
 sun = UsdLux.DistantLight.Define(stage, "/sun")
 sun.CreateIntensityAttr(4)
 sun.CreateNormalizeAttr(True)
-linear = {"hdvk:postProcess": False}
+linear = {"eldr:postProcess": False}
 clear = render(stage, linear).pixelColor(32, 32)
-foggy = render(stage, {**linear, "hdvk:fog": True, "hdvk:fogDensity": 0.3, "hdvk:fogAnisotropy": 0.0,
-                       "hdvk:fogColor": "1 0 0"}).pixelColor(32, 32)
+foggy = render(stage, {**linear, "eldr:fog": True, "eldr:fogDensity": 0.3, "eldr:fogAnisotropy": 0.0,
+                       "eldr:fogColor": "1 0 0"}).pixelColor(32, 32)
 expect(clear.green() == 255 and 40 < foggy.green() < 110, "fog hides the wall behind it")
-expect(foggy.red() > foggy.green() + 30, "hdvk:fogColor: red fog scatters red light")
+expect(foggy.red() > foggy.green() + 30, "eldr:fogColor: red fog scatters red light")
 
 # Reflections of what the camera can't see: a chrome wall facing the camera
 # and an emitter behind the camera over the left (x < 0). The reflection
 # probe and planar reflections (the wall flagged with
-# primvars:hdvk:planarReflection) show it on the left half of the wall;
+# primvars:eldr:planarReflection) show it on the left half of the wall;
 # without them the wall stays dark.
 def material(stage, path, **inputs):
     mat = UsdShade.Material.Define(stage, path)
@@ -151,7 +151,7 @@ stage = wall_stage()
 chrome = material(stage, "/chrome", diffuseColor=(1.0, 1.0, 1.0), metallic=1.0, roughness=0.05)
 wall = stage.GetPrimAtPath("/wall")
 UsdShade.MaterialBindingAPI.Apply(wall).Bind(chrome)
-UsdGeom.PrimvarsAPI(wall).CreatePrimvar("hdvk:planarReflection", Sdf.ValueTypeNames.Bool,
+UsdGeom.PrimvarsAPI(wall).CreatePrimvar("eldr:planarReflection", Sdf.ValueTypeNames.Bool,
                                         UsdGeom.Tokens.constant).Set(True)
 emitter = UsdGeom.Mesh.Define(stage, "/emitter")
 emitter.CreatePointsAttr([(-6, -6, 8), (0, -6, 8), (0, 6, 8), (-6, 6, 8)])
@@ -159,28 +159,28 @@ emitter.CreateFaceVertexCountsAttr([4])
 emitter.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
 glow = material(stage, "/glow", diffuseColor=(0.0, 0.0, 0.0), emissiveColor=(1.0, 1.0, 1.0))
 UsdShade.MaterialBindingAPI.Apply(emitter.GetPrim()).Bind(glow)
-for settings, what in (({"hdvk:reflectionProbe": True}, "hdvk:reflectionProbe"),
-                       ({"hdvk:planarReflections": True}, "hdvk:planarReflections")):
+for settings, what in (({"eldr:reflectionProbe": True}, "eldr:reflectionProbe"),
+                       ({"eldr:planarReflections": True}, "eldr:planarReflections")):
     dark = render(stage, linear)
     lit = render(stage, {**linear, **settings})
     expect(gray(dark, 16, 32) < 10 and gray(lit, 16, 32) > 150 and gray(lit, 48, 32) < 10,
            what + ": the emitter behind the camera in the chrome wall")
 
 # An authored reflection probe: a Cube flagged with
-# primvars:hdvk:reflectionProbe around the wall's left part and the camera.
+# primvars:eldr:reflectionProbe around the wall's left part and the camera.
 # It isn't drawn (from inside it the camera would see only its faces); the
 # wall's left shows the emitter through it, the right only the black sky.
 probe = UsdGeom.Cube.Define(stage, "/probe")
 probe.AddTranslateOp().Set(Gf.Vec3d(-3.05, 0, 4))
 probe.AddScaleOp().Set(Gf.Vec3f(5.9, 8, 10))
-UsdGeom.PrimvarsAPI(probe).CreatePrimvar("hdvk:reflectionProbe", Sdf.ValueTypeNames.Bool,
+UsdGeom.PrimvarsAPI(probe).CreatePrimvar("eldr:reflectionProbe", Sdf.ValueTypeNames.Bool,
                                          UsdGeom.Tokens.constant).Set(True)
-lit = render(stage, {**linear, "hdvk:reflectionProbe": True})
-expect(gray(lit, 8, 32) > 150 and gray(lit, 48, 32) < 10, "hdvk:authoredProbes: a Cube flagged as a probe")
+lit = render(stage, {**linear, "eldr:reflectionProbe": True})
+expect(gray(lit, 8, 32) > 150 and gray(lit, 48, 32) < 10, "eldr:authoredProbes: a Cube flagged as a probe")
 
 # A textured rect light (inputs:texture:file; st (0,0) at +X +Y): black over its +X half,
 # white over its -X half, close to the wall: the wall is dark under the
-# black half, lit under the white one; hdvk:lightTextures off: lit evenly.
+# black half, lit under the white one; eldr:lightTextures off: lit evenly.
 pattern = QImage(64, 2, QImage.Format_RGB32)
 pattern.fill(QColor(255, 255, 255))
 for x in range(32):
@@ -198,8 +198,8 @@ panel.AddTranslateOp().Set(Gf.Vec3d(0, 0, 0.3))
 image = render(stage, linear)
 expect(gray(image, 52, 32) < 0.2 * gray(image, 12, 32) and gray(image, 12, 32) > 50,
        "rect light texture: the wall is dark under its black half")
-image = render(stage, {**linear, "hdvk:lightTextures": False})
-expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "hdvk:lightTextures off: lit evenly")
+image = render(stage, {**linear, "eldr:lightTextures": False})
+expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "eldr:lightTextures off: lit evenly")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

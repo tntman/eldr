@@ -278,7 +278,7 @@ with Visibility Bitmask", Therrien m.fl.):
 
 ### Hur Eldr skiljer sig
 
-- *Status 2026-10 (efter sweep 2):* Eldr har nu `hdvk:ssgiThickness`
+- *Status 2026-10 (efter sweep 2):* Eldr har nu `eldr:ssgiThickness`
   (tjockleksestimator med pixelfotavtryck i SSR och SSGI, commit e9c4636),
   en synlighetsbitmask i SSGI med en enda objekttjocklek (4313c72), en
   SSR-denoiser med ratio estimator, temporal och bilateral (6fbb792), samt
@@ -502,7 +502,7 @@ mörkare bilder än i 5.1.
    Se avsnitt 2: estimator med lutningskontinuitet, pixelfotavtryck som golv,
    träfftest som även täcker strålens djupsteg. En enda tjocklek, standard
    0,1, och två parameteruppsättningar (stråle och Fast GI) som byggs ur
-   projektionen. *Eldr nu:* `hdvk:ssgiThickness` med pixelfotavtryck gör
+   projektionen. *Eldr nu:* `eldr:ssgiThickness` med pixelfotavtryck gör
    samma sak i grunden. *Rekommendation:* (a) kontrollera att Eldr inte har
    någon "far"-liknande extratjocklek bakom ockluderare som ger mörka halos;
    (b) lägg till strålens eget djupsteg i träfftestet om det saknas; (c)
@@ -565,7 +565,7 @@ mörkare bilder än i 5.1.
    kameravisibilitetsflagga. *Eldr nu:* kontrollera om ljusformer (rect,
    disk, sfär) ritas synliga för kameran. *Rekommendation:*
    **`lightCameraVisibility`**: en per-ljus-flagga (USD:s synlighetsattribut
-   eller en `hdvk:`-primvar) som döljer ljuskroppen för primärstrålen men inte
+   eller en `eldr:`-primvar) som döljer ljuskroppen för primärstrålen men inte
    för reflektioner eller belysning. **S (20–40 min).**
 3. **Light Path Intensity (5.1, noter).** Två globala multiplikatorer för
    direkt och indirekt bidrag som bara påverkar slutpixeln, inte

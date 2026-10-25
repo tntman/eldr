@@ -1,5 +1,5 @@
 """Light-split AOVs against the beauty: direct + indirect, diffuse + glossy, plus
-emission, must add up to the linear EXR beauty (hdvk:productLinear) for the
+emission, must add up to the linear EXR beauty (eldr:productLinear) for the
 layered materials too: coat, sheen, subsurface and transmission, plain and
 under GI and the denoised SSR. KNOWN lists what the splits do not hold yet
 (docs/features.md, "Light splits"); the test tolerates exactly those.
@@ -96,11 +96,11 @@ def pixel(x, y):
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
 
-VARIANTS = {"default": [], "gi": ["hdvk:gi=true"], "ssrDenoise": ["hdvk:ssr=true", "hdvk:ssrDenoise=true"]}
+VARIANTS = {"default": [], "gi": ["eldr:gi=true"], "ssrDenoise": ["eldr:ssr=true", "eldr:ssrDenoise=true"]}
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
     subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
-                    scenePath, "/Render", "/cam", "hdvk:autoExposure=false"] + settings,
+                    scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
                    check=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
     for name, (x, y) in POSITIONS.items():
         centre = (int((x + 6) / 12 * SIZE), int((6 - y) / 12 * SIZE))

@@ -96,7 +96,7 @@ def render(times, settings):
     engine.SetActiveRenderSettingsPrimPath(Sdf.Path("/Render/settings"))
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraPath(Sdf.Path("/cam"))
-    for key, value in {"hdvk:autoExposure": False, **settings}.items():
+    for key, value in {"eldr:autoExposure": False, **settings}.items():
         engine.SetRendererSetting(key, value)
     params = UsdImagingGL.RenderParams()
     for t in times:
@@ -110,7 +110,7 @@ def render(times, settings):
 
 # Time 1 converges over the film's samples; time 2 (the cube moved: the post
 # motion blur, final at once) must be in the product, not time 1's image.
-render([1, 2], {"hdvk:finalQuality": True, "hdvk:motionBlurTimeSamples": False})
+render([1, 2], {"eldr:finalQuality": True, "eldr:motionBlurTimeSamples": False})
 then = int(SIZE / 2 - PIXELS_PER_UNIT)  # the cube's centre at time 1
 expect(red(32, 32) > 0.1 and red(then, 32) < 0.02,
        "the product shows time 2 (cube at the centre: %.3f, where it was at 1: %.3f)" % (red(32, 32), red(then, 32)))
@@ -135,10 +135,10 @@ subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--render
                shell=True)
 blurred = ramp(32)
 expect(blurred >= 12, "a single usdrecord frame is motion blurred (%d edge pixels)" % blurred)
-# hdvk:sampledMotion off: the same first frame stays sharp.
-render([2], {"hdvk:sampledMotion": False})
+# eldr:sampledMotion off: the same first frame stays sharp.
+render([2], {"eldr:sampledMotion": False})
 sharp = ramp(32)
-expect(sharp <= 4, "hdvk:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
+expect(sharp <= 4, "eldr:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
 
 # Deformation blur: the same cube as a mesh whose points move (no transform
 # animation), one usdrecord frame.
@@ -160,9 +160,9 @@ subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--render
                shell=True)
 blurred = ramp(32)
 expect(blurred >= 12, "a single usdrecord frame of moving points is blurred (%d edge pixels)" % blurred)
-render([2], {"hdvk:deformationBlur": False, "hdvk:finalQuality": True})
+render([2], {"eldr:deformationBlur": False, "eldr:finalQuality": True})
 sharp = ramp(32)
-expect(sharp <= 4, "hdvk:deformationBlur off: moving points stay sharp (%d edge pixels)" % sharp)
+expect(sharp <= 4, "eldr:deformationBlur off: moving points stay sharp (%d edge pixels)" % sharp)
 print("deformation blur: %d edge pixels on, %d off" % (blurred, sharp))
 
 print("FAILED" if failures else "OK")

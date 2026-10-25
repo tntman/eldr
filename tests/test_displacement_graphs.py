@@ -109,7 +109,7 @@ def render(stage, **settings):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     for name, value in dict(taa=False, autoExposure=False, ambientOcclusion=False, ssr=False, **settings).items():
-        engine.SetRendererSetting("hdvk:" + name, value)
+        engine.SetRendererSetting("eldr:" + name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     frustum = Gf.Frustum()
     frustum.SetPerspective(40, 1.0, 0.1, 100)
@@ -157,7 +157,7 @@ expect(changed > 0.05, f"a displacement graph moves the plane ({changed:.3f} of 
 changed = difference(on, render(graph, depthPrepass=False))
 expect(changed < 0.002, f"the depth prepass runs the same graph ({changed:.4f} differ)")
 changed = difference(off, render(graph, displacementGraphs=False))
-expect(changed < 0.002, f"hdvk:displacementGraphs off: no graph displacement ({changed:.4f} differ)")
+expect(changed < 0.002, f"eldr:displacementGraphs off: no graph displacement ({changed:.4f} differ)")
 
 # The checker on 15 x 15 quads: its mean, 0.5 * 0.3 everywhere, a flat
 # plane (even shading), raised (differs from undisplaced).

@@ -36,7 +36,7 @@ def render(stage, settings={}, frames=4):
     """The stage through /cam with HdVk, as a QImage; no TAA (unless set), fixed exposure."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"hdvk:taa": False, "hdvk:autoExposure": False, **settings}.items():
+    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, **settings}.items():
         engine.SetRendererSetting(key, value)
     frustum = UsdGeom.Camera(stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
@@ -68,8 +68,8 @@ cam = UsdGeom.Xformable(stage.GetPrimAtPath("/cam"))
 cam.ClearXformOpOrder()
 cam.AddTranslateOp().Set(Gf.Vec3d(0.2, 0.06, 2.6))
 region = (200, 160, 280, 200)  # the sphere's lower half
-off = mean(render(stage, {"hdvk:ssgiThickness": False}), *region)
-on = mean(render(stage, {"hdvk:ssgiThickness": True}), *region)
+off = mean(render(stage, {"eldr:ssgiThickness": False}), *region)
+on = mean(render(stage, {"eldr:ssgiThickness": True}), *region)
 print("SSR at floor height: the floor's reflection %.1f without the thickness estimator, %.1f with it" % (off, on))
 expect(on > 1.3 * off, "the thickness estimator fills SSR's grain at grazing angles")
 
@@ -92,8 +92,8 @@ UsdGeom.Camera.Define(stage, "/cam").AddTranslateOp().Set(Gf.Vec3d(0, 0, 5))
 
 def halo(bitmask, thickness=0.25):
     """How much darker the wall is just beside the pole's image than at the edge."""
-    image = render(stage, {"hdvk:taa": True, "hdvk:ssgi": True, "hdvk:ssgiRadius": 3.0, "hdvk:ssgiBitmask": bitmask,
-                           "hdvk:ssgiBitmaskThickness": thickness},
+    image = render(stage, {"eldr:taa": True, "eldr:ssgi": True, "eldr:ssgiRadius": 3.0, "eldr:ssgiBitmask": bitmask,
+                           "eldr:ssgiBitmaskThickness": thickness},
                    frames=20)
     row = [mean(image, x, SIZE // 2 - 2, x + 4, SIZE // 2 + 2) for x in range(0, SIZE // 2 - 24, 4)]
     return row[0] - min(row)
@@ -103,8 +103,8 @@ horizon, bitmask = halo(False), halo(True)
 print("SSGI halo around a thin pole: %.1f with the highest horizon, %.1f with the bitmask" % (horizon, bitmask))
 expect(horizon > 2 and bitmask < 0.5 * horizon, "SSGI's bitmask doesn't darken a halo around a thin object")
 thick = halo(True, 4.0)
-print("SSGI bitmask halo: %.1f at hdvk:ssgiBitmaskThickness 0.25, %.1f at 4" % (bitmask, thick))
-expect(thick > bitmask + 1, "hdvk:ssgiBitmaskThickness: thicker objects hide more light")
+print("SSGI bitmask halo: %.1f at eldr:ssgiBitmaskThickness 0.25, %.1f at 4" % (bitmask, thick))
+expect(thick > bitmask + 1, "eldr:ssgiBitmaskThickness: thicker objects hide more light")
 
 # Denoised glossy SSR: reflections.usda's floor at roughness 0.25. One
 # GGX-sampled ray per pixel and frame, denoised: the columns' glossy
@@ -124,24 +124,24 @@ def roughness(image, x0, y0, x1, y1):
     return total / ((x1 - x0) * (y1 - y0))
 
 
-bright = {"hdvk:exposureCompensation": 2.0}
-dome = mean(render(stage, {"hdvk:ssr": False, **bright}), *column)
-denoised = render(stage, {"hdvk:ssrDenoise": True, **bright}, frames=8)
+bright = {"eldr:exposureCompensation": 2.0}
+dome = mean(render(stage, {"eldr:ssr": False, **bright}), *column)
+denoised = render(stage, {"eldr:ssrDenoise": True, **bright}, frames=8)
 glossy = mean(denoised, *column)
 grain = roughness(denoised, 100, 240, 160, 300)
 print("glossy SSR: the column's reflection %.1f (dome alone %.1f), grain %.2f" % (glossy, dome, grain))
 expect(glossy > dome + 5, "denoised SSR shows a glossy floor's reflections")
 expect(grain < 3, "denoised SSR is smooth without TAA")
 
-# Footprint-filtered SSR hits (hdvk:ssrHitFilter): at roughness 0.25 the
+# Footprint-filtered SSR hits (eldr:ssrHitFilter): at roughness 0.25 the
 # mirror ray reads the mip of last frame's image as wide as the lobe at
 # the hit, so the columns' reflections blur (smaller steps between
 # neighbouring pixels across their edges) instead of staying mirror-sharp.
 edges = (40, 230, 110, 300)  # the left column's reflection and its edges
-sharp = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": False}), *edges)
-blurred = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": True}), *edges)
+sharp = roughness(render(stage, {**bright, "eldr:ssrHitFilter": False}), *edges)
+blurred = roughness(render(stage, {**bright, "eldr:ssrHitFilter": True}), *edges)
 print("SSR hit filter: steps across the column's reflection %.2f without, %.2f with" % (sharp, blurred))
-expect(blurred < 0.8 * sharp, "hdvk:ssrHitFilter blurs glossy reflections by the ray's footprint")
+expect(blurred < 0.8 * sharp, "eldr:ssrHitFilter blurs glossy reflections by the ray's footprint")
 
 # SSR's precision (EEVEE 5.2's fix): a mirror facing the camera, far from
 # it, has nothing in front of it to reflect: its rays head back towards the
@@ -163,7 +163,7 @@ chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
 UsdShade.MaterialBindingAPI.Apply(mirror.GetPrim()).Bind(chrome)
 UsdLux.DomeLight.Define(stage, "/dome").CreateTextureFileAttr("StinsonBeach.hdr")
 UsdGeom.Camera.Define(stage, "/cam").AddTranslateOp().Set(Gf.Vec3d(0, 0, 100))
-off, on = render(stage, {"hdvk:ssr": False}), render(stage, {"hdvk:ssr": True})
+off, on = render(stage, {"eldr:ssr": False}), render(stage, {"eldr:ssr": True})
 selfHits = sum(abs(on.pixelColor(x, y).green() - off.pixelColor(x, y).green()) > 2
                for y in range(0, SIZE, 2) for x in range(0, SIZE, 2))
 print("SSR over a mirror facing the camera: %d pixels (of a quarter) hit something" % selfHits)
@@ -198,11 +198,11 @@ cam = UsdGeom.Camera.Define(stage, "/cam")
 cam.AddTranslateOp().Set(Gf.Vec3d(1.8, 1.6, 3.2))
 cam.AddRotateXYZOp().Set(Gf.Vec3f(-8, 25, 0))
 cam.CreateFocalLengthAttr(24)
-linear = {"hdvk:taa": True, "hdvk:tonemapper": "none", "hdvk:exposureCompensation": -1.0, "hdvk:ssr": False,
-          "hdvk:bloomIntensity": 0.0, "hdvk:adaptiveThreshold": 0.0, "hdvk:adaptiveFinalThreshold": 0.0}
-sky = render(stage, {**linear, "hdvk:ambientOcclusion": False}, frames=70)
+linear = {"eldr:taa": True, "eldr:tonemapper": "none", "eldr:exposureCompensation": -1.0, "eldr:ssr": False,
+          "eldr:bloomIntensity": 0.0, "eldr:adaptiveThreshold": 0.0, "eldr:adaptiveFinalThreshold": 0.0}
+sky = render(stage, {**linear, "eldr:ambientOcclusion": False}, frames=70)
 for bitmask in (False, True):
-    gi = render(stage, {**linear, "hdvk:ssgi": True, "hdvk:ssgiBitmask": bitmask}, frames=70)
+    gi = render(stage, {**linear, "eldr:ssgi": True, "eldr:ssgiBitmask": bitmask}, frames=70)
     brighter = darker = lit = 0
     for y in range(0, SIZE, 2):
         for x in range(0, SIZE, 2):
@@ -215,7 +215,7 @@ for bitmask in (False, True):
         "bitmask" if bitmask else "horizon", lit, brighter, darker))
     expect(brighter == 0 and darker < 0.12 * lit, "SSGI keeps a white furnace's energy")
 
-# SSGI's tile order (hdvk:ssgiTileOrder): at half resolution each frame
+# SSGI's tile order (eldr:ssgiTileOrder): at half resolution each frame
 # traces another pixel of every 2 x 2 tile, so the accumulated image
 # differs from always tracing the top-left one; at full resolution there
 # is nothing to rotate.
@@ -223,23 +223,23 @@ stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "cornel
 
 
 def tileOrderChanges(resolution):
-    a, b = (render(stage, {"hdvk:taa": True, "hdvk:ssgi": True, "hdvk:ssgiResolution": resolution,
-                           "hdvk:ssgiTileOrder": on}, frames=12) for on in (False, True))
+    a, b = (render(stage, {"eldr:taa": True, "eldr:ssgi": True, "eldr:ssgiResolution": resolution,
+                           "eldr:ssgiTileOrder": on}, frames=12) for on in (False, True))
     return sum(a.pixelColor(x, y) != b.pixelColor(x, y) for y in range(0, SIZE, 2) for x in range(0, SIZE, 2))
 
 
 half, full = tileOrderChanges(2), tileOrderChanges(1)
 print("SSGI tile order: %d pixels (of a quarter) change at half resolution, %d at full" % (half, full))
-expect(half > 100 and full == 0, "hdvk:ssgiTileOrder rotates the traced pixel at half resolution only")
+expect(half > 100 and full == 0, "eldr:ssgiTileOrder rotates the traced pixel at half resolution only")
 
 # Denoised SSR's noise through the sample dimensions (its GGX sample and
 # kernel rotation, like every other effect's): a different pattern per
 # frame than the gradient noise without them, the same converged film.
 stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
 stage.GetPrimAtPath("/mtl/polished/pbr").GetAttribute("inputs:roughness").Set(0.25)
-glossy = {**bright, "hdvk:ssrDenoise": True}
-frames = [render(stage, {**glossy, "hdvk:sampleDimensions": on}) for on in (False, True)]
-films = [render(stage, {**glossy, "hdvk:taa": True, "hdvk:sampleDimensions": on}, frames=70) for on in (False, True)]
+glossy = {**bright, "eldr:ssrDenoise": True}
+frames = [render(stage, {**glossy, "eldr:sampleDimensions": on}) for on in (False, True)]
+films = [render(stage, {**glossy, "eldr:taa": True, "eldr:sampleDimensions": on}, frames=70) for on in (False, True)]
 floor = (20, 220, 380, 330)
 changed = sum(frames[0].pixelColor(x, y) != frames[1].pixelColor(x, y)
               for y in range(floor[1], floor[3], 2) for x in range(floor[0], floor[2], 2))
@@ -249,26 +249,26 @@ print("denoised SSR, sample dimensions: %d floor pixels (of a quarter) differ in
 expect(changed > 100 and abs(converged[0] - converged[1]) < 0.5,
        "denoised SSR's noise follows the sample dimensions to the same image")
 
-# Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
-# from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan
+# Back-face hits (eldr:screenBackface): rays that meet what the camera sees
+# from behind take eldr:screenBackfaceScale of its light. SSGI's horizon scan
 # in the Cornell box, where the floor around the tall box and the sphere
 # sees their tops and backs, and SSR's chrome sphere over the floor, whose
 # rays pass behind its silhouette: both darker with a scale of 0 than of 1,
 # which is as without the option (SSR, horizon).
 stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "cornell.usda"))
 floor = (110, 230, 290, 270)
-lit = {"hdvk:ssgi": True, "hdvk:exposureCompensation": 1.0}
-one = mean(render(stage, {**lit, "hdvk:screenBackfaceScale": 1.0}, frames=8), *floor)
-none = mean(render(stage, {**lit, "hdvk:screenBackfaceScale": 0.0}, frames=8), *floor)
-off = mean(render(stage, {**lit, "hdvk:screenBackface": False}, frames=8), *floor)
+lit = {"eldr:ssgi": True, "eldr:exposureCompensation": 1.0}
+one = mean(render(stage, {**lit, "eldr:screenBackfaceScale": 1.0}, frames=8), *floor)
+none = mean(render(stage, {**lit, "eldr:screenBackfaceScale": 0.0}, frames=8), *floor)
+off = mean(render(stage, {**lit, "eldr:screenBackface": False}, frames=8), *floor)
 print("SSGI back-face hits: the floor %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
 expect(none < one - 0.2, "SSGI: back-face hits at scale 0 take no light")
 expect(abs(one - off) < 0.05, "SSGI: back-face hits at scale 1 are as without the option")
 stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
 sphere = (150, 80, 250, 240)  # the sphere and its reflection
-one = mean(render(stage, {**bright, "hdvk:screenBackfaceScale": 1.0}), *sphere)
-none = mean(render(stage, {**bright, "hdvk:screenBackfaceScale": 0.0}), *sphere)
-off = mean(render(stage, {**bright, "hdvk:screenBackface": False}), *sphere)
+one = mean(render(stage, {**bright, "eldr:screenBackfaceScale": 1.0}), *sphere)
+none = mean(render(stage, {**bright, "eldr:screenBackfaceScale": 0.0}), *sphere)
+off = mean(render(stage, {**bright, "eldr:screenBackface": False}), *sphere)
 print("SSR back-face hits: the sphere %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
 expect(none < one - 0.1, "SSR: back-face hits at scale 0 take no light")
 expect(abs(one - off) < 0.05, "SSR: back-face hits at scale 1 are as without the option")

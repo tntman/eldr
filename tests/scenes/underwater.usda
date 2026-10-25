@@ -8,7 +8,7 @@
 # opacity 0, ior 1.33, its normal up, so seen from below). Looking up steeply
 # the surface lets the ball and sky above through, bent; towards the horizon,
 # past the critical angle (48.8 degrees from the vertical), it mirrors the
-# pool floor totally. hdvk:refractionBackFaces off hides the surface.
+# pool floor totally. eldr:refractionBackFaces off hides the surface.
 
 def Camera "cam"
 {

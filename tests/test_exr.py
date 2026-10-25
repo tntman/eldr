@@ -114,7 +114,7 @@ expect(abs(pixel.get("directglossy.G", 0) + pixel.get("indirectglossy.G", 0) -
        "glossy splits: direct + indirect = combined")
 
 
-# Products at their own resolution (hdvk:productResolution): usdrecord's
+# Products at their own resolution (eldr:productResolution): usdrecord's
 # -w 64 buffers, a 96 x 48 product, the camera 20 units from the cube's
 # front face. Its 20.955 x 15.29 aperture expands to 2:1, so the face
 # (2 units, 50 mm: 5 mm) is 5 / 15.29 * 48 = 15.7 pixels across both ways.
@@ -164,27 +164,27 @@ expect(size == (48, 24) and window[:4] == ["48", "0", "96", "48"], "the data win
 expect(face(cropped, 2, 21) and not face(cropped, 12, 21) and not face(cropped, 2, 12),
        "the data window shows the image's top right quarter")
 product.CreateDataWindowNDCAttr(Gf.Vec4f(0, 0, 1, 1))
-# hdvk:productResolution off: the frame's size (exr_record.py's 64 x 64).
+# eldr:productResolution off: the frame's size (exr_record.py's 64 x 64).
 off = os.path.join(folder, "off.exr").replace("\\", "/")
 product.GetProductNameAttr().Set(off)
 stage.GetRootLayer().Save()
 subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
-                scenePath, "/Render/settings", "/cam", "hdvk:productResolution=false"], check=True)
-expect(probe(off, 0, 0)[0] == (64, 64), "hdvk:productResolution off: the frame's size")
+                scenePath, "/Render/settings", "/cam", "eldr:productResolution=false"], check=True)
+expect(probe(off, 0, 0)[0] == (64, 64), "eldr:productResolution off: the frame's size")
 UsdGeom.Xformable(camera).GetOrderedXformOps()[0].Set(Gf.Vec3d(0, 0, 6))
 product.GetResolutionAttr().Set(Gf.Vec2i(64, 64))
 
 
 
-# The beauty is linear and untonemapped by default (hdvk:productLinear): the
+# The beauty is linear and untonemapped by default (eldr:productLinear): the
 # same under ACES, AgX and "none". Off, it is the displayed, tonemapped one.
 def beauty(tonemapper, linear):
     path = os.path.join(folder, "beauty_%s_%s.exr" % (tonemapper, linear)).replace("\\", "/")
     product.GetProductNameAttr().Set(path)
     stage.GetRootLayer().Save()
     subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
-                    scenePath, "/Render/settings", "/cam", "hdvk:tonemapper=" + tonemapper,
-                    "hdvk:productLinear=" + linear], check=True)
+                    scenePath, "/Render/settings", "/cam", "eldr:tonemapper=" + tonemapper,
+                    "eldr:productLinear=" + linear], check=True)
     out = subprocess.run([exrinfo, path, "32", "32"], capture_output=True, text=True).stdout.splitlines()
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
@@ -195,7 +195,7 @@ expect(aces and all(abs(aces[c] - none[c]) < 1e-3 * max(1.0, abs(none[c])) and
        "linear beauty: the same under aces, agx and none")
 expect(none.get("G", 0) > 0.05, "linear beauty: lit")
 tonemapped = beauty("agx", "false")
-expect(abs(tonemapped["G"] - none["G"]) > 0.02, "hdvk:productLinear off: the tonemapped beauty")
+expect(abs(tonemapped["G"] - none["G"]) > 0.02, "eldr:productLinear off: the tonemapped beauty")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

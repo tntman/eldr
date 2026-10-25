@@ -1,6 +1,6 @@
 """Transmission through Hydra: standard_surface and OpenPBR transmission
 (thin-walled, so nothing bends) tints a white wall behind it, and with
-hdvk:refraction off it shows straight through, untinted.
+eldr:refraction off it shows straight through, untinted.
 Run: usdenv.cmd python tests\\test_transmission.py"""
 import sys
 
@@ -81,9 +81,9 @@ def expect(ok, what):
 def render(**settings):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    engine.SetRendererSetting("hdvk:postProcess", False)
+    engine.SetRendererSetting("eldr:postProcess", False)
     for k, v in settings.items():
-        engine.SetRendererSetting("hdvk:" + k, v)
+        engine.SetRendererSetting("eldr:" + k, v)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()
@@ -107,7 +107,7 @@ expect(red[0] > 0.85 and red[1] < 0.05 and red[2] < 0.05, "standard_surface tran
 expect(blue[2] > 0.85 and blue[0] < 0.05 and blue[1] < 0.05, "OpenPBR transmission_color tints blue")
 off = render(refraction=False)
 red = rgb(off, -0.5, 0.5)
-expect(red[1] > 0.85 and red[0] > 0.85, "hdvk:refraction off: straight through, untinted")
+expect(red[1] > 0.85 and red[0] > 0.85, "eldr:refraction off: straight through, untinted")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

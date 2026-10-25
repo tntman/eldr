@@ -37,21 +37,21 @@ Settings through Python (a script that renders with `UsdImagingGL.Engine`):
 
 ```python
 engine.SetRendererPlugin("HdVkRendererPlugin")
-engine.SetRendererSetting("hdvk:finalQuality", True)
-engine.SetRendererSetting("hdvk:filmSamples", 256)
+engine.SetRendererSetting("eldr:finalQuality", True)
+engine.SetRendererSetting("eldr:filmSamples", 256)
 ```
 
 A sensible final-quality starting point:
 
 | Goal | Settings |
 |---|---|
-| Converge from scratch, no interactive shortcuts | `hdvk:finalQuality` on, `hdvk:filmSamples` 128-512 |
-| Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`hdvk:productLinear`); `hdvk:autoExposure` off and `hdvk:exposureCompensation` 0 for unexposed values |
+| Converge from scratch, no interactive shortcuts | `eldr:finalQuality` on, `eldr:filmSamples` 128-512 |
+| Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
 | True soft shadows, bokeh, motion blur | leave `shadowJitter`, `dofJitter`, `motionBlurTimeSamples` on (defaults) |
-| Indirect light | `hdvk:gi` and `hdvk:ssgi` (and `hdvk:ssgiBitmask` for thin occluders) |
-| Accurate shadows and reflections off screen | `hdvk:rtShadows`, `hdvk:rtReflections` with 1 ray (the film averages) |
-| Clean geometry | `hdvk:lodBias` -1 or `hdvk:lod` off, `--complexity veryhigh` (or `hdvk:maxRefineLevel`) |
-| Fireflies | `hdvk:directClamp` / `hdvk:indirectClamp` |
+| Indirect light | `eldr:gi` and `eldr:ssgi` (and `eldr:ssgiBitmask` for thin occluders) |
+| Accurate shadows and reflections off screen | `eldr:rtShadows`, `eldr:rtReflections` with 1 ray (the film averages) |
+| Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off, `--complexity veryhigh` (or `eldr:maxRefineLevel`) |
+| Fireflies | `eldr:directClamp` / `eldr:indirectClamp` |
 
 Environment variables: `HDVK_NO_RAY_TRACING=1` pretends the GPU has no ray
 tracing; `HDVK_PIPELINE_CACHE_DIR` moves the shader cache folder
@@ -103,8 +103,8 @@ Eldr has three ways to turn jittered, noisy samples into a pixel.
 (Halton 2,3), and a temporal anti-aliasing resolve reprojects history with
 camera and object motion vectors (Catmull-Rom history, YCoCg variance clipping
 on tonemapper-compressed colour). The stochastic effects loop over their first
-`hdvk:interactiveSamples` (8) noise samples so the history settles. With
-`hdvk:renderScale` below 1, the scene renders smaller and TAA upscales
+`eldr:interactiveSamples` (8) noise samples so the history settles. With
+`eldr:renderScale` below 1, the scene renders smaller and TAA upscales
 (TAAU).
 
 **Film accumulation.** TAA's clipping also clips legitimate noise (soft
@@ -112,14 +112,14 @@ shadows, SSGI, SSR) so a still camera would converge to a biased mean. Once the
 camera and scene have been still for 3 frames, from the first frame of a fresh
 history (the first frame of `usdrecord`), and always in final quality, the film
 replaces TAA: a plain weighted average in fp32 of each jittered sample through
-a Gaussian pixel filter (`hdvk:filmFilterRadius`, 1.5 px). It runs until
-`hdvk:filmSamples` (64) is reached, which is when the render reports itself
+a Gaussian pixel filter (`eldr:filmFilterRadius`, 1.5 px). It runs until
+`eldr:filmSamples` (64) is reached, which is when the render reports itself
 converged (`IsConverged`, and `percentDone` in the statistics). Any change to
 the camera, the Hydra scene or the settings starts it over. With the film,
 `taaSamples` only sets the pixel jitter cycle. Frames with motion blur used to
 stay TAA's; with time samples they stay on the film.
 
-**Final quality** (`hdvk:finalQuality`, or Hydra's `enableInteractive = false`,
+**Final quality** (`eldr:finalQuality`, or Hydra's `enableInteractive = false`,
 the convention of husk and hdPrman) makes the film start from scratch after
 every change, never from the TAA image. Use it for offline renders.
 
@@ -139,7 +139,7 @@ marked [film] in the settings):
   counts as converged once `adaptivePixelFraction` (0.99) of the pixels stopped.
 
 All stochastic effects take their noise from per-effect Sobol dimensions with
-blue-noise rotation (`hdvk:sampleDimensions`), so the average converges
+blue-noise rotation (`eldr:sampleDimensions`), so the average converges
 without screen-space patterns. Measured at 960 px against a 1024-sample
 reference (RMSE): sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004,
 Kitchen_set 0.0068 to 0.0004. Convergence at 64 samples takes 0.2-0.5 s on
@@ -249,11 +249,11 @@ roughness:
 3. **Reflection probes** (`reflectionProbe`): a cube captured in the scene,
    prefiltered like the dome, with parallax correction against a box and the
    captured distances. One automatic probe at the scene centre, or up to 8
-   authored probes (meshes flagged `primvars:hdvk:reflectionProbe`, smallest
+   authored probes (meshes flagged `primvars:eldr:reflectionProbe`, smallest
    box wins, soft edges). `probeNormalize` scales a probe by the local ambient
    light (needs GI or SSGI) to stop dark corners reflecting a lit room.
 4. **Planar reflections** (`planarReflections`): mirrors (flagged
-   `primvars:hdvk:planarReflection`, or the largest flat glossy opaque mesh)
+   `primvars:eldr:planarReflection`, or the largest flat glossy opaque mesh)
    get the scene rendered mirrored in their plane, with an oblique near plane,
    up to `planarCount` (4) mirrors at `planarScale` of the frame size.
 5. **Ray-traced reflections** (`rtReflections`): GGX-sampled rays, shaded at
@@ -392,7 +392,7 @@ separable per-channel Gaussians (taps spread over three times the largest
 radius, at most 128 px, depth-aware) in a second shading pass; thin parts
 transmit the sun, and thin-walled materials pass it whole.
 
-**Toon.** `inputs:eldr:toonBands` on a material, or `hdvk:toonBands` globally,
+**Toon.** `inputs:eldr:toonBands` on a material, or `eldr:toonBands` globally,
 quantises the lit intensity relative to the albedo into flat bands with
 `inputs:eldr:toonSoftness` edges; emission is untouched.
 
@@ -560,8 +560,8 @@ layout:
 
 **Colour in the EXR.** By default (`productLinear`) the beauty is linear and
 untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
-`hdvk:tonemapper` says (the viewport keeps its tonemapper). For values exactly
-as rendered turn off `hdvk:autoExposure` and set `hdvk:exposureCompensation` to
+`eldr:tonemapper` says (the viewport keeps its tonemapper). For values exactly
+as rendered turn off `eldr:autoExposure` and set `eldr:exposureCompensation` to
 0. With `productLinear` off the beauty is what the post chain presents:
 exposed, bloomed and tonemapped (ACES by default).
 
@@ -606,13 +606,13 @@ Rough budget on a GTX 1080 Ti at 1280x720 for the 20k crowd, defaults: about
 ## USD authoring conventions
 
 What Eldr reads beyond standard UsdPreviewSurface, UsdLux and UsdGeom. All are
-optional; the namespaces are `hdvk:` for scene-level features and `eldr:` for
+optional; the namespaces are `eldr:` for scene-level features and `eldr:` for
 shading inputs.
 
 | Convention | Where | Meaning |
 |---|---|---|
-| `bool primvars:hdvk:reflectionProbe = 1` | any mesh, typically an invisible Cube | The mesh is a reflection probe: never drawn, never in the scene bounds or shadows. Its world box is the influence and parallax volume, captured from its centre. Up to 8, smallest first. Needs `hdvk:reflectionProbe` on. |
-| `bool primvars:hdvk:planarReflection = 1` | a flat mesh | Marks the mirror for planar reflections. Without any, the largest flat glossy opaque mesh is used. Needs `hdvk:planarReflections`. |
+| `bool primvars:eldr:reflectionProbe = 1` | any mesh, typically an invisible Cube | The mesh is a reflection probe: never drawn, never in the scene bounds or shadows. Its world box is the influence and parallax volume, captured from its centre. Up to 8, smallest first. Needs `eldr:reflectionProbe` on. |
+| `bool primvars:eldr:planarReflection = 1` | a flat mesh | Marks the mirror for planar reflections. Without any, the largest flat glossy opaque mesh is used. Needs `eldr:planarReflections`. |
 | `bool primvars:eldr:hair = 0` | BasisCurves, constant | Opt out of hair shading: the curves shade as ordinary surfaces with SSR (cables, ropes). Unauthored or true: hair. An int works. |
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | a material's surface shader | Toon bands per unit of light (0: none) and band edge width, in bands. |
 | `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (UsdPreviewSurface has none; read as standard_surface `coat_color`). Constant or connected. |

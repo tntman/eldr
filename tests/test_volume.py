@@ -3,7 +3,7 @@ OpenVDB): tests/scenes/volume.vdb's cloud in front of an emissive wall, no
 lights, so it only absorbs. It darkens the wall where it is, the volume's
 transform moves it, fieldIndex 1 picks the file's second "density" grid (a
 small ball), a MaterialX volume material sets its absorption and emission,
-half resolution stays close, hdvk:volumes switches volumes off, and the
+half resolution stays close, eldr:volumes switches volumes off, and the
 render stats count them and their grid memory.
 Run: usdenv.cmd python tests\\test_volume.py"""
 import os
@@ -60,7 +60,7 @@ engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
-engine.SetRendererSetting("hdvk:autoExposure", False)
+engine.SetRendererSetting("eldr:autoExposure", False)
 params = UsdImagingGL.RenderParams()
 
 
@@ -151,15 +151,15 @@ UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
 
 # Half resolution: the same image, near enough, the cloud's edge included.
 full = render()
-engine.SetRendererSetting("hdvk:volumeResolution", 2)
+engine.SetRendererSetting("eldr:volumeResolution", 2)
 image = render()
 expect(all(abs(brightness(image, x, 0) - brightness(full, x, 0)) < 0.05 for x in (0, 1.0, 1.6, 2.5)),
        "half resolution volumes")
-engine.SetRendererSetting("hdvk:volumeResolution", 1)
+engine.SetRendererSetting("eldr:volumeResolution", 1)
 
-engine.SetRendererSetting("hdvk:volumes", False)
+engine.SetRendererSetting("eldr:volumes", False)
 image = render()
-expect(brightness(image, 0, 0) > 0.9 * wallLevel, "hdvk:volumes switches volumes off")
+expect(brightness(image, 0, 0) > 0.9 * wallLevel, "eldr:volumes switches volumes off")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

@@ -1,6 +1,6 @@
 """Lens distortion through Hydra: a USD camera's lensDistortion:* custom
 attributes reach HdCamera and warp the image; a Karma lens material with
-the same terms warps it the same; hdvk:lensDistortion off renders the
+the same terms warps it the same; eldr:lensDistortion off renders the
 plain camera's view.
 Run: usdenv.cmd python tests\\test_distortion.py"""
 import os
@@ -29,8 +29,8 @@ stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "distor
 def Render(camera, distortion=True):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    engine.SetRendererSetting("hdvk:taa", False)
-    engine.SetRendererSetting("hdvk:lensDistortion", distortion)
+    engine.SetRendererSetting("eldr:taa", False)
+    engine.SetRendererSetting("eldr:lensDistortion", distortion)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraPath(Sdf.Path(camera))
     params = UsdImagingGL.RenderParams()
@@ -61,7 +61,7 @@ expect(sum(a != b for a, b in zip(plain, barrel)) > SIZE * SIZE // 10, "the barr
 expect("lensDistortion" in karmaPasses, "Karma's lens material distorts")
 # Within a step of 8 bits: exposure adapts by a hair between runs.
 same = all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(plain, off) for k in (0, 8, 16))
-expect(same, "hdvk:lensDistortion off: the plain view")
+expect(same, "eldr:lensDistortion off: the plain view")
 expect(all(abs(((a >> k) & 255) - ((b >> k) & 255)) <= 1 for a, b in zip(barrel, karma) for k in (0, 8, 16)),
        "Karma's lens material: the same warp as lensDistortion:k1, k2")
 

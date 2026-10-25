@@ -1,5 +1,5 @@
 """Levels of detail: 400 instances of a 3968-triangle sphere receding from the
-camera draw far fewer triangles with hdvk:lod on, look the same, and the
+camera draw far fewer triangles with eldr:lod on, look the same, and the
 bias trades triangles for error.
 Run: usdenv.cmd python tests\\test_lod.py"""
 import math
@@ -66,7 +66,7 @@ def render(**settings):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     for name, value in dict(taa=False, autoExposure=False, **settings).items():
-        engine.SetRendererSetting("hdvk:" + name, value)
+        engine.SetRendererSetting("eldr:" + name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()

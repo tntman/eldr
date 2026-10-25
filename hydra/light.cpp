@@ -113,7 +113,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     // Karma's "Render Light Geometry" (inputs:karma:light:renderlightgeo,
     // bool): false hides the light's shape from the camera. UsdLux has no
     // such attribute. ponytail: it can only hide; the shapes still need
-    // hdvk:lightShapesVisible.
+    // eldr:lightShapesVisible.
     light.cameraVisible = param(TfToken("inputs:karma:light:renderlightgeo"), true);
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
     light.specular = param(HdLightTokens->specular, 1.0f);

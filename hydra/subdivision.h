@@ -17,7 +17,7 @@ struct Mesh;
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// Render settings (hdvk:subdivision, hdvk:maxRefineLevel) defaults: the
+// Render settings (eldr:subdivision, eldr:maxRefineLevel) defaults: the
 // display style's refine level (usdview's Complexity) up to this.
 constexpr bool kHdVkSubdivision = true;
 constexpr int kHdVkMaxRefineLevel = 3;
