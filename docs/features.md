@@ -542,7 +542,12 @@ has no lens (no DOF, no blur).
 **Hydra AOVs** (usdview AOV menu, `usdrecord`, husk): `color` (RGBA16F, linear
 unless the tonemapper runs; see below), `depth`, `primId`, `instanceId`
 (picking and selection), plus the extra AOVs below. They cost nothing unless
-bound. Where nothing was drawn they are 0.
+bound. Where nothing was drawn they are 0. A bound buffer comes back to the
+CPU with the frame only if the app read (mapped) it since the last frame,
+else when it is mapped. While the camera moves, an extra AOV the app didn't
+read last frame isn't rendered (Houdini's viewport binds normal and
+primvars:st but shows them only on request); still frames, final quality
+and render products render every bound one.
 
 **Extra AOVs and Karma-style names.** The names UsdRender hands Hydra are the
 source names of Houdini Karma's standard render vars (nothing of Houdini is

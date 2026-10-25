@@ -161,11 +161,45 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 | Volumes | rendered | rendered (OpenVDB files and SOP volumes, see above) | Matches. |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s | |
 
+## Solaris viewport
+
+- **Readback.** Houdini hands delegates an OpenGL Hgi but composites with
+  Vulkan (Houdini VK), so a shared GL texture shows nothing there: this
+  build reads frames back. Houdini binds colour (Float16Vec4), depth,
+  normal, primvars:st, primId and instanceId at the viewport's size.
+  A buffer comes back with the frame only if Houdini mapped it since the
+  last frame; the rest are read when mapped. While the camera moves, the
+  extra AOVs (normal, primvars:st) are rendered only if Houdini read them
+  last frame (it does when the viewport shows that AOV); still frames
+  render them all. `HDVK_DEBUG_AOVS=1` prints the bindings and, every 60
+  frames, how often Houdini mapped each one.
+- **Selection outline.** Houdini draws it for Hydra delegates only when
+  `UsdRenderers.json` says `"needsselection": true` (HUSD_RendererInfo's
+  `needsNativeSelectionPass`: Houdini's own GL draws the selected prims as
+  an overlay; Karma's json sets it too). Eldr's json sets it. Without it
+  there was no outline although the ids were right, so Houdini evidently
+  doesn't outline from a delegate's id AOVs (it binds no elementId, which
+  Hydra's own HdxColorizeSelectionTask would read).
+- **Ids.** primId is the render index's prim id
+  (`HdRenderIndex::GetRprimPathFromPrimId`) and instanceId the instance
+  index, as Houdini's render keys (picking) expect:
+  `viewportBench <scene> <camera> --still --ids` checks every id on screen
+  against the render index (step4 and Kitchen_set_instanced: all resolve).
+- **Frame times** with Houdini's bindings: `viewportBench` (normal build,
+  `tests/viewportBench.cpp`) sets up the same render outputs through
+  HdxTaskController with `eldr:shareFrame` off, orbits the camera and maps
+  the buffers after each frame (`--map` picks which). Run it with
+  `usdenv.cmd`; other GPU users show up in the mean, so compare medians.
+  1280x720, moving camera, best median of 4 alternated runs, before and
+  after the readback changes. Kitchen_set: colour, depth and ids read
+  30.3 -> 23.7 ms, colour and depth read 34.9 -> 20.8 ms, all six read
+  34.0 -> 32.1 ms (unchanged by design). step4 with the ids read:
+  26.4 -> 12.3 ms. usdview's path (GPU sharing) on the same orbit: about
+  15 ms (Kitchen_set) and 11 ms (step4).
+
 ## Not checked
 
-- Interactive Solaris use beyond a first render: camera moves, picking,
-  Render Settings LOP options. The viewport (Houdini VK) does show Eldr's
-  image: Houdini hands delegates an OpenGL Hgi but composites with Vulkan, so
-  this build reads frames back instead of sharing GL textures.
+- Interactive Solaris use in the GUI after the readback and selection
+  changes: navigation speed, the outline, Render Settings LOP options.
 - The Python ctest suite uses `usdenv.cmd` (USD 26.08) and doesn't apply to
   this build.
