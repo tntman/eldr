@@ -682,6 +682,7 @@ public:
             // rect or disk of these half extents, a cylinder's axis.
             enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
             float halfWidth[3], halfHeight[3];
+            float cylinderRadius;  // a cylinder's radius (jittered across its section)
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,

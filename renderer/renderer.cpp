@@ -1983,10 +1983,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             // sphere with density 1 / sqrt(1 - r^2), whose projection along
             // any direction is uniform over the disc it shows a receiver
             // (the Abel transform of (1 - r^2)^-1/2 is constant).
-            // ponytail: a cylinder only along its axis (across, its radius
-            // stays hard); the near plane clears the sphere from the offset
-            // point, so casters within a radius of a sphere light's surface
-            // drop out of its shadow.
+            // A cylinder: uniform along its axis, and across it the disc
+            // of its section with density 1 / sqrt(1 - r^2) (the same
+            // Abel pair, one dimension down: every chord integrates to pi).
+            // ponytail: the near plane clears the sphere or cylinder from
+            // the offset point, so casters within a radius of such a light's
+            // surface drop out of its shadow.
             using Shape = Scene::Gpu::ShadowCaster::Shape;
             const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
             const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
@@ -2008,7 +2010,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             } else if (c.shape == Shape::Disk) {
                 offset = (hw * std::cos(phi) + hh * std::sin(phi)) * std::sqrt(u);
             } else {
-                offset = hw * (2.0f * u - 1.0f);
+                const Vec3 a = Normalize(hw);
+                const Vec3 b = Normalize(Cross(a, std::abs(a.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0}));
+                const float w = 1.0f - shapeSample[1], r = std::sqrt(std::max(1.0f - w * w, 0.0f)) * c.cylinderRadius,
+                            ang = 6.2831853f * shapeSample[2];
+                offset = hw * (2.0f * u - 1.0f) + b * (r * std::cos(ang)) + Cross(a, b) * (r * std::sin(ang));
+                n += c.cylinderRadius;
             }
             position = position + offset;
         }

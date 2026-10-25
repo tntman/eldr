@@ -2995,6 +2995,40 @@ int main()
             const Image localTaa = film(local, frame);
             frame.shadowJitter = true;
             Expect(MaxDifference(film(local, frame), localTaa) == 0.0f, "shadow jitter: TAA frames keep local PCSS");
+
+            // A cylinder light along y (radius 0.1) in the same place: the
+            // plane through the occluder's edge contains its axis, so it
+            // cuts the strip it shows (2r wide, emission uniform across it)
+            // at one place, and the lit part is linear in that place.
+            vkr::Scene tubeScene(&device);
+            AddQuad(tubeScene, -1, -1, 1, 1, 0.5f);
+            AddQuad(tubeScene, -4, -4, 0, 4, 0.0f);
+            vkr::Light *tube = AddSphereLight(tubeScene, -0.3f, 0, -0.5f, 0.1f, 50.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.0f;
+            tube->halfWidth[1] = 0.5f;
+            tube->castShadows = false;
+            tubeScene.Commit();
+            frame.filmAccumulation = true;
+            frame.shadowJitter = true;
+            const Image tubeOpen = film(tubeScene, frame);
+            tube->castShadows = true;
+            tubeScene.Commit();
+            const Image tubeImg = film(tubeScene, frame);
+            float tubeWorst = 0.0f, tubePartial = 0.0f;
+            for (int x = 34; x < 52; ++x) {
+                const float gx = PixelNdc(x), len = std::sqrt(0.25f + gx * gx);
+                const float s = (-0.15f + 0.5f * gx) / len;
+                const float d = std::sqrt((gx + 0.3f) * (gx + 0.3f) + 1.0f);
+                const float lit = std::clamp(0.5f + 0.5f * std::asin(s / d) / std::asin(0.1f / d), 0.0f, 1.0f);
+                const float v = tubeImg.At(x, 32, 0) / tubeOpen.At(x, 32, 0);
+                tubeWorst = std::max(tubeWorst, std::abs(v - lit));
+                tubePartial += v > 0.05f && v < 0.95f ? 1.0f : 0.0f;
+            }
+            std::printf("shadow jitter: cylinder light penumbra error %.3f over %.0f pixels\n", tubeWorst,
+                        tubePartial);
+            Expect(tubeWorst < 0.05f && tubePartial >= 4,
+                   "shadow jitter: the film converges to a cylinder light's penumbra across its axis");
         }
 
         {

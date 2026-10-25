@@ -1987,6 +1987,7 @@ void Scene::Commit(bool keepMotion)
                     c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
                     c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
                     c.extent = h;
+                    c.cylinderRadius = l->point ? 0.0f : l->radius;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];
