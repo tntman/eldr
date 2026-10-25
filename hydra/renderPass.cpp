@@ -177,7 +177,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
                                 {t2.screenBackface, &frame.screenBackface},
-                                {t2.ssrHitFilter, &frame.ssrHitFilter}}) {
+                                {t2.ssrHitFilter, &frame.ssrHitFilter},
+                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},

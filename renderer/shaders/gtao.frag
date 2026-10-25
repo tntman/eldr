@@ -39,7 +39,8 @@ layout(push_constant) uniform GtaoParams {
     vec4 ssgi;          // x: pixels of depth per output pixel (1, 2), y: steps per side, z: 1 = history valid,
                         // w: brightest radiance taken (fireflies: highlights a few pixels wide)
     vec4 temporal;      // (gtao_denoise.frag's); y: 1 = thickness estimator, z: object thickness (BITMASK)
-    vec4 screen;        // x: back-face hits' share of light (Frame::screenBackface; < 0: off)
+    vec4 screen;        // x: back-face hits' share of light (Frame::screenBackface; < 0: off),
+                        // zw: the depth pixel of each ssgi.x-wide tile that traces (Frame::ssgiTileOrder)
 #endif
 } pc;
 
@@ -145,7 +146,9 @@ float Facing(vec3 hitPos, ivec2 sq, ivec2 size, vec3 direction, float back)
 void main()
 {
 #ifdef SSGI
-    ivec2 q = ivec2(gl_FragCoord.xy) * int(pc.ssgi.x);  // the depth pixel this output pixel stands for
+    // The depth pixel this output pixel stands for: at half resolution
+    // one of its tile's, a different one each frame (Frame::ssgiTileOrder).
+    ivec2 q = min(ivec2(gl_FragCoord.xy) * int(pc.ssgi.x) + ivec2(pc.screen.zw), textureSize(sceneDepth, 0) - 1);
     int steps = max(int(pc.ssgi.y), 1);
 #else
     ivec2 q = ivec2(gl_FragCoord.xy);

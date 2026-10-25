@@ -3461,7 +3461,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
                          frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
-                         frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f);
+                         frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f,
+                         frame.ssgiTileOrder ? sample : 0);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,

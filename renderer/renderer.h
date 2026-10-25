@@ -344,6 +344,10 @@ public:
         // takes none and its horizon scan all, as before.
         bool screenBackface = true;
         float screenBackfaceScale = 0.25f;
+        // Half-resolution SSGI traces a different pixel of each 2 x 2 tile
+        // every frame, in Morton order (EEVEE's), so the accumulation sees
+        // all four. Off: always the tile's first, as before.
+        bool ssgiTileOrder = true;
         // SSR hits read last frame's image at the mip as wide as the ray's
         // cone there (EEVEE 5.2): glossy reflections without sparkle. The
         // history then keeps mips (6 levels, blitted each frame). Off: one

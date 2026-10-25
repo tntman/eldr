@@ -1,7 +1,7 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
-denoised glossy SSR, its footprint-filtered hits, its precision, SSGI's energy
-and back-face hits.
+denoised glossy SSR, its footprint-filtered hits, its precision, SSGI's energy and
+tile order, and back-face hits.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -214,6 +214,23 @@ for bitmask in (False, True):
     print("SSGI %s in a white furnace: of %d pixels %d brighter than the open sky, %d much darker" % (
         "bitmask" if bitmask else "horizon", lit, brighter, darker))
     expect(brighter == 0 and darker < 0.12 * lit, "SSGI keeps a white furnace's energy")
+
+# SSGI's tile order (hdvk:ssgiTileOrder): at half resolution each frame
+# traces another pixel of every 2 x 2 tile, so the accumulated image
+# differs from always tracing the top-left one; at full resolution there
+# is nothing to rotate.
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "cornell.usda"))
+
+
+def tileOrderChanges(resolution):
+    a, b = (render(stage, {"hdvk:taa": True, "hdvk:ssgi": True, "hdvk:ssgiResolution": resolution,
+                           "hdvk:ssgiTileOrder": on}, frames=12) for on in (False, True))
+    return sum(a.pixelColor(x, y) != b.pixelColor(x, y) for y in range(0, SIZE, 2) for x in range(0, SIZE, 2))
+
+
+half, full = tileOrderChanges(2), tileOrderChanges(1)
+print("SSGI tile order: %d pixels (of a quarter) change at half resolution, %d at full" % (half, full))
+expect(half > 100 and full == 0, "hdvk:ssgiTileOrder rotates the traced pixel at half resolution only")
 
 # Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
 # from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan

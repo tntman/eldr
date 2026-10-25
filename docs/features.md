@@ -203,7 +203,7 @@ Three layers, each separately switchable:
 |---|---|---|---|
 | Dome light + AO | `imageBasedLighting`, `ambientOcclusion` | prepass | Unoccluded sky light darkened by GTAO. |
 | DDGI probes | `gi` | ray tracing | A grid of probes traces rays each frame (`giProbes` across the scene, `giRaysPerProbe` rays). Irradiance and visibility are octahedral atlases blended with `giHysteresis`. Chebyshev visibility prevents light leaks; probes inside geometry drop out; where no probe sees a surface, shading falls back to the dome. Hits are shaded with direct light, emission and further bounces from the probes themselves. |
-| SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
+| SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution (a different pixel of each 2 x 2 tile every frame, `ssgiTileOrder`) and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
 
 SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 (light passes behind thin objects, occluders `ssgiBitmaskThickness` of the

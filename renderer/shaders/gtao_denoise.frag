@@ -24,6 +24,7 @@ layout(push_constant) uniform GtaoParams {
     mat4 prevViewProj;
     vec4 ssgi;      // x: depth pixels per raw pixel
     vec4 temporal;  // x: this frame's weight in the running average (1: none)
+    vec4 screen;    // zw: the depth pixel of its tile each raw pixel traced (gtao.frag)
 } pc;
 layout(set = 0, binding = 3) uniform sampler2D previousSsgi;  // last frame's result, same pixels (a still camera)
 layout(location = 0) out vec4 outSsgi;  // visibility, gathered irradiance / pi (gba): mesh.frag's AO texture
@@ -61,7 +62,7 @@ void main()
     for (int y = -2; y <= 2; ++y) {
         for (int x = -2; x <= 2; ++x) {
             ivec2 r = clamp(rawQ + ivec2(x, y), ivec2(0), maxRaw);
-            vec4 tap = Position(min(r * scale, maxQ));
+            vec4 tap = Position(min(r * scale + ivec2(pc.screen.zw), maxQ));
             float w = tap.w > 0.0 && abs(dot(tap.xyz - center.xyz, n)) <= tolerance ? 1.0 : 0.0;
             sum += texelFetch(rawAo, r, 0) * w;
             weights += w;

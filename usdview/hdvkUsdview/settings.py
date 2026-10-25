@@ -13,7 +13,7 @@ GROUPS = [
      "pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
+     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution ssgiTileOrder "
      "ssgiThickness ssgiBitmask ssgiBitmaskThickness screenBackface screenBackfaceScale directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
