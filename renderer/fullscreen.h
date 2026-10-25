@@ -19,4 +19,8 @@ void DrawFullscreen(VkCommandBuffer cmd, VkPipeline pipeline, VkPipelineLayout l
                     VkDescriptorSet set, VkImageView target, uint32_t width, uint32_t height,
                     bool load, VkShaderStageFlags pushStages, const void *push, uint32_t pushBytes);
 
+// Fragment shaders' storage writes (the light splits) before the next pass's
+// reads and writes of them.
+void StorageBarrier(VkCommandBuffer cmd);
+
 } // namespace vkr

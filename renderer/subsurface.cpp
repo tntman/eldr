@@ -17,6 +17,7 @@ constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // Renderer::k
 struct BlurParams {  // mirror of the push block in subsurface_blur.frag
     float invViewProj[16];
     float params[4];  // direction (pixels), taps, pass (0: horizontal, 1: vertical into the colour)
+    float splits[4];  // x: 1 moves the same light in the light splits (binding 4)
 };
 
 VkImageSubresourceRange Color()
@@ -36,13 +37,14 @@ Subsurface::Subsurface(Device &device)
     Check(vkCreateSampler(d, &sci, nullptr, &_sampler), "vkCreateSampler");
 
     // 0: what the pass blurs (the light, then the horizontal pass's
-    // result), 1: the light, 2: ids, 3: depth.
-    VkDescriptorSetLayoutBinding bindings[4] = {};
+    // result), 1: the light, 2: ids, 3: depth, 4: the light splits.
+    VkDescriptorSetLayoutBinding bindings[5] = {};
     for (uint32_t i = 0; i < 4; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
     }
+    bindings[4] = {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 4;
+    slci.bindingCount = 5;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BlurParams)};
@@ -95,11 +97,12 @@ void Subsurface::BeginLighting(VkCommandBuffer cmd)
                                VK_IMAGE_VIEW_TYPE_2D);
         _blurred = _dev.CreateImage(kLightFormat, _width, _height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
                                     VK_IMAGE_VIEW_TYPE_2D);
-        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8};
+        const VkDescriptorPoolSize size[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8},
+                                              {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
         VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pci.maxSets = 2;
-        pci.poolSizeCount = 1;
-        pci.pPoolSizes = &size;
+        pci.poolSizeCount = 2;
+        pci.pPoolSizes = size;
         Check(vkCreateDescriptorPool(_dev.device, &pci, nullptr, &_pool), "vkCreateDescriptorPool");
         const VkDescriptorSetLayout layouts[2] = {_setLayout, _setLayout};
         VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -133,8 +136,21 @@ void Subsurface::BeginLighting(VkCommandBuffer cmd)
     }
 }
 
-void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples)
+void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
+                      VkImageView splits, bool moveSplits)
 {
+    // The splits may have been recreated since the sets were made.
+    const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
+    for (VkDescriptorSet set : _sets) {
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = set;
+        write.dstBinding = 4;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        write.pImageInfo = &splitsInfo;
+        vkUpdateDescriptorSets(_dev.device, 1, &write, 0, nullptr);
+    }
+    StorageBarrier(cmd);  // the shading pass's and the SSR's splits
     for (const Image *img : {&_light, &_id}) {
         ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -144,6 +160,7 @@ void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invVie
     BlurParams params{};
     std::copy(invViewProj, invViewProj + 16, params.invViewProj);
     params.params[2] = float(std::clamp(samples, 1u, 64u));
+    params.splits[0] = moveSplits ? 1.0f : 0.0f;
 
     ImageBarrier(cmd, _blurred.image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
@@ -160,6 +177,7 @@ void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invVie
     params.params[3] = 1.0f;
     DrawFullscreen(cmd, _vertical, _layout, _sets[1], color, _width, _height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                    &params, sizeof(params));
+    StorageBarrier(cmd);
 }
 
 } // namespace vkr

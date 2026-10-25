@@ -516,7 +516,7 @@ private:
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
     void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
-                           const float *invViewProj, VkRenderingAttachmentInfo depth);
+                           const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits);
     void _RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, FrameData *data, const float *viewProj,
                              uint32_t motion, VkRenderingAttachmentInfo depth);
 

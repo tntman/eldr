@@ -908,7 +908,8 @@ void main()
         color = emissive + clamped;
     }
     vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
-    color += SubsurfaceTransmission(inWorldPos, n);
+    const vec3 splitThrough = SubsurfaceTransmission(inWorldPos, n);  // direct diffuse, unscaled by the light paths
+    color += splitThrough;
 
     // Image-based lighting from the dome, if any.
     vec3 specular = vec3(0.0), Lavg = vec3(0.0);
@@ -1063,10 +1064,10 @@ void main()
     // what is behind); a pixel's last surface at equal depth wins.
     if (LightSplits() && frame.aovs.x != 0u && kShadingPass == 0u && alpha >= 1.0) {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
-        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, 1.0));
         imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
         imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse + splitDomeGlossy, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy + gRefractedLight, 1.0));
     }
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
