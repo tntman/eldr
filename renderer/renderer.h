@@ -337,6 +337,13 @@ public:
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
         float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
+        // Back-face hits in SSR and SSGI (Blender 5.2's Backface option): a
+        // ray that meets the visible surface from behind (it went behind an
+        // object) takes its radiance times screenBackfaceScale (0: none,
+        // 1: as a front face). Off: SSR counts them fully, SSGI's bitmask
+        // takes none and its horizon scan all, as before.
+        bool screenBackface = true;
+        float screenBackfaceScale = 0.25f;
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.

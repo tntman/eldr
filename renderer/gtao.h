@@ -50,10 +50,12 @@ public:
     // neighbourhood clipping would keep the denoised blotches. `thickness`:
     // the thickness estimator; `objectThickness` > 0: the visibility
     // bitmask, objects that thick behind their front (world units).
+    // `backface` >= 0: hits on back faces take that share of their light
+    // (Frame::screenBackface); < 0: the bitmask takes none, the horizon all.
     void RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                     const float eye[3], float radius, float noise, uint32_t slices, uint32_t steps,
                     VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
-                    float objectThickness);
+                    float objectThickness, float backface);
 
     VkImageView Output() const { return _ssgiOn ? _ssgi[_current].view : _ao.view; }
 

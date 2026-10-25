@@ -1,6 +1,6 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
-thickness estimator (SSR at grazing angles), SSGI's visibility bitmask and
-denoised glossy SSR.
+thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
+denoised glossy SSR and back-face hits.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -131,6 +131,30 @@ grain = roughness(denoised, 100, 240, 160, 300)
 print("glossy SSR: the column's reflection %.1f (dome alone %.1f), grain %.2f" % (glossy, dome, grain))
 expect(glossy > dome + 5, "denoised SSR shows a glossy floor's reflections")
 expect(grain < 3, "denoised SSR is smooth without TAA")
+
+# Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
+# from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan
+# in the Cornell box, where the floor around the tall box and the sphere
+# sees their tops and backs, and SSR's chrome sphere over the floor, whose
+# rays pass behind its silhouette: both darker with a scale of 0 than of 1,
+# which is as without the option (SSR, horizon).
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "cornell.usda"))
+floor = (110, 230, 290, 270)
+lit = {"hdvk:ssgi": True, "hdvk:exposureCompensation": 1.0}
+one = mean(render(stage, {**lit, "hdvk:screenBackfaceScale": 1.0}, frames=8), *floor)
+none = mean(render(stage, {**lit, "hdvk:screenBackfaceScale": 0.0}, frames=8), *floor)
+off = mean(render(stage, {**lit, "hdvk:screenBackface": False}, frames=8), *floor)
+print("SSGI back-face hits: the floor %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
+expect(none < one - 0.2, "SSGI: back-face hits at scale 0 take no light")
+expect(abs(one - off) < 0.05, "SSGI: back-face hits at scale 1 are as without the option")
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
+sphere = (150, 80, 250, 240)  # the sphere and its reflection
+one = mean(render(stage, {**bright, "hdvk:screenBackfaceScale": 1.0}), *sphere)
+none = mean(render(stage, {**bright, "hdvk:screenBackfaceScale": 0.0}), *sphere)
+off = mean(render(stage, {**bright, "hdvk:screenBackface": False}), *sphere)
+print("SSR back-face hits: the sphere %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
+expect(none < one - 0.1, "SSR: back-face hits at scale 0 take no light")
+expect(abs(one - off) < 0.05, "SSR: back-face hits at scale 1 are as without the option")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

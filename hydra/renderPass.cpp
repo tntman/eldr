@@ -175,7 +175,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
-                                {t2.splitDomeDirect, &frame.splitDomeDirect}}) {
+                                {t2.splitDomeDirect, &frame.splitDomeDirect},
+                                {t2.screenBackface, &frame.screenBackface}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -197,7 +198,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.adaptiveFinalThreshold, &frame.adaptiveFinalThreshold},
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
-                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
+                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp},
+                                {t2.screenBackfaceScale, &frame.screenBackfaceScale}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a

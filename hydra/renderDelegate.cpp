@@ -205,6 +205,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
         {"Screen-Space Thickness Estimator (SSGI, SSR)", t2.ssgiThickness, VtValue(frame.ssgiThickness)},
         {"SSGI Visibility Bitmask (light behind thin objects)", t2.ssgiBitmask, VtValue(frame.ssgiBitmask)},
+        {"Screen-Space Back-Face Hits (SSR, SSGI)", t2.screenBackface, VtValue(frame.screenBackface)},
+        {"Screen-Space Back-Face Hit Scale (0-1)", t2.screenBackfaceScale, VtValue(frame.screenBackfaceScale)},
         {"SSGI Bitmask Object Thickness (fraction of SSGI radius)", t2.ssgiBitmaskThickness,
          VtValue(frame.ssgiBitmaskThickness)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},

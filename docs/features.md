@@ -208,7 +208,9 @@ Three layers, each separately switchable:
 SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 (light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
 radius thick); `ssgiThickness` makes rays respect thin
-and grazing surfaces. `emissiveLights`, `fogGiAmbient` and `probeNormalize`
+and grazing surfaces. `screenBackface` (on) gives hits on the back of what
+the camera sees `screenBackfaceScale` (0.25) of the front's light, in SSGI and
+SSR alike (Blender 5.2's Backface option). `emissiveLights`, `fogGiAmbient` and `probeNormalize`
 use the GI. With the film, `giPreconverge` waits for the probes (about 33
 extra frames).
 

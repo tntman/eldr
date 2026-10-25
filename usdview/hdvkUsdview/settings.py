@@ -14,7 +14,7 @@ GROUPS = [
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
-     "ssgiThickness ssgiBitmask ssgiBitmaskThickness directClamp indirectClamp"),
+     "ssgiThickness ssgiBitmask ssgiBitmaskThickness screenBackface screenBackfaceScale directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "

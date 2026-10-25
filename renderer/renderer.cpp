@@ -56,7 +56,7 @@ struct FrameData {
     uint32_t sampleInfo[4];
     uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
-    float screenTrace[4];    // thickness estimator (SSR) on
+    float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
 };
@@ -2632,6 +2632,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
+    // SSR's back-face hits: their share of light (1 without Frame::screenBackface: as before).
+    fd.screenTrace[1] = frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : 1.0f;
     if (frame.lod) {
         fd.features[0] |= kFeatureLod;
         fd.geometry[1] = frame.lodBias;
@@ -3453,7 +3455,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f);
+                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
+                         frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,

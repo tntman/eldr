@@ -552,6 +552,22 @@ layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;    
 layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1
 float ssrHitDistance = -1.0;  // TraceReflection's last hit, world units
 
+// The visible surface's normal at `ndc` (world point p) from the depth:
+// per axis the shorter of the two one-pixel steps, so silhouettes don't
+// bend it; facing the camera.
+vec3 DepthNormal(vec2 ndc, vec3 p)
+{
+    vec3 t[2];
+    for (int i = 0; i < 2; ++i) {
+        vec2 o = i == 0 ? vec2(2.0 / frame.viewport.x, 0.0) : vec2(0.0, 2.0 / frame.viewport.y);
+        vec3 a = Unproject(vec3(ndc + o, SceneDepth(ndc + o) * 2.0 - 1.0)) - p;
+        vec3 b = p - Unproject(vec3(ndc - o, SceneDepth(ndc - o) * 2.0 - 1.0));
+        t[i] = dot(a, a) < dot(b, b) ? a : b;
+    }
+    vec3 n = normalize(cross(t[0], t[1]));
+    return dot(n, frame.cameraPos.xyz - p) < 0.0 ? -n : n;
+}
+
 // Screen-space reflection: marches the ray linearly through NDC (where
 // it stays a straight line with affine depth) against the prepass depth,
 // refines the first crossing by bisection and shades it with last frame's
@@ -702,6 +718,12 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             }
             hit = textureLod(previousColor, prevUv, 0.0);
             hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
+            // Met from behind (the ray went behind an object): the light of
+            // its unseen side is guessed as a share of the front's
+            // (Frame::screenBackface).
+            if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 0.0) {
+                hit.rgb *= frame.screenTrace.y;
+            }
             // Fade towards the screen edges, beyond which the ray is blind.
             vec2 edge = 1.0 - abs(ndc);
             return smoothstep(0.0, 0.1, min(edge.x, edge.y));
