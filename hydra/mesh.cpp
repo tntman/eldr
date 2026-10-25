@@ -26,7 +26,7 @@ namespace {
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (st)
-    ((riMatte, "ri:attributes:Ri:Matte"))
+    ((eldrMatte, "eldr:matte"))
     ((karmaHoldout, "karma:object:holdoutmode"))
     ((planarReflection, "hdvk:planarReflection"))
     ((reflectionProbe, "hdvk:reflectionProbe")));
@@ -55,7 +55,7 @@ bool FindPrimvar(HdSceneDelegate *sd, SdfPath const &id, TfToken const &name,
 
 bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
 {
-    for (const TfToken &name : {_tokens->riMatte, _tokens->karmaHoldout}) {
+    for (const TfToken &name : {_tokens->eldrMatte, _tokens->karmaHoldout}) {
         HdInterpolation interp;
         if (!FindPrimvar(sceneDelegate, id, name, &interp)) {
             continue;
