@@ -1247,8 +1247,9 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
 
 // Frame::pipelinePrewarm: queues the shading sets of `features` with one
 // optional feature toggled that this scene can use, and starts the worker.
-// ponytail: single toggles only; two at once (gi and ssgi) wait for the
-// second's set, which the frame after the first queues.
+// ponytail: single toggles, then pairs of gi/ssgi/fog/refraction/translucent
+// shadows; other pairs wait for the second's set, which the frame after the
+// first queues.
 void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
 {
     if (features == _prewarmFor) {
@@ -1270,6 +1271,18 @@ void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
     for (uint32_t bit = 1; bit; bit <<= 1) {
         if ((toggles & bit) && bit != kFeatureGi && bit != kFeatureSsgi) {
             order.push_back(bit);
+        }
+    }
+    // Then the pairs a VFX artist switches together (GI+SSGI is above);
+    // volumes are a pass, not a shading feature.
+    constexpr uint32_t kPairable = kFeatureGi | kFeatureSsgi | kFeatureFog | kFeatureRefraction |
+                                   kFeatureTranslucentShadows;
+    for (uint32_t a = kPairable; a; a &= a - 1) {
+        for (uint32_t b = a & (a - 1); b; b &= b - 1) {
+            const uint32_t bits = (a & -a) | (b & -b);
+            if ((toggles & bits) == bits && bits != (kFeatureGi | kFeatureSsgi)) {
+                order.push_back(bits);
+            }
         }
     }
     {
