@@ -204,7 +204,7 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 
 | What | Karma | Eldr | Action |
 |---|---|---|---|
-| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | st (0,0) at +X +Y with the image's bottom row at t = 0, as UsdUVTexture reads images | None: UsdLux's text gives the corner, not the image flip. Left as is; flagged for the user. |
+| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | Matches since the change below: the image's top row at +Y, left edge at +X (before: the bottom row at +Y) | Changed to Karma's orientation at the user's request (`renderer/shaders/mesh.frag`; vkrtest and test_lighting check it). |
 | `primvars:displayColor` | read as sRGB (0.5 becomes 0.214 linear) | linear, as USD defines colour attributes | None, USD followed. A floor of displayColor 0.5 is 0.43 as bright in Karma. |
 | Dome in the camera | not drawn by default | drawn (`domeLightCameraVisibility`, true) | None; Hydra's own setting. |
 | Glossy highlights of small lights on a rough 0.15 floor | | up to 2.4x brighter peaks (lights.usda reflections) | Open: Eldr's representative-point specular. |

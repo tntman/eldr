@@ -392,7 +392,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         l = normalize(toLight + hw * uv.x + hh * uv.y);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
-            // The texture (UsdLux: st (0,0) at the light's +X +Y corner) where the specular representative point is, and
+            // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
             // above p (its foot on the plane) for diffuse, each at the mip
             // of what it gathers: the lobe's footprint at the light, and
             // the light seen from its height over the plane.
@@ -403,12 +403,12 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                                      textureSize(textures[nonuniformEXT(tex)], 0).y));
             float aLobe = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
-            specularTint = textureLod(textures[nonuniformEXT(tex)], 0.5 - uv * 0.5, lobeLod).rgb;
+            specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
             vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
             foot = rect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
             float height = abs(dot(toLight, light.axis.xyz));
             float footLod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
-            diffuseTint = textureLod(textures[nonuniformEXT(tex)], 0.5 - foot * 0.5, footLod).rgb;
+            diffuseTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + foot * vec2(-0.5, 0.5), footLod).rgb;
         }
     }
     float aWide = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);

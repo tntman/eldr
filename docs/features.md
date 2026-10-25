@@ -694,7 +694,7 @@ shading inputs.
 | `karma:camera:material:binding`, `karma:camera:use_lensshader` | camera | A Karma Physical Lens (`kma_physicallens`) material's `opencv_k1..k6`, `opencv_p1`, `opencv_p2` become the same distortion. Edits reach the camera on its next sync. |
 | `primvars:skel:skinningMethod = "dualQuaternion"` | skinned mesh | Dual-quaternion skinning (otherwise linear blend). |
 | `inputs:angle` | DistantLight | Sun angular diameter for soft shadows (plus the film's jitter). |
-| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image over the light's surface (rect and disk; as UsdLux specifies, st (0,0) is the +X +Y corner) or the dome's latlong. |
+| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image over the light's surface (rect and disk; s = 0 is at +X as UsdLux specifies, and the image's top row is at +Y as in Karma, which differs from UsdLux's st (0,0) corner) or the dome's latlong. |
 | `shadow:enable` | lights | Lights without it cast no shadows. |
 | `emissiveColor` (constant) | UsdPreviewSurface or standard_surface emission | Small bright emitters are promoted to lights. |
 | Camera `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field and motion blur. |
