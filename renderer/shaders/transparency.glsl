@@ -20,6 +20,9 @@ layout(set = 0, binding = 42) uniform sampler2D refractionBackground;
 // what's behind it) and the fraction it refracts (sampled from the
 // background by TransmissionEnd).
 float gStraight = 0.0, gRefracted = 0.0;
+// The light TransmissionEnd added from the background (the light splits'
+// indirect glossy: Karma counts refraction with the specular lobes).
+vec3 gRefractedLight = vec3(0.0);
 
 // Before shading: `alpha` (opacity) becomes the fraction that reflects
 // diffusely and emits.
@@ -131,6 +134,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         vec4 background = RefractedBackground(r, thickness, spread);
         vec3 transmitted = through * tint;
         color += transmitted * background.rgb;
+        gRefractedLight += transmitted * background.rgb;
         lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
     }
     if (inside) {
@@ -138,6 +142,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
         vec3 reflected = gRefracted * F * tint;
         color += reflected * mirrored.rgb;
+        gRefractedLight += reflected * mirrored.rgb;
         lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
     }
     return 1.0 - gStraight - lost;

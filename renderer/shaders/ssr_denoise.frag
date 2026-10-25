@@ -20,7 +20,13 @@ layout(push_constant) uniform DenoiseParams {
     mat4 prevViewProj;  // world -> last frame's clip
     vec4 eye;           // camera position; w: noise index
     vec4 params;        // x: kDimSsrDenoise's value (< 0: gradient noise), history valid, 1/width, 1/height
+    vec4 splits;        // x: 1 adds the result to the light splits
 } pc;
+
+#if PASS == 2
+// The light splits (mesh.frag's lightSplits): layer 3 is the indirect glossy light.
+layout(set = 0, binding = 9, rgba16f) uniform image2DArray lightSplits;
+#endif
 
 layout(location = 0) out vec4 outColor;
 
@@ -208,6 +214,10 @@ vec4 Composite(ivec2 q)
         }
     }
     vec3 c = weights > 0.0 ? sum / weights : center.rgb;
+    if (pc.splits.x != 0.0) {
+        vec4 glossy = imageLoad(lightSplits, ivec3(q, 3));
+        imageStore(lightSplits, ivec3(q, 3), vec4(glossy.rgb + f.rgb * c, glossy.a));
+    }
     return vec4(f.rgb * c, 0.0);
 }
 

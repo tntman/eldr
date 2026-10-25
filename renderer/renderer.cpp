@@ -2501,7 +2501,7 @@ void Renderer::_RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewP
 // lobe only, into Subsurface's targets (testing the opaque depth), which
 // it then blurs into the colour.
 void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,
-                                 const float *invViewProj, VkRenderingAttachmentInfo depth)
+                                 const float *invViewProj, VkRenderingAttachmentInfo depth, bool splits)
 {
     // The opaque pass's ids, velocity and colour are written before this
     // pass loads (and the blur adds to) them.
@@ -2554,7 +2554,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
                                  sizeof(VkDrawIndexedIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
-    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples);
+    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits);
 }
 
 bool Renderer::IsConverged() const
@@ -3642,12 +3642,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     pass("shading");
     if (ssrDenoise) {
         _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
-                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f);
+                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits);
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;
     if (fd.features[0] & kFeatureSubsurface) {
-        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt);
+        _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt, splits);
         pass("subsurface");
     }
     if (volumesUnder) {

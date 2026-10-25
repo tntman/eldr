@@ -517,11 +517,14 @@ visibility, and its reflection under specular occlusion where no probe,
 mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
 SSGI, multi-bounce, probes and reflections add beyond that. Direct and
 indirect add up to the combined value, and with the emission to the linear beauty
-(tests/test_aov_sums.py), for diffuse, coat, sheen and emissive surfaces, plain and under
-GI, to within 3%. Not in the splits: the denoised glossy SSR's rays (6-7% of a lit sphere
-with `ssrDenoise`), a transmissive surface's refracted light, and for subsurface
-materials the profile blur (up to 10% across light and shadow edges) and the
-thin-walled transmission; the splits are the light before them. A sheen or coat's
+(tests/test_aov_sums.py), for every closure (diffuse, coat, sheen, emissive, subsurface,
+transmission), plain and under GI and the denoised SSR, to within 3%. Where the
+light is added after the shading it joins the splits there: a transmissive surface's
+refracted light (what it samples from the background) counts as indirect glossy
+(there is no separate refraction AOV); the denoised SSR's rays go to indirect glossy when the pass adds them; the
+subsurface blur moves the same light in the diffuse splits (shared between direct and
+indirect by their unblurred shares); the sun's light through thin subsurface parts is
+direct diffuse. A sheen or coat's
 dome light counts as dome light (direct with `splitDomeDirect`), also under GI. They are
 only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the

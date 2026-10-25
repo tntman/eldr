@@ -17,7 +17,8 @@ namespace vkr {
 //      neighbourhood's statistics in YCoCg, with the luma's second moment
 //      for the variance;
 //   3. a variance-guided bilateral filter, its result times the weight
-//      added to the colour.
+//      added to the colour (and, with `addToSplits`, to the indirect glossy
+// layer of the light splits `splits`, Aovs::SplitsView).
 // ponytail: full resolution, one ray per pixel; EEVEE traces at half or
 // quarter resolution and stretches the spatial kernel along the reflection.
 class SsrDenoise {
@@ -51,7 +52,8 @@ public:
     // dimension's value turning the blue noise (kDimSsrDenoise); < 0:
     // gradient noise shifted by `noise`.
     void Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], const float prevViewProj[16],
-                 const float eye[3], uint32_t noise, bool history, float dimension);
+                 const float eye[3], uint32_t noise, bool history, float dimension,
+                 VkImageView splits, bool addToSplits);
     // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Prepare.
     void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 

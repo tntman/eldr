@@ -26,6 +26,7 @@ struct DenoiseParams {  // mirror of the push block in ssr_denoise.frag
     float prevViewProj[16];
     float eye[4];     // camera position; w: noise index
     float params[4];  // kDimSsrDenoise's value (< 0: none), history valid, 1/width, 1/height
+    float splits[4];  // x: 1 adds the result to the light splits (binding 9)
 };
 
 VkImageSubresourceRange Color()
@@ -49,12 +50,13 @@ SsrDenoise::SsrDenoise(Device &device)
     // 0: depth, 1..4: mesh.frag's rays, directions, normals, weights,
     // 5: the spatial pass's result, 6: last frame's history (linear),
     // 7: this frame's, 8: the blue noise (SetBlueNoise).
-    VkDescriptorSetLayoutBinding bindings[kBindings] = {};
+    VkDescriptorSetLayoutBinding bindings[kBindings + 1] = {};
     for (uint32_t i = 0; i < kBindings; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
     }
+    bindings[kBindings] = {kBindings, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_FRAGMENT_BIT};  // the light splits
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = kBindings;
+    slci.bindingCount = kBindings + 1;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(DenoiseParams)};
@@ -130,11 +132,12 @@ void SsrDenoise::Prepare()
         }
     });
 
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kBindings};
+    const VkDescriptorPoolSize size[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kBindings},
+                                          {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 2;
-    pci.poolSizeCount = 1;
-    pci.pPoolSizes = &size;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes = size;
     Check(vkCreateDescriptorPool(_dev.device, &pci, nullptr, &_pool), "vkCreateDescriptorPool");
     const VkDescriptorSetLayout layouts[2] = {_setLayout, _setLayout};
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -187,14 +190,23 @@ void SsrDenoise::Clear(VkCommandBuffer cmd)
 
 void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16],
                          const float prevViewProj[16], const float eye[3], uint32_t noise, bool history,
-                         float dimension)
+                         float dimension, VkImageView splits, bool addToSplits)
 {
+    StorageBarrier(cmd);  // the shading pass's splits
+    const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+    write.dstBinding = kBindings;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    write.pImageInfo = &splitsInfo;
     for (const Image *img : {&_rays, &_directions, &_normals, &_factor}) {
         ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                      VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     }
     _current ^= 1u;
+    write.dstSet = _sets[_current];
+    vkUpdateDescriptorSets(_dev.device, 1, &write, 0, nullptr);
     const Image &cur = _history[_current];
     const VkDescriptorSet set = _sets[_current];
     DenoiseParams params{};
@@ -206,6 +218,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float inv
     params.params[1] = history ? 1.0f : 0.0f;
     params.params[2] = 1.0f / float(_width);
     params.params[3] = 1.0f / float(_height);
+    params.splits[0] = addToSplits ? 1.0f : 0.0f;
 
     auto toTarget = [&](const Image &img) {
         ImageBarrier(cmd, img.image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
@@ -228,6 +241,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float inv
     toRead(cur);
     DrawFullscreen(cmd, _composite, _layout, set, color, _width, _height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &params,
                    sizeof(params));
+    StorageBarrier(cmd);
 }
 
 } // namespace vkr
