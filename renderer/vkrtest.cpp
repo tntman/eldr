@@ -3241,6 +3241,25 @@ int main()
             std::printf("shadow jitter: floor behind a ceiling near a bulb lit to %.3f\n", worstLeak);
             Expect(leakOpen.At(57, 32, 0) > 0.01f && worstLeak < 0.02f,
                    "shadow jitter: a caster just outside a sphere light still shadows");
+            // The same with a tube of radius 0.05 along y in the bulb's place
+            // (a fluorescent tube just under a shelf). Clearing its radius
+            // past the sample point dropped the ceiling.
+            bulb->type = vkr::Light::Type::Cylinder;
+            bulb->halfWidth[0] = 0.0f;
+            bulb->halfWidth[1] = 0.5f;
+            bulb->castShadows = false;
+            leak.Commit();
+            const Image tubeLeakOpen = film(leak, frame);
+            bulb->castShadows = true;
+            leak.Commit();
+            const Image tubeLeakOn = film(leak, frame);
+            float worstTubeLeak = 0.0f;
+            for (int x = 56; x < 59; ++x) {
+                worstTubeLeak = std::max(worstTubeLeak, tubeLeakOn.At(x, 32, 0) / tubeLeakOpen.At(x, 32, 0));
+            }
+            std::printf("shadow jitter: floor behind a ceiling near a tube lit to %.3f\n", worstTubeLeak);
+            Expect(tubeLeakOpen.At(57, 32, 0) > 0.01f && worstTubeLeak < 0.02f,
+                   "shadow jitter: a caster just outside a cylinder light still shadows");
         }
 
         {
