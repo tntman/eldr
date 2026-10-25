@@ -4,7 +4,6 @@
 
 #include "frame.glsl"
 #include "scene.glsl"
-#include "displace.glsl"
 
 // Shared by the main pass (camera viewProj, culled instance lists) and the
 // shadow pass (cascade viewProj, identity lists); the shadow pipeline has no
@@ -43,12 +42,15 @@ layout(location = 4) flat out uint outMaterial;
 layout(location = 5) flat out uint outEntry;  // visible-list entry (mask.frag's LodKeep)
 #endif
 layout(location = 2) out vec2 outUv;
-#if defined(GRAPH) && !defined(DEPTH_ONLY)
-// Material programs (built with GRAPH): vertex-rate primvars, packed in one
-// vec4 per vertex.
+// Material programs (built with GRAPH, and displacement graphs): vertex-rate
+// primvars, packed in one vec4 per vertex.
 layout(std430, set = 0, binding = 32) readonly buffer PrimvarVertices { vec4 primvarVertices[]; };
+#if defined(GRAPH) && !defined(DEPTH_ONLY)
 layout(location = 5) out vec4 outPrimvars;
 #endif
+
+#define DISPLACE_VERTEX
+#include "displace.glsl"
 
 mat4 Joint(uint i, bool previous)
 {
@@ -126,7 +128,8 @@ void main()
     // Displaced along the rest normal before anything moves it, the same in
     // every pass (displace.glsl).
     bool facing = kDisplacement && d.facing != 0u;
-    vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d.material, inUv), prevPosition = position;
+    vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d, slot, model, inVertexColor.rgb),
+         prevPosition = position;
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {

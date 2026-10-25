@@ -119,7 +119,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lodBias, "hdvk:lodBias"))                              \
     ((curveRibbons, "hdvk:curveRibbons"))                    \
     ((pointSprites, "hdvk:pointSprites"))                    \
-    ((lodFade, "hdvk:lodFade"))
+    ((lodFade, "hdvk:lodFade"))                              \
+    ((displacementGraphs, "hdvk:displacementGraphs"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 

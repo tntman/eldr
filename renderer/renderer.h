@@ -189,6 +189,9 @@ public:
         // surfaces; the scale multiplies every material's offset.
         bool displacement = true;
         float displacementScale = 1.0f;
+        // Displacement from shading graphs (run per vertex); off, those
+        // materials don't displace.
+        bool displacementGraphs = true;
         // Levels of detail (Scene builds them for heavy meshes): off draws
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;

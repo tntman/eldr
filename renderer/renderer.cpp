@@ -44,7 +44,7 @@ struct FrameData {
     float probeMax[4];
     float planarPlane[4];    // the mirror's plane, facing the camera
     uint32_t planarInfo[4];  // the mirror's mesh slot
-    float geometry[4];       // displacement scale (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
+    float geometry[4];       // displacement scale, w graphs (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
 };
 
@@ -475,10 +475,10 @@ void Renderer::_CreateDescriptors()
         {25, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | kVertex},
         {26, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
-        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},  // also displacement programs (displace.glsl)
+        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
+        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
+        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
@@ -1871,6 +1871,7 @@ void Renderer::Render(const Scene &scene, const Frame &frame, const Targets &out
     if (frame.displacement && gpu.displaced) {
         fd.features[0] |= kFeatureDisplacement;
         fd.geometry[0] = frame.displacementScale;
+        fd.geometry[3] = frame.displacementGraphs ? 1.0f : 0.0f;
     }
     if (frame.lod) {
         fd.features[0] |= kFeatureLod;

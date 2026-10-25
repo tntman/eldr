@@ -38,9 +38,10 @@ struct Material {
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile
 
-#ifdef RAY_TRACING
-// Ray tracing stages have no derivatives: hit shaders set the ray cone's
-// footprint in uv here (rt.glsl).
+#if defined(RAY_TRACING) || defined(UV_FOOTPRINT)
+// Ray tracing and vertex stages have no derivatives: hit shaders set the
+// ray cone's footprint in uv here (rt.glsl), the vertex stage the mesh's
+// uv spacing (displace.glsl).
 float rtUvFootprint = 0.0;
 #define UV_DX(uv) vec2(rtUvFootprint, 0.0)
 #define UV_DY(uv) vec2(0.0, rtUvFootprint)

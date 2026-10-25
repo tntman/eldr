@@ -247,6 +247,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
         {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
+        {"Displacement Graphs (per vertex)", t.displacementGraphs, VtValue(frame.displacementGraphs)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},

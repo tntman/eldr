@@ -49,6 +49,7 @@ struct DrawInfo {
     uint hair;             // 1: shaded as hair (brdf.glsl)
     uint holdout;          // 1: a holdout (transparency.glsl)
     uint facing;           // camera-facing: 1 ribbons, 2 discs (mesh.vert's Facing)
+    float uvSpacing;       // mean uv length of an edge (displace.glsl's texture footprint)
 };
 
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).

@@ -40,7 +40,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 probeMax;
     vec4 planarPlane;    // the mirror's plane (unit normal towards the camera, offset)
     uvec4 planarInfo;    // x: the mirror's mesh slot (DrawInfo)
-    vec4 geometry;       // x: displacement scale (kFeatureDisplacement); y: LOD bias, z: frame (kFeatureLod)
+    vec4 geometry;       // x: displacement scale, w: 1 = displacement graphs (kFeatureDisplacement);
+                         // y: LOD bias, z: frame (kFeatureLod)
     uvec4 lodFade;       // x: frames a level of detail change crossfades over (0: it pops; LodKeep)
 } frame;
 

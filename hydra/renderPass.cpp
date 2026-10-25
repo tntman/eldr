@@ -151,6 +151,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogZUp, &frame.fogZUp}, {t.reflectionProbe, &frame.reflectionProbe},
                                 {t.planarReflections, &frame.planarReflections},
                                 {t.volumes, &frame.volumes}, {t.displacement, &frame.displacement},
+                                {t.displacementGraphs, &frame.displacementGraphs},
                                 {t.lod, &frame.lod}, {t.lodFade, &frame.lodFade}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }

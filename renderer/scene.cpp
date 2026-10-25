@@ -53,6 +53,7 @@ static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4
 struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
     float params[4];      // Material::displacement, displacementBound
     GpuTexRef tex;
+    uint32_t program[4];  // Material::displacementProgram, as GpuMaterial::program (count 0: none)
 };
 struct GpuLod {           // mirror of Lod in shaders/cull.comp
     uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
@@ -791,6 +792,14 @@ void Scene::_UploadGeometry(Mesh &m)
         }
     }
 
+    // The mean uv length of an edge: a texture's footprint at a vertex
+    // (displace.glsl's mip level).
+    double uvLength = 0.0;
+    for (size_t c = 0; !m.uvs.empty() && c < corners; ++c) {
+        const float *a = vertices[indices[c]].uv, *b = vertices[indices[c % 3 == 2 ? c - 2 : c + 1]].uv;
+        uvLength += std::hypot(double(b[0]) - a[0], double(b[1]) - a[1]);
+    }
+    m._uvSpacing = corners > 0 ? float(uvLength / double(corners)) : 0.0f;
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
     uint32_t vertexOffset, firstIndex;
     while (!_vertexAlloc.Allocate(vertexCount, &vertexOffset)) {
@@ -1463,6 +1472,25 @@ void Scene::Commit()
         std::copy(r.uvTransform + 3, r.uvTransform + 6, g.uvRows[1]);
         return g;
     };
+    // A program's code, constants and images (shaders/program.glsl); where
+    // they went in `out` (GpuMaterial::program).
+    auto appendProgram = [&](const MaterialProgram &p, uint32_t out[4]) {
+        if (p.Empty() || !p.Valid()) {
+            return;
+        }
+        out[0] = uint32_t(programCode.size() / 4);
+        out[1] = uint32_t(p.code.size() / 4);
+        out[2] = uint32_t(programConstants.size() / 4);
+        out[3] = uint32_t((programConstants.size() + p.constants.size()) / 4);
+        programCode.insert(programCode.end(), p.code.begin(), p.code.end());
+        programConstants.insert(programConstants.end(), p.constants.begin(), p.constants.end());
+        for (const TextureRef &image : p.images) {
+            const GpuTexRef r = texRef(image);
+            const size_t at = programConstants.size();
+            programConstants.resize(at + sizeof(GpuTexRef) / sizeof(float));
+            std::memcpy(&programConstants[at], &r, sizeof(r));
+        }
+    };
     auto materialIndex = [&](const Material &m) {
         const auto [it, inserted] = materialSlots.emplace(&m, uint32_t(materials.size()));
         if (inserted) {
@@ -1507,21 +1535,7 @@ void Scene::Commit()
             std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
             g.subsurface[3] = m.subsurface;
             std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
-            const MaterialProgram &p = m.program;
-            if (!p.Empty() && p.Valid()) {
-                g.program[0] = uint32_t(programCode.size() / 4);
-                g.program[1] = uint32_t(p.code.size() / 4);
-                g.program[2] = uint32_t(programConstants.size() / 4);
-                g.program[3] = uint32_t((programConstants.size() + p.constants.size()) / 4);
-                programCode.insert(programCode.end(), p.code.begin(), p.code.end());
-                programConstants.insert(programConstants.end(), p.constants.begin(), p.constants.end());
-                for (const TextureRef &image : p.images) {
-                    const GpuTexRef r = texRef(image);
-                    const size_t at = programConstants.size();
-                    programConstants.resize(at + sizeof(GpuTexRef) / sizeof(float));
-                    std::memcpy(&programConstants[at], &r, sizeof(r));
-                }
-            }
+            appendProgram(m.program, g.program);
             materials.push_back(g);
         }
         return it->second;
@@ -1570,6 +1584,7 @@ void Scene::Commit()
         d.motion = motionBase[slot];
         d.hair = m.hair ? 1 : 0;
         d.facing = m.facing;
+        d.uvSpacing = m._uvSpacing;
         facing = facing || (drawable && m.facing != Mesh::kNotFacing);
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
@@ -1585,7 +1600,8 @@ void Scene::Commit()
         // program's fallback.
         d.primvars = kNone;
         d.primvarVertices = m._primvarVertexCount > 0 ? m._primvarVertexOffset : kNone;
-        if (program && !m.material->program.primvars.empty()) {
+        const bool displacementProgram = drawable && m.material && !m.material->displacementProgram.Empty();
+        if ((program || displacementProgram) && !m.material->program.primvars.empty()) {
             d.primvars = uint32_t(primvarTable.size() / 4);
             for (const std::string &name : m.material->program.primvars) {
                 uint32_t e[4] = {0, 0, 0, 0};
@@ -1746,6 +1762,7 @@ void Scene::Commit()
         g.params[0] = material->displacement;
         g.params[1] = material->displacementBound;
         g.tex = texRef(material->displacementTex);
+        appendProgram(material->displacementProgram, g.program);
         _gpu.displaced = _gpu.displaced || material->displacementBound > 0;
     }
     _device->Reserve(_displacements, displacements.size() * sizeof(GpuDisplacement),

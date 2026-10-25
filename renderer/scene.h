@@ -124,7 +124,8 @@ struct MaterialProgram {
     enum Input : uint32_t {
         kBaseColor, kEmissive, kMetallic, kRoughness, kOcclusion, kNormal, kOpacity,
         kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
-        kThinFilmThickness
+        kThinFilmThickness,
+        kDisplacement  // Material::displacementProgram's offset (mesh.vert)
     };
 
     std::vector<uint32_t> code;      // 4 words per op
@@ -268,6 +269,10 @@ struct Material {
     float displacement = 0;
     float displacementBound = 0;
     TextureRef displacementTex;
+    // Or a shading graph's offset, run per vertex (kOutput of
+    // MaterialProgram::kDisplacement; its primvars are `program`'s slots);
+    // the shading pass then takes the displaced surface's own normal.
+    MaterialProgram displacementProgram;
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -358,6 +363,7 @@ private:
     // (object space, three points).
     bool _flat = false;
     float _flatTriangle[9] = {};
+    float _uvSpacing = 0;  // DrawInfo::uvSpacing
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -480,7 +486,7 @@ struct DrawInfo {
     uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
     uint32_t holdout;          // 1: Mesh::holdout
     uint32_t facing;           // Mesh::facing
-    uint32_t pad;
+    float uvSpacing;           // mean uv length of an edge (vertex-stage texture footprint, displace.glsl)
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
