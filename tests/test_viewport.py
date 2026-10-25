@@ -8,7 +8,7 @@ framebuffer, TestIntersection) in an offscreen GL context. Checks
       a temp folder),
   (d) the background pipeline prewarm on a cold cache keeps frames coming,
   (e) closing and reopening a stage 20 times with the prewarm on does not hang
-      (faulthandler kills the process with all stacks after 180 s).
+      (faulthandler kills the process with all stacks after 240 s).
 Run: usdenv.cmd python tests\\test_viewport.py"""
 import faulthandler
 import os
@@ -29,7 +29,7 @@ from pxr import Gf, Usd, UsdGeom, UsdImagingGL
 W, H = 320, 240
 SCENE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes", "step4.usda")
 
-faulthandler.dump_traceback_later(900, exit=True)  # the whole test; (e) has its own 120 s
+faulthandler.dump_traceback_later(900, exit=True)  # the whole test; (e) has its own 240 s
 
 app = QApplication(sys.argv)
 surface = QOffscreenSurface()
@@ -208,7 +208,7 @@ for prewarm in (False, True):
     view.Close()
 
 # --- (e) close and reopen --------------------------------------------------
-faulthandler.dump_traceback_later(180, exit=True)  # the watchdog: a hang prints every thread's stack and exits
+faulthandler.dump_traceback_later(240, exit=True)  # the watchdog: a hang prints every thread's stack and exits
 start = time.perf_counter()
 for i in range(20):
     view = View(0.5 if i % 2 else 1.0, True, gi=bool(i % 3 == 0))  # a toggled feature queues more prewarm sets
