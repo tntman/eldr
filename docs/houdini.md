@@ -84,16 +84,9 @@ copy `eldr.json` to `Documents/houdini22.0/packages/`, or set
 `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`. Then pick Eldr in the Solaris
 viewport's renderer menu or on a Render Settings LOP.
 
-<<<<<<< HEAD
-## Tested (Houdini 22.0.466)
+## Volumes, tested
 
-- The build succeeds.
-- `hython` with the package: `UsdImagingGL.Engine.GetRendererPlugins()` lists
-  `HdVkRendererPlugin`, display name "Eldr".
-- `hython tests\houdini_render.py tests\scenes\step4.usda /cam out.png`
-  (with `PXR_PLUGINPATH_NAME=<build-h22>\`) creates an engine with Eldr and
-  renders a correct image of the scene.
-- Volumes: `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
+- `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
   and `volume_material.usda` gives 8-bit images identical to the same
   script run with the normal build under `usdenv.cmd python`. Set
   `PXR_AR_DEFAULT_SEARCH_PATH` to Houdini's
@@ -106,10 +99,6 @@ viewport's renderer menu or on a Render Settings LOP.
 - The same network saved by a USD ROP (`.vdb` and `.bgeo.sc` volume files)
   renders both volumes in husk.
 
-## Not verified
-
-- The Solaris viewport (GUI) was not tried.
-=======
 ## Tested (Houdini 22.0.466, FX licence)
 
 Run husk and hython with `HOUDINI_USER_PREF_DIR` set to an empty folder
@@ -169,13 +158,14 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 | Glossy highlights of small lights on a rough 0.15 floor | | up to 2.4x brighter peaks (lights.usda reflections) | Open: Eldr's representative-point specular. |
 | `ray:primid` | float id/coverage | Hydra int primId; husk writes it as a float reinterpretation, so it reads 0 | Open: use Cryptomatte-like ids from Karma, not comparable. |
 | Cryptomatte vars | rank layers `<name>00..` and manifest metadata (written by Karma) | a plain `<name>` RGB layer, no manifest | Open: Eldr's writer needs OpenImageIO; use the standalone build (usdrecord) for Cryptomatte. |
-| Volumes | rendered | not in this build (no OpenVDB reader): volume.usda shows no cloud | By design, see Build. |
+| Volumes | rendered | rendered (OpenVDB files and SOP volumes, see above) | Matches. |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s | |
 
 ## Not checked
 
-- The Solaris viewport (GUI): hython cannot create a viewer. The renderer
-  menu entry comes from `UsdRenderers.json`; husk lists it.
->>>>>>> worktree-agent-afe41cf4d0e2a6415
+- Interactive Solaris use beyond a first render: camera moves, picking,
+  Render Settings LOP options. The viewport (Houdini VK) does show Eldr's
+  image: Houdini hands delegates an OpenGL Hgi but composites with Vulkan, so
+  this build reads frames back instead of sharing GL textures.
 - The Python ctest suite uses `usdenv.cmd` (USD 26.08) and doesn't apply to
   this build.
