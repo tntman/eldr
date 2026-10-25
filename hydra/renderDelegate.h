@@ -173,6 +173,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lodFade, "hdvk:lodFade")) \
     ((displacementGraphs, "hdvk:displacementGraphs")) \
     ((splitDomeDirect, "hdvk:splitDomeDirect")) \
+    ((directIntensity, "hdvk:directIntensity")) \
+    ((indirectIntensity, "hdvk:indirectIntensity")) \
     ((sampledMotion, "hdvk:sampledMotion"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);

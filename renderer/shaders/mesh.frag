@@ -88,9 +88,16 @@ layout(location = 3) out vec2 outVelocity;
 // that is no optional feature, Renderer::_ShadingSet) have this code.
 layout(set = 0, binding = 67, rgba16f) uniform writeonly image2DArray lightSplits;
 const uint kCompiledLightSplits = 1u;
+// Light path intensity (Frame::directIntensity, indirectIntensity) scales
+// the splits' direct and indirect light in the final pixel; it needs them
+// too, so it shares their code and key bit.
+bool LightPathScaled()
+{
+    return (kCompiledFeatures & kCompiledLightSplits) != 0u && frame.lightPath.z != 0.0;
+}
 bool LightSplits()
 {
-    return (kCompiledFeatures & kCompiledLightSplits) != 0u && frame.aovs.x != 0u;
+    return (kCompiledFeatures & kCompiledLightSplits) != 0u && (frame.aovs.x != 0u || frame.lightPath.z != 0.0);
 }
 vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
 
@@ -951,6 +958,10 @@ void main()
         splitDomeGlossy = min(FssEss * domeSpecular * domeKept * specularAO, splitIndirectGlossy);
         splitIndirectGlossy -= splitDomeGlossy;
     }
+    if (LightPathScaled()) {
+        color += (frame.lightPath.x - 1.0) * (splitDirect + splitDomeGlossy) +
+                 (frame.lightPath.y - 1.0) * (splitIndirectDiffuse + splitIndirectGlossy);
+    }
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
@@ -960,6 +971,9 @@ void main()
             splitDomeGlossy += color - splitAmbient;
         } else {
             splitIndirectGlossy += color - splitAmbient;
+        }
+        if (LightPathScaled()) {  // the lobes' dome light, one way as above
+            color += ((frame.aovs.y != 0u ? frame.lightPath.x : frame.lightPath.y) - 1.0) * (color - splitAmbient);
         }
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
@@ -982,7 +996,7 @@ void main()
     outColor = vec4(color, alpha);
     // ponytail: opaque surfaces only (the translucent pass would overwrite
     // what is behind); a pixel's last surface at equal depth wins.
-    if (LightSplits() && kShadingPass == 0u && alpha >= 1.0) {
+    if (LightSplits() && frame.aovs.x != 0u && kShadingPass == 0u && alpha >= 1.0) {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse, 1.0));
         imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));

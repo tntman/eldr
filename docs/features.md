@@ -209,8 +209,9 @@ SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 (light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
 radius thick); `ssgiThickness` makes rays respect thin
 and grazing surfaces. `emissiveLights`, `fogGiAmbient` and `probeNormalize`
-use the GI. With the film, `giPreconverge` waits for the probes (about 33
-extra frames).
+use the GI. With the film, `giPreconverge` waits for the probes: their about 33
+updates run in the first frame, as probe traces and updates alone (no raster or
+shading in between), not as 33 frames.
 
 Typical costs on a 1080 Ti at 1280x720: probes 2-3 ms (Kitchen), SSGI
 0.67 ms at half resolution.
@@ -242,7 +243,8 @@ roughness:
 5. **Ray-traced reflections** (`rtReflections`): GGX-sampled rays, shaded at
    hits, up to roughness 0.7, replace the dome and SSR; rough ones are
    averaged over up to 12 pixels in the surface plane before the film.
-   Displacement is seen (`rtDisplacement`); skinned instances only up to the
+   Displacement is seen (`rtDisplacement`), also on skinned instances (displaced
+   before skinning, as the raster does, in rt_skin.comp); skinned instances only up to the
    cap.
 
 Mirror pixels take their planar reflection instead of SSR; other surfaces
@@ -492,11 +494,21 @@ cylinder) and, as in Karma, the dome's directly visible light
 visibility, and its reflection under specular occlusion where no probe,
 mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
 SSGI, multi-bounce, probes and reflections add beyond that. Direct and
-indirect always add up to the combined value. The denoised glossy SSR's rays
-are not in the splits. They are
+indirect add up to the combined value, and with the emission to the linear beauty
+(tests/test_aov_sums.py), for diffuse, coat, sheen and emissive surfaces, plain and under
+GI, to within 3%. Not in the splits: the denoised glossy SSR's rays (6-7% of a lit sphere
+with `ssrDenoise`), a transmissive surface's refracted light, and for subsurface
+materials the profile blur (up to 10% across light and shadow edges) and the
+thin-walled transmission; the splits are the light before them. A sheen or coat's
+dome light counts as dome light (direct with `splitDomeDirect`), also under GI. They are
 only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
 lights test scene. They accumulate like the colour: over TAA frames, or the film.
+
+**Light path intensity** (`directIntensity`, `indirectIntensity`, both 1; Blender 5.1)
+multiplies the same direct and indirect light in the final pixel, not in the light transport
+(GI still bounces unscaled light) nor in the AOVs. Closures outside the splits (subsurface
+transmission, refraction, fog, toon) stay unscaled. At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes

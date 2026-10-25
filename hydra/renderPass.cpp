@@ -197,6 +197,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.adaptiveFinalThreshold, &frame.adaptiveFinalThreshold},
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
+                                {t2.directIntensity, &frame.directIntensity},
+                                {t2.indirectIntensity, &frame.indirectIntensity},
                                 {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }

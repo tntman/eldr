@@ -1804,16 +1804,45 @@ int main()
                 img = Render(renderer, scene, frame);
                 ++frames;
             } while (!renderer.IsConverged() && frames < 200);
+            for (int k = 0; k < 40; ++k) {  // the probes keep blending: the image stays put
+                last = img;
+                img = Render(renderer, scene, frame);
+            }
             const float r = img.At(28, 32, 0), g = img.At(28, 32, 1);
             Expect(std::abs(direct.At(28, 32, 0) - direct.At(28, 32, 1)) < 1e-3f && r > 1.2f * g && g > 0.0f,
                    "GI bounces the red panel's light onto the white wall");
-            Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
+            Expect(frames < 200, "GI converges");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
 
+            // Light path intensity: indirect 0 leaves the direct light (the
+            // GI-less image), direct 0 the bounced light alone; they add up.
+            auto intensity = [&](float d, float i) {
+                vkr::Renderer::Frame f = frame;
+                f.directIntensity = d;
+                f.indirectIntensity = i;
+                Image out;
+                for (int k = 0; k < 4; ++k) {
+                    out = Render(renderer, scene, f);
+                }
+                return out;
+            };
+            const Image noIndirect = intensity(1.0f, 0.0f), noDirect = intensity(0.0f, 1.0f), twice = intensity(2.0f, 2.0f);
+            for (int c = 0; c < 2; ++c) {
+                Expect(std::abs(noIndirect.At(28, 32, c) - direct.At(28, 32, c)) < 0.03f * direct.At(28, 32, c),
+                       "indirectIntensity 0: the GI-lit wall keeps its direct light");
+                Expect(std::abs(noDirect.At(28, 32, c) + noIndirect.At(28, 32, c) - img.At(28, 32, c)) <
+                           0.03f * img.At(28, 32, c),
+                       "directIntensity 0 + indirectIntensity 0 images add up to the beauty");
+                Expect(std::abs(twice.At(28, 32, c) - 2.0f * img.At(28, 32, c)) < 0.03f * img.At(28, 32, c),
+                       "both intensities 2: twice the light");
+            }
+            Expect(noDirect.At(28, 32, 0) > 1.2f * noDirect.At(28, 32, 1) && noDirect.At(28, 32, 0) < 0.8f * img.At(28, 32, 0),
+                   "directIntensity 0: only the red bounce is left");
+
             // GI preconverge: the film's 8 samples start once the probes
-            // have settled (their first 1 / (1 - 0.97) = 33 updates), so no
-            // sample sees half-filled probes; off, the film starts at once
-            // and averages them in.
+            // have settled (their first 1 / (1 - 0.97) = 33 updates, all in
+            // the first frame), so no sample sees half-filled probes; off,
+            // the film starts at once and averages them in.
             auto filmFrames = [&](bool preconverge, Image *out) {
                 vkr::Renderer r(device);
                 vkr::Renderer::Frame f = frame;
@@ -1832,8 +1861,20 @@ int main()
             };
             Image settledFilm, earlyFilm;
             const int settledFrames = filmFrames(true, &settledFilm), earlyFrames = filmFrames(false, &earlyFilm);
-            Expect(settledFrames >= 33 + 8 - 1 && earlyFrames < settledFrames,
-                   "GI preconverge: the film starts after the probes settled");
+            Expect(settledFrames >= 8 && settledFrames <= 8 + 3 && earlyFrames >= 33,
+                   "GI preconverge: the 33 updates cost one frame, not 33");
+            Image slowGi;
+            {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame f = frame;
+                f.giPreconverge = false;
+                for (int n = 0; n < 150; ++n) {
+                    slowGi = Render(r, scene, f);
+                }
+            }
+            Expect(std::abs(img.At(28, 32, 0) - slowGi.At(28, 32, 0)) < 0.05f * slowGi.At(28, 32, 0) &&
+                       std::abs(img.At(28, 32, 1) - slowGi.At(28, 32, 1)) < 0.05f * slowGi.At(28, 32, 1),
+                   "GI preconverge: the burst's probes match the frame by frame ones");
             Expect(settledFilm.At(28, 32, 0) > earlyFilm.At(28, 32, 0),
                    "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
@@ -1999,6 +2040,29 @@ int main()
             frame.rtSkinnedInstances = 0;
             Expect(Render(renderer, scene, frame).At(3, 48, 0) > 0.9f * lit,
                    "Frame::rtSkinnedInstances 0: skinned meshes don't block rays");
+
+            // Displaced after skinning: the occluder's material moves it 0.5
+            // up along its normals, so its shadow does what the lifted
+            // joint's did; with rtDisplacement off, rays see the rest quad.
+            auto material = std::make_shared<vkr::Material>();
+            material->displacement = 0.5f;
+            material->displacementBound = 0.5f;
+            occluder->material = material;
+            occluder->normals.clear();
+            for (size_t c = 0; c < occluder->points.size() / 3; ++c) {
+                occluder->normals.insert(occluder->normals.end(), {0, 1, 0});
+            }
+            occluder->geometryDirty = true;
+            lift(0);
+            frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image displaced = Render(renderer, scene, frame);
+            Expect(displaced.At(3, 32, 0) > 0.9f * lit && displaced.At(3, 48, 0) < 0.01f * lit,
+                   "a skinned occluder's traced shadow follows its displacement");
+            frame.rtDisplacement = false;
+            const Image restShadow = Render(renderer, scene, frame);
+            Expect(restShadow.At(3, 32, 0) < 0.01f * lit && restShadow.At(3, 48, 0) > 0.9f * lit,
+                   "Frame::rtDisplacement off: rays see the skinned rest surface");
         }
 
         {

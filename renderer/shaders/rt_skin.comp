@@ -1,13 +1,17 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
 #include "scene.glsl"
+#include "displace.glsl"
 
 // Ray tracing's skinned instances (RayTracing): their vertices posed as
 // mesh.vert poses them (blend shapes, then linear or dual-quaternion
 // skinning with four or eight influences), as world-space positions and
 // normals for their BLASes (refit every frame) and the closest-hit shader.
 // x: vertex, y: the instance's entry in rtSkinned.
-// ponytail: no displacement (rigid ones have it: rt_displace.comp).
+// Displaced materials move the rest vertex first, as mesh.vert does
+// (displace.glsl, specialized with kDisplacement; Frame::rtDisplacement).
 
 layout(std430, set = 0, binding = 55) readonly buffer RtVertices { float rtVertices[]; };  // the rest Vertex pool
 struct RtSkinned {  // rt.glsl
@@ -17,7 +21,7 @@ struct RtSkinned {  // rt.glsl
     uint instance;     // instance slot
     uint vertexCount;
     uint flags;        // 1: eight influences, 2: dual quaternions
-    uint pad;
+    uint displaced;    // 1: displaced first (Work::displacement)
 };
 layout(std430, set = 1, binding = 5) readonly buffer RtSkinnedTable { RtSkinned rtSkinned[]; };
 layout(std430, set = 1, binding = 4) writeonly buffer RtSkinnedVertices { float rtSkinnedVertices[]; };
@@ -48,6 +52,9 @@ void main()
     uint rest = (d.vertexBase + v) * 10u;
     vec3 position = vec3(rtVertices[rest], rtVertices[rest + 1u], rtVertices[rest + 2u]);
     vec3 normal = vec3(rtVertices[rest + 3u], rtVertices[rest + 4u], rtVertices[rest + 5u]);
+    if (job.displaced != 0u) {
+        position = Displace(position, normal, d, vec2(rtVertices[rest + 6u], rtVertices[rest + 7u]));
+    }
     uint sv = d.skin + v * (kWideSkin ? 2u : 1u);
     SkinVertex sk = skin[sv];
     uvec4 s = sk.influence, s2 = kWideSkin ? skin[sv + 1u].influence : uvec4(0u);
