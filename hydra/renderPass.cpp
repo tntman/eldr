@@ -57,6 +57,35 @@ GfMatrix4d ProductProjection(GfMatrix4d projection, HdVkRenderProducts::Framing 
     return projection * crop;
 }
 
+// The AOV a binding asks for. husk names its bindings by its own channel
+// names ("C", "depth", "primid") and carries UsdRender's source in the
+// binding's settings; that source (as UsdRender names it: lpe: or primvars:
+// prefixed, else raw) wins. usdview and usdrecord bind by Hydra's names.
+TfToken BoundAov(HdRenderPassAovBinding const &b)
+{
+    const auto text = [&](const char *key) {
+        const auto it = b.aovSettings.find(TfToken(key));
+        if (it == b.aovSettings.end()) {
+            return std::string();
+        }
+        return it->second.IsHolding<TfToken>()       ? it->second.UncheckedGet<TfToken>().GetString()
+               : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
+                                                     : std::string();
+    };
+    const std::string name = text("sourceName"), type = text("sourceType");
+    if (name.empty()) {
+        return b.aovName;
+    }
+    const TfToken source = type == "lpe"       ? HdAovTokensMakeLpe(TfToken(name))
+                           : type == "primvar" ? HdAovTokensMakePrimvar(TfToken(name))
+                                               : TfToken(name);
+    if (source == TfToken("lpe:C.*[LO]")) {
+        return HdAovTokens->color;
+    }
+    // Karma's own names for what Hydra calls primId and its N-less raw vars.
+    return source == TfToken("ray:primid") ? HdAovTokens->primId : source;
+}
+
 } // namespace
 
 HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &collection,
@@ -99,23 +128,24 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // ray:hitN) bound at once, the last one gets it.
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+        const TfToken aovName = BoundAov(b);
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            extra[aov.kind] = b.aovName == aov.name ? b.renderBuffer : extra[aov.kind];
+            extra[aov.kind] = aovName == aov.name ? b.renderBuffer : extra[aov.kind];
         }
-        if (b.aovName == HdAovTokens->color) {
+        if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
             if (b.clearValue.IsHolding<GfVec4f>()) {
                 const GfVec4f &c = b.clearValue.UncheckedGet<GfVec4f>();
                 std::copy(c.data(), c.data() + 4, frame.clearColor);
             }
-        } else if (b.aovName == HdAovTokens->depth) {
+        } else if (aovName == HdAovTokens->depth) {
             depth = b.renderBuffer;
             if (b.clearValue.IsHolding<float>()) {
                 frame.clearDepth = b.clearValue.UncheckedGet<float>();
             }
-        } else if (b.aovName == HdAovTokens->primId) {
+        } else if (aovName == HdAovTokens->primId) {
             primId = b.renderBuffer;
-        } else if (b.aovName == HdAovTokens->instanceId) {
+        } else if (aovName == HdAovTokens->instanceId) {
             instanceId = b.renderBuffer;
         }
     }
@@ -152,6 +182,30 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         const HdFormat format = extra[k] ? extra[k]->GetFormat() : HdFormatInvalid;
         extra[k] = HdGetComponentFormat(format) == HdFormatFloat32 ? usable(extra[k], format) : nullptr;
         extraComponents[k] = extra[k] ? uint8_t(HdGetComponentCount(format)) : 0;
+    }
+    // eldr:* attributes of the active UsdRenderSettings prim are render
+    // settings of the scene: applied when the prim's value changes (so a
+    // later edit in usdview's menu stands until the prim changes again).
+    // Typed like the setting's default; unknown names are ignored.
+    bool batch = false;  // husk sets no enableInteractive, but its settings prim says who renders
+    if (const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings()) {
+        for (const auto &[key, value] : prim->GetNamespacedSettings()) {
+            batch |= key.compare(0, 5, "husk:") == 0;  // HuskRenderSettingsAPI
+            if (key.compare(0, 5, "eldr:") != 0) {
+                continue;
+            }
+            const TfToken token(key);
+            const VtValue current = delegate->GetRenderSetting(token);
+            VtValue &applied = _appliedSettings[token];
+            if (current.IsEmpty() || applied == value) {
+                continue;
+            }
+            applied = value;
+            const VtValue typed = VtValue::CastToTypeOf(value, current);
+            if (!typed.IsEmpty()) {
+                delegate->SetRenderSetting(token, typed);
+            }
+        }
     }
     frame.showEnvironment = delegate->GetRenderSetting<bool>(
         HdRenderSettingsTokens->domeLightCameraVisibility, true);
@@ -364,8 +418,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Final quality: asked for, or an offline renderer's convention (husk,
     // hdPrman: enableInteractive false). usdrecord sets neither, but its
     // first frame has no history, so its film starts with the first sample.
-    frame.finalQuality = frame.finalQuality ||
-                         !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
+    std::fprintf(stderr, "TMPI interactive=%s fq=%d samples=%u\n", TfStringify(delegate->GetRenderSetting(HdRenderSettingsTokens->enableInteractive)).c_str(), int(frame.finalQuality), frame.filmSamples);
+    const bool offline = batch || !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
+    frame.finalQuality = frame.finalQuality || offline;
+    // An offline frame's exposure is deterministic (like Karma's: none)
+    // unless the render settings prim asks for eldr:autoExposure.
+    if (offline && !_appliedSettings.count(t.autoExposure)) {
+        frame.post.autoExposure = false;
+    }
     // Any edit to the scene or the settings starts the film over.
     frame.sceneVersion = (uint64_t(GetRenderIndex()->GetChangeTracker().GetSceneStateVersion()) << 32) |
                          delegate->GetRenderSettingsVersion();
@@ -455,7 +515,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
-    frame.linearColor = frame.linearBeauty && _products.HasBeauty();
+    // husk writes its colour AOV itself: it gets the linear beauty too.
+    const bool huskLinear = !colorHalf.empty() && frame.linearBeauty;
+    frame.linearColor = frame.linearBeauty && (_products.HasBeauty() || huskLinear);
 
     // Cryptomatte: per primId the ids of its rprim's path and material path,
     // and their manifests (GetRenderStats).
@@ -502,6 +564,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    if (huskLinear) {
+        try {  // the linear image over the display one Render read
+            vkr::Renderer::Targets linear;
+            linear.linearColor = colorHalf.data();
+            _renderer->Read(linear);
+        } catch (const std::exception &e) {
+            TF_RUNTIME_ERROR("HdVk linear readback failed: %s", e.what());
+        }
+    }
     if (!colorHalf.empty()) {
         float *dst = static_cast<float *>(colorFloat32->Map());
         std::copy(colorHalf.begin(), colorHalf.end(), dst);
