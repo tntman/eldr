@@ -45,14 +45,17 @@ Material ShadingMaterial()
         m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
     }
     // Transmission and subsurface (transparency.glsl, subsurface.glsl):
-    // the radius multiplies the constant (its scale).
+    // the radius and its scale multiply the constant (their product).
     uint passes = (frame.styles.x & kStyleTexturedTransmission) != 0u ? programLobes : 0u;
-    if ((passes & 507904u) != 0u) {
+    if ((passes & 4177920u) != 0u) {
         m.transmission.w = (passes & 16384u) != 0u ? programLobe[14].x : m.transmission.w;
         m.transmission.rgb = (passes & 32768u) != 0u ? programLobe[15].rgb : m.transmission.rgb;
         m.subsurface.w = (passes & 65536u) != 0u ? programLobe[16].x : m.subsurface.w;
         m.subsurface.rgb = (passes & 131072u) != 0u ? programLobe[17].rgb : m.subsurface.rgb;
         m.subsurfaceRadius.xyz *= (passes & 262144u) != 0u ? programLobe[18].xyz : vec3(1.0);
+        m.refraction.z = (passes & 524288u) != 0u ? programLobe[19].x : m.refraction.z;
+        m.refraction.y = (passes & 1048576u) != 0u ? (programLobe[20].x > 0.5 ? 1.0 : 0.0) : m.refraction.y;
+        m.subsurfaceRadius.xyz *= (passes & 2097152u) != 0u ? programLobe[21].xyz : vec3(1.0);
     }
 #endif
     return m;

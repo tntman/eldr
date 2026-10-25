@@ -158,7 +158,7 @@ reflections.
 
 | Setting, key | Type, default | What it does, when to change it | Cost; related |
 |---|---|---|---|
-| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | flag, on | Transmission, transmission colour, subsurface weight, colour and radius may be textures or graphs. Off reads constants. | |
+| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | flag, on | Transmission, transmission colour and depth, thin walled, subsurface weight, colour, radius and its scale may be textures or graphs. Off reads constants. | |
 | Translucent Objects<br>`eldr:translucency` | flag, on | Draws materials with opacity below 1. Off: they are not drawn. | Scenes without them skip the pass. |
 | Order-Independent Transparency<br>`eldr:oit` | flag, on | Weighted blended OIT (McGuire and Bavoil) for translucent meshes. Off sorts meshes back to front, which can misorder one mesh's own triangles. | 18 bytes per pixel and one full-screen pass. Related: *OIT Depth Weight*. |
 | OIT Depth Weight<br>`eldr:oitDepthWeight` | float, 4 | Exponent of the distance weight (0 = plain average). Raise if far layers show through near ones. | |

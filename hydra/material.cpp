@@ -1254,13 +1254,13 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         std::copy(c.data(), c.data() + 3, out);
     };
     // Whether `name` is connected; if so the program computes it (times
-    // `scale`) where it can.
-    auto program = [&](TfToken const &name, P::Input target, float scale = 1.0f) {
+    // `scale`) where it can; `channel` >= 0 splats that component.
+    auto program = [&](TfToken const &name, P::Input target, float scale = 1.0f, int channel = -1) {
         const auto c = surface.inputConnections.find(name);
         if (c == surface.inputConnections.end() || c->second.empty()) {
             return false;
         }
-        if (!graph.Output(surface, name, target, scale)) {
+        if (!graph.Output(surface, name, target, scale, channel)) {
             static std::mutex mutex;
             static std::set<std::string> warned;
             std::lock_guard<std::mutex> lock(mutex);
@@ -1324,6 +1324,9 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->subsurface, P::kSubsurface);
         program(_tokens->subsurface_color, P::kSubsurfaceColor);
         program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_scale
+        program(_tokens->subsurface_scale, P::kSubsurfaceScale, 1.0f, 0);
+        program(_tokens->transmission_depth, P::kTransmissionDepth);
+        program(_tokens->thin_walled, P::kThinWalled);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
         // ponytail: coat_darkening isn't modelled (the coat's albedo only);
         // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
@@ -1357,6 +1360,9 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->subsurface_weight, P::kSubsurface);
         program(_tokens->subsurface_color, P::kSubsurfaceColor);
         program(_tokens->subsurface_radius, P::kSubsurfaceRadius);  // times subsurface_radius_scale
+        program(_tokens->subsurface_radius_scale, P::kSubsurfaceScale);
+        program(_tokens->transmission_depth, P::kTransmissionDepth);
+        program(_tokens->geometry_thin_walled, P::kThinWalled);
     }
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
@@ -1472,11 +1478,10 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // their own inputs; UsdPreviewSurface refracts what its opacity lets
     // through once it has an ior ("for translucent objects"; Hydra hands
     // over authored inputs only).
-    // Connected weights, colours and the radius (not its scale) are computed
-    // by the material program (ReadLobes); their constants here are the
-    // defaults they fall back to.
-    // ponytail: transmission_depth, thin_walled and the radius scale stay
-    // constants.
+    // Connected weights, colours, transmission_depth, thin_walled, the
+    // radius and its scale are computed by the material program
+    // (ReadLobes); their constants here are the defaults they fall back to
+    // (a connected radius or scale: 1, as the program multiplies it in).
     const bool openPbr = surface.nodeTypeId == _tokens->ND_open_pbr_surface_surfaceshader;
     if (openPbr || surface.nodeTypeId == _tokens->ND_standard_surface_surfaceshader) {
         Read(surface.parameters, openPbr ? _tokens->transmission_weight : _tokens->transmission, &m->transmission);
@@ -1510,6 +1515,9 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         GfVec3f radius = openPbr ? GfVec3f(1.0f, 0.5f, 0.25f) : GfVec3f(1.0f);
         float scale = 1.0f;
         if (openPbr) {
+            if (surface.inputConnections.count(_tokens->subsurface_radius_scale)) {
+                radius = GfVec3f(1.0f);  // the program's
+            }
             Read(surface.parameters, _tokens->subsurface_radius_scale, &radius);
             Read(surface.parameters, _tokens->subsurface_radius, &scale);
         } else {

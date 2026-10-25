@@ -123,7 +123,8 @@ add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
     DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
-            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
+            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/material.glsl
+            renderer/shaders/program.glsl renderer/shaders/noise.glsl)
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC

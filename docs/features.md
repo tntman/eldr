@@ -383,7 +383,9 @@ emission, opacity, normal, displacement, and (with
 `texturedLobes` / `texturedTransmission`) specularColor, coat, coat colour,
 coat roughness, sheen, sheen colour and roughness, anisotropy and rotation,
 thin film thickness, weight and IOR, ior, transmission, transmission colour,
-subsurface, subsurface colour and radius.
+transmission depth (Beer-Lambert per pixel), thin walled (above 0.5),
+subsurface, subsurface colour, radius and its scale (standard_surface
+`subsurface_scale`, OpenPBR `subsurface_radius_scale`).
 
 **Material programs** (`materialGraphs`): graphs behind inputs that a
 texture or constant cannot express are compiled to a small per-pixel
@@ -718,9 +720,9 @@ Materials
 - Coat: no coat normal, anisotropy or screen-space reflection; OpenPBR
   `coat_darkening` is not modelled. Thin film assumes air above it. Hair has no
   TT lobe (backlit hair gets no glow) and a closed curve's u jumps at its weld.
-- `transmission_depth` is read, but `thin_walled` and the subsurface radius
-  scales stay constants for textured inputs; with the textured setting off, a
-  material with a textured weight is still drawn in the translucent or
+- A textured `thin_walled` or `transmission_depth` acts per pixel in shading,
+  but ray-traced refraction reads their constants. With the textured setting
+  off, a material with a textured weight is still drawn in the translucent or
   subsurface pass (weight 0).
 - Displacement: top mip only; vector displacement drops tangential
   components; no shading graphs in the vertex stage; skinning stretch does not

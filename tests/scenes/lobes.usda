@@ -302,6 +302,37 @@ def Scope "mtl"
             float outputs:out
         }
     }
+
+    # A textured transmission_depth: 1.5 where the texture's red is high
+    # (bottom-left, top-right), 0.5 in the other quarters, which absorb
+    # far more of the blue-green transmission colour.
+    def Material "texturedDepth"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedDepth/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.3, 0.7, 0.9)
+            float inputs:transmission_depth.connect = </mtl/texturedDepth/depth.outputs:out>
+            token outputs:out
+        }
+        def Shader "red"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @./textures/quadrants.png@
+            float outputs:out
+        }
+        def Shader "depth"
+        {
+            uniform token info:id = "ND_add_float"
+            float inputs:in1.connect = </mtl/texturedDepth/red.outputs:out>
+            float inputs:in2 = 0.5
+            float outputs:out
+        }
+    }
 }
 
 def Sphere "specularWorkflow" (prepend apiSchemas = ["MaterialBindingAPI"])
@@ -433,6 +464,18 @@ def Mesh "texturedTransmission" (prepend apiSchemas = ["MaterialBindingAPI"])
     uniform token subdivisionScheme = "none"
     rel material:binding = </mtl/texturedTransmission>
     double3 xformOp:translate = (1.2, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedDepth" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "faceVarying")
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/texturedDepth>
+    double3 xformOp:translate = (6, -3.6, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 

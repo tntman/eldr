@@ -40,7 +40,7 @@ vec4 programRegisters[kProgramRegisters];
 // The lobe inputs a program computes (MaterialProgram::Input from
 // kSpecularColor on, in that order), for brdf.glsl's PrepareLayers: their
 // values, and a bit each in programLobes.
-const uint kProgramLobes = 19u;
+const uint kProgramLobes = 22u;
 vec4 programLobe[kProgramLobes];
 uint programLobes = 0u;
 #endif
@@ -185,7 +185,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             } else if (imm0 == 6u) {
                 alpha = clamp(a.x, 0.0, 1.0);
 #ifdef PROGRAM_VERTEX
-            } else if (imm0 == 26u) {  // MaterialProgram::kDisplacement
+            } else if (imm0 == 29u) {  // MaterialProgram::kDisplacement
                 programDisplacement = a.x;
 #endif
 #ifdef LAYERS
