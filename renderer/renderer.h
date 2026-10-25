@@ -134,6 +134,10 @@ public:
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
+        // hdvk:productResolution: products render at the first raster
+        // product's resolution, pixel aspect ratio and data window (the
+        // Hydra layer's; the app's buffers get that image resampled).
+        bool productResolution = true;
         // Also exposes the beauty without bloom or tonemapping for
         // Renderer::Read (Targets::linearColor): an EXR's linear beauty.
         bool linearColor = false;

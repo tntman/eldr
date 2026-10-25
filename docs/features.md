@@ -522,8 +522,14 @@ layout:
   `conversion` uint32_to_float32, `manifest` JSON of name to hex id). The
   manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the film
   sample's nearest the pixel centre; they are not averaged.
-- Files are zip-compressed float32 EXR at the frame's size (the product's own
-  resolution is ignored).
+- Files are zip-compressed float32 EXR. With `productResolution` (on) the
+  frame renders at the first raster product's `resolution`, conformed to its
+  `pixelAspectRatio` by its `aspectRatioConformPolicy` and cut to its
+  `dataWindowNDC`, when that isn't the app's buffer size (usdrecord sizes
+  its buffers from `-w` and the camera): the EXR's display window is the
+  resolution, its data window the part rendered, with `PixelAspectRatio`.
+  The app's colour, depth and ids get that frame resampled; its other AOVs
+  stay empty. Off: the frame's size.
 
 **Colour in the EXR.** By default (`productLinear`) the beauty is linear and
 untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
@@ -610,8 +616,8 @@ ceiling). Each is a candidate for later work.
 
 Output and Hydra
 
-- Render products are written at the frame's size, not the product's
-  resolution, and the data window and collection are ignored. Vars Eldr cannot
+- Render products all render at the first raster product's framing; the
+  collection is ignored. Vars Eldr cannot
   fill are left out with a warning. No `elementId` AOV (face picking).
 - Cryptomatte has one sample per pixel: edges do not blend.
 - Volumes are not pickable. A field prim's own transform is ignored (as in

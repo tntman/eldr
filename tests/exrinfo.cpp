@@ -1,6 +1,7 @@
-// exrinfo image [x y]: prints an image's size, channel names, string
-// metadata (name=value, one per line) and, given a pixel (x right, y down),
-// its channel values. For tests/test_exr.py (no OpenImageIO in Python).
+// exrinfo image [x y]: prints an image's size, its data window's origin
+// and display window's size with the pixel aspect ratio, channel names,
+// string metadata (name=value, one per line) and, given a pixel of the data
+// window (x right, y down), its channel values. For tests/test_exr.py (no OpenImageIO in Python).
 #include <OpenImageIO/imageio.h>
 
 #include <cstdio>
@@ -20,6 +21,8 @@ int main(int argc, char **argv)
     }
     const OIIO::ImageSpec &spec = in->spec();
     std::printf("size %d %d\n", spec.width, spec.height);
+    std::printf("window %d %d %d %d %g\n", spec.x, spec.y, spec.full_width, spec.full_height,
+                spec.get_float_attribute("PixelAspectRatio", 1.0f));
     for (const std::string &c : spec.channelnames) {
         std::printf("channel %s\n", c.c_str());
     }

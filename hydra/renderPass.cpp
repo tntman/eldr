@@ -9,6 +9,7 @@
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/imaging/cameraUtil/conformWindow.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/changeTracker.h"
 #include "pxr/imaging/hd/renderBuffer.h"
@@ -21,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <string>
 #include <unordered_set>
@@ -28,6 +30,33 @@
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
+
+namespace {
+
+// A product's projection (renderPass's productSized): the camera's own
+// conformed to the product's image aspect (resolution times pixel aspect
+// ratio) by its aspectRatioConformPolicy, then its data window's part of
+// the image stretched over the frame.
+GfMatrix4d ProductProjection(GfMatrix4d projection, HdVkRenderProducts::Framing const &f)
+{
+    const TfToken &p = f.conformPolicy;
+    const CameraUtilConformWindowPolicy policy = p == TfToken("cropAperture")             ? CameraUtilCrop
+                                               : p == TfToken("adjustApertureWidth")      ? CameraUtilMatchVertically
+                                               : p == TfToken("adjustApertureHeight")     ? CameraUtilMatchHorizontally
+                                               : p == TfToken("adjustPixelAspectRatio") ? CameraUtilDontConform
+                                                                                          : CameraUtilFit;
+    projection = CameraUtilConformedWindow(projection, policy,
+                                           double(f.resolution[0]) * f.pixelAspectRatio / double(f.resolution[1]));
+    GfMatrix4d crop(1.0);  // NDC x' = (x - centre) / half size (row vectors: clip * crop)
+    for (int k = 0; k < 2; ++k) {
+        const double lo = 2.0 * f.window[k] / f.resolution[k] - 1.0, hi = 2.0 * f.window[k + 2] / f.resolution[k] - 1.0;
+        crop[k][k] = 2.0 / (hi - lo);
+        crop[3][k] = -(hi + lo) / (hi - lo);
+    }
+    return projection * crop;
+}
+
+} // namespace
 
 HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &collection,
                                vkr::Scene &scene, vkr::Renderer *renderer)
@@ -177,8 +206,27 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
                                 {t2.deformationBlur, &frame.deformationBlur},
-                                {t2.dofResidualBlur, &frame.dofResidualBlur}}) {
+                                {t2.dofResidualBlur, &frame.dofResidualBlur},
+                                {t2.productResolution, &frame.productResolution}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    // Render products at their own framing (hdvk:productResolution): the
+    // first raster product's resolution, pixel aspect ratio and data window
+    // when they aren't the buffers' size (usdrecord sizes them from -w and
+    // the camera; husk from the product). The app's colour, depth and ids
+    // then get the frame resampled (nearest); its extra AOVs stay empty.
+    HdVkRenderProducts::Framing framing;
+    const bool hasFraming = frame.renderProducts && HdVkRenderProducts::GetFraming(
+                                                        static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings(),
+                                                        &framing);
+    const bool productSized = hasFraming && frame.productResolution &&
+                              (framing.Width() != frame.width || framing.Height() != frame.height);
+    const uint32_t appWidth = frame.width, appHeight = frame.height;
+    _products.SetFraming(hasFraming ? &framing : nullptr);
+    if (productSized) {
+        frame.width = framing.Width();
+        frame.height = framing.Height();
+        std::fill(extra, extra + vkr::Aovs::kCount, nullptr);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
@@ -258,6 +306,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // scene renders that much wider for the warp to sample.
     GfMatrix4d projection = state->GetProjectionMatrix();
     const HdCamera *camera = state->GetCamera();
+    if (productSized) {
+        projection = ProductProjection(camera ? camera->ComputeProjectionMatrix() : projection, framing);
+    }
     if (camera && frame.lensDistortion && projection[0][0] > 0.0) {
         vkr::LensDistortion::Params &d = frame.distortion;
         const bool perspective = camera->GetProjection() == HdCamera::Perspective;
@@ -346,17 +397,29 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // GPU sharing: colour and depth go to the app's OpenGL as textures, and
     // none of the four is read back unless someone maps it.
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
-    HdVkGLInterop *interop = frame.shareFrame && color ? vkDelegate->GLInterop() : nullptr;
+    HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
     HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
                                           static_cast<HdVkRenderBuffer *>(primId),
                                           static_cast<HdVkRenderBuffer *>(instanceId)};
     vkr::Renderer::Targets out;
+    // At a product's framing the frame's targets are read here and
+    // resampled into the buffers after.
+    void *mapped[4] = {};
+    std::vector<uint8_t> productTargets[4];
+    constexpr size_t kTargetBytes[4] = {8, 4, 4, 4};  // RGBA16F, float, int, int
     if (!lazy) {
-        out.color = color ? color->Map() : nullptr;
-        out.depth = depth ? static_cast<float *>(depth->Map()) : nullptr;
-        out.primId = primId ? static_cast<int32_t *>(primId->Map()) : nullptr;
-        out.instanceId = instanceId ? static_cast<int32_t *>(instanceId->Map()) : nullptr;
+        for (int i = 0; i < 4; ++i) {
+            mapped[i] = buffers[i] ? buffers[i]->Map() : nullptr;
+            if (productSized && mapped[i]) {
+                productTargets[i].resize(size_t(frame.width) * frame.height * kTargetBytes[i]);
+            }
+        }
+        auto target = [&](int i) { return productSized && mapped[i] ? productTargets[i].data() : mapped[i]; };
+        out.color = target(0);
+        out.depth = static_cast<float *>(target(1));
+        out.primId = static_cast<int32_t *>(target(2));
+        out.instanceId = static_cast<int32_t *>(target(3));
     }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
@@ -412,6 +475,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    for (int i = 0; i < 4 && productSized; ++i) {
+        if (!mapped[i]) {
+            continue;
+        }
+        const size_t b = kTargetBytes[i];
+        for (uint32_t y = 0; y < appHeight; ++y) {
+            const size_t sy = size_t(y) * frame.height / appHeight;
+            for (uint32_t x = 0; x < appWidth; ++x) {
+                const size_t sx = size_t(x) * frame.width / appWidth;
+                std::memcpy(static_cast<uint8_t *>(mapped[i]) + (size_t(y) * appWidth + x) * b,
+                            productTargets[i].data() + (sy * frame.width + sx) * b, b);
+            }
+        }
+    }
     try {
         _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
     } catch (const std::exception &e) {

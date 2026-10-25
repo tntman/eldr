@@ -32,12 +32,32 @@ protected:
 // Karma's names). Cryptomatte vars become layers <name>00 (rank 0 and 1)
 // with the spec's metadata (cryptomatte/<key>/name, hash, conversion,
 // manifest).
-// ponytail: written at the frame's size, not the product's resolution; an
-// extra AOV Hydra binds itself as well isn't in the product (one target per
-// kind); vars Eldr can't fill are left out with a warning.
+// With hdvk:productResolution the frame renders at the first raster
+// product's Framing (renderPass.cpp), and the EXR's display window is the
+// product's resolution, its data window the part rendered.
+// ponytail: one size for all products (the first's); an extra AOV Hydra
+// binds itself as well isn't in the product (one target per kind); vars
+// Eldr can't fill are left out with a warning.
 class HdVkRenderProducts
 {
 public:
+    // The image of the first raster product of `settings` (active, with a
+    // resolution): its resolution, pixel aspect ratio, conform policy, and
+    // the pixels of its data window (dataWindowNDC), x0 y0 from the
+    // bottom left, x1 y1 exclusive. False without one.
+    struct Framing {
+        GfVec2i resolution{0, 0};
+        float pixelAspectRatio = 1.0f;
+        TfToken conformPolicy;
+        int window[4] = {0, 0, 0, 0};
+        uint32_t Width() const { return uint32_t(window[2] - window[0]); }
+        uint32_t Height() const { return uint32_t(window[3] - window[1]); }
+    };
+    static bool GetFraming(const HdRenderSettings *settings, Framing *framing);
+    // Products render at `framing` (null: at the frame's size, as an image
+    // of its own).
+    void SetFraming(const Framing *framing) { _framing = framing ? *framing : Framing(); }
+
     // This frame's products (`settings` null or inactive: none): asks `out`
     // for the extra AOVs they need that no Hydra buffer asked for.
     void Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height, vkr::Renderer::Targets *out);
@@ -66,6 +86,7 @@ private:
     bool _need[vkr::Aovs::kCount] = {};
     std::vector<float> _aovs[vkr::Aovs::kCount];  // the extra AOVs the products asked for
     uint32_t _width = 0, _height = 0;
+    Framing _framing;  // resolution 0: the frame's size
     bool _written = false;
     uint64_t _writtenKey = 0;  // the frame _written is of: a new one (a post blur frame converges at once) writes again
 };

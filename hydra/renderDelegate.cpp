@@ -329,6 +329,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
+        {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
