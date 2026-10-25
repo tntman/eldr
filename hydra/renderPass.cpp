@@ -172,7 +172,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.probeNormalize, &frame.probeNormalize},
                                 {t2.domeSun, &frame.domeSun},
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
-                                {t2.lightTextures, &frame.lightTextures}}) {
+                                {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
@@ -339,6 +339,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    frame.linearColor = frame.linearBeauty && _products.HasBeauty();
 
     // Cryptomatte: per primId the ids of its rprim's path and material path,
     // and their manifests (GetRenderStats).
@@ -386,7 +387,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     vkDelegate->SetFrameShared(shared);
     try {
-        _products.Write(*_renderer, objects, materials);
+        _products.Write(*_renderer, objects, materials, frame.linearColor);
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
     }

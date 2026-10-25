@@ -42,8 +42,12 @@ public:
     // for the extra AOVs they need that no Hydra buffer asked for.
     void Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height, vkr::Renderer::Targets *out);
     bool Needs(vkr::Aovs::Kind kind) const { return _need[kind]; }
+    // Whether a product has a beauty var (Prepare's).
+    bool HasBeauty() const { return _beauty; }
     // After Render: writes the products once `renderer` converged.
-    void Write(vkr::Renderer &renderer, const std::string &objectManifest, const std::string &materialManifest);
+    // `linear`: the beauty is the frame's linear one (Frame::linearColor).
+    void Write(vkr::Renderer &renderer, const std::string &objectManifest, const std::string &materialManifest,
+               bool linear);
 
 private:
     enum class Source { Color, Depth, PrimId, InstanceId, Aov };
@@ -57,6 +61,7 @@ private:
         std::vector<Var> vars;
     };
     std::vector<Product> _products;
+    bool _beauty = false;
     bool _need[vkr::Aovs::kCount] = {};
     std::vector<float> _aovs[vkr::Aovs::kCount];  // the extra AOVs the products asked for
     uint32_t _width = 0, _height = 0;

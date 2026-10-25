@@ -1449,7 +1449,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
 {
     _outWidth = width;
     _outHeight = height;
-    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4 + 4),
+    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4 + 4 + 8),
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _taa.Resize(width, height);
     _post.Resize(width, height, _taa.Output());
@@ -2534,7 +2534,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         return;
     }
     const auto cpuStart = std::chrono::steady_clock::now();
-    _frameColor = VK_NULL_HANDLE;
+    _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);
     }
@@ -3687,7 +3687,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             _taaConverged = true;
             pass("motionBlur");
         }
-        _post.Record(_cmd, frame.post, dt, reset, frame.clearColor);
+        _post.Record(_cmd, frame.post, dt, reset, frame.clearColor, frame.linearColor);
         pass("post");
         _stats.taaSamples = uint32_t(1.0f / alpha + 0.5f);
         _stats.taaTarget = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
@@ -3788,6 +3788,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
     }
     _frameColor = frame.postProcess ? _post.Output() : _color.image;
+    _linearColor = frame.postProcess && frame.linearColor ? _post.LinearOutput() : VK_NULL_HANDLE;
 
     // Copy only what the caller asked for, packed one after another.
     struct Output {
@@ -3935,17 +3936,18 @@ void Renderer::Read(const Targets &out)
         return;
     }
     const Image *images = _upscaled ? _up : nullptr;  // else the scene's, at the frame's size
-    const std::pair<VkImage, void *> outputs[5] = {
+    const std::pair<VkImage, void *> outputs[6] = {
         {_frameColor, out.color}, {(images ? images[0] : _depth).image, out.depth},
         {(images ? images[1] : _primId).image, out.primId}, {(images ? images[2] : _instanceId).image, out.instanceId},
-        {(images ? images[3] : _velocity).image, out.velocity}};
-    const VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
+        {(images ? images[3] : _velocity).image, out.velocity},
+        {_linearColor ? _linearColor : _frameColor, out.linearColor}};
+    const VkDeviceSize bytesPerPixel[6] = {8, 4, 4, 4, 4, 8};
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
-    VkDeviceSize offsets[5] = {}, offset = 0;
-    for (int i = 0; i < 5; ++i) {
+    VkDeviceSize offsets[6] = {}, offset = 0;
+    for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             offsets[i] = offset;
             VkBufferImageCopy copy{};
@@ -3977,7 +3979,7 @@ void Renderer::Read(const Targets &out)
     Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
     Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
     const auto *src = static_cast<const uint8_t *>(_readback.mapped);
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _outWidth * _outHeight);
         }

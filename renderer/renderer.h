@@ -111,6 +111,10 @@ public:
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
+        // Also exposes the beauty without bloom or tonemapping for
+        // Renderer::Read (Targets::linearColor): an EXR's linear beauty.
+        bool linearColor = false;
+        bool linearBeauty = true;  // hdvk:productLinear: the Hydra layer sets linearColor for products
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
@@ -338,6 +342,7 @@ public:
     // Null pointers skip that output's readback.
     struct Targets {
         void *color = nullptr;          // RGBA16F, 8 bytes per pixel
+        void *linearColor = nullptr;    // Read only: Frame::linearColor's (else as color)
         float *depth = nullptr;         // window depth in [0, 1]
         int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
         int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
@@ -620,6 +625,7 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
+    VkImage _linearColor = VK_NULL_HANDLE;  // Frame::linearColor's image, else null
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
     std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
 };
