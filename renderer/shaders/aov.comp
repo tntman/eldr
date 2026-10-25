@@ -19,6 +19,13 @@ layout(std430, set = 0, binding = 6) buffer Output { float values[]; };
 // Light splits stored by the shading pass: direct diffuse, indirect diffuse,
 // direct glossy, indirect glossy.
 layout(set = 0, binding = 7) uniform sampler2DArray splits;
+// Film samples of the colour AOVs: per pixel `components` sums of
+// weight * value, the weights' sum (film.comp's), then the film's count of
+// the pixel's samples when it last took one.
+layout(std430, set = 0, binding = 8) buffer Sums { float sums[]; };
+// The film's: weight, samples (y)... A pixel the adaptive film stopped
+// sampling takes none here either.
+layout(set = 0, binding = 9, rgba32f) uniform readonly image2D filmWeights;
 
 layout(push_constant) uniform Push {
     uint kind;        // Aovs::Kind
@@ -26,6 +33,10 @@ layout(push_constant) uniform Push {
     uint components;
     uint cryptomatteIds;
     float weight;     // this frame's in the running average (1: the first)
+    uint sumsOffset;  // first float of this kind in sums
+    vec2 filmOffset;  // film samples: where this frame's are from their pixel centres
+    float filmRadius; // the film's filter radius (pixels)
+    uint film;        // film samples (the colour AOVs are filtered as the film's beauty): 1 add, 2 start over
 } pc;
 
 const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, kSt = 4u, kAlbedo = 5u,
@@ -42,11 +53,87 @@ vec3 OctDecode(vec2 e)
     return normalize(n);
 }
 
+bool IsColour(uint kind)
+{
+    return kind == kAlbedo || kind == kEmission || (kind >= kDiffuseAlbedo && kind <= kCombinedGlossy);
+}
+
+// The colour AOVs' value at q, from this sample's G-buffer and splits.
+vec3 Colour(ivec2 q)
+{
+    switch (pc.kind) {
+    case kAlbedo: return texelFetch(albedo, q, 0).rgb;
+    case kEmission: return texelFetch(emission, q, 0).rgb;
+    case kDirectDiffuse:
+    case kIndirectDiffuse:
+    case kDirectGlossy:
+    case kIndirectGlossy: {
+        int layer = int(pc.kind - kDirectDiffuse) - (pc.kind >= kDirectGlossy ? 1 : 0);
+        return texelFetch(splits, ivec3(q, layer), 0).rgb;
+    }
+    case kCombinedDiffuse:
+    case kCombinedGlossy: {
+        int layer = pc.kind == kCombinedDiffuse ? 0 : 2;
+        return texelFetch(splits, ivec3(q, layer), 0).rgb + texelFetch(splits, ivec3(q, layer + 1), 0).rgb;
+    }
+    default: {  // kDiffuseAlbedo: base colour * (1 - metallic)
+        vec4 a = texelFetch(albedo, q, 0);
+        return a.rgb * (1.0 - a.a);
+    }
+    }
+}
+
+// As film.comp: NaN/Inf (and negative colour) never enter the sums.
+vec3 Clean(vec3 c)
+{
+    return any(isnan(c)) || any(isinf(c)) ? vec3(0.0) : max(c, vec3(0.0));
+}
+
 void main()
 {
     ivec2 size = textureSize(depth, 0);
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     if (p.x >= size.x || p.y >= size.y) {
+        return;
+    }
+    if (pc.film != 0u && IsColour(pc.kind)) {
+        // Film samples: film.comp's filter (Gaussian, 3x3 gather around the
+        // pixel, each sample at its jittered position), summed over frames.
+        // No id test: this sample's G-buffer and splits are 0 where nothing
+        // was drawn, and the ids in hand are the nearest sample's.
+        uint s = pc.sumsOffset + uint(p.y * size.x + p.x) * (pc.components + 2u);
+        float count = imageLoad(filmWeights, p).y;
+        if (pc.film != 2u && count == sums[s + pc.components + 1u]) {
+            return;
+        }
+        sums[s + pc.components + 1u] = count;
+        float radius = pc.filmRadius;
+        float k = -0.5 / max(0.284 * 0.284 * radius * radius, 1e-6);
+        vec3 sum = vec3(0.0);
+        float weight = 0.0;
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec2 q = p + ivec2(x, y);
+                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) {
+                    continue;
+                }
+                vec2 d = vec2(x, y) + pc.filmOffset;
+                float r2 = dot(d, d);
+                float w = r2 < radius * radius ? exp(k * r2) : 0.0;
+                w = (x == 0 && y == 0) ? max(w, 1e-6) : w;
+                sum += Clean(Colour(q)) * w;
+                weight += w;
+            }
+        }
+        float old = pc.film == 2u ? 0.0 : 1.0;
+        float total = weight + old * sums[s + pc.components];
+        sums[s + pc.components] = total;
+        uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
+        for (uint c = 0u; c < pc.components; ++c) {
+            float t = (c < 3u ? sum[c] : 0.0) + old * sums[s + c];
+            sums[s + c] = t;
+            values[base + c] = t / total;
+        }
         return;
     }
     vec4 v = vec4(0.0);
@@ -65,29 +152,11 @@ void main()
         case kPositionEye: v.xyz = eye; break;
         case kCameraDepth: v.x = eye.z; break;
         case kSt: v.xy = g.zw; break;
-        case kAlbedo: v.xyz = texelFetch(albedo, p, 0).rgb; break;
-        case kEmission: v.xyz = texelFetch(emission, p, 0).rgb; break;
+        case kAlbedo: case kEmission: case kDiffuseAlbedo: case kDirectDiffuse: case kIndirectDiffuse:
+        case kCombinedDiffuse: case kDirectGlossy: case kIndirectGlossy: case kCombinedGlossy:
+            v.xyz = Colour(p); break;
         case kPositionWorld: v.xyz = world.xyz / world.w; break;
         case kDepth: v.x = -eye.z; break;
-        case kDirectDiffuse:
-        case kIndirectDiffuse:
-        case kDirectGlossy:
-        case kIndirectGlossy: {
-            int layer = int(pc.kind - kDirectDiffuse) - (pc.kind >= kDirectGlossy ? 1 : 0);
-            v.xyz = texelFetch(splits, ivec3(p, layer), 0).rgb;
-            break;
-        }
-        case kCombinedDiffuse:
-        case kCombinedGlossy: {
-            int layer = pc.kind == kCombinedDiffuse ? 0 : 2;
-            v.xyz = texelFetch(splits, ivec3(p, layer), 0).rgb + texelFetch(splits, ivec3(p, layer + 1), 0).rgb;
-            break;
-        }
-        case kDiffuseAlbedo: {
-            vec4 a = texelFetch(albedo, p, 0);  // base colour, metallic
-            v.xyz = a.rgb * (1.0 - a.a);
-            break;
-        }
         case kCryptoObject:
         case kCryptoMaterial:
             v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;

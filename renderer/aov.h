@@ -87,6 +87,14 @@ public:
         float viewProj[16] = {};
         uint64_t version = 0;      // the scene's (Scene::Gpu::version)
         uint32_t maxFrames = 1;
+        // Film samples: the colour AOVs (albedo, emission, the splits) are
+        // reconstructed as the beauty is (the Gaussian filter of `filmRadius`
+        // at this sample's `filmOffset` from the pixel centres, summed with
+        // their weights); the rest take the sample nearest the pixel centre
+        // so far (`filmNearer`, as the ids) instead of averaging.
+        bool film = false, filmNearer = false;
+        float filmOffset[2] = {}, filmRadius = 0;
+        VkImageView filmWeights = VK_NULL_HANDLE;  // the film's (TemporalAA::FilmWeights), GENERAL
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set
@@ -117,9 +125,11 @@ private:
     float _viewProj[16] = {};
     uint64_t _version = 0;
     std::vector<uint32_t> _accumLayout;
-    VkBuffer _accumBuffer = VK_NULL_HANDLE;
+    VkBuffer _accumBuffer = VK_NULL_HANDLE, _accumSums = VK_NULL_HANDLE;
     Buffer _params;                       // view, invViewProj, then the Cryptomatte table
     Buffer _output;                       // every AOV asked for, packed (device-local)
+    Buffer _sums;                         // the colour AOVs' film sums (shader), weights
+    VkDeviceSize _sumsOffsets[kCount] = {};
     Buffer _readback;                     // its copy the CPU reads
     VkDeviceSize _offsets[kCount] = {};   // each one's place in _output (floats)
     uint32_t _components[kCount] = {};    // and its floats per pixel

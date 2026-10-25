@@ -4015,6 +4015,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // Under the film the AOVs average its samples: they start over with it.
         params.version = film ? ~_filmRuns : gpu.version;
         params.maxFrames = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
+        params.film = film;
+        params.filmNearer = filmNearer;
+        std::copy(filmOffset, filmOffset + 2, params.filmOffset);
+        params.filmRadius = std::clamp(frame.filmFilterRadius, 0.0f, 2.0f);
+        params.filmWeights = _taa.FilmWeights();
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {
