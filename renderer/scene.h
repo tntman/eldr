@@ -127,7 +127,9 @@ struct MaterialProgram {
         kSpecularColor, kCoat, kCoatRoughness, kCoatColor, kSheen, kSheenColor, kSheenRoughness, kAnisotropy,
         kThinFilmThickness, kCoatIor, kThinFilm, kThinFilmIor, kAnisotropyRotation, kIor,
         kTransmission, kTransmissionColor, kSubsurface, kSubsurfaceColor,
-        kSubsurfaceRadius  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
+        kSubsurfaceRadius,  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
+        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 26)
+
     };
 
     std::vector<uint32_t> code;      // 4 words per op
@@ -275,6 +277,10 @@ struct Material {
     float displacement = 0;
     float displacementBound = 0;
     TextureRef displacementTex;
+    // Or a shading graph's offset, run per vertex (kOutput of
+    // MaterialProgram::kDisplacement; its primvars are `program`'s slots);
+    // the shading pass then takes the displaced surface's own normal.
+    MaterialProgram displacementProgram;
 };
 
 // A primvar a material program reads, from the mesh or its instancer: one
@@ -350,6 +356,13 @@ struct Mesh {
     // Planar reflections: make this (flat) mesh the mirror
     // (primvars:hdvk:planarReflection), whatever its size and roughness.
     bool planarReflection = false;
+    // Camera-facing primitives, turned towards each pass's eye by mesh.vert
+    // (its Facing): every vertex sits on its curve or point, `normals` hold
+    // the curve's tangent times the half width (ribbons; uvs' v, 0 or 1,
+    // the side) or the offset within the disc times the radius (discs;
+    // zero at the centre). Never skinned or displaced.
+    enum Facing : uint32_t { kNotFacing, kFacingRibbon, kFacingDisc };
+    Facing facing = kNotFacing;
     // Reflection probes: this mesh only marks one (primvars:hdvk:reflectionProbe):
     // never drawn, its world bounds are the probe's influence box.
     bool reflectionProbe = false;
@@ -361,6 +374,7 @@ private:
     // (object space, three points).
     bool _flat = false;
     float _flatTriangle[9] = {};
+    float _uvSpacing = 0;  // DrawInfo::uvSpacing
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -486,7 +500,8 @@ struct DrawInfo {
     uint32_t primvarVertices;  // the mesh's first vec4 in Gpu::primvarVertices, kNone: none
     uint32_t hair;             // 1: shaded as hair (Mesh::hair, shaders/brdf.glsl)
     uint32_t holdout;          // 1: Mesh::holdout
-    uint32_t pad[2];
+    uint32_t facing;           // Mesh::facing
+    float uvSpacing;           // mean uv length of an edge (vertex-stage texture footprint, displace.glsl)
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -625,6 +640,9 @@ public:
             kDisplaced = 128
         };
         std::vector<uint8_t> chunkKind;
+        // Per chunk: 1 if it draws levels of detail (a mesh with levels or
+        // their commands), whose crossfade needs the alpha-tested prepass.
+        std::vector<uint8_t> chunkLevels;
         // The translucent slots (with their pipeline variants) and their
         // world bounds' centres (xyz).
         std::vector<uint32_t> translucent;
@@ -730,6 +748,9 @@ public:
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
         VkBuffer displacements = VK_NULL_HANDLE;
         bool displaced = false;
+        // A drawn mesh is camera-facing (Mesh::facing; drawn by the kDisplaced
+        // pipelines, whose vertex stage turns it).
+        bool facing = false;
         // Levels of detail: per mesh slot its LOD commands and their ranges
         // of the visible lists (shaders/cull.comp's Lod). The LOD commands
         // are slots after the meshes' (drawCount counts both): level 1

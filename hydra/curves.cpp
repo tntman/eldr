@@ -120,15 +120,18 @@ struct Builder {
     void Triangle(uint32_t a, uint32_t b, uint32_t c) { m.indices.insert(m.indices.end(), {a, b, c}); }
 };
 
-// A tube along a polyline, or with normals a ribbon across them. A closed
+// A tube along a polyline, or with normals a ribbon across them, or
+// `facing` a camera-facing ribbon (vkr::Mesh::facing: both vertices on the
+// curve, the tangent times the half width as their normal). A closed
 // polyline (last sample on the first) is welded there. Their uvs: u runs
 // along the curve, 0 at its first point to 1 at its last (hair shading's
 // strand direction, shaders/brdf.glsl), v around or across it.
 // ponytail: a closed curve's u jumps back to 0 at the weld.
-void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder &out)
+void Extrude(std::vector<Sample> const &line, bool ribbon, bool facing, bool closed, Builder &out)
 {
     const size_t n = line.size();
     closed = closed && n >= 3;
+    ribbon = ribbon || facing;
     const uint32_t ring = ribbon ? 2 : kTubeSides;
     const uint32_t first = uint32_t(out.m.points.size() / 3);
     std::vector<float> along(n, 0.0f);
@@ -144,6 +147,11 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder 
         tangent = d.GetLength() > 1e-12f ? d.GetNormalized() : tangent;
         const Sample &s = line[i];
         const float r = 0.5f * s.width, u = along[i] / length;
+        if (facing) {
+            out.Vertex(s.p, r * tangent, s.color, u, 0.0f);
+            out.Vertex(s.p, r * tangent, s.color, u, 1.0f);
+            continue;
+        }
         if (ribbon) {
             const GfVec3f side = GfCross(tangent, s.normal).GetNormalized() * r;
             out.Vertex(s.p - side, s.normal, s.color, u, 0.0f);
@@ -178,7 +186,8 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool closed, Builder 
 // primvars with the same basis, varying ones linearly along each segment
 // (UsdGeomBasisCurves' rules), then extruded.
 void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, Primvar<float> const &widths,
-            Primvar<GfVec3f> const &colors, Primvar<GfVec3f> const &normals, GfVec3f const &color, Builder &out)
+            Primvar<GfVec3f> const &colors, Primvar<GfVec3f> const &normals, GfVec3f const &color, bool facing,
+            Builder &out)
 {
     const TfToken basis = topology.GetCurveBasis();
     const bool linear = topology.GetCurveType() == HdTokens->linear;
@@ -258,22 +267,23 @@ void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, P
                 line.push_back(out);
             }
         }
-        Extrude(line, ribbon, periodic, out);
+        Extrude(line, ribbon, facing && !ribbon, periodic, out);
     }
 }
 
-// Whether curves shade as hair: Eldr's `primvars:eldr:hair` (constant bool
-// or int, as hydra/material.cpp's toon inputs Eldr's own namespace),
-// default true; false shades cables and ropes as ordinary surfaces.
-bool HairPrimvar(HdSceneDelegate *sd, SdfPath const &id)
+// A constant bool (or int) primvar in Eldr's own namespace (as
+// hydra/material.cpp's toon inputs), `fallback` without one:
+// `primvars:eldr:hair` (curves shade as hair, default true; false shades
+// cables and ropes as ordinary surfaces), `eldr:ribbons` and `eldr:sprites`
+// (camera-facing curves and points; default: the render setting).
+bool BoolPrimvar(HdSceneDelegate *sd, SdfPath const &id, char const *name, bool fallback)
 {
-    static const TfToken name("eldr:hair");
-    const VtValue v = sd->Get(id, name);
+    const VtValue v = sd->Get(id, TfToken(name));
     if (v.IsHolding<bool>()) {
         return v.UncheckedGet<bool>();
     }
     const VtValue i = VtValue::Cast<int>(v);
-    return i.IsEmpty() || i.UncheckedGet<int>() != 0;
+    return i.IsEmpty() ? fallback : i.UncheckedGet<int>() != 0;
 }
 
 // A unit icosahedron: its vertices (also the normals) and outward faces.
@@ -286,9 +296,11 @@ constexpr int kIcosahedronFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {
                                           {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
                                           {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
 
-// Each point as a sphere `widths` across.
+// Each point as a sphere `widths` across, or `facing` a camera-facing disc
+// (vkr::Mesh::facing): an octagon of 8 triangles around a centre vertex,
+// all on the point, their normals the offsets within the disc.
 void Spheres(VtVec3fArray const &points, Primvar<float> const &widths, Primvar<GfVec3f> const &colors,
-             GfVec3f const &color, Builder &out)
+             GfVec3f const &color, bool facing, Builder &out)
 {
     auto at = [](auto const &pv, size_t i, auto const &fallback) {
         return pv.At(pv.interp == HdInterpolationConstant ? 0 : i, fallback);
@@ -297,6 +309,17 @@ void Spheres(VtVec3fArray const &points, Primvar<float> const &widths, Primvar<G
         const float r = 0.5f * at(widths, i, 1.0f);
         const GfVec3f c = at(colors, i, color);
         const uint32_t first = uint32_t(out.m.points.size() / 3);
+        if (facing) {
+            // Corners 1.0539 r out: the octagon's area is the disc's.
+            const float corner = r * 1.0539f;
+            out.Vertex(points[i], GfVec3f(0.0f), c);
+            for (int k = 0; k < 8; ++k) {
+                const float a = 0.7853982f * float(k);
+                out.Vertex(points[i], corner * GfVec3f(std::cos(a), std::sin(a), 0.0f), c);
+                out.Triangle(first, first + 1 + uint32_t(k), first + 1 + uint32_t((k + 1) % 8));
+            }
+            continue;
+        }
         for (const GfVec3f &v : kIcosahedron) {
             out.Vertex(points[i] + r * v, v, c);
         }
@@ -362,12 +385,22 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.indices.clear();
         constexpr bool curves = std::is_same_v<Base, HdBasisCurves>;
         Builder out{m, colors.interp != HdInterpolationConstant, curves};
-        m.hair = curves && HairPrimvar(sceneDelegate, id);
+        m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
+        HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
+        const auto &t2 = *HdVkRenderSettingsTokens2;
         if constexpr (curves) {
-            Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors,
-                   Primvar<GfVec3f>(sceneDelegate, id, HdTokens->normals), color, out);
+            const Primvar<GfVec3f> normals(sceneDelegate, id, HdTokens->normals);
+            // Curves with normals are ribbons already, oriented by them.
+            const bool facing = normals.values.empty() &&
+                                BoolPrimvar(sceneDelegate, id, "eldr:ribbons",
+                                            delegate->GetRenderSetting<bool>(t2.curveRibbons, kHdVkCurveRibbons));
+            m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
+            Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
         } else {
-            Spheres(points, widths, colors, color, out);
+            const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites",
+                                            delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites));
+            m.facing = facing ? vkr::Mesh::kFacingDisc : vkr::Mesh::kNotFacing;
+            Spheres(points, widths, colors, color, facing, out);
         }
         m.geometryDirty = true;
     }

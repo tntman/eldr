@@ -1,7 +1,9 @@
 // MaterialProgram interpreter (scene.h): the material inputs a shading
 // graph computes per pixel. Included by mesh.frag's GRAPH variant after
 // material.glsl and scene.glsl; reads its inUv, inColor, inSlot,
-// inPrimvars, inWorldPos and inNormal.
+// inPrimvars, inWorldPos and inNormal. With PROGRAM_VERTEX (displace.glsl,
+// in mesh.vert): a displacement graph per vertex, its inputs set by
+// Displace, its offset in programDisplacement.
 // ponytail: implicit texture derivatives inside the op loop are only
 // defined where a pixel quad runs the same program (not at the edge
 // between two materials).
@@ -64,7 +66,11 @@ vec4 ReadPrimvar(uint slot, vec4 fallback)
             v[i] = inPrimvars[e.w + i];
         }
     } else {
+#ifdef PROGRAM_VERTEX
+        uint element = e.x == 3u ? uint(instances[inSlot].index) : 0u;  // ponytail: uniform reads face 0
+#else
         uint element = e.x == 2u ? uint(gl_PrimitiveID) : e.x == 3u ? uint(instances[inSlot].index) : 0u;
+#endif
         for (uint i = 0u; i < e.y; ++i) {
             v[i] = primvarData[e.z + element * e.y + i];
         }
@@ -94,6 +100,18 @@ vec3 HsvToRgb(vec3 hsv)
 // posed points, as Storm's points primvar).
 // ponytail: meshes without normals use the facet's normal, facing the
 // camera.
+#ifdef PROGRAM_VERTEX
+// Per vertex: the rest point and normal (programPosition, programNormal)
+// and the instance's transform (programModel).
+vec3 Geometry(bool normal, uint space)
+{
+    vec3 v = normal ? programNormal : programPosition;
+    if (space == 0u) {
+        return normal && dot(v, v) > 1e-12 ? normalize(v) : v;
+    }
+    return normal ? normalize(transpose(inverse(mat3(programModel))) * v) : (programModel * vec4(v, 1.0)).xyz;
+}
+#else
 vec3 Geometry(bool normal, uint space)
 {
     vec3 n = dot(inNormal, inNormal) > 1e-12 ? inNormal : cross(dFdx(inWorldPos), dFdy(inWorldPos));
@@ -104,6 +122,7 @@ vec3 Geometry(bool normal, uint space)
     mat4 m = InstanceTransform(instances[inSlot]);
     return normal ? normalize(transpose(mat3(m)) * n) : inverse(mat3(m)) * (inWorldPos - m[3].xyz);
 }
+#endif
 
 // v as a value of `components` (1: x splat; vector2 and vector3 zero the rest).
 vec4 Components(vec4 v, uint components)
@@ -165,6 +184,10 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
                 hasNormalMap = true;
             } else if (imm0 == 6u) {
                 alpha = clamp(a.x, 0.0, 1.0);
+#ifdef PROGRAM_VERTEX
+            } else if (imm0 == 26u) {  // MaterialProgram::kDisplacement
+                programDisplacement = a.x;
+#endif
 #ifdef LAYERS
             } else if (imm0 - 7u < kProgramLobes) {
                 programLobe[imm0 - 7u] = a;
@@ -261,9 +284,13 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             break;
         }
         default:
+#ifdef PROGRAM_VERTEX
+            r = ProceduralOp(code, imm0, imm1, a, b, x);  // displaced pipelines only (kDisplacement)
+#else
             if (kProcedurals) {
                 r = ProceduralOp(code, imm0, imm1, a, b, x);
             }
+#endif
             break;
         }
         programRegisters[dst] = r;

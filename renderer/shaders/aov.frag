@@ -17,7 +17,8 @@ layout(location = 0) in vec4 inWorldPosPrevX;
 layout(location = 1) in vec4 inNormalPrevY;
 layout(location = 2) in vec2 inUv;
 layout(location = 3) in vec4 inColorPrevZ;
-layout(location = 4) flat in uint inSlot;
+layout(location = 4) flat in uint inEntry;  // visible-list entry (frame.glsl's EntrySlot, LodKeep)
+#define inSlot EntrySlot(inEntry)
 #define inWorldPos (inWorldPosPrevX.xyz)
 #define inNormal (inNormalPrevY.xyz)
 #define inColor (inColorPrevZ.rgb)
@@ -82,7 +83,7 @@ void main()
     if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }
-    if (!present) {
+    if (!present || !LodKeep(inEntry, gl_FragCoord.xy)) {
         discard;
     }
     outNormalSt = vec4(OctEncode(n), inUv);

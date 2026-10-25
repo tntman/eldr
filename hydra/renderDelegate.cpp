@@ -189,6 +189,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
+        {"Level of Detail Crossfade (dithered)", t2.lodFade, VtValue(frame.lodFade)},
+        {"Curves as Camera-Facing Ribbons (else tubes)", t2.curveRibbons, VtValue(kHdVkCurveRibbons)},
+        {"Points as Camera-Facing Discs (else spheres)", t2.pointSprites, VtValue(kHdVkPointSprites)},
         {"Prewarm Pipelines (compile toggles in the background)", t.pipelinePrewarm, VtValue(true)},
         {"Pipeline Cache on Disk (save compiled shaders)", t.pipelineCache, VtValue(frame.pipelineCache)},
         {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
@@ -278,6 +281,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
         {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
+        {"Displacement Graphs (per vertex)", t2.displacementGraphs, VtValue(frame.displacementGraphs)},
         {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
         {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
         {"Translucent Holdouts Cut Alpha (by opacity)", t.holdoutAlpha, VtValue(frame.holdoutAlpha)},
@@ -349,12 +353,19 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
 void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &value)
 {
     const auto &t = *HdVkRenderSettingsTokens;
-    const bool geometry = (key == t.subdivision || key == t.maxRefineLevel) && GetRenderSetting(key) != value;
+    const auto &t2 = *HdVkRenderSettingsTokens2;
+    const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
     // Through the scene: a scene index render index's change tracker can't
     // dirty prims, and nothing may during a sync (this runs between frames).
-    if (geometry && _terminalSceneIndex) {
-        HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+    if (changed && _terminalSceneIndex) {
+        if (key == t.subdivision || key == t.maxRefineLevel) {
+            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+        } else if (key == t2.curveRibbons) {
+            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->basisCurves);
+        } else if (key == t2.pointSprites) {
+            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->points);
+        }
     }
 }
 

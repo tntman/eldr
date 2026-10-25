@@ -250,12 +250,15 @@ public:
         return _GetInputSceneIndex()->GetChildPrimPaths(path);
     }
 
-    void DirtyMeshes()
+    void DirtyMeshes(TfToken const &type)
     {
+        const HdDataSourceLocator &locator = type == HdPrimTypeTokens->mesh
+                                                 ? HdLegacyDisplayStyleSchema::GetDefaultLocator()
+                                                 : HdPrimvarsSchema::GetDefaultLocator();
         HdSceneIndexObserver::DirtiedPrimEntries entries;
         for (const SdfPath &path : HdSceneIndexPrimView(_GetInputSceneIndex())) {
-            if (_GetInputSceneIndex()->GetPrim(path).primType == HdPrimTypeTokens->mesh) {
-                entries.emplace_back(path, HdLegacyDisplayStyleSchema::GetDefaultLocator());
+            if (_GetInputSceneIndex()->GetPrim(path).primType == type) {
+                entries.emplace_back(path, locator);
             }
         }
         _SendPrimsDirtied(entries);
@@ -283,7 +286,7 @@ private:
 
 } // namespace
 
-void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal)
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type)
 {
     // Find this renderer's _SettingsSceneIndex upstream of the terminal.
     std::vector<HdSceneIndexBaseRefPtr> todo = {terminal};
@@ -295,7 +298,7 @@ void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal)
             continue;
         }
         if (auto *settings = dynamic_cast<_SettingsSceneIndex *>(sceneIndex)) {
-            settings->DirtyMeshes();
+            settings->DirtyMeshes(type);
             return;
         }
         if (auto *filtering = dynamic_cast<HdFilteringSceneIndexBase *>(sceneIndex)) {

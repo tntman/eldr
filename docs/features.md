@@ -392,14 +392,19 @@ quantises the lit intensity relative to the albedo into flat bands with
   vertex stage, so depth, shadows, motion vectors and ray tracing all see the
   same surface; the shading normal is bumped by the height map's slope
   (surface gradient). Best on refined subdivision surfaces. Culling bounds grow
-  by the largest offset.
+  by the largest offset. Height maps are read at the mip whose texels are as
+  far apart as the mesh's vertices, so a map finer than the mesh doesn't
+  alias. With `displacementGraphs`, a displacement driven by a shading graph
+  (math, noise, several textures) runs that graph per vertex.
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also
   weighs normals, uvs and colours, and joint weights for skinned meshes);
   culling picks the coarsest level whose error stays under about a pixel with
   hysteresis. Measured: crowd 54.5M triangles drawn down to 13.6M with the
   image within 0.6% of pixels, GPU 68 ms to 28-34 ms; Kitchen at Very High
-  34.8M to 6.4M triangles, 30 ms to 10.5 ms.
+  34.8M to 6.4M triangles, 30 ms to 10.5 ms. With `lodFade` a level change
+  crossfades over 8 frames with a moving dither that TAA or the film blends,
+  instead of popping.
 - **Skinning** (UsdSkel): GPU linear blend or dual quaternion
   (`primvars:skel:skinningMethod = "dualQuaternion"`), four or eight influences,
   blend shapes; per-instance poses so a crowd is one indirect draw per
@@ -407,8 +412,11 @@ quantises the lit intensity relative to the albedo into flat bands with
 - **Curves** (BasisCurves): linear, bezier, bspline and catmullRom, tubes of
   six sides or flat ribbons when normals exist; `widths`, `displayColor`,
   materials, instancing. u runs along each curve for hair shading and
-  textures. 100k hair curves come up in about 2 s.
-- **Points**: icosahedra `widths` across.
+  textures. 100k hair curves come up in about 2 s. `curveRibbons` (or a
+  curve's `primvars:eldr:ribbons`) draws curves without normals as flat
+  ribbons turned towards each pass's eye: 2 triangles per step instead of 12.
+- **Points**: icosahedra `widths` across, or with `pointSprites` (or
+  `primvars:eldr:sprites`) camera-facing discs shaded like spheres.
 - **Volumes**: see above.
 
 ## Motion blur, depth of field and upscaling

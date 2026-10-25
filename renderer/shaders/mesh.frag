@@ -56,7 +56,11 @@ layout(location = 0) in vec4 inWorldPosPrevX;
 layout(location = 1) in vec4 inNormalPrevY;
 layout(location = 2) in vec2 inUv;
 layout(location = 3) in vec4 inColorPrevZ;
-layout(location = 4) flat in uint inSlot;  // instance slot: draw (material, prim id) and instance index
+// The visible-list entry: the instance slot (draw: material, prim id; and
+// instance index), and while its level of detail changes the crossfade.
+// Pipelines without the crossfade (kCompiledFeatures) see only plain slots.
+layout(location = 4) flat in uint inEntry;
+#define inSlot ((kCompiledFeatures & kFeatureLod) != 0u ? EntrySlot(inEntry) : inEntry)
 #define inWorldPos (inWorldPosPrevX.xyz)
 #define inNormal (inNormalPrevY.xyz)
 #define inColor (inColorPrevZ.rgb)
@@ -932,8 +936,9 @@ void main()
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
-    // Cutouts: last, so every derivative above saw the whole quad.
-    if (!present) {
+    // Cutouts: last, so every derivative above saw the whole quad; and
+    // the other level's pixels of a level of detail crossfade.
+    if (!present || ((kCompiledFeatures & kFeatureLod) != 0u && !LodKeep(inEntry, gl_FragCoord.xy))) {
         discard;
     }
     // Volumetric fog between the camera and the surface (premultiplied;
