@@ -192,6 +192,8 @@ its own shape).
   with a skinned-character cap (`rtSkinnedInstances`). In final quality they
   take one ray per light and film sample at the sample dimensions' point of
   the light's shape, so the film converges to the exact penumbra.
+  Traced shadow rays pass translucent casters, taking their colour, and march
+  the volumes (`rtTranslucentShadows`), as the tint maps do.
   `finalShadows` (`maps`, `raytraced`, `auto`) traces them in final quality
   without `rtShadows`; `auto` traces dense scenes (2 triangles per pixel and
   shadowed light) whose skinned instances all block rays.

@@ -169,7 +169,8 @@ public:
         // lights that matter most (no shadow maps for them; soft from the
         // sun's angle and the lights' size) and traced reflections (instead
         // of the dome's and SSR, up to roughness 0.7), both noisy per frame
-        // for TAA to average. Translucent meshes don't block rays; of the
+        // for TAA to average. Translucent meshes only tint shadow rays
+        // (rtTranslucentShadows); of the
         // skinned ones, the rtSkinnedInstances largest on screen do (posed
         // and refit every frame).
         bool rtShadows = false;
@@ -181,6 +182,11 @@ public:
         // follow rtShadows alone.
         enum class FinalShadows { Maps, Raytraced, Auto };
         FinalShadows finalShadows = FinalShadows::Maps;
+        // Traced shadows go on through translucent casters (their colour,
+        // as the tint maps') and through the volumes (with volume.shadows;
+        // their transmittance, marched as volume_shadow.frag does); off:
+        // translucent meshes cast none, volumes neither.
+        bool rtTranslucentShadows = true;
         bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect

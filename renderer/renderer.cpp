@@ -739,8 +739,8 @@ void Renderer::_CreateDescriptors()
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Scene::Gpu::kMaxMirrors, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
-        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment},
+        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},  // traced shadows march the volumes too
+        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
@@ -2924,6 +2924,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
+    // Through glass and smoke: translucent casters colour each light's
+    // shadow (a texel per light), volumes are marched (grey).
+    const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
+    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
+    rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows
+                           ? gpu.volumeCount : 0;
+    rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
+    rt.volumeDensity = std::max(frame.volume.density, 0.0f);
     ScrambledSobol(sobolIndex, kSeedRtShadow, rt.shadowSample, 2);
     rt.reflectionSamples = frame.rtReflectionSamples;
     rt.sun = gpu.shadowLight;

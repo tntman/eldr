@@ -16,7 +16,15 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
     uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
     vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), w: layer stride (rows)
+    uvec4 shadowInfo;    // x: shadow rays' cull mask (kRtMaskTranslucent: through translucent casters),
+                         // y: volumes they march (0: none), z: lights per texel of the shadow image
+                         // (4: one channel each; 1: colour, rgb)
+    vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
 } rt;
+
+// TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
+// every ray, translucent ones only by shadow rays that tint.
+const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
 // of irradiance / pi (rgb; a: 1 while the probe sees mostly front faces)
@@ -172,16 +180,18 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
     return sum / weights;
 }
 
-// The traced shadow of `light`, if it has one (then it has no shadow map):
-// unshadowed on translucent surfaces.
+// The traced shadow of `light` (its colour: what reaches p through
+// translucent casters and volumes), if it has one (then it has no shadow
+// map): unshadowed on translucent surfaces.
 // ponytail: unfiltered (a fixed blur would soften hard and small shadows
 // alike); a filter sized by the penumbra needs the blockers' distances.
-bool RtShadow(uint light, out float visibility)
+bool RtTraced(uint light, out vec3 visibility)
 {
-    visibility = 1.0;
+    visibility = vec3(1.0);
     if (!Feature(kFeatureRtShadows)) {
         return false;
     }
+    uint perTexel = rt.shadowInfo.z;
     for (uint k = 0u; k < 16u; ++k) {
         uint traced = rt.shadowLights[k >> 2u][k & 3u];
         if (traced == kNone) {
@@ -189,12 +199,32 @@ bool RtShadow(uint light, out float visibility)
         }
         if (traced == light) {
             if (RtOpaque()) {
-                visibility = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k >> 2u) * int(rt.shadowSample.w)))[k & 3u];
+                vec4 v = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
+                visibility = perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
             }
             return true;
         }
     }
     return false;
+}
+
+// Split for mesh.frag's Shadow() and ShadowTint(): the brightest channel,
+// and the colour over it.
+bool RtShadow(uint light, out float visibility)
+{
+    vec3 v;
+    bool traced = RtTraced(light, v);
+    visibility = max(max(v.r, v.g), v.b);
+    return traced;
+}
+
+bool RtShadowTint(uint light, out vec3 tint)
+{
+    vec3 v;
+    bool traced = RtTraced(light, v);
+    float m = max(max(v.r, v.g), v.b);
+    tint = m > 0.0 ? v / m : vec3(1.0);
+    return traced;
 }
 
 // Traced reflections replace the dome's (and SSR) by their weight (a),

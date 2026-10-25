@@ -23,7 +23,11 @@ struct RayTracingData {
     float giRotation[16];
     uint32_t skinned[4];  // the TLAS's first skinned instance, how many
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
+    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
+    float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
 };
+// TLAS instance masks (shaders/gi.glsl).
+constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2;
 
 // Hardware ray tracing (Device::rayTracing): a BLAS per rigid opaque or
 // cutout mesh, a TLAS over the instance pool, and the passes tracing them.
@@ -47,6 +51,12 @@ public:
         bool reflections = false;  // traced reflections
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
+        // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):
+        // colour per light in the shadow image, and the first shadowVolumes
+        // volumes are marched along the rays at volumeStep, volumeDensity.
+        bool shadowColor = false;
+        uint32_t shadowVolumes = 0;
+        float volumeStep = 1.0f, volumeDensity = 1.0f;
         uint32_t shadowSamples = 1, reflectionSamples = 1;          // rays per light / pixel
         uint32_t sun = kNone;  // the distant light shadowed at hits
         bool gi = false;            // global illumination probes

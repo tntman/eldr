@@ -9,6 +9,7 @@
 #include "material.glsl"
 #include "rt.glsl"
 #include "gi.glsl"
+#include "volume.glsl"
 #include "rt_shade.glsl"
 
 // Per pixel, for mesh.frag: a ray through the pixel finds the surface the
@@ -68,27 +69,35 @@ void main()
     }
     uvec3 seed = uvec3(pixel, rt.params.x);
 
-    // Shadows, four lights per layer of the image. With the sample
-    // dimensions each film sample takes a new point on every light's shape:
-    // the CPU's scrambled Sobol point turned by blue noise (each light
-    // reading it elsewhere), so the film converges to the exact penumbra.
+    // Shadows, rt.shadowInfo.z lights per layer of the image (four grey
+    // ones, or one in colour). With the sample dimensions each film sample
+    // takes a new point on every light's shape: the CPU's scrambled Sobol
+    // point turned by blue noise (each light reading it elsewhere), so the
+    // film converges to the exact penumbra.
     if ((frame.features.x & kFeatureRtShadows) != 0u) {
-        for (uint layer = 0u; layer < 4u && rt.shadowLights[layer].x != kNone; ++layer) {
-            vec4 shadows = vec4(1.0);
-            for (uint c = 0u; c < 4u; ++c) {
-                uint light = rt.shadowLights[layer][c];
-                if (light == kNone) {
-                    break;
-                }
-                uint k = layer * 4u + c;
-                vec2 u = Random2(seed + uvec3(0u, 0u, light * 64u), 0u);
-                if (frame.sampleInfo.x != 0u) {
-                    vec4 noise = texelFetch(blueNoise, (pixel + ivec2(k * 23u + 7u, k * 41u + 13u)) & 63, 0);
-                    u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
-                }
-                shadows[c] = LightVisibility(light, p, ng, u, rt.params.y);
+        uint perTexel = rt.shadowInfo.z;
+        vec4 shadows = vec4(1.0);
+        for (uint k = 0u; k < 16u; ++k) {
+            uint light = rt.shadowLights[k >> 2u][k & 3u];
+            if (light == kNone) {
+                break;
             }
-            imageStore(rtShadowImage, pixel + ivec2(0, int(layer) * int(rt.shadowSample.w)), shadows);
+            vec2 u = Random2(seed + uvec3(0u, 0u, light * 64u), 0u);
+            if (frame.sampleInfo.x != 0u) {
+                vec4 noise = texelFetch(blueNoise, (pixel + ivec2(k * 23u + 7u, k * 41u + 13u)) & 63, 0);
+                u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
+            }
+            vec3 v = LightVisibility(light, p, ng, u, rt.params.y);
+            if (perTexel == 1u) {
+                shadows.rgb = v;
+            } else {
+                shadows[k & 3u] = v.r;
+            }
+            uint next = k + 1u < 16u ? rt.shadowLights[(k + 1u) >> 2u][(k + 1u) & 3u] : kNone;
+            if ((k + 1u) % perTexel == 0u || next == kNone) {
+                imageStore(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)), shadows);
+                shadows = vec4(1.0);
+            }
         }
     }
 

@@ -19,6 +19,8 @@ layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]
 
 // Every instance of the mesh is also a light (Scene::SetEmissiveLights).
 const uint kRtSlotEmitter = 1u;
+// A translucent mesh: only shadow rays that tint see it (rt_shadow.rahit).
+const uint kRtSlotTranslucent = 4u;
 
 // Skinned instances (rt_skin.comp): the TLAS's instances from
 // rt.skinned.x on, one per entry here, each with a BLAS of its own over its

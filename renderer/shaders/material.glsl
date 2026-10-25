@@ -79,6 +79,21 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     return r.channel < 0 ? t : vec4(t[r.channel]);
 }
 
+// What a translucent shadow caster lets through (shadow_tint.frag's tint
+// maps, rt_shadow.rahit's traced shadows): what transmits through a
+// refracting surface loses its two interfaces' reflections at normal
+// incidence.
+// ponytail: constants and textures only (material programs are skipped),
+// no absorption over the path inside.
+vec3 ShadowTransmission(Material m, vec2 uv)
+{
+    float opacity = clamp(Fetch(m.tex[6], m.params.wwww, uv).r, 0.0, 1.0);
+    float f0 = (m.refraction.x - 1.0) / (m.refraction.x + 1.0);
+    float interfaces = (1.0 - f0 * f0) * (1.0 - f0 * f0);
+    vec3 transmitted = opacity * m.transmission.w * m.transmission.rgb * interfaces;
+    return m.refraction.w > 0.0 ? vec3((1.0 - opacity) * interfaces) : vec3(1.0 - opacity) + transmitted;
+}
+
 // False where a cutout material has no surface (opacity under its threshold).
 bool Present(Material m, vec2 uv)
 {

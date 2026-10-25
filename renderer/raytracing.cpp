@@ -27,6 +27,9 @@ const uint32_t kClosestHit[] =
 const uint32_t kAnyHit[] =
 #include "rt.rahit.inc"
 ;
+const uint32_t kShadowAnyHit[] =
+#include "rt_shadow.rahit.inc"
+;
 const uint32_t kTlasComp[] =
 #include "tlas.comp.inc"
 ;
@@ -50,7 +53,7 @@ constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors,
 
 
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
-constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2;
+constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2, kSlotTranslucent = 4;
 
 // BLASes are placed in 16 MB blocks at the required 256-byte alignment.
 constexpr VkDeviceSize kUnit = 256;
@@ -280,7 +283,8 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
 
     // Shader groups: the ray generation shaders, misses (closest surface,
     // shadow), hit groups (closest surface: closest hit + cutout any hit;
-    // shadow: the any hit only). Rays pick the shadow ones by SBT offset 1.
+    // shadow: rt_shadow.rahit, cutouts and translucent casters). Rays pick
+    // the shadow ones by SBT offset 1.
     struct Stage {
         const uint32_t *code;
         size_t bytes;
@@ -293,6 +297,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {kClosestHit, sizeof(kClosestHit), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
         {kAnyHit, sizeof(kAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
         {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kShadowAnyHit, sizeof(kShadowAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
     };
     constexpr uint32_t kStages = sizeof(stages) / sizeof(stages[0]);
     VkPipelineShaderStageCreateInfo stageInfos[kStages] = {};
@@ -315,7 +320,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 1, kUnused, kUnused),  // miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 2, kUnused, kUnused),  // shadow miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, 3, 4),
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 4),
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 6),
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 5, kUnused, kUnused),  // probes
     };
     constexpr uint32_t kGroups = sizeof(groups) / sizeof(groups[0]);
@@ -458,6 +463,9 @@ VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertic
 {
     VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
     geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+    // A translucent caster's any hit multiplies the shadow ray's colour:
+    // once per surface.
+    geometry.flags = VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR;
     VkAccelerationStructureGeometryTrianglesDataKHR &t = geometry.geometry.triangles;
     t.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR;
     t.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
@@ -753,7 +761,8 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
         words[s * 4 + 0] = uint32_t(address);
         words[s * 4 + 1] = uint32_t(address >> 32);
         words[s * 4 + 2] = g.firstIndex;
-        words[s * 4 + 3] = (g.cutout ? kSlotCutout : 0) | (g.emitter ? kSlotEmitter : 0);
+        words[s * 4 + 3] = (g.cutout ? kSlotCutout : 0) | (g.emitter ? kSlotEmitter : 0) |
+                           (g.translucent ? kSlotTranslucent : 0);
     }
     if (words != _slotWords) {
         _dev.Reserve(_slots, words.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -883,12 +892,13 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     const VkDeviceSize skinnedScratch = _PrepareSkinned(gpu);
     _PrepareTlas(gpu);
     _ReserveScratch(skinnedScratch);  // the skinned BLASes' builds share it with the TLAS's, one after the other
-    // Shadow layers grow (four lights each) and stay.
+    // Shadow layers grow (four grey lights or one colour one each) and stay.
     uint32_t lights = 0;
     while (work.shadows && lights < kMaxRtShadowLights && work.shadowLights[lights] != kNone) {
         ++lights;
     }
-    const uint32_t layers = std::max((lights + 3) / 4, std::max(_shadowLayers, 1u));
+    const uint32_t perTexel = work.shadowColor ? 1 : 4;
+    const uint32_t layers = std::max((lights + perTexel - 1) / perTexel, std::max(_shadowLayers, 1u));
     if ((work.shadows || work.reflections) && (width != _width || height != _height || layers != _shadowLayers)) {
         _CreateImages(width, height, layers);
     }
@@ -898,6 +908,11 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowSample[0] = work.shadowSample[0];
     d.shadowSample[1] = work.shadowSample[1];
     d.shadowSample[3] = float(height);
+    d.shadowInfo[0] = kRtMaskSurfaces | (work.shadowColor ? kRtMaskTranslucent : 0);
+    d.shadowInfo[1] = work.shadowVolumes;
+    d.shadowInfo[2] = perTexel;
+    d.shadowVolume[0] = work.volumeStep;
+    d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;
     d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
     d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);

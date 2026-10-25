@@ -1718,12 +1718,11 @@ void Scene::Commit(bool keepMotion)
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
-        // ponytail: translucent meshes don't block rays (no traced tints).
+        // Translucent meshes are traced too, seen by shadow rays only (tints).
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
-        const bool traced = drawable && blend != Gpu::kTranslucent;
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
-                                   traced ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
-                                   (variant & Gpu::kDisplaced) != 0};
+                                   drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
+                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;
