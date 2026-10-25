@@ -50,5 +50,18 @@ cube = rg.stage().GetPrimAtPath("/cube1")
 assert cube, [p.GetPath() for p in rg.stage().Traverse()]
 got = cube.GetAttribute("primvars:eldr:hair").Get()
 assert got is False, got
+# Viewport Display Options: HdVkRendererPlugin_Viewport.ds is found through
+# HOUDINI_SOHO_PATH and every parm is in the "viewport" scope, named by the
+# setting's key (the viewport hands the decoded name to SetRenderSetting).
+import os
+
+ds = [d + "/parameters/HdVkRendererPlugin_Viewport.ds" for d in hou.houdiniPath("HOUDINI_SOHO_PATH")]
+ds = [f for f in ds if os.path.exists(f)]
+assert ds, "no HdVkRendererPlugin_Viewport.ds on HOUDINI_SOHO_PATH"
+group = hou.ParmTemplateGroup()
+group.setToDialogScript(open(ds[0]).read())
+parms = [t for folder in group.entries() for t in folder.parmTemplates()]
+assert len(parms) > 100 and all(t.tags().get("uiscope") == "viewport" for t in parms), len(parms)
+assert hou.text.decodeParm(parms[0].name()).startswith("eldr:"), parms[0].name()
 print("houdini_ui OK")
 sys.exit(0)

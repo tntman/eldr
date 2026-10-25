@@ -100,7 +100,11 @@ window (`GROUPS` in `usdview/hdvkUsdview/settings.py`). The Render Settings tab
 authors every `eldr:*` setting (each with Karma's Do Nothing / Set or Create /
 Block menu); the Geometry tab the per-prim primvars (`primvars:eldr:reflectionProbe`,
 `planarReflection`, `hair`, `ribbons`, `sprites`). `hython tests\houdini_ui.py`
-creates both LOPs, sets parameters and checks the authored attributes. Nodes
+creates both LOPs, sets parameters and checks the authored attributes and the
+viewport file. Houdini does not list a delegate's `GetRenderSettingDescriptors`
+by itself: without `HdVkRendererPlugin_Viewport.ds` the viewport's Display
+Options had no Eldr settings (the Embree sample in
+`$HFS/houdini/soho/parameters` shows the mechanism). Nodes
 made before Eldr was installed need "Rebuild Renderer-Specific Parameters".
 
 ## Render statistics in Solaris
