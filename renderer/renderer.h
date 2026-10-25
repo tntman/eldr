@@ -361,6 +361,22 @@ public:
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
         float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
+        // Back-face hits in SSR and SSGI (Blender 5.2's Backface option): a
+        // ray that meets the visible surface from behind (it went behind an
+        // object) takes its radiance times screenBackfaceScale (0: none,
+        // 1: as a front face). Off: SSR counts them fully, SSGI's bitmask
+        // takes none and its horizon scan all, as before.
+        bool screenBackface = true;
+        float screenBackfaceScale = 0.25f;
+        // Half-resolution SSGI traces a different pixel of each 2 x 2 tile
+        // every frame, in Morton order (EEVEE's), so the accumulation sees
+        // all four. Off: always the tile's first, as before.
+        bool ssgiTileOrder = true;
+        // SSR hits read last frame's image at the mip as wide as the ray's
+        // cone there (EEVEE 5.2): glossy reflections without sparkle. The
+        // history then keeps mips (6 levels, blitted each frame). Off: one
+        // texel, sharp at any roughness.
+        bool ssrHitFilter = true;
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.

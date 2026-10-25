@@ -13,14 +13,14 @@ GROUPS = [
      "pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures lightShapesVisible emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
-     "ssgiThickness ssgiBitmask ssgiBitmaskThickness directClamp indirectClamp"),
+     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution ssgiTileOrder "
+     "ssgiThickness ssgiBitmask ssgiBitmaskThickness screenBackface screenBackfaceScale directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
      "rtDisplacement shadowJitter"),
     ("Reflections",
-     "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
      "probeNormalize planarReflections planarScale planarCount"),
     ("Materials",
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "

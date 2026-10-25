@@ -209,7 +209,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.dofResidualBlur, &frame.dofResidualBlur},
                                 {t2.productResolution, &frame.productResolution},
                                 {t2.localVolumeShadows, &frame.localVolumeShadows},
-                                {t2.lightShapesVisible, &frame.lightShapesVisible}}) {
+                                {t2.lightShapesVisible, &frame.lightShapesVisible},
+                                {t2.screenBackface, &frame.screenBackface},
+                                {t2.ssrHitFilter, &frame.ssrHitFilter},
+                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     // Render products at their own framing (hdvk:productResolution): the
@@ -251,7 +254,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
                                 {t2.directIntensity, &frame.directIntensity},
                                 {t2.indirectIntensity, &frame.indirectIntensity},
-                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
+                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp},
+                                {t2.screenBackfaceScale, &frame.screenBackfaceScale}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a

@@ -40,6 +40,13 @@ VkImageSubresourceRange Color()
     return {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 }
 
+// The history's mips (SetHistoryMips), all in one layout between frames.
+constexpr uint32_t kHistoryMips = 6;
+VkImageSubresourceRange HistoryRange()
+{
+    return {VK_IMAGE_ASPECT_COLOR_BIT, 0, VK_REMAINING_MIP_LEVELS, 0, 1};
+}
+
 } // namespace
 
 TemporalAA::TemporalAA(Device &device)
@@ -136,8 +143,13 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _history = _dev.CreateImage(kFormat, width, height, 1, 1,
-                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    _historyMips = 1;
+    while (_historyMips < kHistoryMips && (std::max(width, height) >> _historyMips) > 0) {
+        ++_historyMips;
+    }
+    _history = _dev.CreateImage(kFormat, width, height, 1, _historyMips,
+                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     for (Image *sums : {&_sums, &_weights}) {
         *sums = _dev.CreateImage(kSumFormat, width, height, 1, 1, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
@@ -151,13 +163,13 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
                          VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         }
-        ImageBarrier(cmd, _history.image, Color(), VK_PIPELINE_STAGE_2_NONE, 0,
+        ImageBarrier(cmd, _history.image, HistoryRange(), VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         const VkClearColorValue black{};
-        const VkImageSubresourceRange range = Color();
+        const VkImageSubresourceRange range = HistoryRange();
         vkCmdClearColorImage(cmd, _history.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &black, 1, &range);
-        ImageBarrier(cmd, _history.image, Color(),
+        ImageBarrier(cmd, _history.image, HistoryRange(),
                      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -290,17 +302,39 @@ void TemporalAA::_CopyToHistory(VkCommandBuffer cmd, VkImageLayout layout, VkPip
 {
     ImageBarrier(cmd, _resolved.image, Color(), stage, access, VK_PIPELINE_STAGE_2_COPY_BIT,
                  VK_ACCESS_2_TRANSFER_READ_BIT, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    ImageBarrier(cmd, _history.image, Color(),
+    ImageBarrier(cmd, _history.image, HistoryRange(),
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
     VkImageCopy copy{};
     copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
     copy.extent = {_width, _height, 1};
     vkCmdCopyImage(cmd, _resolved.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                    _history.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-    ImageBarrier(cmd, _history.image, Color(),
-                 VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+    // Its mips, each a linear 2x2 average of the one above (box filter).
+    const uint32_t mips = _mipsOn ? _historyMips : 1;
+    for (uint32_t m = 1; m < mips; ++m) {
+        ImageBarrier(cmd, _history.image, {VK_IMAGE_ASPECT_COLOR_BIT, m - 1, 1, 0, 1},
+                     VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkImageBlit blit{};
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m - 1, 0, 1};
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, m, 0, 1};
+        blit.srcOffsets[1] = {int32_t(std::max(_width >> (m - 1), 1u)), int32_t(std::max(_height >> (m - 1), 1u)), 1};
+        blit.dstOffsets[1] = {int32_t(std::max(_width >> m, 1u)), int32_t(std::max(_height >> m, 1u)), 1};
+        vkCmdBlitImage(cmd, _history.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _history.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    }
+    if (mips > 1) {
+        ImageBarrier(cmd, _history.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, mips - 1, 0, 1}, VK_PIPELINE_STAGE_2_BLIT_BIT,
+                     VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    ImageBarrier(cmd, _history.image, {VK_IMAGE_ASPECT_COLOR_BIT, mips - 1, VK_REMAINING_MIP_LEVELS, 0, 1},
+                 VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     ImageBarrier(cmd, _resolved.image, Color(),

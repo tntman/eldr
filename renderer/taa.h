@@ -46,7 +46,12 @@ public:
     VkImageView Output() const { return _resolved.view; }
     VkImage OutputImage() const { return _resolved.image; }
     // Last frame's resolve, in SHADER_READ_ONLY_OPTIMAL between frames.
+    // Its view has mips; they hold the resolve's averages over 2^m pixels
+    // only while SetHistoryMips is on (SSR's footprint-filtered hits),
+    // else stale data (samplers with maxLod 0 never see them).
     VkImageView History() const { return _history.view; }
+    // Whether the next Record/RecordFilm builds the history's mips.
+    void SetHistoryMips(bool on) { _mipsOn = on; }
 
 private:
     void _Destroy();
@@ -62,6 +67,8 @@ private:
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _resolved, _history;
+    uint32_t _historyMips = 1;
+    bool _mipsOn = false;
     // Film: compute pipeline, set and its fp32 sums (colour * weight; weight), GENERAL.
     VkDescriptorSetLayout _filmSetLayout = VK_NULL_HANDLE;
     VkPipelineLayout _filmLayout = VK_NULL_HANDLE;

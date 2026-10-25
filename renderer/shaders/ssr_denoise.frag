@@ -13,12 +13,13 @@ layout(set = 0, binding = 4) uniform sampler2D factor;      // the reflection's 
 layout(set = 0, binding = 5) uniform sampler2D resolved;    // the spatial pass's radiance, mean hit distance
 layout(set = 0, binding = 6) uniform sampler2D history;     // last frame's temporal result (rgb, luma^2), linear
 layout(set = 0, binding = 7) uniform sampler2D current;     // this frame's
+layout(set = 0, binding = 8) uniform sampler2D blueNoise;   // 64 x 64 RGBA (Renderer's sample dimensions)
 
 layout(push_constant) uniform DenoiseParams {
     mat4 invViewProj;   // NDC -> world (row-vector order)
     mat4 prevViewProj;  // world -> last frame's clip
     vec4 eye;           // camera position; w: noise index
-    vec4 params;        // x unused, history valid, 1/width, 1/height
+    vec4 params;        // x: kDimSsrDenoise's value (< 0: gradient noise), history valid, 1/width, 1/height
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -72,10 +73,15 @@ float Lobe(vec3 n, vec3 v, vec3 l, float a)
     return D * 0.5 / (gv + gl) * NoL;
 }
 
-// Interleaved gradient noise (Jimenez 2014), per frame: the spatial
-// kernel's rotation (the one noise lookup here).
+// The spatial kernel's rotation (the one noise lookup here): frame.glsl's
+// SampleNoise for kDimSsrDenoise (10: channel b, shifted by 10 x (23, 41));
+// without the sample dimensions interleaved gradient noise (Jimenez 2014)
+// shifted per frame.
 float Noise(vec2 p)
 {
+    if (pc.params.x >= 0.0) {
+        return fract(texelFetch(blueNoise, (ivec2(p) + ivec2(230, 410)) & 63, 0).b + pc.params.x);
+    }
     p += 5.588238 * pc.eye.w;
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }

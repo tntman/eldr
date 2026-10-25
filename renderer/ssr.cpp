@@ -19,13 +19,13 @@ const uint32_t kCompositeFrag[] =
 ;
 
 constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // Renderer::kColorFormat
-constexpr uint32_t kBindings = 8;
+constexpr uint32_t kBindings = 9;
 
 struct DenoiseParams {  // mirror of the push block in ssr_denoise.frag
     float invViewProj[16];
     float prevViewProj[16];
     float eye[4];     // camera position; w: noise index
-    float params[4];  // unused, history valid, 1/width, 1/height
+    float params[4];  // kDimSsrDenoise's value (< 0: none), history valid, 1/width, 1/height
 };
 
 VkImageSubresourceRange Color()
@@ -48,7 +48,7 @@ SsrDenoise::SsrDenoise(Device &device)
 
     // 0: depth, 1..4: mesh.frag's rays, directions, normals, weights,
     // 5: the spatial pass's result, 6: last frame's history (linear),
-    // 7: this frame's.
+    // 7: this frame's, 8: the blue noise (SetBlueNoise).
     VkDescriptorSetLayoutBinding bindings[kBindings] = {};
     for (uint32_t i = 0; i < kBindings; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
@@ -152,7 +152,8 @@ void SsrDenoise::Prepare()
             {_nearest, _factor.view, general},
             {_nearest, _resolved.view, read},
             {_linear, _history[i ^ 1].view, read},
-            {_nearest, _history[i].view, read}};
+            {_nearest, _history[i].view, read},
+            {_nearest, _blueNoise, read}};
         VkWriteDescriptorSet writes[kBindings] = {};
         for (uint32_t b = 0; b < kBindings; ++b) {
             writes[b] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
@@ -185,7 +186,8 @@ void SsrDenoise::Clear(VkCommandBuffer cmd)
 }
 
 void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16],
-                         const float prevViewProj[16], const float eye[3], uint32_t noise, bool history)
+                         const float prevViewProj[16], const float eye[3], uint32_t noise, bool history,
+                         float dimension)
 {
     for (const Image *img : {&_rays, &_directions, &_normals, &_factor}) {
         ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -200,6 +202,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float inv
     std::copy(prevViewProj, prevViewProj + 16, params.prevViewProj);
     std::copy(eye, eye + 3, params.eye);
     params.eye[3] = float(noise % 1024u);
+    params.params[0] = dimension;
     params.params[1] = history ? 1.0f : 0.0f;
     params.params[2] = 1.0f / float(_width);
     params.params[3] = 1.0f / float(_height);

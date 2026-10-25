@@ -551,6 +551,16 @@ float SceneDepth(vec2 ndc)
     return texelFetch(sceneDepth, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
 }
 
+// Whether a ray at window depth z is behind the depth buffer's `scene`
+// (EEVEE 5.2's precision fix): by more than 7 steps of the depth's
+// precision (2^-24 near 1, D32F as 24-bit), so a ray leaving its surface
+// towards the camera doesn't hit it again where the depths round alike,
+// nor where fast math puts an equal depth a hair behind.
+bool Behind(float z, float scene)
+{
+    return scene < 1.0 && z - scene > 7.0 / 16777216.0;
+}
+
 // Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
 // GGX-sampled ray per pixel, for the denoiser.
 layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
@@ -559,14 +569,31 @@ layout(set = 0, binding = 74, rgba16f) uniform writeonly image2D ssrNormals;    
 layout(set = 0, binding = 75, rgba16f) uniform writeonly image2D ssrFactor;      // the reflection's weight, 1
 float ssrHitDistance = -1.0;  // TraceReflection's last hit, world units
 
+// The visible surface's normal at `ndc` (world point p) from the depth:
+// per axis the shorter of the two one-pixel steps, so silhouettes don't
+// bend it; facing the camera.
+vec3 DepthNormal(vec2 ndc, vec3 p)
+{
+    vec3 t[2];
+    for (int i = 0; i < 2; ++i) {
+        vec2 o = i == 0 ? vec2(2.0 / frame.viewport.x, 0.0) : vec2(0.0, 2.0 / frame.viewport.y);
+        vec3 a = Unproject(vec3(ndc + o, SceneDepth(ndc + o) * 2.0 - 1.0)) - p;
+        vec3 b = p - Unproject(vec3(ndc - o, SceneDepth(ndc - o) * 2.0 - 1.0));
+        t[i] = dot(a, a) < dot(b, b) ? a : b;
+    }
+    vec3 n = normalize(cross(t[0], t[1]));
+    return dot(n, frame.cameraPos.xyz - p) < 0.0 ? -n : n;
+}
+
 // Screen-space reflection: marches the ray linearly through NDC (where
 // it stays a straight line with affine depth) against the prepass depth,
 // refines the first crossing by bisection and shades it with last frame's
 // result reprojected to the hit. Returns the hit's weight (0 = miss) and
 // its premultiplied radiance in `hit`.
 // Without the denoiser (Frame::ssrDenoise): mirror rays only, faded out
-// from roughness 0.3 to 0.6.
-float TraceReflection(vec3 p, vec3 r, out vec4 hit)
+// from roughness 0.3 to 0.6. `cone`: the tangent of the half angle of the
+// cone of directions the ray stands for (Frame::ssrHitFilter).
+float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
 {
     int steps = int(frame.features.y);
     hit = vec4(0.0);
@@ -602,9 +629,15 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
     // the crowd 1.4 ms for nothing the pixel search doesn't already catch.
     bool estimator = frame.screenTrace.x > 0.0;
     float prevScene = 1.0;
-    int budget = 128;  // pixels searched between steps, per ray
+    // Pixels searched between steps, per ray: 4 per step (128 at the
+    // default 32), so fewer steps cost less. A fixed 128 let the search
+    // take over at few steps, whose gaps are wider: 8 steps were slower
+    // than 32.
+    int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
-    for (int i = 0; i < steps; ++i) {
+    float lo = 0.0, hi = 0.0;  // the crossing's bracket
+    bool crossed = false;
+    for (int i = 0; i < steps && !crossed; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
         if (estimator) {
             u = max(u, uPrev + uEnd / pixels);
@@ -618,7 +651,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             break;  // beyond the far plane: only sky, which the dome provides
         }
         float scene = SceneDepth(s.xy);
-        if (estimator && i > 0 && !wasBehind && !(scene < 1.0 && z > scene)) {
+        if (estimator && i > 0 && !wasBehind && !Behind(z, scene)) {
             // Across a jump in depth between two steps (an edge, the end
             // of a thin strip of surface seen edge-on) a thin feature can
             // hide in front of the ray: search the pixels in between.
@@ -630,7 +663,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
                     float uk = mix(uPrev, u, float(k) / float(between + 1));
                     vec3 sk = mix(s0, s1, uk);
                     float dk = SceneDepth(sk.xy);
-                    if (dk < 1.0 && sk.z * 0.5 + 0.5 > dk) {
+                    if (Behind(sk.z * 0.5 + 0.5, dk)) {
                         u = uk;
                         s = sk;
                         z = sk.z * 0.5 + 0.5;
@@ -651,15 +684,16 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
         // refined first and judged where it crosses: at grazing angles a
         // whole step can land far behind a surface it did pass through
         // (otherwise a miss that TAA's clipping keeps as grain).
-        bool behind = scene < 1.0 && z > scene, crossed = false;
-        float lo = uPrev, hi = u;
+        bool behind = Behind(z, scene);
+        lo = uPrev;
+        hi = u;
         if (behind) {
             float stepLength = length(Unproject(s) - Unproject(sPrev));
             if (!wasBehind) {
                 for (int k = 0; k < 5; ++k) {
                     float mid = 0.5 * (lo + hi);
                     vec3 m = mix(s0, s1, mid);
-                    if (m.z * 0.5 + 0.5 > SceneDepth(m.xy)) {
+                    if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
                         hi = mid;
                     } else {
                         lo = mid;
@@ -689,34 +723,57 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             }
         }
         wasBehind = behind;
-        if (crossed) {
-            for (int k = 0; k < 5; ++k) {
-                float mid = 0.5 * (lo + hi);
-                vec3 m = mix(s0, s1, mid);
-                if (m.z * 0.5 + 0.5 > SceneDepth(m.xy)) {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            vec2 ndc = mix(s0.xy, s1.xy, hi);
-            vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
-            ssrHitDistance = length(hitPos - p);
-            vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
-            vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
-            if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
-                return 0.0;
-            }
-            hit = textureLod(previousColor, prevUv, 0.0);
-            hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
-            // Fade towards the screen edges, beyond which the ray is blind.
-            vec2 edge = 1.0 - abs(ndc);
-            return smoothstep(0.0, 0.1, min(edge.x, edge.y));
-        }
         uPrev = u;
         sPrev = s;
     }
-    return 0.0;
+    // Resolved after the march, so its code holds no registers in the
+    // loop (it went 1 ms faster on the crowd than inside it).
+    if (!crossed) {
+        return 0.0;
+    }
+    for (int k = 0; k < 5; ++k) {
+        float mid = 0.5 * (lo + hi);
+        vec3 m = mix(s0, s1, mid);
+        if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    vec2 ndc = mix(s0.xy, s1.xy, hi);
+    vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
+    ssrHitDistance = length(hitPos - p);
+    vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
+    vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
+    if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
+        return 0.0;  // not in last frame's image: a miss (the probe or dome)
+    }
+    // Footprint-filtered (Frame::ssrHitFilter, EEVEE 5.2): the
+    // history's mip whose pixels are as wide as the ray's cone at
+    // the hit, so a rough ray doesn't pick one sparkling pixel.
+    float lod = 0.0, prevEdge = 1.0;
+    if (frame.screenTrace.z > 0.0) {
+        float hitNdcZ = SceneDepth(ndc) * 2.0 - 1.0;
+        float pixel = length(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, hitNdcZ)) - hitPos);
+        lod = clamp(log2(2.0 * ssrHitDistance * cone / max(pixel, 1e-20)), 0.0, 5.0);
+        // Faded out at the edges of last frame's image too, where
+        // the footprint reaches past it.
+        vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
+        prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
+    }
+    hit = textureLod(previousColor, prevUv, lod);
+    hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
+    // Met from behind (the ray went behind an object): the light of
+    // its unseen side is guessed as a share of the front's
+    // (Frame::screenBackface).
+    // A small tolerance: grazing hits (normal from depth across
+    // the ray, rounding either way) count as front faces.
+    if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+        hit.rgb *= frame.screenTrace.y;
+    }
+    // Fade towards the screen edges, beyond which the ray is blind.
+    vec2 edge = 1.0 - abs(ndc);
+    return smoothstep(0.0, 0.1, min(edge.x, edge.y)) * prevEdge;
 }
 
 // Same SH9 basis order as BuildEnvironment.
@@ -899,10 +956,16 @@ void main()
 #endif
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
         vec3 ve = vec3(dot(v, tx), dot(v, ty), NoV);
-        // Interleaved gradient noise, two lookups shifted per frame.
-        vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
-        vec2 u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
-                                                dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        // Two sample dimensions; without them interleaved gradient noise,
+        // two lookups shifted per frame.
+        vec2 u;
+        if (frame.sampleInfo.x != 0u) {
+            u = vec2(SampleNoise(kDimSsrGgx, gl_FragCoord.xy, 0.0), SampleNoise(kDimSsrGgx2, gl_FragCoord.xy, 0.0));
+        } else {
+            vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
+            u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
+                                              dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        }
         vec3 h = SampleGgxVndf(ve, a, u);
         h = tx * h.x + ty * h.y + n * h.z;
         vec3 l = reflect(-v, h);
@@ -913,7 +976,9 @@ void main()
         // The visible normals' pdf: D(h) G1(v) / (4 NoV).
         float pdf = D_GGX(max(dot(n, h), 0.0), a) * 2.0 / (NoV + sqrt(a * a + (1.0 - a * a) * NoV * NoV)) / 4.0;
         vec4 hit;
-        float w = TraceReflection(inWorldPos, l, hit);
+        // The ray's share of the lobe: the solid angle of one of the 9
+        // rays the denoiser's spatial pass reuses.
+        float w = TraceReflection(inWorldPos, l, sqrt(1.0 / (9.0 * PI * max(pdf, 1e-6))), hit);
         ivec2 px = ivec2(gl_FragCoord.xy);
         imageStore(ssrRays, px, vec4(mix(specular, hit.rgb + (1.0 - hit.a) * specular, w), pdf));
         imageStore(ssrDirections, px, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
@@ -923,7 +988,7 @@ void main()
         domeKept *= 1.0 - ssrWeight;  // ponytail: the denoised rays' misses aren't in the splits
     } else if (ssrWeight > 0.0) {
         vec4 hit;
-        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
+        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), a, hit);  // the lobe's width
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
         domeKept *= 1.0 - ssrWeight * hit.a;
     }

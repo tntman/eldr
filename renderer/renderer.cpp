@@ -52,11 +52,11 @@ struct FrameData {
     float geometry[4];       // displacement scale, w graphs (kFeatureDisplacement); LOD bias, frame (kFeatureLod)
     // Sample dimensions (frame.glsl's SampleNoise): this sample's value per
     // stochastic effect (kDim*); x of sampleInfo 1 with them on.
-    float sampleDims[2][4];
+    float sampleDims[3][4];
     uint32_t sampleInfo[4];
     uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
-    float screenTrace[4];    // thickness estimator (SSR) on
+    float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light, SSR hit filter on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
     float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
@@ -299,10 +299,10 @@ float Halton(uint32_t index, uint32_t base)
 // stochastic effect (the pixel jitter is Halton 2, 3), so effects never
 // share a pattern and each is stratified at every power of two samples;
 // with the blue noise, fract(noise + value) per pixel.
-constexpr uint32_t kSampleDims = 8, kDimAo = 0, kDimSsgi = 1;
+constexpr uint32_t kSampleDims = 12, kDimAo = 0, kDimSsgi = 1, kDimSsrDenoise = 10, kDimSsgiJitter = 11;
 constexpr uint32_t kBlueNoiseSize = 64;
 
-// Sobol dimensions 2..9 (Joe and Kuo's new-joe-kuo-6.21201: degree s,
+// Sobol dimensions 2..13 (Joe and Kuo's new-joe-kuo-6.21201: degree s,
 // coefficients a, initial m) at `index`, all 32 bits.
 uint32_t SobolBits(uint32_t index, uint32_t dim)
 {
@@ -312,6 +312,7 @@ uint32_t SobolBits(uint32_t index, uint32_t dim)
     static const Poly kPolys[kSampleDims] = {
         {1, 0, {1}},        {2, 1, {1, 3}},        {3, 1, {1, 3, 1}},        {3, 2, {1, 1, 1}},
         {4, 1, {1, 1, 3, 3}}, {4, 4, {1, 3, 5, 13}}, {5, 2, {1, 1, 5, 5, 17}}, {5, 4, {1, 1, 5, 5, 5}},
+        {5, 7, {1, 1, 7, 11, 19}}, {5, 11, {1, 1, 5, 1, 1}}, {5, 13, {1, 1, 1, 3, 11}}, {5, 14, {1, 3, 5, 5, 31}},
     };
     const Poly &p = kPolys[dim];
     uint32_t v[32];
@@ -374,7 +375,7 @@ uint32_t NestedUniformScramble(uint32_t x, uint32_t seed)
 // a (0, 2)-sequence: a disc's or sphere's projections converge about twice
 // as fast as through the sample dimensions' unscrambled pairs (measured on
 // 128 samples: 0.02-0.03 worst error in a slab's share, not 0.06-0.08).
-constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3;
+constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4;
 void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
 {
     index = NestedUniformScramble(index, HashU32(seed));
@@ -1464,6 +1465,7 @@ void Renderer::_CreateConstantImages()
     });
     _dev.Destroy(staging);
     _gtao.SetBlueNoise(_blueNoise.view);
+    _ssr.SetBlueNoise(_blueNoise.view);
 }
 
 // The frame's size: TAA's resolve and history, post and the readback; the
@@ -2670,6 +2672,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
+    // SSR's back-face hits: their share of light (1 without Frame::screenBackface: as before).
+    fd.screenTrace[1] = frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : 1.0f;
     if (frame.lod) {
         fd.features[0] |= kFeatureLod;
         fd.geometry[1] = frame.lodBias;
@@ -2858,9 +2862,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Reflections shade hits with last frame's resolved image, which exists
     // once post (TAA resolve) ran at this size.
     std::memcpy(fd.prevViewProj, _historyValid ? _prevViewProj : frame.viewProj, sizeof(fd.prevViewProj));
+    // SSR's hits from the history's mip their footprint spans: built at
+    // the end of each frame for the next.
+    const bool ssrHitFilter = frame.ssr && frame.ssrHitFilter && frame.postProcess && frame.depthPrepass;
+    _taa.SetHistoryMips(ssrHitFilter);
     if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
+        fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
         if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {
@@ -2924,6 +2933,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         for (uint32_t d = 0; d < kSampleDims; ++d) {
             dims[d] = fd.sampleDims[d / 4][d % 4] = Sobol(sobolIndex, d);
         }
+        // The denoised SSR's GGX sample (kDimSsrGgx, kDimSsrGgx2) is one 2D
+        // point: from the scrambled (0, 2)-sequence, as Sobol dimensions
+        // 10 and 11 together leave half of an 8 x 8 grid's cells empty
+        // after 64 samples.
+        ScrambledSobol(sobolIndex, kSeedSsrGgx, fd.sampleDims[2], 2);
     }
     if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
@@ -3506,7 +3520,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
                          _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) == 0,
-                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f);
+                         frame.ssgiThickness, frame.ssgiBitmask ? std::max(frame.ssgiBitmaskThickness, 1e-3f) * frame.ssgiRadius : 0.0f,
+                         frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : -1.0f,
+                         frame.ssgiTileOrder ? sample : 0, frame.sampleDimensions ? dims[kDimSsgiJitter] : -1.0f);
         pass("ssgi");
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,
@@ -3618,7 +3634,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     vkCmdEndRendering(_cmd);
     pass("shading");
     if (ssrDenoise) {
-        _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory);
+        _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
+                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f);
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;

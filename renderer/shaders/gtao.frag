@@ -39,6 +39,9 @@ layout(push_constant) uniform GtaoParams {
     vec4 ssgi;          // x: pixels of depth per output pixel (1, 2), y: steps per side, z: 1 = history valid,
                         // w: brightest radiance taken (fireflies: highlights a few pixels wide)
     vec4 temporal;      // (gtao_denoise.frag's); y: 1 = thickness estimator, z: object thickness (BITMASK)
+    vec4 screen;        // x: back-face hits' share of light (Frame::screenBackface; < 0: off), y: the
+                        // sector jitter's sample dimension (kDimSsgiJitter; < 0: off, from stepNoise),
+                        // zw: the depth pixel of each ssgi.x-wide tile that traces (Frame::ssgiTileOrder)
 #endif
 } pc;
 
@@ -122,6 +125,20 @@ vec3 HistoryAt(vec3 p)
     return peak <= 0.0 ? vec3(0.0) : c * min(1.0, pc.ssgi.w / peak);
 }
 
+// How much of the light of hit hitPos (depth pixel sq) leaves towards
+// the pixel along `direction` (from it): 1 from its front, from its back
+// (the ray went behind it; its normal from depth faces the camera) the
+// back-face share (Frame::screenBackface), else `back`.
+float Facing(vec3 hitPos, ivec2 sq, ivec2 size, vec3 direction, float back)
+{
+    vec3 hn = normalize(cross(Tangent(hitPos, sq, ivec2(1, 0), size - 1), Tangent(hitPos, sq, ivec2(0, 1), size - 1)));
+    hn = dot(hn, pc.eye.xyz - hitPos) < 0.0 ? -hn : hn;
+    if (any(isnan(hn))) {
+        return 1.0;
+    }
+    return mix(pc.screen.x >= 0.0 ? pc.screen.x : back, 1.0, smoothstep(-0.1, 0.1, -dot(hn, direction)));
+}
+
 #define OUTPUT(visibility, distance, light) outSsgi = vec4(light, visibility)
 #else
 #define OUTPUT(visibility, distance, light) outAo = vec2(visibility, distance)
@@ -130,7 +147,9 @@ vec3 HistoryAt(vec3 p)
 void main()
 {
 #ifdef SSGI
-    ivec2 q = ivec2(gl_FragCoord.xy) * int(pc.ssgi.x);  // the depth pixel this output pixel stands for
+    // The depth pixel this output pixel stands for: at half resolution
+    // one of its tile's, a different one each frame (Frame::ssgiTileOrder).
+    ivec2 q = min(ivec2(gl_FragCoord.xy) * int(pc.ssgi.x) + ivec2(pc.screen.zw), textureSize(sceneDepth, 0) - 1);
     int steps = max(int(pc.ssgi.y), 1);
 #else
     ivec2 q = ivec2(gl_FragCoord.xy);
@@ -179,7 +198,7 @@ void main()
 #endif
     float sliceNoise = Noise(vec2(q) + 0.5);
     float stepNoise = Noise(vec2(q.yx) + 0.5 + vec2(17.0, 43.0));
-    float visibility = 0.0;
+    float visibility = 0.0, full = 0.0;
     int slices = max(int(pc.eye.w), 1);
     for (int slice = 0; slice < slices; ++slice) {
         float phi = (float(slice) + sliceNoise) * PI / float(slices);
@@ -196,12 +215,30 @@ void main()
         // Side 0 searches along +omega, side 1 along -omega.
         float lowCos0 = cos(angleN + HALF_PI), lowCos1 = cos(angleN - HALF_PI);
         float horizonCos0 = lowCos0, horizonCos1 = lowCos1;
+#ifdef SSGI
+        // SSGI's energy audit (after EEVEE 5.2's): the projected normal's
+        // length, the cosine weight itself (a 5% floor made surfaces at
+        // grazing angles up to 2.3% too bright), and the slices' sum
+        // normalized by what they'd see unoccluded (`full`), so visibility
+        // and hidden shares add up to exactly 1 at every pixel and sample:
+        // a white furnace stays the dome's brightness, and no visibility
+        // over 1 is clamped away (EEVEE renormalizes its SH alike).
+        float sliceWeight = projectedLength;
+        full += sliceWeight * (Arc(angleN - HALF_PI, angleN, cosN) + Arc(angleN + HALF_PI, angleN, cosN));
+#else
         float sliceWeight = mix(projectedLength, 1.0, 0.05);
+#endif
         float lastPixels = 0.0;
 #ifdef BITMASK
         uint occluded = 0u;
         float hidden = 0.0;  // the cosine-weighted share of the occluded sectors
-        float jitter = fract(stepNoise + 0.618034 * float(slice));
+        // frame.glsl's SampleNoise for kDimSsgiJitter (11: channel a,
+        // shifted by 11 x (23, 41)); without the sample dimensions the
+        // steps' noise.
+        float jitterNoise = pc.screen.y >= 0.0
+                          ? fract(texelFetch(blueNoise, (q + ivec2(253, 451)) & 63, 0).a + pc.screen.y)
+                          : stepNoise;
+        float jitter = fract(jitterNoise + 0.618034 * float(slice));
 #endif
         for (int s = 0; s < steps; ++s) {
             float t = (float(s) + stepNoise) / float(steps);
@@ -243,6 +280,9 @@ void main()
                 float hf = clamp(sgn * acos(clamp(c, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                 float hb = clamp(sgn * acos(clamp(dot(normalize(back - p), v), -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                 float a0 = min(hf, hb), a1 = max(hf, hb);
+                if (a1 <= a0) {
+                    continue;  // wholly below the surface (both clamped): hides no sector
+                }
                 uint first = uint(clamp(floor((a0 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
                 uint last = uint(clamp(ceil((a1 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
                 uint count = last > first ? last - first : 0u;
@@ -252,12 +292,9 @@ void main()
                     float share = Share(angleN + a0, angleN + a1, angleN, cosN) * weight *
                                   float(bitCount(fresh)) / float(bitCount(mask));
                     hidden += share;
-                    // Light leaves the hit towards the pixel only from its
+                    // Light leaves the hit towards the pixel from its
                     // front: its normal (from depth) must face it.
-                    vec3 hn = normalize(cross(Tangent(hitPos, sq, ivec2(1, 0), size - 1),
-                                              Tangent(hitPos, sq, ivec2(0, 1), size - 1)));
-                    hn = dot(hn, toEye) < 0.0 ? -hn : hn;
-                    float facing = any(isnan(hn)) ? 1.0 : smoothstep(-0.1, 0.1, -dot(hn, delta / max(len, 1e-20)));
+                    float facing = Facing(hitPos, sq, size, delta / max(len, 1e-20), 0.0);
                     light += HistoryAt(hitPos) * (sliceWeight * share * facing);
                     occluded |= mask;
                 }
@@ -271,7 +308,8 @@ void main()
                     float sgn = side == 0 ? 1.0 : -1.0;
                     float h0 = angleN + clamp(sgn * acos(clamp(before, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                     float h1 = angleN + clamp(sgn * acos(clamp(after, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
-                    light += HistoryAt(hitPos) * (sliceWeight * abs(Arc(h0, angleN, cosN) - Arc(h1, angleN, cosN)));
+                    float facing = pc.screen.x >= 0.0 ? Facing(hitPos, sq, size, delta / max(len, 1e-20), 1.0) : 1.0;
+                    light += HistoryAt(hitPos) * (sliceWeight * facing * abs(Arc(h0, angleN, cosN) - Arc(h1, angleN, cosN)));
                 }
 #endif
                 if (side == 0) {
@@ -293,8 +331,9 @@ void main()
 #endif
     }
 #ifdef SSGI
-    light /= float(slices);
-    OUTPUT(clamp(visibility / float(slices), 0.0, 1.0), distanceToEye,
+    full = max(full, 1e-6);
+    light /= full;
+    OUTPUT(clamp(visibility / full, 0.0, 1.0), distanceToEye,
            any(isnan(light)) || any(isinf(light)) ? vec3(0.0) : light);
 #else
     visibility = max(pow(clamp(visibility / float(slices), 0.0, 1.0), 2.2), 0.03);

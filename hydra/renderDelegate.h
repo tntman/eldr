@@ -180,7 +180,11 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((dofResidualBlur, "hdvk:dofResidualBlur")) \
     ((productResolution, "hdvk:productResolution")) \
     ((localVolumeShadows, "hdvk:localVolumeShadows")) \
-    ((lightShapesVisible, "hdvk:lightShapesVisible"))
+    ((lightShapesVisible, "hdvk:lightShapesVisible")) \
+    ((screenBackface, "hdvk:screenBackface")) \
+    ((screenBackfaceScale, "hdvk:screenBackfaceScale")) \
+    ((ssrHitFilter, "hdvk:ssrHitFilter")) \
+    ((ssgiTileOrder, "hdvk:ssgiTileOrder"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);

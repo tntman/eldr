@@ -211,12 +211,17 @@ Three layers, each separately switchable:
 |---|---|---|---|
 | Dome light + AO | `imageBasedLighting`, `ambientOcclusion` | prepass | Unoccluded sky light darkened by GTAO. |
 | DDGI probes | `gi` | ray tracing | A grid of probes traces rays each frame (`giProbes` across the scene, `giRaysPerProbe` rays). Irradiance and visibility are octahedral atlases blended with `giHysteresis`. Chebyshev visibility prevents light leaks; probes inside geometry drop out; where no probe sees a surface, shading falls back to the dome. Hits are shaded with direct light, emission and further bounces from the probes themselves. |
-| SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
+| SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution (a different pixel of each 2 x 2 tile every frame, `ssgiTileOrder`) and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
 
 SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 (light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
 radius thick); `ssgiThickness` makes rays respect thin
-and grazing surfaces. `emissiveLights`, `fogGiAmbient` and `probeNormalize`
+and grazing surfaces. `screenBackface` (on) gives hits on the back of what
+the camera sees `screenBackfaceScale` (0.25) of the front's light, in SSGI and
+SSR alike (Blender 5.2's Backface option). Each pixel's slices are
+normalized by what they would see unoccluded, so visibility and gathered
+light add up to exactly the sky's share: in a white furnace no pixel gets
+brighter than under the open sky (before: up to 2.3% at grazing angles). `emissiveLights`, `fogGiAmbient` and `probeNormalize`
 use the GI. With the film, `giPreconverge` waits for the probes: their about 33
 updates run in the first frame, as probe traces and updates alone (no raster or
 shading in between), not as 33 frames.
@@ -232,12 +237,15 @@ roughness:
 1. **SSR** (`ssr`): ray marching against the depth buffer, 32 steps by
    default, bisection refinement at crossings, shaded from last frame's image,
    fades with roughness (0.3 to 0.6) and at screen edges. Thickness estimator
-   (`ssgiThickness`) handles thin strips and grazing surfaces.
+   (`ssgiThickness`) handles thin strips and grazing surfaces. `ssrHitFilter`
+   reads each hit from the mip of last frame's image that matches the ray's
+   cone (the history keeps 6 mips for it), so rough reflections blur instead
+   of sparkling; hits outside last frame's view are misses (probe or dome).
 2. **SSR denoiser** (`ssrDenoise`, off): one GGX-visible-normal ray per pixel,
    a ratio-estimator spatial filter (9 rays), temporal reprojection through the
    reflected point and a variance-guided bilateral filter. Handles roughness
-   up to 0.8 (fade 0.5 to 0.8). Costly (the crowd's shading goes from 12.5 to
-   21 ms); not combined with ray-traced reflections.
+   up to 0.8 (fade 0.5 to 0.8). Costly (the crowd's shading goes from 11.7 to
+   20.4 ms); not combined with ray-traced reflections.
 3. **Reflection probes** (`reflectionProbe`): a cube captured in the scene,
    prefiltered like the dome, with parallax correction against a box and the
    captured distances. One automatic probe at the scene centre, or up to 8
