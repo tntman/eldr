@@ -55,7 +55,7 @@ for name, (x, y) in POSITIONS.items():
 text.append('def Cube "wall"\n{\n double size = 1\n double3 xformOp:translate = (0, 0, -3)\n'
             ' double3 xformOp:scale = (14, 14, 0.2)\n uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]\n}\n')
 text.append('def RenderSettings "Render"\n{\n rel camera = </cam>\n rel products = </Render/product>\n'
-            f' def RenderProduct "product"\n {{\n uniform token productName = "{exrPath}"\n rel camera = </cam>\n'
+            f' def RenderProduct "product"\n {{\n uniform token productName = "{exrPath}"\n rel camera = </cam>\n int2 resolution = ({SIZE}, {SIZE})\n'
             ' rel orderedVars = [' + ", ".join(f"</Render/Vars/{n}>" for n, *_ in [
                 ("C",), ("directdiffuse",), ("indirectdiffuse",), ("directglossy",), ("indirectglossy",),
                 ("emission",)]) + ']\n }\n def Scope "Vars"\n {\n')

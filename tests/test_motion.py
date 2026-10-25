@@ -65,6 +65,7 @@ camera.CreateShutterCloseAttr(0.25)
 settings = UsdRender.Settings.Define(stage, "/Render/settings")
 product = UsdRender.Product.Define(stage, "/Render/product")
 product.CreateProductNameAttr(exrPath)
+product.CreateResolutionAttr(Gf.Vec2i(SIZE, SIZE))  # USD's fallback is 2048 x 1080
 product.CreateCameraRel().SetTargets(["/cam"])
 settings.CreateProductsRel().SetTargets([product.GetPath()])
 settings.CreateCameraRel().SetTargets(["/cam"])

@@ -36,6 +36,7 @@ camera.AddTranslateOp().Set(Gf.Vec3d(0, 0, 6))
 settings = UsdRender.Settings.Define(stage, "/Render/settings")
 product = UsdRender.Product.Define(stage, "/Render/product")
 product.CreateProductNameAttr(exrPath)
+product.CreateResolutionAttr(Gf.Vec2i(64, 64))  # USD's fallback is 2048 x 1080
 product.CreateCameraRel().SetTargets(["/cam"])
 settings.CreateProductsRel().SetTargets([product.GetPath()])
 settings.CreateCameraRel().SetTargets(["/cam"])
@@ -171,7 +172,7 @@ subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__f
                 scenePath, "/Render/settings", "/cam", "hdvk:productResolution=false"], check=True)
 expect(probe(off, 0, 0)[0] == (64, 64), "hdvk:productResolution off: the frame's size")
 UsdGeom.Xformable(camera).GetOrderedXformOps()[0].Set(Gf.Vec3d(0, 0, 6))
-product.GetResolutionAttr().Clear()
+product.GetResolutionAttr().Set(Gf.Vec2i(64, 64))
 
 
 
