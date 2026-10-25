@@ -219,6 +219,12 @@ endforeach()
 add_executable(testPlugin tests/testPlugin.cpp)
 target_link_libraries(testPlugin PRIVATE hd)
 add_dependencies(testPlugin hdVk)
+if(NOT HDVK_HOUDINI)
+    # Frame times with Houdini's viewport AOV bindings, and its id check (docs/houdini.md).
+    add_executable(viewportBench tests/viewportBench.cpp)
+    target_link_libraries(viewportBench PRIVATE hd hdx usdImaging usdGeom)
+    add_dependencies(viewportBench hdVk)
+endif()
 
 enable_testing()
 add_test(NAME vkrtest COMMAND vkrtest)
