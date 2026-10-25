@@ -20,7 +20,12 @@ int main()
         return 1;
     }
     std::string why;
-    if (!plugin->IsSupported(HdRendererCreateArgsSchema(nullptr), &why)) {
+#if HD_API_VERSION >= 103
+    const HdRendererCreateArgsSchema args(nullptr);
+#else
+    const HdContainerDataSourceHandle args;  // Houdini 22's USD 26.05
+#endif
+    if (!plugin->IsSupported(args, &why)) {
         std::printf("FAIL: IsSupported returned false: %s\n", why.c_str());
         return 1;
     }
