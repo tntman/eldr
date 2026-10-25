@@ -10,6 +10,7 @@
 #include <functional>
 #include <random>
 #include <tuple>
+#include <map>
 #include <vector>
 
 namespace vkr {
@@ -769,17 +770,22 @@ void Renderer::_CreateDescriptors()
     Check(vkCreateDescriptorSetLayout(_dev.device, &slci, nullptr, &_setLayout),
           "vkCreateDescriptorSetLayout");
 
-    const VkDescriptorPoolSize sizes[5] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxTextures + 8 + 2 + 5 + 4 + 1 + 1 + 1 + 1 + Reflections::kMaxProbes - 1 + Scene::Gpu::kMaxMirrors - 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 24 + 3 + 2 + 3 + 3},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + 1},
-        {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2 + 3 + kMaxShadowMinLevels + 1 + 4},
-        {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1},
-    };
+    // The pool holds exactly what the layout's bindings add up to, so a new
+    // binding can't leave it short.
+    std::map<VkDescriptorType, uint32_t> counts;
+    for (const VkDescriptorSetLayoutBinding &binding : bindings) {
+        counts[binding.descriptorType] += binding.descriptorCount;
+    }
+    std::vector<VkDescriptorPoolSize> sizes;
+    for (const auto &[type, count] : counts) {
+        if (count > 0) {
+            sizes.push_back({type, count});
+        }
+    }
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
-    dpci.poolSizeCount = _dev.rayTracing ? 5 : 4;
-    dpci.pPoolSizes = sizes;
+    dpci.poolSizeCount = uint32_t(sizes.size());
+    dpci.pPoolSizes = sizes.data();
     Check(vkCreateDescriptorPool(_dev.device, &dpci, nullptr, &_descriptorPool),
           "vkCreateDescriptorPool");
     VkDescriptorSetAllocateInfo dsai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
