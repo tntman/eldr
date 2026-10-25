@@ -1055,6 +1055,7 @@ int main()
             Expect(shadowed < 0.2f * lit, "dome sun: extracted, it casts a shadow");
             Expect(std::abs(lit - off.At(51, 32, 0)) < 0.25f * lit, "dome sun: as bright as the dome's");
             Expect(!scene.SetDomeSun(true, 10.0f), "dome sun: unchanged");
+            Expect(vkr::Renderer::Frame().domeSun, "dome sun: on by default");
             scene.SetDomeSun(false, 10.0f);
             scene.Commit();
             Expect(Render(renderer, scene, frame).At(51, 32, 0) == off.At(51, 32, 0), "dome sun off again: as before");

@@ -34,6 +34,7 @@ viewProj = frustum.ComputeViewMatrix() * frustum.ComputeProjectionMatrix()
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRendererSetting("hdvk:postProcess", False)
+engine.SetRendererSetting("hdvk:domeSun", False)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()

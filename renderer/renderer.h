@@ -163,7 +163,7 @@ public:
         // The dome's sun (Scene::SetDomeSun, applied by the caller too): its
         // texels over the threshold (scene radiance, luminance) leave the
         // image-based light and become a distant light with shadows.
-        bool domeSun = false;
+        bool domeSun = true;
         float domeSunThreshold = 10.0f;
         // Translucency (transparency.h): weighted blended OIT, its weights
         // falling with distance to this power (0: a plain average); off:
