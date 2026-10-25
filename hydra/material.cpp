@@ -97,7 +97,7 @@ TF_DEFINE_PRIVATE_TOKENS(
     (specularColor)
     (clearcoat)
     (clearcoatRoughness)
-    (clearcoatColor)
+    ((clearcoatColor, "eldr:clearcoatColor"))
     (ior)
     (coat)
     (coat_color)
@@ -1240,7 +1240,7 @@ float IorToF0(float ior)
 // programs are off, its constant is the default, except specularColor:
 // 0.04 grey (a dielectric, as the metallic workflow), not black.
 // UsdPreviewSurface has no clearcoat colour (Storm's is white); Eldr reads
-// an authored `clearcoatColor` as standard_surface's coat_color.
+// an authored `eldr:clearcoatColor` as standard_surface's coat_color.
 // ponytail: textured IORs refract and reflect per pixel, but whether a
 // UsdPreviewSurface refracts is decided per material (a connected ior
 // does).

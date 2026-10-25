@@ -124,6 +124,10 @@ public:
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
+        // Also exposes the beauty without bloom or tonemapping for
+        // Renderer::Read (Targets::linearColor): an EXR's linear beauty.
+        bool linearColor = false;
+        bool linearBeauty = true;  // hdvk:productLinear: the Hydra layer sets linearColor for products
         // Material lobes beyond the metallic base (shaders/brdf.glsl); off:
         // materials render without them.
         bool specularWorkflow = true;  // UsdPreviewSurface specularColor as F0
@@ -172,7 +176,7 @@ public:
         // The dome's sun (Scene::SetDomeSun, applied by the caller too): its
         // texels over the threshold (scene radiance, luminance) leave the
         // image-based light and become a distant light with shadows.
-        bool domeSun = false;
+        bool domeSun = true;
         float domeSunThreshold = 10.0f;
         // Translucency (transparency.h): weighted blended OIT, its weights
         // falling with distance to this power (0: a plain average); off:
@@ -280,6 +284,13 @@ public:
         // flat areas (try 0.002).
         float adaptiveThreshold = 0.0f;
         uint32_t adaptiveMinSamples = 16;
+        // Final quality (finalQuality, or a film that started fresh, as
+        // usdrecord's): adaptive sampling at this threshold when
+        // adaptiveThreshold is 0 (0: off). And the film is converged once
+        // this fraction of the pixels has stopped (the rest of the noisy
+        // ones would only run it to filmSamples).
+        float adaptiveFinalThreshold = 0.01f;
+        float adaptivePixelFraction = 0.99f;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
@@ -313,7 +324,7 @@ public:
         // traced reflection hits, GI probe rays; not the dome), scaled down
         // to at most this scene-referred radiance. 0: off.
         float directClamp = 0.0f;
-        float indirectClamp = 0.0f;
+        float indirectClamp = 10.0f;
         // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
         // quadratically, each at least a pixel on, objects at least a pixel's
         // footprint thick (deep at grazing angles) and a ray that crosses a
@@ -321,10 +332,11 @@ public:
         // steps evenly and any object is 5% of its distance thick.
         bool ssgiThickness = true;
         // SSGI with a visibility bitmask (EEVEE's fast GI) instead of the
-        // highest horizon: 32 sectors per slice, objects a quarter of
-        // ssgiRadius thick, light from the sectors nothing nearer hides,
+        // highest horizon: 32 sectors per slice, objects
+        // ssgiBitmaskThickness of ssgiRadius thick, light from the sectors nothing nearer hides,
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
+        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
@@ -340,7 +352,8 @@ public:
         // light (the sun's disc, a rect's or disk's area, inside a
         // sphere) and looks them up hard (3x3 PCF), so the film's average
         // is the true penumbra; with softShadows (and softSunShadows for
-        // the sun). TAA frames keep PCSS.
+        // the sun). Only in final quality (the film run started fresh or
+        // with finalQuality); TAA frames and interactive films keep PCSS.
         bool shadowJitter = true;
         // Lens jitter under the film (EEVEE's DOF jitter): with depth of
         // field, each sample sees through a point of the lens aperture
@@ -357,6 +370,7 @@ public:
     // Null pointers skip that output's readback.
     struct Targets {
         void *color = nullptr;          // RGBA16F, 8 bytes per pixel
+        void *linearColor = nullptr;    // Read only: Frame::linearColor's (else as color)
         float *depth = nullptr;         // window depth in [0, 1]
         int32_t *primId = nullptr;      // Mesh::primId, -1 where nothing was drawn
         int32_t *instanceId = nullptr;  // index into Mesh::transforms, -1 likewise
@@ -489,6 +503,7 @@ private:
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
     bool _filmAdaptive = false;
+    bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
     bool _freshRun = false;
     bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
@@ -641,6 +656,7 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
+    VkImage _linearColor = VK_NULL_HANDLE;  // Frame::linearColor's image, else null
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
     std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
 };

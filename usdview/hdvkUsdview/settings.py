@@ -9,12 +9,12 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 GROUPS = [
     ("Performance and geometry",
      "depthPrepass frustumCulling cullPixels lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons "
-     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect renderProducts pipelineCache "
+     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect renderProducts productLinear pipelineCache "
      "pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
-     "ssgiThickness ssgiBitmask directClamp indirectClamp"),
+     "ssgiThickness ssgiBitmask ssgiBitmaskThickness directClamp indirectClamp"),
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
@@ -31,7 +31,7 @@ GROUPS = [
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",
-     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter motionBlur motionBlurTimeSamples sampledMotion lensDistortion postProcess "
+     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveFinalThreshold adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter motionBlur motionBlurTimeSamples sampledMotion lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),
 ]
 

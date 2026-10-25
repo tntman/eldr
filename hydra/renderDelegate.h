@@ -164,6 +164,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((planarCount, "hdvk:planarCount")) \
     ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples")) \
     ((renderScale, "hdvk:renderScale")) \
+    ((productLinear, "hdvk:productLinear")) \
+    ((ssgiBitmaskThickness, "hdvk:ssgiBitmaskThickness")) \
+    ((adaptiveFinalThreshold, "hdvk:adaptiveFinalThreshold")) \
+    ((adaptivePixelFraction, "hdvk:adaptivePixelFraction")) \
     ((curveRibbons, "hdvk:curveRibbons")) \
     ((pointSprites, "hdvk:pointSprites")) \
     ((lodFade, "hdvk:lodFade")) \

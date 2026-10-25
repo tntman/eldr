@@ -172,7 +172,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.probeNormalize, &frame.probeNormalize},
                                 {t2.domeSun, &frame.domeSun},
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
-                                {t2.lightTextures, &frame.lightTextures},
+                                {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect}}) {
@@ -195,7 +195,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.domeSunThreshold, &frame.domeSunThreshold},
                                 {t.filmFilterRadius, &frame.filmFilterRadius}, {t2.renderScale, &frame.renderScale},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
-                                {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
+                                {t2.adaptiveFinalThreshold, &frame.adaptiveFinalThreshold},
+                                {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
+                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -361,6 +363,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    frame.linearColor = frame.linearBeauty && _products.HasBeauty();
 
     // Cryptomatte: per primId the ids of its rprim's path and material path,
     // and their manifests (GetRenderStats).
@@ -408,7 +411,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     vkDelegate->SetFrameShared(shared);
     try {
-        _products.Write(*_renderer, frame, objects, materials);
+        _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
     }

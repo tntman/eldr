@@ -7,7 +7,9 @@
 // along the texel's light ray across the cascade's depth range, the depth
 // where the optical depth's mean lies (receivers behind it get all of it).
 // ponytail: one depth per texel, so surfaces inside a volume are either
-// shadowed by all of it or by none; nearest reads, no empty-tile skipping.
+// shadowed by all of it or by none; nearest reads; segments outside a
+// volume's box are skipped and the march stops at 1e-3 transmittance, but
+// empty tiles inside it are still stepped (the grid's tree isn't used).
 
 #include "frame.glsl"
 #include "volume.glsl"
@@ -29,6 +31,7 @@ layout(push_constant) uniform Params {  // as volume.frag's (VolumeParams)
 layout(location = 0) out vec4 outTint;
 
 const uint kShadowSteps = 64u;  // per volume and texel, at most
+const float kOpaque = 6.9;      // optical depth of 1e-3 transmittance: nothing is left to dim
 
 void main()
 {
@@ -40,7 +43,7 @@ void main()
     vec3 origin = a.xyz / a.w, dir = b.xyz / b.w - origin;
     float len = length(dir);
     float tau = 0.0, weighted = 0.0;  // optical depth, and times s
-    for (uint i = 0u; i < params.count; ++i) {
+    for (uint i = 0u; i < params.count && tau < kOpaque; ++i) {
         vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
         vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
         vec2 span = Slabs(oi, di, volumes[i].indexMin.xyz, volumes[i].indexMax.xyz);
@@ -53,7 +56,7 @@ void main()
         float ds = (span.y - span.x) / float(steps);
         float sigma = volumes[i].medium.x * params.density * ds * len;  // per unit of density
         pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
-        for (uint k = 0u; k < steps; ++k) {
+        for (uint k = 0u; k < steps && tau < kOpaque; ++k) {
             float s = span.x + (float(k) + 0.5) * ds;
             float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0) * sigma;
             tau += d;

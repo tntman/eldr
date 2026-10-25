@@ -84,6 +84,12 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
         _written = false;
     }
     _products = std::move(products);
+    _beauty = false;
+    for (const Product &product : _products) {
+        for (const Var &var : product.vars) {
+            _beauty |= var.source == Source::Color;
+        }
+    }
     _width = width;
     _height = height;
     for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
@@ -102,7 +108,7 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
 }
 
 void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame,
-                               const std::string &objectManifest, const std::string &materialManifest)
+                               const std::string &objectManifest, const std::string &materialManifest, bool linear)
 {
     // FNV-1a over what the image shows; a time step of usdrecord or a
     // script can converge in its first frame (the post motion blur's).
@@ -131,6 +137,9 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
     std::vector<int32_t> primId(pixels), instanceId(pixels);
     vkr::Renderer::Targets read;
     read.color = color.data();
+    // Exposed but neither bloomed nor tonemapped, whatever hdvk:tonemapper is.
+    std::vector<uint16_t> linearColor(linear ? pixels * 4 : 0);
+    read.linearColor = linear ? linearColor.data() : nullptr;
     read.depth = depth.data();
     read.primId = primId.data();
     read.instanceId = instanceId.data();
@@ -152,7 +161,7 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
             if (var.source == Source::Color) {
                 for (uint32_t c = 0; c < 4; ++c) {
                     channels.push_back(beauty ? var.name + "." + rgba[c] : std::string(rgba[c]));
-                    sources.push_back({color.data(), 1, 4, c});
+                    sources.push_back({linear ? linearColor.data() : color.data(), 1, 4, c});
                 }
                 beauty = true;
             } else if (var.source == Source::Depth) {

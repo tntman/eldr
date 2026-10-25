@@ -32,11 +32,15 @@ public:
     // Records every pass. Expects hdr in SHADER_READ_ONLY_OPTIMAL and leaves
     // Output() in TRANSFER_SRC_OPTIMAL. The tonemapped scene is composited
     // over `background` (display-referred) by coverage.
+    // `linear`: also writes LinearOutput(), the same image exposed but
+    // neither bloomed nor tonemapped (an EXR's beauty).
     void Record(VkCommandBuffer cmd, const Settings &settings, float dt, bool resetExposure,
-                const float background[4]);
+                const float background[4], bool linear = false);
 
     VkImage Output() const { return _output.image; }
     VkImageView OutputView() const { return _output.view; }
+    // In TRANSFER_SRC_OPTIMAL after Record(.., linear).
+    VkImage LinearOutput() const { return _exr.image; }
 
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;
@@ -61,6 +65,7 @@ private:
     Image _bloom;                         // half resolution, one mip per bloom level
     std::vector<VkImageView> _bloomMips;  // single-mip views
     Image _output;
+    Image _exr;  // made when first asked for
     VkDescriptorSet _hdrSet = VK_NULL_HANDLE;  // src = HDR scene
     std::vector<VkDescriptorSet> _mipSets;     // src = bloom mip i
 };

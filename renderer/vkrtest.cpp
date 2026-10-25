@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
 }
@@ -764,8 +765,8 @@ int main()
             Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * formFactor) - 1.0f) < 0.03f,
                    "rect light: exact form factor head-on");
 
-            // Textured (inputs:texture:file), 2 wide: black over its -X
-            // half, white over its +X half. The wall under each half takes
+            // Textured (inputs:texture:file), 2 wide; st (0,0) is at +X +Y (UsdLux): black over its +X
+            // half (texture u < 0.5), white over its -X half. The wall under each half takes
             // its colour; Frame::lightTextures off: as without one.
             rect->halfWidth[0] = 1.0f;
             scene.Commit();
@@ -782,8 +783,8 @@ int main()
             rect->texture = halves;
             scene.Commit();
             const Image textured = Render(renderer, scene);
-            Expect(textured.At(16, 32, 0) < 0.2f * textured.At(48, 32, 0) &&
-                       std::abs(textured.At(48, 32, 0) / plain.At(48, 32, 0) - 1.0f) < 0.2f,
+            Expect(textured.At(48, 32, 0) < 0.2f * textured.At(16, 32, 0) &&
+                       std::abs(textured.At(16, 32, 0) / plain.At(16, 32, 0) - 1.0f) < 0.2f,
                    "rect light texture: dark under its black half, as bright under its white one");
             vkr::Renderer::Frame untextured = IdentityFrame();
             untextured.lightTextures = false;
@@ -1056,6 +1057,7 @@ int main()
             Expect(shadowed < 0.2f * lit, "dome sun: extracted, it casts a shadow");
             Expect(std::abs(lit - off.At(51, 32, 0)) < 0.25f * lit, "dome sun: as bright as the dome's");
             Expect(!scene.SetDomeSun(true, 10.0f), "dome sun: unchanged");
+            Expect(vkr::Renderer::Frame().domeSun, "dome sun: on by default");
             scene.SetDomeSun(false, 10.0f);
             scene.Commit();
             Expect(Render(renderer, scene, frame).At(51, 32, 0) == off.At(51, 32, 0), "dome sun off again: as before");
@@ -1222,6 +1224,35 @@ int main()
             converge(coarse, &frames);
             Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
                    "adaptive sampling: done once every pixel's noise is under the threshold");
+
+            // Final quality samples adaptively by default: with only
+            // adaptiveFinalThreshold set, a fresh film (final) stops at the
+            // minimum; the film that took over from TAA after a change
+            // (interactive) still runs to filmSamples. The converged pixel
+            // fraction ends the noisy-edge film early (6% of the pixels
+            // are its edge).
+            frame.adaptiveThreshold = 0.0f;
+            frame.adaptiveFinalThreshold = 0.5f;
+            vkr::Renderer finalRun(device);
+            converge(finalRun, &frames);
+            Expect(frames == 9 && finalRun.GetStats().filmActivePixels == 0,
+                   "adaptive sampling: on in a final-quality film by hdvk:adaptiveFinalThreshold");
+            frame.sceneVersion = 100;
+            Render(finalRun, scene, frame);
+            converge(finalRun, &frames);
+            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1,
+                   "adaptive sampling: not in a film that took over from TAA");
+            frame.adaptiveFinalThreshold = 0.002f;
+            frame.adaptivePixelFraction = 0.9f;
+            vkr::Renderer fraction(device);
+            converge(fraction, &frames);
+            Expect(frames >= 8 && frames < 32, "adaptive sampling: converged once 90% of the pixels stopped");
+            frame.adaptivePixelFraction = 0.99f;
+            vkr::Renderer edge(device);
+            converge(edge, &frames);
+            Expect(frames == 32, "adaptive sampling: 6% noisy pixels keep the film running at 99%");
+            frame.adaptiveFinalThreshold = 0.0f;
+            frame.adaptiveThreshold = 0.002f;
         }
 
         {
@@ -2884,7 +2915,33 @@ int main()
             const Image taaOff = film(scene, frame);
             frame.shadowJitter = true;
             Expect(MaxDifference(film(scene, frame), taaOff) == 0.0f, "shadow jitter: TAA frames keep PCSS");
+            // The film a change handed back to TAA (usdview's still camera) is
+            // interactive too: PCSS, jitter on or off.
             frame.filmAccumulation = true;
+            frame.finalQuality = false;
+            auto interactive = [&](const vkr::Renderer::Frame &f) {
+                vkr::Renderer r(device);
+                Render(r, scene, f);
+                vkr::Renderer::Frame changed = f;
+                changed.sceneVersion = 7;
+                Image img;
+                for (int i = 0; i < 400; ++i) {
+                    img = Render(r, scene, changed);
+                    if (r.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            const Image interactiveJitter = interactive(frame);
+            frame.shadowJitter = false;
+            const Image interactivePcss = interactive(frame);
+            // (Measured 0.004 apart, not bit for bit; a jittered film's
+            // penumbra is up to about 0.1 away from PCSS.)
+            Expect(MaxDifference(interactiveJitter, interactivePcss) < 0.01f,
+                   "shadow jitter: only in final quality (an interactive film keeps PCSS)");
+            frame.shadowJitter = true;
+            frame.finalQuality = true;
             sun->angle = 0.0f;
             scene.Commit();
             const Image pointOn = film(scene, frame);
@@ -3587,6 +3644,7 @@ int main()
             };
             const float full = wall(0.0f), quarter = wall(0.5f);
             Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
+            Expect(vkr::Renderer::Frame().indirectClamp == 10.0f, "the indirect clamp is 10 by default");
         }
 
         {
@@ -3662,7 +3720,25 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
+            // Saving prunes the other shader builds' caches of this driver
+            // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
+            std::filesystem::path current;
+            for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
+                if (entry.path().extension() == ".bin") {
+                    current = entry.path();
+                }
+            }
+            const std::string name = current.filename().string();
+            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
+                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            std::filesystem::copy_file(current, stale, cacheError);
+            std::filesystem::copy_file(current, other, cacheError);
+            device.SavePipelineCache();
+            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
+                       std::filesystem::exists(other),
+                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
                 bytes = entry.path().extension() == ".bin" ? entry.file_size() : bytes;

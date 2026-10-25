@@ -146,6 +146,7 @@ void PostProcess::_DestroyTargets()
     _bloomMips.clear();
     _dev.Destroy(_bloom);
     _dev.Destroy(_output);
+    _dev.Destroy(_exr);
 }
 
 VkDescriptorSet PostProcess::_CreateSet(VkImageView src)
@@ -224,7 +225,7 @@ void PostProcess::Resize(uint32_t width, uint32_t height, VkImageView hdr)
 }
 
 void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool resetExposure,
-                         const float background[4])
+                         const float background[4], bool linear)
 {
     auto fullscreen = [&](VkPipeline pipeline, VkDescriptorSet set, VkImageView target,
                           uint32_t width, uint32_t height, bool load, const Params &params) {
@@ -315,6 +316,24 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool 
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    if (linear) {
+        if (!_exr.image) {
+            _exr = _dev.CreateImage(kFormat, _width, _height, 1, 1,
+                                    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        }
+        ImageBarrier(cmd, _exr.image, Mip(0), VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        // Exposure only: tonemapper None, no bloom.
+        tonemapParams.a[0] = 0.0f;
+        tonemapParams.a[2] = float(Settings::Tonemapper::None);
+        fullscreen(_tonemap, _hdrSet, _exr.view, _width, _height, false, tonemapParams);
+        ImageBarrier(cmd, _exr.image, Mip(0),
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    }
 }
 
 float PostProcess::Exposure() const

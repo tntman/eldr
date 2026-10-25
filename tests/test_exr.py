@@ -112,5 +112,28 @@ expect(abs(pixel.get("directglossy.G", 0) + pixel.get("indirectglossy.G", 0) -
            pixel.get("combinedglossyreflection.G", 0)) < 1e-3 and pixel.get("directglossy.G", 0) > 0,
        "glossy splits: direct + indirect = combined")
 
+
+
+# The beauty is linear and untonemapped by default (hdvk:productLinear): the
+# same under ACES, AgX and "none". Off, it is the displayed, tonemapped one.
+def beauty(tonemapper, linear):
+    path = os.path.join(folder, "beauty_%s_%s.exr" % (tonemapper, linear)).replace("\\", "/")
+    product.GetProductNameAttr().Set(path)
+    stage.GetRootLayer().Save()
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
+                    scenePath, "/Render/settings", "/cam", "hdvk:tonemapper=" + tonemapper,
+                    "hdvk:productLinear=" + linear], check=True)
+    out = subprocess.run([exrinfo, path, "32", "32"], capture_output=True, text=True).stdout.splitlines()
+    return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
+
+
+aces, agx, none = (beauty(t, "true") for t in ("aces", "agx", "none"))
+expect(aces and all(abs(aces[c] - none[c]) < 1e-3 * max(1.0, abs(none[c])) and
+                    abs(agx[c] - none[c]) < 1e-3 * max(1.0, abs(none[c])) for c in "RGB"),
+       "linear beauty: the same under aces, agx and none")
+expect(none.get("G", 0) > 0.05, "linear beauty: lit")
+tonemapped = beauty("agx", "false")
+expect(abs(tonemapped["G"] - none["G"]) > 0.02, "hdvk:productLinear off: the tonemapped beauty")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

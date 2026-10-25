@@ -34,6 +34,9 @@ viewProj = frustum.ComputeViewMatrix() * frustum.ComputeProjectionMatrix()
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRendererSetting("hdvk:postProcess", False)
+# The scene's dome is an HDRI with a sun; extracted (the default) it adds a
+# white light the tint checks below weren't made for.
+engine.SetRendererSetting("hdvk:domeSun", False)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
@@ -92,6 +95,8 @@ for prim in ("/clearcoat", "/carPaint", "/amberCoat"):
     expect(sum(on) > 1.5 * sum(off), prim[1:] + ": the coat's sharp highlight", on, off)
 on, off = compare("hdvk:clearcoat", "/amberCoat")
 expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "amberCoat: the coat colour tints the base", on, off)
+on, off = compare("hdvk:clearcoat", "/previewAmber")
+expect(on[2] < 0.7 * off[2] and on[0] > 0.8 * off[0], "previewAmber: eldr:clearcoatColor tints the base", on, off)
 for prim in ("/velvet", "/fuzz"):
     on, off = compare("hdvk:sheen", prim)
     expect(sum(on) > 1.15 * sum(off), prim[1:] + ": sheen brightens the sphere", on, off)
