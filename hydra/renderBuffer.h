@@ -4,8 +4,15 @@
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hgi/texture.h"
 
+#ifdef HDVK_HOUDINI
+#include <UT/UT_HUSDExtraAOVResource.h>
+#endif
+
 #include <atomic>
 #include <functional>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -58,7 +65,36 @@ public:
     bool IsConverged() const override { return true; }
 
     // GPU sharing: this frame's texture (empty: the CPU data is the frame).
-    VtValue GetResource(bool) const override { return _texture ? VtValue(_texture) : VtValue(); }
+    // Houdini: a Cryptomatte AOV tells husk about its rank layers (see
+    // SetCrypto), which husk reads through this.
+    VtValue GetResource(bool) const override
+    {
+#ifdef HDVK_HOUDINI
+        if (_crypto) {
+            HdAovSettingsMap map;
+            map[TfToken("extra_aov_resource")] = VtValue(std::static_pointer_cast<void>(_crypto));
+            return VtValue(map);
+        }
+#endif
+        return _texture ? VtValue(_texture) : VtValue();
+    }
+#ifdef HDVK_HOUDINI
+    // Cryptomatte for husk (UT_HUSDExtraAOVResource.h): the layer
+    // <name>00 holds (id, coverage, id, coverage) per pixel, rank 0 and 1,
+    // the plane returned here (the frame's size, same row order as the AOV
+    // itself); `metadata` is the spec's cryptomatte/<key>/... entries.
+    // ponytail: only layer 00, one sample per pixel (see vkr::Aovs); husk
+    // takes the ranks the delegate offers, not the var's cryptomatterank.
+    float *SetCrypto(const std::string &name, std::map<std::string, std::string> metadata)
+    {
+        _cryptoPlane.assign(size_t(_width) * _height * 4, 0.0f);
+        _crypto = std::make_shared<UT_HUSDExtraAOVResource>(
+            [this](int) -> void * { return _cryptoPlane.data(); }, [](int) {});
+        _crypto->addPlane(name + "00", HdFormatFloat32Vec4);
+        _crypto->setMetadata(metadata);
+        return _cryptoPlane.data();
+    }
+#endif
     void SetTexture(HgiTextureHandle texture) { _texture = texture; }
     // Fills the CPU copy on the next Map (null: it is current).
     void SetFetch(std::function<void(void *)> fetch) { _fetch = std::move(fetch); }
@@ -78,6 +114,10 @@ private:
     std::atomic<int> _mappers{0};
     HgiTextureHandle _texture;
     std::function<void(void *)> _fetch;
+#ifdef HDVK_HOUDINI
+    std::vector<float> _cryptoPlane;
+    UT_HUSDExtraAOVResourcePtr _crypto;
+#endif
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

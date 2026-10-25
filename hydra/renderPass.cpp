@@ -62,17 +62,21 @@ GfMatrix4d ProductProjection(GfMatrix4d projection, HdVkRenderProducts::Framing 
 // names ("C", "depth", "primid") and carries UsdRender's source in the
 // binding's settings; that source (as UsdRender names it: lpe: or primvars:
 // prefixed, else raw) wins. usdview and usdrecord bind by Hydra's names.
+// A string (or token) setting of an AOV binding, "" when absent.
+std::string BindingText(HdRenderPassAovBinding const &b, const char *key)
+{
+    const auto it = b.aovSettings.find(TfToken(key));
+    if (it == b.aovSettings.end()) {
+        return std::string();
+    }
+    return it->second.IsHolding<TfToken>()       ? it->second.UncheckedGet<TfToken>().GetString()
+           : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
+                                                 : std::string();
+}
+
 TfToken BoundAov(HdRenderPassAovBinding const &b)
 {
-    const auto text = [&](const char *key) {
-        const auto it = b.aovSettings.find(TfToken(key));
-        if (it == b.aovSettings.end()) {
-            return std::string();
-        }
-        return it->second.IsHolding<TfToken>()       ? it->second.UncheckedGet<TfToken>().GetString()
-               : it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
-                                                     : std::string();
-    };
+    const auto text = [&](const char *key) { return BindingText(b, key); };
     const std::string name = text("sourceName"), type = text("sourceType");
     if (name.empty()) {
         return b.aovName;
@@ -128,10 +132,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // ponytail: one buffer per kind; of two names for the same (normal and
     // ray:hitN) bound at once, the last one gets it.
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
+    // husk's var name of the extra AOVs it binds ("driver:parameters:aov:husk:name").
+    std::string huskName[vkr::Aovs::kCount];
+    bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b);
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            extra[aov.kind] = aovName == aov.name ? b.renderBuffer : extra[aov.kind];
+            if (aovName == aov.name) {
+                extra[aov.kind] = b.renderBuffer;
+                huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
+            }
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -146,6 +156,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         } else if (aovName == HdAovTokens->primId) {
             primId = b.renderBuffer;
+            huskPrimId = !BindingText(b, "driver:parameters:aov:husk:name").empty();
         } else if (aovName == HdAovTokens->instanceId) {
             instanceId = b.renderBuffer;
         }
@@ -204,6 +215,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     color = usable(color, HdFormatFloat16Vec4);
     depth = usable(depth, HdFormatFloat32);
+    // husk's id var is a float in the image (it reads an Int32 buffer as a
+    // normalised int, which is 0): that buffer becomes Float32 below.
+    HdRenderBuffer *const idForHusk = huskPrimId && primId && primId->GetWidth() == frame.width &&
+                                      primId->GetHeight() == frame.height ? primId : nullptr;
     primId = usable(primId, HdFormatInt32);
     instanceId = usable(instanceId, HdFormatInt32);
 
@@ -512,6 +527,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
     HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
+    // ponytail: at a product's framing husk's ids stay as they are (Int32).
+    std::vector<int32_t> huskIds;
+    if (idForHusk && !productSized &&
+        (idForHusk->GetFormat() == HdFormatFloat32 ||
+         static_cast<HdVkRenderBuffer *>(idForHusk)->Allocate(GfVec3i(frame.width, frame.height, 1), HdFormatFloat32, false))) {
+        huskIds.resize(size_t(frame.width) * frame.height);
+        primId = nullptr;
+    }
     HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
                                           static_cast<HdVkRenderBuffer *>(primId),
                                           static_cast<HdVkRenderBuffer *>(instanceId)};
@@ -584,6 +607,31 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests(objects, materials);
     }
 
+#ifdef HDVK_HOUDINI
+    // husk's Cryptomatte vars: Eldr renders (id, coverage, id, coverage) to
+    // the layer <name>00 husk writes (HdVkRenderBuffer::SetCrypto) and copies
+    // the first components to the var's own buffer after.
+    float *cryptoPrimary[vkr::Aovs::kCount] = {}, *cryptoPlane[vkr::Aovs::kCount] = {};
+    for (uint32_t k : {vkr::Aovs::kCryptoObject, vkr::Aovs::kCryptoMaterial}) {
+        if (!extra[k] || huskName[k].empty() || !out.aovs[k]) {
+            continue;
+        }
+        char hash[16];
+        std::snprintf(hash, sizeof(hash), "%08x", vkr::CryptomatteHash(huskName[k]));
+        const std::string prefix = "cryptomatte/" + std::string(hash, 7) + "/";
+        cryptoPrimary[k] = out.aovs[k];
+        cryptoPlane[k] = out.aovs[k] = static_cast<HdVkRenderBuffer *>(extra[k])->SetCrypto(
+            huskName[k], {{prefix + "name", huskName[k]},
+                          {prefix + "hash", "MurmurHash3_32"},
+                          {prefix + "conversion", "uint32_to_float32"},
+                          {prefix + "manifest", k == vkr::Aovs::kCryptoObject ? objects : materials}});
+        out.aovComponents[k] = 4;
+    }
+#endif
+    if (!huskIds.empty()) {
+        out.primId = huskIds.data();
+    }
+
     bool shared = false;
     try {
         _renderer->Render(_scene, frame, out);
@@ -622,6 +670,25 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
         colorFloat32->Unmap();
+    }
+#ifdef HDVK_HOUDINI
+    for (int k = 0; k < vkr::Aovs::kCount; ++k) {
+        if (!cryptoPlane[k]) {
+            continue;
+        }
+        const size_t pixels = size_t(frame.width) * frame.height, n = std::min<size_t>(extraComponents[k], 4);
+        for (size_t p = 0; p < pixels; ++p) {
+            std::copy(cryptoPlane[k] + p * 4, cryptoPlane[k] + p * 4 + n, cryptoPrimary[k] + p * extraComponents[k]);
+        }
+    }
+#endif
+    if (!huskIds.empty()) {
+        // 0 is the background, ids count from 1.
+        auto *dst = static_cast<float *>(idForHusk->Map());
+        for (size_t p = 0; p < huskIds.size(); ++p) {
+            dst[p] = huskIds[p] < 0 ? 0.0f : float(huskIds[p] + 1);
+        }
+        idForHusk->Unmap();
     }
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
         static int frames = 0;

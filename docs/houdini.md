@@ -122,6 +122,32 @@ another checkout's Eldr beside yours.
   `ray:hitPz`, `ray:hitN`. The layer layout of the EXR is the same as
   Karma's (husk's): `C` RGBA, `<var>.R/G/B`, `depth.z`, `N.x/y/z`,
   `P.x/y/z`, `primid.id`, so one comp template works for both.
+- **Cryptomatte.** husk asks the render buffer for `GetResource()`: a
+  `HdAovSettingsMap` whose `extra_aov_resource` is a
+  `UT_HUSDExtraAOVResource` (Houdini's `UT_HUSDExtraAOVResource.h`, no
+  other Houdini dependency) listing extra planes and `cryptomatte/...`
+  metadata; Karma's delegate does the same. Eldr's buffer for a
+  Karma Cryptomatte var (`sourceName __name` / `__materialname`) returns it
+  (houdini build only): the plane `<husk name>00` (Float32Vec4: id,
+  coverage, id, coverage) and, per var, `cryptomatte/<key>/name|hash|
+  conversion|manifest`. husk puts the planes in the EXR as parts and the
+  metadata in the first part's header, as for Karma, which also keeps the
+  var's own RGB part. `hython tests\houdini_cryptomatte.py <build-h22>`
+  (hython; not in ctest) renders step4 through a Karma Render Settings LOP
+  with both Cryptomatte vars, and checks with OpenImageIO that the layers
+  exist, the manifests parse, and every id drawn is in its manifest.
+  Limits: one layer (ranks 0 and 1) whatever the var's
+  `cryptomatterank`, and edges don't blend (see Aovs in renderer/aov.h);
+  the render stats' `cryptomatte` entry also lands in the header as a
+  plain `cryptomatte` attribute, which readers ignore.
+- **`ray:primid`.** A Karma Prim ID var has `dataType int`, so husk makes
+  an Int32 buffer, then writes the EXR channel (`husk:format float`) from
+  the int's bits as a float (id 1 reads 1.4e-45, so 0). For a husk-bound id var (the
+  binding carries `driver:parameters:aov:husk:name`) the pass reallocates
+  the buffer as Float32 and fills it with the id + 1 (0 off objects).
+  usdview and usdrecord bind `primId` without husk's settings and keep
+  Int32, which picking needs. With `eldr:productResolution` at a size other
+  than husk's buffer, the ids stay Int32.
 - **The beauty is linear, unexposed.** When the settings prim is husk's
   (`husk:*` attributes), Eldr renders the film in final quality, gives husk
   the linear beauty (`eldr:productLinear`) and leaves auto exposure off
@@ -156,8 +182,8 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 | `primvars:displayColor` | read as sRGB (0.5 becomes 0.214 linear) | linear, as USD defines colour attributes | None, USD followed. A floor of displayColor 0.5 is 0.43 as bright in Karma. |
 | Dome in the camera | not drawn by default | drawn (`domeLightCameraVisibility`, true) | None; Hydra's own setting. |
 | Glossy highlights of small lights on a rough 0.15 floor | | up to 2.4x brighter peaks (lights.usda reflections) | Open: Eldr's representative-point specular. |
-| `ray:primid` | float id/coverage | Hydra int primId; husk writes it as a float reinterpretation, so it reads 0 | Open: use Cryptomatte-like ids from Karma, not comparable. |
-| Cryptomatte vars | rank layers `<name>00..` and manifest metadata (written by Karma) | a plain `<name>` RGB layer, no manifest | Open: Eldr's writer needs OpenImageIO; use the standalone build (usdrecord) for Cryptomatte. |
+| `ray:primid` | float id/coverage | float: 0 on the background, Hydra's primId + 1 on objects (no coverage) | Not comparable (Karma's blends ids with coverage); both are 0 only off objects. |
+| Cryptomatte vars | rank layers `<name>00..02` and manifest metadata | `<name>00` (rank 0 and 1, one sample per pixel, so hard edges) and the same manifest metadata: husk's `UT_HUSDExtraAOVResource` (see above) | Matches in layout; one layer, not three. |
 | Volumes | rendered | rendered (OpenVDB files and SOP volumes, see above) | Matches. |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s | |
 
