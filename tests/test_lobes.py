@@ -197,6 +197,19 @@ expect(shift[0] > 3 * shift[1] and shift[3] > 3 * shift[2],
 expect(max(luminance(q) for q in opaque) < 1.1 * min(luminance(q) for q in opaque),
        "eldr:texturedTransmission off: opaque everywhere", *opaque)
 
+
+# A textured transmission_depth (Beer-Lambert, colour^(distance / depth)):
+# the quarters at depth 1.5 (bottom-left, top-right) keep far more of the
+# light than those at 0.5, relative to Textured Transmission off (the
+# constant depth 0: tinted once at the surface, as the dome behind varies).
+deep = quadrants(render({}), "/texturedDepth")
+flat = quadrants(render({"eldr:texturedTransmission": False}), "/texturedDepth")
+engine.SetRendererSetting("eldr:texturedTransmission", True)
+gain = [luminance(a) / max(luminance(b), 1e-6) for a, b in zip(deep, flat)]
+expect(min(gain[0], gain[3]) > 1.5 * max(gain[1], gain[2]),
+       "textured transmission_depth: two tints by the texture (gains %s)" % [round(x, 3) for x in gain],
+       *deep)
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

@@ -46,7 +46,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
-foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit rt_shadow.rahit)
+foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit
+        rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -54,6 +55,7 @@ foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit r
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
                 renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+                renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
@@ -129,7 +131,8 @@ add_custom_command(OUTPUT ${spv}
     COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
     DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
-            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl)
+            renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/material.glsl
+            renderer/shaders/program.glsl renderer/shaders/noise.glsl)
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
@@ -257,6 +260,8 @@ if(WIN32)
     set_tests_properties(interop PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME transmission COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_transmission.py)
     set_tests_properties(transmission PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME rt_refraction COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_rt_refraction.py)
+    set_tests_properties(rt_refraction PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME holdout COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_holdout.py)
     set_tests_properties(holdout PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lighting COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lighting.py)

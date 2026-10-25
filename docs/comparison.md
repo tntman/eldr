@@ -60,8 +60,8 @@ Read it with these limits in mind:
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | Order-independent transparency | Yes | No | Partial | |
-| Refraction through several layers, back faces, TIR | Yes | Partial | Yes | Screen space. |
-| Ray-traced refraction (off-screen content) | No | No | Partial | In progress in round 4. |
+| Refraction through several layers, back faces, TIR | Yes | Partial | Yes | Screen space interactively; traced in final quality. |
+| Ray-traced refraction (off-screen content) | Yes | No | Partial | Final quality (`rtRefraction`): glass behind glass, materials evaluated at every hit. |
 | Holdouts and mattes | Yes | Yes | Yes | |
 | OpenVDB / NanoVDB volumes | Yes | Yes | Yes | |
 | Froxel fog | Yes | Yes | Yes | |

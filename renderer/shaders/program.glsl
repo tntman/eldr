@@ -40,9 +40,51 @@ vec4 programRegisters[kProgramRegisters];
 // The lobe inputs a program computes (MaterialProgram::Input from
 // kSpecularColor on, in that order), for brdf.glsl's PrepareLayers: their
 // values, and a bit each in programLobes.
-const uint kProgramLobes = 19u;
+const uint kProgramLobes = 22u;
 vec4 programLobe[kProgramLobes];
 uint programLobes = 0u;
+#endif
+
+#ifdef LAYERS
+// `m` with the lobe inputs the program computed in place of its constants,
+// where frame.styles.x's Textured Lobe (4) and Transmission (8) Inputs are
+// on (brdf.glsl's ShadingMaterial; rt_refraction.rgen at ray hits). Call
+// after RunProgram.
+Material ProgramMaterial(Material m)
+{
+    uint lobes = (frame.styles.x & 4u) != 0u ? programLobes : 0u;
+    if (lobes != 0u) {
+        m.specularColor.rgb = (lobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
+        m.coat.x = (lobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
+        m.coat.y = (lobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
+        m.coatColor.rgb = (lobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
+        m.sheen.x = (lobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
+        m.sheenColor.rgb = (lobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
+        m.sheen.y = (lobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
+        m.anisotropy.x = (lobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
+        m.thinFilm.y = (lobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
+        float r = (programLobe[9].x - 1.0) / (programLobe[9].x + 1.0);  // the coat's F0 from its IOR
+        m.coat.z = (lobes & 512u) != 0u ? r * r : m.coat.z;
+        m.thinFilm.x = (lobes & 1024u) != 0u ? programLobe[10].x : m.thinFilm.x;
+        m.thinFilm.z = (lobes & 2048u) != 0u ? programLobe[11].x : m.thinFilm.z;
+        m.anisotropy.y = (lobes & 4096u) != 0u ? programLobe[12].x : m.anisotropy.y;
+        m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
+    }
+    // Transmission and subsurface (transparency.glsl, subsurface.glsl):
+    // the radius and its scale multiply the constant (their product).
+    uint passes = (frame.styles.x & 8u) != 0u ? programLobes : 0u;
+    if ((passes & 4177920u) != 0u) {
+        m.transmission.w = (passes & 16384u) != 0u ? programLobe[14].x : m.transmission.w;
+        m.transmission.rgb = (passes & 32768u) != 0u ? programLobe[15].rgb : m.transmission.rgb;
+        m.subsurface.w = (passes & 65536u) != 0u ? programLobe[16].x : m.subsurface.w;
+        m.subsurface.rgb = (passes & 131072u) != 0u ? programLobe[17].rgb : m.subsurface.rgb;
+        m.subsurfaceRadius.xyz *= (passes & 262144u) != 0u ? programLobe[18].xyz : vec3(1.0);
+        m.refraction.z = (passes & 524288u) != 0u ? programLobe[19].x : m.refraction.z;
+        m.refraction.y = (passes & 1048576u) != 0u ? (programLobe[20].x > 0.5 ? 1.0 : 0.0) : m.refraction.y;
+        m.subsurfaceRadius.xyz *= (passes & 2097152u) != 0u ? programLobe[21].xyz : vec3(1.0);
+    }
+    return m;
+}
 #endif
 
 vec4 ProgramArg(uint b, uint constants)
@@ -185,7 +227,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             } else if (imm0 == 6u) {
                 alpha = clamp(a.x, 0.0, 1.0);
 #ifdef PROGRAM_VERTEX
-            } else if (imm0 == 26u) {  // MaterialProgram::kDisplacement
+            } else if (imm0 == 29u) {  // MaterialProgram::kDisplacement
                 programDisplacement = a.x;
 #endif
 #ifdef LAYERS

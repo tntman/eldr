@@ -25,6 +25,7 @@ struct RayTracingData {
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
     uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
+    uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces)
 };
 // TLAS instance masks (shaders/gi.glsl).
 constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2;
@@ -49,6 +50,10 @@ public:
     struct Work {
         bool shadows = false;      // traced shadows of shadowLights
         bool reflections = false;  // traced reflections
+        // Traced refraction (rt_refraction.rgen): each pixel's refracted
+        // ray through the translucent meshes, up to this many interfaces.
+        bool refraction = false;
+        uint32_t refractionBounces = 4;
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
         // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):
@@ -80,7 +85,7 @@ public:
     // (in submits of their own), frees unused ones, sizes the TLAS and the
     // images for `width` x `height`, and writes this frame's uniforms.
     void Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height);
-    // Writes bindings 52..59 of the scene set (see shaders/rt.glsl, gi.glsl).
+    // Writes bindings 52..59 and 86 of the scene set (see shaders/rt.glsl, gi.glsl).
     void UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu);
     // Records the TLAS build (when the scene changed) and the traces;
     // `pass` closes a GPU timestamp after each part.
@@ -157,7 +162,7 @@ private:
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
     VkPipeline _displacePipeline = VK_NULL_HANDLE;  // rt_displace.comp
     Buffer _sbt;  // shader binding table: raygen, miss and hit regions
-    VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _miss{}, _hit{}, _callable{};
+    VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _raygenRefraction{}, _miss{}, _hit{}, _callable{};
 
     // BLASes by Scene::Gpu::SlotGeometry::version, sub-allocated from blocks.
     std::unordered_map<uint64_t, Blas> _blas;
@@ -192,6 +197,7 @@ private:
     uint32_t _frame = 0;
     Buffer _uniforms;  // RayTracingData
     Image _shadowImage, _reflectionImage;
+    Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
     uint32_t _width = 0, _height = 0, _shadowLayers = 0;
     Image _giIrradiance, _giVisibility;
     VkSampler _sampler = VK_NULL_HANDLE;

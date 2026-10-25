@@ -310,6 +310,27 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
 - **Layers** (`multiRefraction`): refracting meshes draw back to front and the
   colour is copied again after each, so glass behind glass shows (up to
   `refractionLayers` copies).
+- **Ray-traced refraction** (`rtRefraction`, needs ray tracing and the
+  prepass; on in final quality by default): refraction rays see the
+  translucent meshes' TLAS instances (kRtMaskTranslucent, which traced
+  shadows also tint through; reflection and GI rays pass them), skinned ones
+  among `rtSkinnedInstances` included. Per pixel a ray finds the nearest
+  refracting surface (through translucent ones that don't refract) and
+  follows its refracted ray through the glass, up to `rtRefractionBounces`
+  interfaces: into and out of each medium, glass behind glass, total internal
+  reflection, a Fresnel choice between reflecting and refracting after the
+  first surface, Beer-Lambert absorption over `transmission_depth`, and a GGX
+  microfacet normal per sample by the roughness (rough glass converges over
+  the film). Each surface's material is evaluated at the hit as shading does
+  (textures, material programs and their lobe inputs, normal maps), so the
+  first surface bends by its fragment's normal and ior, and later ones by
+  their own ior, transmission colour, weight, opacity, depth and thin walls
+  (after the first, each lets the ray through straight, refracts it, or ends
+  it on its diffuse surface, by its fractions). It is shaded at its hit as
+  traced reflections are, so what is off screen or behind other objects
+  shows through glass, and counts as indirect glossy light in the light
+  splits. The front surface keeps its own Fresnel, tint and reflections;
+  other refracting fragments at the pixel stay screen space.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
@@ -318,7 +339,7 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   material program, per pixel).
 - **Subsurface** (`subsurface`): see Materials.
 
-Screen-space limits: only what is on screen is refracted, and OIT is an
+Screen-space limits (without ray-traced refraction): only what is on screen is refracted, and OIT is an
 approximation (sorting is per mesh, not per triangle).
 
 ## Volumes and fog
@@ -387,7 +408,9 @@ emission, opacity, normal, displacement, and (with
 `texturedLobes` / `texturedTransmission`) specularColor, coat, coat colour,
 coat roughness, sheen, sheen colour and roughness, anisotropy and rotation,
 thin film thickness, weight and IOR, ior, transmission, transmission colour,
-subsurface, subsurface colour and radius.
+transmission depth (Beer-Lambert per pixel), thin walled (above 0.5),
+subsurface, subsurface colour, radius and its scale (standard_surface
+`subsurface_scale`, OpenPBR `subsurface_radius_scale`).
 
 **Material programs** (`materialGraphs`): graphs behind inputs that a
 texture or constant cannot express are compiled to a small per-pixel
@@ -707,7 +730,10 @@ GI and reflections
 Transparency
 
 - OIT and sorting are per mesh; one mesh's triangles keep their order.
-- Refraction is screen space; the translucent depth for volumes covers whole
+- Refraction is screen space outside final quality (ray-traced refraction
+  traces only the nearest refracting surface's ray; displacement doesn't
+  bend its rays, and skinned glass beyond `rtSkinnedInstances` isn't traced);
+  the translucent depth for volumes covers whole
   meshes and only the nearest layer splits a volume ray.
 - Holdout mattes cut everything at the pixel (also layers in front); the
   holdout opacity comes from constants or textures, not material programs.
@@ -723,9 +749,8 @@ Materials
 - Coat: no coat normal, anisotropy or screen-space reflection; OpenPBR
   `coat_darkening` is not modelled. Thin film assumes air above it. Hair has no
   TT lobe (backlit hair gets no glow) and a closed curve's u jumps at its weld.
-- `transmission_depth` is read, but `thin_walled` and the subsurface radius
-  scales stay constants for textured inputs; with the textured setting off, a
-  material with a textured weight is still drawn in the translucent or
+- With the textured setting
+  off, a material with a textured weight is still drawn in the translucent or
   subsurface pass (weight 0).
 - Displacement: top mip only; vector displacement drops tangential
   components; no shading graphs in the vertex stage; skinning stretch does not

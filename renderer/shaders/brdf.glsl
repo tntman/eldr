@@ -21,39 +21,12 @@ const uint kStyleToon = 1u, kStyleHair = 2u, kStyleTexturedLobes = 4u, kStyleTex
 // material program computed (textures, graphs; program.glsl's programLobe
 // in MaterialProgram::Input order from kSpecularColor) in their place when
 // the frame's Textured Lobe (and Transmission) Inputs are on. Only the GRAPH + LAYERS shaders
-// have them. Call after RunProgram.
+// have them (program.glsl's ProgramMaterial). Call after RunProgram.
 Material ShadingMaterial()
 {
     Material m = materials[inMaterial];
 #if defined(GRAPH) && defined(LAYERS)
-    uint lobes = (frame.styles.x & kStyleTexturedLobes) != 0u ? programLobes : 0u;
-    if (lobes != 0u) {
-        m.specularColor.rgb = (lobes & 1u) != 0u ? programLobe[0].rgb : m.specularColor.rgb;
-        m.coat.x = (lobes & 2u) != 0u ? programLobe[1].x : m.coat.x;
-        m.coat.y = (lobes & 4u) != 0u ? programLobe[2].x : m.coat.y;
-        m.coatColor.rgb = (lobes & 8u) != 0u ? programLobe[3].rgb : m.coatColor.rgb;
-        m.sheen.x = (lobes & 16u) != 0u ? programLobe[4].x : m.sheen.x;
-        m.sheenColor.rgb = (lobes & 32u) != 0u ? programLobe[5].rgb : m.sheenColor.rgb;
-        m.sheen.y = (lobes & 64u) != 0u ? programLobe[6].x : m.sheen.y;
-        m.anisotropy.x = (lobes & 128u) != 0u ? programLobe[7].x : m.anisotropy.x;
-        m.thinFilm.y = (lobes & 256u) != 0u ? programLobe[8].x : m.thinFilm.y;
-        float r = (programLobe[9].x - 1.0) / (programLobe[9].x + 1.0);  // the coat's F0 from its IOR
-        m.coat.z = (lobes & 512u) != 0u ? r * r : m.coat.z;
-        m.thinFilm.x = (lobes & 1024u) != 0u ? programLobe[10].x : m.thinFilm.x;
-        m.thinFilm.z = (lobes & 2048u) != 0u ? programLobe[11].x : m.thinFilm.z;
-        m.anisotropy.y = (lobes & 4096u) != 0u ? programLobe[12].x : m.anisotropy.y;
-        m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
-    }
-    // Transmission and subsurface (transparency.glsl, subsurface.glsl):
-    // the radius multiplies the constant (its scale).
-    uint passes = (frame.styles.x & kStyleTexturedTransmission) != 0u ? programLobes : 0u;
-    if ((passes & 507904u) != 0u) {
-        m.transmission.w = (passes & 16384u) != 0u ? programLobe[14].x : m.transmission.w;
-        m.transmission.rgb = (passes & 32768u) != 0u ? programLobe[15].rgb : m.transmission.rgb;
-        m.subsurface.w = (passes & 65536u) != 0u ? programLobe[16].x : m.subsurface.w;
-        m.subsurface.rgb = (passes & 131072u) != 0u ? programLobe[17].rgb : m.subsurface.rgb;
-        m.subsurfaceRadius.xyz *= (passes & 262144u) != 0u ? programLobe[18].xyz : vec3(1.0);
-    }
+    m = ProgramMaterial(m);
 #endif
     return m;
 }

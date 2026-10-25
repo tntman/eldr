@@ -296,11 +296,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
                                 {t.volumeResolution, &frame.volume.resolution},
                                 {t2.planarCount, &frame.planarCount},
+                                {t2.rtRefractionBounces, &frame.rtRefractionBounces},
                                 {t.filmSamples, &frame.filmSamples},
                                 {t.interactiveSamples, &frame.interactiveSamples},
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    // 0 allowed: off.
+    frame.rtRefraction =
+        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtRefraction, int(frame.rtRefraction)), 0, 2));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));

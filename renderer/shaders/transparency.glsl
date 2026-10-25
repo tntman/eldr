@@ -14,6 +14,10 @@ const uint kFeatureRefraction = 4096u, kFeatureHoldouts = 32768u;
 // The opaque colour (premultiplied) with mips, copied after the opaque
 // pass (Transparency::RecordBackground).
 layout(set = 0, binding = 42) uniform sampler2D refractionBackground;
+// Traced refraction (rt_refraction.rgen; frame.rtRefraction.x): per pixel
+// the light along the refracted ray of the nearest refracting surface,
+// that surface's distance in a (negative: the app's background).
+layout(set = 0, binding = 86, rgba16f) uniform readonly image2D rtRefractionImage;
 
 // Transmission, split by TransmissionBegin: the fraction of the pixel
 // seen straight through the surface (opacity's complement, blended over
@@ -86,8 +90,12 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
 // the far side of a glass ball), with the inverted ior, so beyond the
 // critical angle it reflects the inside totally (sampled along the
 // mirrored ray) instead of letting light out.
-// ponytail: screen space only (what isn't on screen isn't refracted);
-// one interface per layer, the thickness an estimate.
+// With traced refraction (frame.rtRefraction.x) the front surface the
+// ray tracing pass found at this pixel takes its light from there instead
+// (the path through the glass, absorption inside included), and back
+// faces there draw nothing; other refracting fragments stay screen space.
+// ponytail: screen space: what isn't on screen isn't refracted; one
+// interface per layer, the thickness an estimate.
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {
@@ -114,6 +122,19 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float through = gRefracted * (1.0 - F);
     if (!Feature(kFeatureRefraction)) {
         return 1.0 - gStraight - through;  // no background: seen straight through, untinted
+    }
+    if (frame.rtRefraction.x != 0u) {
+        vec4 traced = imageLoad(rtRefractionImage, ivec2(gl_FragCoord.xy));
+        if (kShadingPass == 3u && traced.a != 0.0) {
+            discard;  // the traced path went through this back face
+        }
+        float camera = length(inWorldPos - frame.cameraPos.xyz);
+        if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
+            vec3 transmitted = through * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
+            color += transmitted * traced.rgb;
+            gRefractedLight += transmitted * traced.rgb;  // indirect glossy (light splits)
+            return 1.0 - gStraight - (traced.a < 0.0 ? dot(transmitted, vec3(1.0 / 3.0)) : 0.0);
+        }
     }
 
     float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;

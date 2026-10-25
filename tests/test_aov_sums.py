@@ -90,7 +90,14 @@ def pixel(x, y):
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
 
-VARIANTS = {"default": [], "gi": ["eldr:gi=true"], "ssrDenoise": ["eldr:ssr=true", "eldr:ssrDenoise=true"]}
+# Traced refraction (on in final quality) is noisy per sample, and the
+# film's pixel filter weights samples unlike the AOVs' plain average, so
+# its transmission sums only to within TOLERANCE_RT; the other variants
+# refract in screen space.
+VARIANTS = {"default": ["eldr:rtRefraction=0"], "gi": ["eldr:gi=true", "eldr:rtRefraction=0"],
+            "ssrDenoise": ["eldr:ssr=true", "eldr:ssrDenoise=true", "eldr:rtRefraction=0"],
+            "rtRefraction": ["eldr:rtRefraction=2"]}
+TOLERANCE_RT = 0.06
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
     run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
@@ -109,7 +116,12 @@ for variant, settings in VARIANTS.items():
                 worst = residual if abs(residual) > abs(worst) else worst
         print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
-        expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
+        if name == "transmission":  # what it refracts (traced or not) is indirect glossy
+            p = pixel(centre[0], centre[1])
+            share = p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
+            expect(share > 0.6, f"{variant} transmission: refracted light in indirect glossy ({share:.2f})")
+        tolerance = TOLERANCE_RT if variant == "rtRefraction" else TOLERANCE
+        expect(abs(worst) <= tolerance, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

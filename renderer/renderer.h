@@ -352,6 +352,14 @@ public:
         // (glass behind glass, a ball's far side), up to this many copies.
         bool multiRefraction = true;
         uint32_t refractionLayers = 4;
+        // Ray-traced refraction (needs refraction and Device::rayTracing):
+        // the front refracting surface's refracted ray is traced through
+        // the glass (back faces, total internal reflection, glass behind
+        // glass) up to rtRefractionBounces interfaces and shaded at its hit
+        // as traced reflections are, so what is off screen or hidden shows.
+        // 0 off, 1 in final quality (film runs started fresh), 2 always.
+        uint32_t rtRefraction = 1;
+        uint32_t rtRefractionBounces = 4;  // 1..16
         // Translucent holdouts (with holdouts) cut the image's colour and
         // alpha by their opacity; off: they draw nothing.
         bool holdoutAlpha = true;

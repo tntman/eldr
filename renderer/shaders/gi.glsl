@@ -20,6 +20,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // y: volumes they march (0: none), z: lights per texel of the shadow image
                          // (4: one channel each; 1: colour, rgb)
     vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
+    uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by

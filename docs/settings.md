@@ -160,7 +160,7 @@ reflections.
 
 | Setting, key | Type, default | What it does, when to change it | Cost; related |
 |---|---|---|---|
-| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | flag, on | Transmission, transmission colour, subsurface weight, colour and radius may be textures or graphs. Off reads constants. | |
+| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | flag, on | Transmission, transmission colour and depth, thin walled, subsurface weight, colour, radius and its scale may be textures or graphs. Off reads constants. | |
 | Translucent Objects<br>`eldr:translucency` | flag, on | Draws materials with opacity below 1. Off: they are not drawn. | Scenes without them skip the pass. |
 | Order-Independent Transparency<br>`eldr:oit` | flag, on | Weighted blended OIT (McGuire and Bavoil) for translucent meshes. Off sorts meshes back to front, which can misorder one mesh's own triangles. | 18 bytes per pixel and one full-screen pass. Related: *OIT Depth Weight*. |
 | OIT Depth Weight<br>`eldr:oitDepthWeight` | float, 4 | Exponent of the distance weight (0 = plain average). Raise if far layers show through near ones. | |
@@ -169,6 +169,8 @@ reflections.
 | Refraction Back Faces<br>`eldr:refractionBackFaces` | flag, on | Back faces of refracting meshes are drawn too (water from below with Snell's window and total internal reflection; the far side of a glass ball). Off discards back faces. | |
 | Refraction Through Layers<br>`eldr:multiRefraction` | flag, on | Glass behind glass: the background is copied again after each refracting layer. | About 0.1 ms per copy at 1280x720. Related: *Refraction Layers*. |
 | Refraction Layers<br>`eldr:refractionLayers` | int, 4 | Most background copies per frame (1-16); further layers share the last. | |
+| Ray-Traced Refraction<br>`eldr:rtRefraction` | int, 1 | [RT][prepass] 0 off, 1 in final quality (film runs that started fresh), 2 always. The nearest refracting surface's refracted ray is traced through the glass (back faces, glass behind glass, total internal reflection, absorption) and shaded at its hit like traced reflections, so glass shows what is off screen or hidden; rough glass is jittered per sample. Interactive frames keep screen space unless 2. | glass.usda 1280x720: 8.1-9.7 ms for the rays (driver compute fallback; every hit evaluates its material, programs included). Crowd (no glass) unchanged. Related: *Refraction*, *Ray-Traced Refraction Interfaces*. |
+| Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int, 4 | Surfaces a traced refraction ray passes (1-16): 2 for one ball, 4 for a ball in front of another pane. | |
 | Holdouts<br>`eldr:holdouts` | flag, on | Matte objects draw black with zero alpha but keep depth, ids and shadows. Off draws them normally. | None. |
 | Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | flag, on | A translucent holdout cuts colour and alpha by its opacity instead of drawing nothing. | A small pass only when such holdouts exist. |
 
