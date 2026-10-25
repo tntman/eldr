@@ -201,5 +201,28 @@ expect(gray(image, 52, 32) < 0.2 * gray(image, 12, 32) and gray(image, 12, 32) >
 image = render(stage, {**linear, "eldr:lightTextures": False})
 expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "eldr:lightTextures off: lit evenly")
 
+# Ray-traced shadows don't shadow the surface itself far from the origin:
+# a grey floor of 16x16 quads at z = 0.04 from (200, 200) to (400, 400), as Kitchen_set's
+# tiles (centimetres), under a 35 degree sun, is as bright traced as
+# unshadowed (their ray origins were under the floor half the time).
+stage = Usd.Stage.CreateInMemory()
+floor = UsdGeom.Mesh.Define(stage, "/floor")
+floor.CreatePointsAttr([(200 + 200 * i / 16, 200 + 200 * j / 16, 0.04) for j in range(17) for i in range(17)])
+floor.CreateFaceVertexCountsAttr([4] * 256)
+floor.CreateFaceVertexIndicesAttr([v for j in range(16) for i in range(16)
+                                   for v in (j * 17 + i, j * 17 + i + 1, (j + 1) * 17 + i + 1, (j + 1) * 17 + i)])
+floor.CreateDisplayColorAttr([(0.5, 0.5, 0.5)])
+camera = UsdGeom.Camera.Define(stage, "/cam")
+camera.AddTransformOp().Set(Gf.Matrix4d().SetLookAt(Gf.Vec3d(300, 150, 120), Gf.Vec3d(300, 300, 0),
+                                                    Gf.Vec3d(0, 0, 1)).GetInverse())
+sun = UsdLux.DistantLight.Define(stage, "/sun")
+sun.CreateIntensityAttr(4)
+sun.CreateNormalizeAttr(True)
+sun.AddRotateXYZOp().Set(Gf.Vec3f(55, 0, 30))
+lit = render(stage, {**linear, "eldr:shadows": False})
+traced = render(stage, {**linear, "eldr:rtShadows": True})
+dark = sum(gray(traced, x, y) < 0.9 * gray(lit, x, y) for x in range(8, 56, 2) for y in range(8, 56, 2))
+expect(gray(lit, 32, 32) > 50 and dark == 0, "ray-traced shadows: no self-shadowing (%d of 576 darker)" % dark)
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

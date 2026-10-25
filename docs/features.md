@@ -189,7 +189,10 @@ its own shape).
   shadow maps.
 - Ray-traced shadows (`rtShadows`) replace maps for the sun and the three most
   important local lights, soft from the light's size, with a skinned-character
-  cap (`rtSkinnedInstances`).
+  cap (`rtSkinnedInstances`). Traced rays start 256 ulps of the hit's largest
+  coordinate off the surface, so floors far from the origin don't shadow
+  themselves (until sweep 4, Kitchen_set's sunlit floor came out 37% too dark
+  traced; the shadow maps were right).
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).
