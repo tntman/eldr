@@ -768,7 +768,7 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
         _slotWords = std::move(words);
         _tlasDirty = true;
     }
-    _tlasDirty = _tlasDirty || gpu.version != _tlasVersion;
+    _tlasDirty = _tlasDirty || gpu.version != _tlasVersion || _work.moving;
 
     const uint32_t capacity = std::max(gpu.instanceCapacity, 1u) + _work.skinnedCapacity;
     if (capacity <= _tlasCapacity) {

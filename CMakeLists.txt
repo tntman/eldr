@@ -25,7 +25,8 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                taa.frag lens_tiles.comp dof.frag motion_blur.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp oit_resolve.frag
                shadow_tint.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
-               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp)
+               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp
+               shutter.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
@@ -109,6 +110,13 @@ foreach(variant layers graph_layers)
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Upscaling (TAAU): taa.frag reconstructing a larger history (UPSCALE).
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/taa_upscale.frag.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DUPSCALE -o ${spv}
+            ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/taa.frag
+    DEPENDS renderer/shaders/taa.frag)
+list(APPEND shader_incs ${spv})
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}
@@ -215,6 +223,8 @@ if(WIN32)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME settings COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_settings_window.py)
     set_tests_properties(settings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    add_test(NAME docs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_docs.py)
+    set_tests_properties(docs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME lobes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_lobes.py)
     set_tests_properties(lobes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME textures COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_textures.py)

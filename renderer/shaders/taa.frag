@@ -17,6 +17,11 @@ layout(set = 0, binding = 3) uniform sampler2D velocity;    // object motion in 
 layout(push_constant) uniform TaaParams {
     mat4 reprojection;  // current jittered NDC -> previous clip (row-vector order)
     vec4 params;        // blend weight of the current frame, 1/width, 1/height
+#ifdef UPSCALE
+    // Upscaling (TAAU): xy where this frame's samples are from their input
+    // pixels' centres (input pixels), zw input size / output size.
+    vec4 upscale;
+#endif
 } pc;
 
 layout(location = 0) out vec4 outColor;
@@ -92,6 +97,7 @@ vec4 SampleHistory(vec2 uv, vec2 size)
     return max(c, vec4(0.0));
 }
 
+#ifndef UPSCALE
 void main()
 {
     ivec2 p = ivec2(gl_FragCoord.xy);
@@ -137,3 +143,52 @@ void main()
     c.rgb *= luma > brightest ? brightest / luma : 1.0;
     outColor = Expand(c);
 }
+#else
+// Upscaling (TAAU): this frame has fewer samples than the output has
+// pixels. Each output pixel takes the 3x3 input samples around it, each
+// weighted by its distance from the pixel's centre (where its jitter put
+// it, in output pixels; Karis 2014's Gaussian fit exp(-2.29 d^2)), and
+// blends them with the history by how much weight landed: pixels no
+// sample came near this frame keep their (clipped) history.
+void main()
+{
+    vec2 inPos = gl_FragCoord.xy * pc.upscale.zw;  // the output pixel's centre, in input pixels
+    ivec2 maxP = textureSize(current, 0) - 1;
+    ivec2 q0 = ivec2(floor(inPos - pc.upscale.xy));  // the input sample nearest it
+    vec4 sum = vec4(0.0), m1 = vec4(0.0), m2 = vec4(0.0);
+    float weight = 0.0, brightest = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            ivec2 q = q0 + ivec2(x, y);
+            vec4 c = Compress(Current(clamp(q, ivec2(0), maxP)));
+            vec2 d = (vec2(q) + 0.5 + pc.upscale.xy - inPos) / pc.upscale.zw;
+            float w = exp(-2.29 * dot(d, d));
+            sum += c * w;
+            weight += w;
+            brightest = max(brightest, Luma(c.rgb));
+            c = ToYCoCg(c);
+            m1 += c;
+            m2 += c * c;
+        }
+    }
+    vec4 cur = sum / max(weight, 1e-6);  // compressed
+    float alpha = pc.params.x;
+    ivec2 p = clamp(ivec2(inPos), ivec2(0), maxP);
+    vec2 uv = gl_FragCoord.xy * pc.params.yz;
+    float depth = texelFetch(sceneDepth, p, 0).r;
+    vec4 prev = pc.reprojection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5 + texelFetch(velocity, p, 0).xy;
+    if (alpha >= 1.0 || prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
+        outColor = Expand(cur);  // no usable history: the samples' reconstruction alone
+        return;
+    }
+    vec4 mean = m1 / 9.0;
+    vec4 sigma = sqrt(max(m2 / 9.0 - mean * mean, vec4(0.0)));
+    vec4 hist = ToYCoCg(SampleHistory(prevUv, 1.0 / pc.params.yz));
+    hist = FromYCoCg(clamp(hist, mean - 1.25 * sigma, mean + 1.25 * sigma));
+    vec4 c = max(mix(hist, cur, min(alpha * weight, 1.0)), vec4(0.0));
+    float luma = Luma(c.rgb);
+    c.rgb *= luma > brightest ? brightest / luma : 1.0;
+    outColor = Expand(c);
+}
+#endif

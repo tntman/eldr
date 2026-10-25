@@ -157,6 +157,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((authoredProbes, "hdvk:authoredProbes")) \
     ((probeNormalize, "hdvk:probeNormalize")) \
     ((planarCount, "hdvk:planarCount")) \
+    ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples")) \
+    ((renderScale, "hdvk:renderScale")) \
     ((curveRibbons, "hdvk:curveRibbons")) \
     ((pointSprites, "hdvk:pointSprites")) \
     ((lodFade, "hdvk:lodFade")) \

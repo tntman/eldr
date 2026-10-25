@@ -10,6 +10,12 @@
 #else
 #define JOINTS_ACCESS readonly
 #endif
+// shutter.comp moves instances and blend shape weights to a shutter time.
+#ifdef SHUTTER_WRITABLE
+#define SHUTTER_ACCESS
+#else
+#define SHUTTER_ACCESS readonly
+#endif
 
 const uint kFreeSlot = 0xFFFFFFFFu;
 
@@ -58,7 +64,7 @@ struct SkinVertex {
     uvec4 blend;      // first blend shape offset, count
 };
 
-layout(std430, set = 0, binding = 7) readonly buffer Instances { Instance instances[]; };
+layout(std430, set = 0, binding = 7) SHUTTER_ACCESS buffer Instances { Instance instances[]; };
 layout(std430, set = 0, binding = 8) readonly buffer Draws { DrawInfo draws[]; };
 // kVisibleLists lists of instance indices, instanceCapacity each (culling output).
 layout(std430, set = 0, binding = 9) SCENE_ACCESS buffer Visible { uint visible[]; };
@@ -72,4 +78,4 @@ layout(std430, set = 0, binding = 16) JOINTS_ACCESS buffer Joints { mat4 joints[
 layout(std430, set = 0, binding = 21) readonly buffer SkinXforms { mat4 skinXforms[]; };
 layout(std430, set = 0, binding = 22) readonly buffer JointBounds { vec4 jointBounds[]; };
 layout(std430, set = 0, binding = 23) readonly buffer BlendOffsets { vec4 blendOffsets[]; };
-layout(std430, set = 0, binding = 24) readonly buffer BlendWeights { float blendWeights[]; };
+layout(std430, set = 0, binding = 24) SHUTTER_ACCESS buffer BlendWeights { float blendWeights[]; };

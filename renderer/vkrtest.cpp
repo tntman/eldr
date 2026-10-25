@@ -1423,6 +1423,133 @@ int main()
         }
 
         {
+            // Motion blur time samples: the same quad's edge moves from x = 0
+            // to 0.25 (pixel 32 to 40) over a shutter of [-1, 0]; in final
+            // quality the film renders each sample with the quad at a time in
+            // it, so the edge's pixels are covered for the part of the shutter
+            // the edge is past them: a linear ramp (in linear post, no
+            // tonemapper). The camera moving instead (by -0.25) gives the
+            // same ramp. Time samples off: the film stays off for the motion
+            // and the post blur's frame is final at once, as before.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 0);
+            quad->material = white;
+            auto ramp = [&](bool timeSamples, bool moveCamera, int *frames) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.shutterOpen = -1.0f;
+                frame.shutter = 1.0f;
+                frame.finalQuality = true;
+                frame.filmSamples = 64;
+                frame.filmFilterRadius = 0.0f;
+                frame.motionBlurTimeSamples = timeSamples;
+                quad->transforms[12] = 0.0f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                Render(renderer, scene, frame);
+                if (moveCamera) {
+                    frame.viewProj[12] = -0.25f;
+                    frame.invViewProj[12] = 0.25f;
+                    frame.cameraPos[0] = 0.25f;
+                } else {
+                    quad->prevTransforms = quad->transforms;
+                    quad->transforms[12] = 0.25f;
+                    quad->transformsDirty = true;
+                    scene.Commit();
+                }
+                Image img;
+                for (*frames = 0; *frames < 100 && (*frames == 0 || !renderer.IsConverged()); ++*frames) {
+                    img = Render(renderer, scene, frame);
+                    scene.Commit();  // still: no motion rows any more
+                }
+                std::vector<float> row;
+                for (int x = 0; x < 64; ++x) {
+                    row.push_back(img.At(x, 32, 0) / std::max(img.At(16, 32, 0), 1e-6f));
+                }
+                return row;
+            };
+            int frames = 0;
+            bool linear = true, mirrored = true;
+            const std::vector<float> rigid = ramp(true, false, &frames);
+            const int rigidFrames = frames;
+            const std::vector<float> camera = ramp(true, true, &frames);
+            for (int x = 33; x < 40; ++x) {  // pixel x is past the edge for t > (x + 0.5 - 32) / 8
+                linear = linear && std::abs(rigid[x] - (1.0f - (x + 0.5f - 32.0f) / 8.0f)) < 0.06f;
+            }
+            for (int x = 25; x < 32; ++x) {  // the edge moves left: covered for t < (31.5 - x) / 8
+                mirrored = mirrored && std::abs(camera[x] - (31.5f - x) / 8.0f) < 0.06f;
+            }
+            Expect(rigidFrames == 64 && linear && rigid[30] > 0.95f && rigid[41] < 0.05f,
+                   "time samples: a moving edge blurs into a linear ramp over the film's samples");
+            Expect(mirrored, "time samples: the camera's motion blurs the same");
+            const std::vector<float> off = ramp(false, false, &frames);
+            Expect(frames == 1 && off[34] > 0.9f, "time samples off: the post blur's frame is final at once");
+        }
+
+        {
+            // Upscaling (TAAU): an emitter whose edges fall between pixels
+            // (x = 0.3: pixel 41.6; y = 0.45: row 46.4), rendered at half
+            // size while TAA resolves (film off: it stays so), comes out at
+            // the full size closer to the full-size TAA image than a half-size
+            // render is (nearest upscaled); ids and depth come at full size.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            vkr::Mesh *quad = AddQuad(scene, -1, -1, 0.3f, 0.45f, 0);
+            quad->material = white;
+            quad->primId = 5;
+            scene.Commit();
+            auto resolve = [&](float scale, uint32_t size, uint32_t *renderWidth, bool final = false) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.width = frame.height = size;
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.filmAccumulation = false;
+                frame.renderScale = scale;
+                frame.finalQuality = final;
+                Image img;
+                for (int i = 0; i < 48; ++i) {
+                    img = Render(renderer, scene, frame);
+                }
+                *renderWidth = renderer.GetStats().renderWidth;
+                return img;
+            };
+            uint32_t fullWidth = 0, halfWidth = 0, smallWidth = 0, finalWidth = 0;
+            const Image full = resolve(1.0f, 64, &fullWidth), upscaled = resolve(0.5f, 64, &halfWidth),
+                        small = resolve(1.0f, 32, &smallWidth);
+            resolve(0.5f, 64, &finalWidth, true);
+            double upscaledError = 0, smallError = 0;
+            for (int y = 0; y < 64; ++y) {
+                for (int x = 0; x < 64; ++x) {
+                    const float smallValue = HalfToFloat(small.color[((y / 2) * 32 + x / 2) * 4]);
+                    upscaledError += std::abs(upscaled.At(x, y, 0) - full.At(x, y, 0));
+                    smallError += std::abs(smallValue - full.At(x, y, 0));
+                }
+            }
+            std::printf("upscaling: mean error vs full size %.4f (half size, nearest: %.4f)\n",
+                        upscaledError / 4096.0, smallError / 4096.0);
+            Expect(fullWidth == 64 && halfWidth == 32 && smallWidth == 32 && finalWidth == 64,
+                   "render scale 0.5: the scene renders at half size, final quality at full size");
+            Expect(upscaledError < 0.5 * smallError && std::abs(upscaled.At(10, 10, 0) - 1.0f) < 0.02f &&
+                       upscaled.At(60, 60, 0) < 0.02f,
+                   "upscaling reconstructs the full size's edges better than a half-size image");
+            Expect(upscaled.Prim(10, 10) == 5 && upscaled.Prim(60, 60) == -1 &&
+                       std::abs(upscaled.depth[10 * 64 + 10] - full.depth[10 * 64 + 10]) < 1e-6f,
+                   "upscaling: ids and depth at the frame's size");
+        }
+
+        {
             // SSR: a mirror tilted towards -y (normal (0, -1, -1)) above an
             // emitter tilted up towards it. View rays (+z) reflect straight
             // down and hit the emitter, which is on screen. No dome, so the

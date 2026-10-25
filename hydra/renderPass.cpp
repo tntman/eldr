@@ -131,6 +131,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.autoExposure, &frame.post.autoExposure}, {t.shadows, &frame.shadows},
                                 {t.localShadows, &frame.localShadows}, {t.softShadows, &frame.softShadows},
                                 {t.depthOfField, &frame.depthOfField}, {t.motionBlur, &frame.motionBlur},
+                                {t2.motionBlurTimeSamples, &frame.motionBlurTimeSamples},
                                 {t.depthPrepass, &frame.depthPrepass}, {t.frustumCulling, &frame.frustumCulling},
                                 {t.localLights, &frame.localLights}, {t.clusteredLights, &frame.clusteredLights},
                                 {t.imageBasedLighting, &frame.imageBasedLighting}, {t.normalMaps, &frame.normalMaps},
@@ -191,7 +192,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
                                 {t2.domeSunThreshold, &frame.domeSunThreshold},
-                                {t.filmFilterRadius, &frame.filmFilterRadius},
+                                {t.filmFilterRadius, &frame.filmFilterRadius}, {t2.renderScale, &frame.renderScale},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
@@ -299,6 +300,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // The scene camera's lens; usdview's free camera has none.
     if (camera) {
         frame.shutter = float(camera->GetShutterClose() - camera->GetShutterOpen());
+        frame.shutterOpen = float(camera->GetShutterOpen());
         if (camera->GetProjection() == HdCamera::Perspective && projection[0][0] > 0.0) {
             frame.focalLength = camera->GetFocalLength();
             frame.fStop = camera->GetFStop();
