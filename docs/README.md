@@ -8,6 +8,7 @@ frame is fine for final quality).
 |---|---|
 | [features.md](features.md) | How the renderer works, area by area: frame pipeline, film and TAA, lighting, GI, reflections, transparency, volumes, materials, geometry, camera, output (AOVs, EXR, Cryptomatte), performance, USD authoring conventions, known limitations. |
 | [settings.md](settings.md) | Every `eldr:` render setting, in the order of usdview's Eldr > Render Settings window: type, default, effect, when to change it, cost. |
+| [houdini.md](houdini.md) | Building Eldr against Houdini 22's USD, installing it in Solaris, what is tested. |
 | [eevee-lardomar.md](eevee-lardomar.md) | Design notes on what Eldr can learn from Blender EEVEE (in Swedish). |
 
 ## Keeping the docs current
