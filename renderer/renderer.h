@@ -298,7 +298,7 @@ public:
         // traced reflection hits, GI probe rays; not the dome), scaled down
         // to at most this scene-referred radiance. 0: off.
         float directClamp = 0.0f;
-        float indirectClamp = 0.0f;
+        float indirectClamp = 10.0f;
         // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
         // quadratically, each at least a pixel on, objects at least a pixel's
         // footprint thick (deep at grazing angles) and a ray that crosses a

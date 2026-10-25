@@ -3522,6 +3522,7 @@ int main()
             };
             const float full = wall(0.0f), quarter = wall(0.5f);
             Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
+            Expect(vkr::Renderer::Frame().indirectClamp == 10.0f, "the indirect clamp is 10 by default");
         }
 
         {
