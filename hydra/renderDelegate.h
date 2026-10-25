@@ -148,6 +148,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssgiBitmask, "hdvk:ssgiBitmask"))                      \
     ((rtDisplacement, "hdvk:rtDisplacement"))                \
     ((ssrDenoise, "hdvk:ssrDenoise"))                        \
+    ((shadowJitter, "hdvk:shadowJitter"))                    \
+    ((dofJitter, "hdvk:dofJitter"))                          \
     ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples"))  \
     ((renderScale, "hdvk:renderScale"))
 

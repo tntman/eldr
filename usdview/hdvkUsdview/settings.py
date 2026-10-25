@@ -17,7 +17,7 @@ GROUPS = [
     ("Shadows",
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
      "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
-     "rtDisplacement"),
+     "rtDisplacement shadowJitter"),
     ("Reflections",
      "ssr ssrSteps ssrDenoise rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition "
      "planarReflections planarScale"),
@@ -30,7 +30,7 @@ GROUPS = [
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
      "volumeResolution volumeUnderTransparency volumeShadows"),
     ("Camera and image",
-     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField motionBlur motionBlurTimeSamples lensDistortion postProcess "
+     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter motionBlur motionBlurTimeSamples lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),
 ]
 

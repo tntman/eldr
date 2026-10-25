@@ -29,6 +29,7 @@ struct ShadowTile {
     mat4 viewProj;
     vec4 rect;    // atlas uv offset, uv scale
     vec4 params;  // x: shadow texel size per unit of distance from the light, y/z: near/far, w: light size
+    vec4 origin;  // xyz: where the tile sees from (the light's centre, or its jittered point)
 };
 layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
@@ -186,7 +187,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     if (tile == kNone) {
         return 1.0;
     }
-    vec3 fromLight = p - light.position.xyz;
+    vec3 fromLight = p - shadowTiles[tile].origin.xyz;
     if (light.shaping.y > kSpotShadowCone) {
         vec3 a = abs(fromLight);
         tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
@@ -483,7 +484,7 @@ float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = ndc.xy * 0.5 + 0.5;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
-    if (Feature(kFeatureSoftSun) && tanHalf > 0.0) {
+    if (Feature(kFeatureSoftSun) && tanHalf > 0.0 && frame.shadowJitter.x == 0u) {
         return SoftSunShadow(c, uv, ref, ng, l, tanHalf);
     }
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0).xy);

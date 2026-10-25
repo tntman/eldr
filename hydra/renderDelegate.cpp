@@ -298,6 +298,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.adaptiveMinSamples))},
         {"GI Preconverge (film waits for fresh probes)", t.giPreconverge, VtValue(frame.giPreconverge)},
         {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
+        {"Jittered Light Shape per Sample (film: true soft shadows)", t2.shadowJitter, VtValue(frame.shadowJitter)},
+        {"Lens Jitter per Sample (film: depth of field without post)", t2.dofJitter, VtValue(frame.dofJitter)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
