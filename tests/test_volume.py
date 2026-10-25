@@ -161,9 +161,9 @@ engine.SetRendererSetting("eldr:volumes", False)
 image = render()
 expect(brightness(image, 0, 0) > 0.9 * wallLevel, "eldr:volumes switches volumes off")
 
-# Ray-traced sun shadows skip the cascades: volumes look no darker for it
-# (volume.frag's cascade lookup fell into an empty cascade 0: mean 24.3
-# against 31.0 on volume.usda).
+# Ray-traced sun shadows: volumes look no darker for it (volume.frag's
+# cascade lookup once fell into an empty cascade 0: mean 24.3 against 31.0 on
+# volume.usda; the sun now keeps its cascades for volumes, test_traced_media.py).
 del engine  # release GL resources while the context is still current
 scene = Usd.Stage.Open(os.path.join(os.path.dirname(VDB), "volume.usda"))
 sceneCam = UsdGeom.Camera(scene.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum

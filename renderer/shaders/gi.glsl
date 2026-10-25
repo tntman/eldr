@@ -181,8 +181,9 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
 }
 
 // The traced shadow of `light` (its colour: what reaches p through
-// translucent casters and volumes), if it has one (then it has no shadow
-// map): unshadowed on translucent surfaces.
+// translucent casters and volumes), if it has one, on opaque pixels (the
+// traced image's). Translucent surfaces fall back to the maps: the sun keeps
+// its cascades for them, traced local lights have no tile (unshadowed).
 // ponytail: unfiltered (a fixed blur would soften hard and small shadows
 // alike); a filter sized by the penumbra needs the blockers' distances.
 bool RtTraced(uint light, out vec3 visibility)
@@ -198,10 +199,11 @@ bool RtTraced(uint light, out vec3 visibility)
             break;
         }
         if (traced == light) {
-            if (RtOpaque()) {
-                vec4 v = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
-                visibility = perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
+            if (!RtOpaque()) {
+                return false;
             }
+            vec4 v = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
+            visibility = perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
             return true;
         }
     }
