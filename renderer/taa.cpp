@@ -70,8 +70,8 @@ TemporalAA::TemporalAA(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _pipeline = CreateFullscreenPipeline(d, _layout, kTaaFrag, sizeof(kTaaFrag), kFormat);
-    _upscale = CreateFullscreenPipeline(d, _layout, kTaaUpscaleFrag, sizeof(kTaaUpscaleFrag), kFormat);
+    _pipeline = CreateFullscreenPipeline(_dev, _layout, kTaaFrag, sizeof(kTaaFrag), kFormat);
+    _upscale = CreateFullscreenPipeline(_dev, _layout, kTaaUpscaleFrag, sizeof(kTaaUpscaleFrag), kFormat);
 
     const VkDescriptorSetLayoutBinding film[6] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},

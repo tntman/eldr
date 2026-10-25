@@ -79,11 +79,11 @@ Gtao::Gtao(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _gtaoPipeline = CreateFullscreenPipeline(d, _layout, kGtaoFrag, sizeof(kGtaoFrag), kRawFormat);
-    _denoisePipeline = CreateFullscreenPipeline(d, _layout, kDenoiseFrag, sizeof(kDenoiseFrag), kAoFormat);
-    _ssgiPipeline = CreateFullscreenPipeline(d, _layout, kSsgiFrag, sizeof(kSsgiFrag), kSsgiFormat);
-    _ssgiBitmaskPipeline = CreateFullscreenPipeline(d, _layout, kSsgiBitmaskFrag, sizeof(kSsgiBitmaskFrag), kSsgiFormat);
-    _ssgiDenoisePipeline = CreateFullscreenPipeline(d, _layout, kSsgiDenoiseFrag, sizeof(kSsgiDenoiseFrag), kSsgiFormat);
+    _gtaoPipeline = CreateFullscreenPipeline(_dev, _layout, kGtaoFrag, sizeof(kGtaoFrag), kRawFormat);
+    _denoisePipeline = CreateFullscreenPipeline(_dev, _layout, kDenoiseFrag, sizeof(kDenoiseFrag), kAoFormat);
+    _ssgiPipeline = CreateFullscreenPipeline(_dev, _layout, kSsgiFrag, sizeof(kSsgiFrag), kSsgiFormat);
+    _ssgiBitmaskPipeline = CreateFullscreenPipeline(_dev, _layout, kSsgiBitmaskFrag, sizeof(kSsgiBitmaskFrag), kSsgiFormat);
+    _ssgiDenoisePipeline = CreateFullscreenPipeline(_dev, _layout, kSsgiDenoiseFrag, sizeof(kSsgiDenoiseFrag), kSsgiFormat);
 }
 
 Gtao::~Gtao()

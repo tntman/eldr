@@ -64,9 +64,9 @@ SsrDenoise::SsrDenoise(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _spatial = CreateFullscreenPipeline(d, _layout, kSpatialFrag, sizeof(kSpatialFrag), kFormat);
-    _temporal = CreateFullscreenPipeline(d, _layout, kTemporalFrag, sizeof(kTemporalFrag), kFormat);
-    _composite = CreateFullscreenPipeline(d, _layout, kCompositeFrag, sizeof(kCompositeFrag), kColorFormat, true);
+    _spatial = CreateFullscreenPipeline(_dev, _layout, kSpatialFrag, sizeof(kSpatialFrag), kFormat);
+    _temporal = CreateFullscreenPipeline(_dev, _layout, kTemporalFrag, sizeof(kTemporalFrag), kFormat);
+    _composite = CreateFullscreenPipeline(_dev, _layout, kCompositeFrag, sizeof(kCompositeFrag), kColorFormat, true);
 }
 
 SsrDenoise::~SsrDenoise()

@@ -3773,6 +3773,23 @@ int main()
         }
 
         {
+            // Prewarm pairs: fog and SSGI turned on together take the set
+            // the worker made for the pair (two toggles, one frame).
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            scene.Commit();
+            vkr::Renderer warm(device);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.pipelinePrewarm = true;
+            Render(warm, scene, frame);
+            warm.WaitForPrewarm();
+            frame.fog = frame.ssgi = true;
+            Render(warm, scene, frame);
+            Expect(warm.GetStats().prewarmedSets == 1, "pipeline prewarm: fog and SSGI together came from the worker");
+        }
+
+        {
             // Refraction from inside: a water surface (transmission 1, ior
             // 1.33) at z = -2 with its normal facing away from the camera,
             // i.e. seen from below, in front of a red (x < 0) and green wall.

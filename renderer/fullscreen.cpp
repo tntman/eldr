@@ -10,11 +10,12 @@ const uint32_t kFullscreenVert[] =
 
 } // namespace
 
-VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
+VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
                                     const uint32_t *fragCode, size_t fragBytes, VkFormat format,
                                     bool additive, bool over, bool multiply, VkFormat depthFormat)
 {
-    VkShaderModule vert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
+    const VkDevice device = dev.device;
+    VkShaderModule vert =CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
     VkShaderModule frag = VK_NULL_HANDLE;
     try {
         frag = CreateShaderModule(device, fragCode, fragBytes);
@@ -82,7 +83,7 @@ VkPipeline CreateFullscreenPipeline(VkDevice device, VkPipelineLayout layout,
     ci.pDynamicState = &dynamic;
     ci.layout = layout;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    const VkResult r = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pipeline);
+    const VkResult r = vkCreateGraphicsPipelines(device, dev.pipelineCache, 1, &ci, nullptr, &pipeline);
     vkDestroyShaderModule(device, vert, nullptr);
     vkDestroyShaderModule(device, frag, nullptr);
     Check(r, "vkCreateGraphicsPipelines");

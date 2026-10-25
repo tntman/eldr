@@ -148,12 +148,12 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
     const VkDevice d = _dev.device;
-    _pipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
+    _pipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
                                          false, true);
-    _halfPipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
-    _upsamplePipeline = CreateFullscreenPipeline(d, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
+    _halfPipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
+    _upsamplePipeline = CreateFullscreenPipeline(_dev, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
-    _shadowPipeline = CreateFullscreenPipeline(d, _layout, kShadowFrag, sizeof(kShadowFrag),
+    _shadowPipeline = CreateFullscreenPipeline(_dev, _layout, kShadowFrag, sizeof(kShadowFrag),
                                                Transparency::kTintFormat, false, false, true,
                                                Transparency::kTintDepthFormat);
 }
