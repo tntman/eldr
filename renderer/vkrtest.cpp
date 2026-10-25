@@ -3106,6 +3106,43 @@ int main()
         }
 
         {
+            // Film ids: primId and depth come from the film sample nearest
+            // the pixel centre, not the last one. A quad in front of a
+            // backdrop ends a quarter pixel outside the centres of columns
+            // 20 and 40, so every jittered sample farther out than that
+            // (the last one, 0.49 pixels off, on one side) misses it there.
+            vkr::Scene scene(&device);
+            const float px = 2.0f / 64.0f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->primId = 2;
+            AddQuad(scene, -1.0f + 20.5f * px - 0.25f * px, -0.8f, -1.0f + 40.5f * px + 0.25f * px, 0.8f, 0.0f)->primId =
+                1;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.postProcess = true;
+            frame.post.autoExposure = false;
+            frame.finalQuality = true;
+            frame.filmSamples = 64;
+            vkr::Renderer r(device);
+            Image img;
+            for (int i = 0; i < 200; ++i) {
+                img = Render(r, scene, frame);
+                if (r.IsConverged()) {
+                    break;
+                }
+            }
+            bool ids = true;
+            for (int y = 16; y < 48; ++y) {
+                ids = ids && img.Prim(20, y) == 1 && img.Prim(40, y) == 1 && img.Prim(19, y) == 2 &&
+                      img.Prim(41, y) == 2 && img.depth[y * 64 + 20] == img.depth[y * 64 + 30] &&
+                      img.depth[y * 64 + 40] == img.depth[y * 64 + 30];
+            }
+            std::printf("film ids: columns 19..21 %d %d %d, 39..41 %d %d %d after %u samples\n", img.Prim(19, 32),
+                        img.Prim(20, 32), img.Prim(21, 32), img.Prim(39, 32), img.Prim(40, 32), img.Prim(41, 32),
+                        r.GetStats().taaSamples);
+            Expect(ids, "film ids: primId and depth of the sample nearest the pixel centre");
+        }
+
+        {
             // Volumetric fog, through PerspectiveFrame (camera at the origin
             // looking down -z): an emitter 4 away behind uniform fog of
             // density 0.2 keeps exp(-0.8) of its light; a black backdrop

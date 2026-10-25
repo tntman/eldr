@@ -612,6 +612,11 @@ private:
     Stats _stats;
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
+    // Film: primId, instanceId and depth of the sample nearest the pixel
+    // centre so far (GENERAL; made with the first film frame), and its
+    // distance from the centre (the jitter is the same for every pixel).
+    Image _filmIds[3];
+    float _filmIdDistance = 0.0f;
     Image _shadowMap;                           // kCascades-layer array view
     // The cascades' nearest depths for soft sun shadows (shadow_min.comp):
     // level 0 per 4 x 4 texels, mips to 1 x 1, in GENERAL; a view per level.

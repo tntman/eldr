@@ -145,8 +145,12 @@ reference (RMSE): sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004,
 Kitchen_set 0.0068 to 0.0004. Convergence at 64 samples takes 0.2-0.5 s on
 those scenes.
 
-Ids, depth and Cryptomatte are the last sample's (one jittered sample,
-unfiltered).
+Ids, depth and Cryptomatte are one unfiltered sample's: under the film the
+one nearest the pixel centre so far (kept while later samples land farther
+out, so id edges don't move with the last sample's jitter; the jitter is
+the same for every pixel), else the frame's (TAA: its jittered sample).
+Extra AOVs from depth (P, camera depth) still average the samples (not
+the one nearest the pixel centre).
 
 ## Lighting and shadows
 
@@ -516,8 +520,8 @@ layout:
 - Cryptomatte vars become `<var>00` layers (rank 0 and 1) with the spec's
   metadata (`cryptomatte/<key>/name`, `hash` MurmurHash3_32,
   `conversion` uint32_to_float32, `manifest` JSON of name to hex id). The
-  manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the latest
-  frame's value; they are not averaged.
+  manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the film
+  sample's nearest the pixel centre; they are not averaged.
 - Files are zip-compressed float32 EXR at the frame's size (the product's own
   resolution is ignored).
 
