@@ -496,7 +496,9 @@ public:
     uint32_t Width() const { return _outWidth; }
     uint32_t Height() const { return _outHeight; }
     // Copies the last frame's outputs (as Render's, extra AOVs aside) to
-    // host memory, for consumers that ask after Render.
+    // host memory, for consumers that ask after Render. Safe from another
+    // thread than Render's (Houdini maps buffers on its own): it waits for
+    // a running Render and then reads that frame.
     void Read(const Targets &out);
     // The last frame's colour target: raw HDR, premultiplied (with
     // Frame::postProcess off), in TRANSFER_SRC_OPTIMAL. Planar reflections
@@ -726,6 +728,7 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
+    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback)
     VkImage _linearColor = VK_NULL_HANDLE;  // Frame::linearColor's image, else null
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
     std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout
