@@ -67,8 +67,8 @@ Lens::Lens(Device &device)
     const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_tilesPipeline);
     vkDestroyShaderModule(d, m, nullptr);
     Check(r, "vkCreateComputePipelines");
-    _dof = CreateFullscreenPipeline(d, _layout, kDofFrag, sizeof(kDofFrag), kFormat);
-    _blur = CreateFullscreenPipeline(d, _layout, kMotionBlurFrag, sizeof(kMotionBlurFrag), kFormat);
+    _dof = CreateFullscreenPipeline(_dev, _layout, kDofFrag, sizeof(kDofFrag), kFormat);
+    _blur = CreateFullscreenPipeline(_dev, _layout, kMotionBlurFrag, sizeof(kMotionBlurFrag), kFormat);
 }
 
 Lens::~Lens()

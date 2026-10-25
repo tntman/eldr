@@ -114,9 +114,9 @@ PostProcess::PostProcess(Device &device)
     _histogram = compute(kHistogramComp, sizeof(kHistogramComp));
     _exposure = compute(kExposureComp, sizeof(kExposureComp));
 
-    _down = CreateFullscreenPipeline(d, _layout, kBloomDownFrag, sizeof(kBloomDownFrag), kFormat);
-    _up = CreateFullscreenPipeline(d, _layout, kBloomUpFrag, sizeof(kBloomUpFrag), kFormat, true);
-    _tonemap = CreateFullscreenPipeline(d, _layout, kTonemapFrag, sizeof(kTonemapFrag), kFormat);
+    _down = CreateFullscreenPipeline(_dev, _layout, kBloomDownFrag, sizeof(kBloomDownFrag), kFormat);
+    _up = CreateFullscreenPipeline(_dev, _layout, kBloomUpFrag, sizeof(kBloomUpFrag), kFormat, true);
+    _tonemap = CreateFullscreenPipeline(_dev, _layout, kTonemapFrag, sizeof(kTonemapFrag), kFormat);
 }
 
 PostProcess::~PostProcess()

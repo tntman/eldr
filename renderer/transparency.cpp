@@ -46,7 +46,7 @@ Transparency::Transparency(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _resolve = CreateFullscreenPipeline(d, _layout, kOitResolveFrag, sizeof(kOitResolveFrag), kColorFormat,
+    _resolve = CreateFullscreenPipeline(_dev, _layout, kOitResolveFrag, sizeof(kOitResolveFrag), kColorFormat,
                                         false, true);
 }
 

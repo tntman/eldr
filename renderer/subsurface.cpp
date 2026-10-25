@@ -52,8 +52,8 @@ Subsurface::Subsurface(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    _horizontal = CreateFullscreenPipeline(d, _layout, kBlurFrag, sizeof(kBlurFrag), kLightFormat);
-    _vertical = CreateFullscreenPipeline(d, _layout, kBlurFrag, sizeof(kBlurFrag), kColorFormat, true);
+    _horizontal = CreateFullscreenPipeline(_dev, _layout, kBlurFrag, sizeof(kBlurFrag), kLightFormat);
+    _vertical = CreateFullscreenPipeline(_dev, _layout, kBlurFrag, sizeof(kBlurFrag), kColorFormat, true);
 }
 
 Subsurface::~Subsurface()
