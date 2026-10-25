@@ -418,7 +418,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Final quality: asked for, or an offline renderer's convention (husk,
     // hdPrman: enableInteractive false). usdrecord sets neither, but its
     // first frame has no history, so its film starts with the first sample.
-    std::fprintf(stderr, "TMPI interactive=%s fq=%d samples=%u\n", TfStringify(delegate->GetRenderSetting(HdRenderSettingsTokens->enableInteractive)).c_str(), int(frame.finalQuality), frame.filmSamples);
     const bool offline = batch || !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
     frame.finalQuality = frame.finalQuality || offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
