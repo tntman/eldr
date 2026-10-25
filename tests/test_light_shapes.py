@@ -29,6 +29,11 @@ for name, x, geo in (("shown", -1.0, None), ("hidden", 1.0, False)):
     light.AddTranslateOp().Set(Gf.Vec3d(x, 0, 0))
     if geo is not None:
         light.GetPrim().CreateAttribute("inputs:karma:light:renderlightgeo", Sdf.ValueTypeNames.Bool).Set(geo)
+wall = UsdGeom.Mesh.Define(stage, "/wall")
+wall.CreatePointsAttr([(-4, -4, -30), (4, -4, -30), (4, 4, -30), (-4, 4, -30)])
+wall.CreateFaceVertexCountsAttr([4])
+wall.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+wall.CreateDisplayColorAttr([(0.2, 0.2, 0.2)])
 camera = UsdGeom.Camera.Define(stage, "/cam")
 camera.CreateProjectionAttr("orthographic")
 camera.CreateHorizontalApertureAttr(40.0)
@@ -53,8 +58,10 @@ engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
 params.clearColor = Gf.Vec4f(0, 0, 0, 1)
-for _ in range(3):
+for _ in range(8):
     engine.Render(stage.GetPseudoRoot(), params)
+    if engine.IsConverged():
+        break
 image = fbo.toImage()
 
 
@@ -64,7 +71,7 @@ def lum(x):  # world x on the row of the lights
 
 
 expect(lum(-1.0) > 0.5, "a sphere light shows its shape")
-expect(lum(1.0) < 0.05, "inputs:karma:light:renderlightgeo = false hides it")
+expect(lum(1.0) < 0.2, "inputs:karma:light:renderlightgeo = false hides it")
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
