@@ -5,8 +5,8 @@
 // state of its own (HdsiRenderPassPruneSceneIndex applies only the prune
 // collection), so this scene index does for HdVk what hdPrman's
 // HdPrman_RenderPassVisibilityAndMatteSceneIndexPlugin does: gprims in the
-// collection get the constant primvar ri:attributes:Ri:Matte = 1, the
-// primvar HdVkMesh reads (as it does Karma's karma:object:holdoutmode).
+// collection get the constant primvar eldr:matte = 1, Eldr's own channel,
+// which HdVkMesh reads (as it does Karma's karma:object:holdoutmode).
 // It sits after the app's scene globals (insertion phase 1), so it sees
 // the active render pass and is told when it changes.
 // ponytail: whole gprims only; instances matched through an instancer's
@@ -35,7 +35,7 @@ namespace {
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (matte)
-    ((riMatte, "ri:attributes:Ri:Matte")));
+    ((eldrMatte, "eldr:matte")));
 
 TF_DECLARE_REF_PTRS(_MatteSceneIndex);
 
@@ -55,7 +55,7 @@ public:
             static const HdContainerDataSourceHandle matte = HdRetainedContainerDataSource::New(
                 HdPrimvarsSchema::GetSchemaToken(),
                 HdRetainedContainerDataSource::New(
-                    _tokens->riMatte,
+                    _tokens->eldrMatte,
                     HdPrimvarSchema::Builder()
                         .SetPrimvarValue(HdRetainedTypedSampledDataSource<int>::New(1))
                         .SetInterpolation(HdPrimvarSchema::BuildInterpolationDataSource(

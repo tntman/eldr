@@ -16,8 +16,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 class HdVkSubdivision;
 // Whether a gprim is a holdout (matte object): a non-zero constant primvar
-// ri:attributes:Ri:Matte (hdPrman's, which HdVk's matte scene index also
-// writes for the active UsdRenderPass's collection:matte) or Karma's
+// eldr:matte (which HdVk's matte scene index writes for the active
+// UsdRenderPass's collection:matte) or Karma's
 // karma:object:holdoutmode (1 matte; 2, background, is taken as matte).
 bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 

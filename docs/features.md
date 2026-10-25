@@ -173,7 +173,7 @@ middle gray. Emissive meshes (constant `emissiveColor` above
 `emissiveLightThreshold`, small enough) are additionally promoted to lights
 (rects for flat panels, spheres otherwise; at most 32) and cast shadows.
 Light shapes are not drawn to the camera unless `lightShapesVisible` is on
-(a light with `primvars:ri:attributes:visibility:camera = 0` is never drawn;
+(a light with Karma's `bool inputs:karma:light:renderlightgeo = 0`, "Render Light Geometry", is never drawn;
 it still lights the scene and shows in reflections of what it lights, not of
 its own shape).
 
@@ -551,7 +551,9 @@ layout:
   frame renders at the first raster product's `resolution`, conformed to its
   `pixelAspectRatio` by its `aspectRatioConformPolicy` and cut to its
   `dataWindowNDC`, when that isn't the app's buffer size (usdrecord sizes
-  its buffers from `-w` and the camera): the EXR's display window is the
+  its buffers from `-w` and the camera). A product with nothing authored
+  renders at UsdRenderSettingsBase's fallback 2048 x 1080, as in husk and
+  Karma, not at the app's size: the EXR's display window is the
   resolution, its data window the part rendered, with `PixelAspectRatio`.
   The app's colour, depth and ids get that frame resampled; its other AOVs
   stay empty. Off: the frame's size.
@@ -614,7 +616,7 @@ shading inputs.
 | `bool primvars:eldr:hair = 0` | BasisCurves, constant | Opt out of hair shading: the curves shade as ordinary surfaces with SSR (cables, ropes). Unauthored or true: hair. An int works. |
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | a material's surface shader | Toon bands per unit of light (0: none) and band edge width, in bands. |
 | `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (UsdPreviewSurface has none; read as standard_surface `coat_color`). Constant or connected. |
-| `int primvars:ri:attributes:Ri:Matte = 1` or `int primvars:karma:object:holdoutmode = 1` | a gprim | Holdout: black, zero alpha, keeps depth, ids and shadows. Karma's mode 2 (background) is treated as matte. |
+| `int primvars:karma:object:holdoutmode = 1` (Karma's) | a gprim | Holdout: black, zero alpha, keeps depth, ids and shadows. Mode 2 (background) is treated as matte. A gprim in the active UsdRenderPass's `matte` collection is a holdout too (through Eldr's own `eldr:matte` primvar). |
 | `collection:matte` on a UsdRenderPass | active render pass | Everything in the collection is a holdout (the delegate reads the pass itself; usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, which needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | Active settings write EXR products with the AOVs and Cryptomatte listed above. `sourceType` `lpe` and `primvar` are honoured. |
 | `lensDistortion:k1,k2,k3,k4,k5,k6,p1,p2,center,anaSq,asym,scale` and `lensDistortion:type` (`standard`, `fisheye`) | custom attributes on a camera | Lens warp. `k1`, `k2`, `type`, `center`, `anaSq`, `asym`, `scale` come through HdCamera; `k3`-`k6`, `p1`, `p2` are OpenCV terms Eldr reads from the camera. See [Output](#output-aovs-exr-products-cryptomatte-light-splits) and `renderer/distortion.h`. |

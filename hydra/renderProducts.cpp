@@ -49,13 +49,8 @@ bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *f
         if (rp.type != TfToken("raster") || rp.name.IsEmpty() || rp.resolution[0] <= 0 || rp.resolution[1] <= 0) {
             continue;
         }
-        // UsdRenderSettingsBase's fallback when neither the product nor the
-        // settings author one: the app's size, as before.
-        // ponytail: an authored 2048 x 1080 is taken for the fallback too
-        // (the flattened product doesn't say what was authored).
-        if (rp.resolution == GfVec2i(2048, 1080)) {
-            return false;
-        }
+        // Literal USD: with nothing authored, a product is
+        // UsdRenderSettingsBase's fallback 2048 x 1080, as in husk and Karma.
         framing->resolution = rp.resolution;
         framing->pixelAspectRatio = rp.pixelAspectRatio > 0.0f ? rp.pixelAspectRatio : 1.0f;
         framing->conformPolicy = rp.aspectRatioConformPolicy;

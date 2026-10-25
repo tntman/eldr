@@ -1,5 +1,5 @@
-"""Holdouts through Hydra: gprims with primvars:ri:attributes:Ri:Matte
-(hdPrman's), primvars:karma:object:holdoutmode (Karma's) or in the active
+"""Holdouts through Hydra: gprims with primvars:karma:object:holdoutmode
+(Karma's) or in the active
 UsdRenderPass's matte collection render black with zero alpha over a red
 wall; hdvk:holdouts off draws them as usual.
 Run: usdenv.cmd python tests\\test_holdout.py"""
@@ -47,8 +47,8 @@ def quad(path, x0, y0, x1, y1, z, mat):
 
 red, green = emitter("/mtl/red", (1, 0, 0)), emitter("/mtl/green", (0, 1, 0))
 quad("/wall", -2, -2, 2, 2, -1, red)
-ri = quad("/ri", -1.5, 0.5, -0.5, 1.5, 0, green)
-UsdGeom.PrimvarsAPI(ri).CreatePrimvar("ri:attributes:Ri:Matte", Sdf.ValueTypeNames.Int).Set(1)
+bg = quad("/bg", -1.5, 0.5, -0.5, 1.5, 0, green)
+UsdGeom.PrimvarsAPI(bg).CreatePrimvar("karma:object:holdoutmode", Sdf.ValueTypeNames.Int).Set(2)
 karma = quad("/karma", 0.5, 0.5, 1.5, 1.5, 0, green)
 UsdGeom.PrimvarsAPI(karma).CreatePrimvar("karma:object:holdoutmode", Sdf.ValueTypeNames.Int).Set(1)
 quad("/inPass", -1.5, -1.5, -0.5, -0.5, 0, green)
@@ -103,7 +103,7 @@ def black(c):
 
 image = render()
 expect(rgb(image, 0, 0)[0] > 0.9, "the wall is red")
-expect(black(rgb(image, -1, 1)), "primvars:ri:attributes:Ri:Matte 1: a holdout")
+expect(black(rgb(image, -1, 1)), "primvars:karma:object:holdoutmode 2: a holdout")
 expect(black(rgb(image, 1, 1)), "primvars:karma:object:holdoutmode 1: a holdout")
 expect(rgb(image, 1, -1)[1] > 0.9 and rgb(image, -1, -1)[1] > 0.9, "the others as usual")
 engine.SetActiveRenderPassPrimPath(Sdf.Path("/passes/matte"))

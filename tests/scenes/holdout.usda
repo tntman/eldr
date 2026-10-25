@@ -6,10 +6,10 @@
 
 # Holdouts (matte objects): black with zero alpha, cut out of the image
 # (an app shows its background there, a comp the plate), still hiding what
-# is behind them and casting shadows. Three ways to author one:
-#   /ball:  primvars:ri:attributes:Ri:Matte = 1 (as hdPrman reads it)
-#   /box:   primvars:karma:object:holdoutmode = 1 (Karma's; 2, background,
-#           is taken as matte)
+# is behind them and casting shadows. Ways to author one:
+#   /ball:  primvars:karma:object:holdoutmode = 2 (Karma's, background;
+#           taken as matte)
+#   /box:   primvars:karma:object:holdoutmode = 1 (Karma's, matte)
 #   /cone:  in the matte collection of /passes/holdouts, a UsdRenderPass,
 #           while that pass is active (usdview: right-click the pass, "Set
 #           As Active Render Pass"; usdrecord --renderPassPrimPath)
@@ -98,7 +98,7 @@ def Sphere "ball"
 {
     double radius = 0.6
     color3f[] primvars:displayColor = [(0.8, 0.3, 0.2)]
-    int primvars:ri:attributes:Ri:Matte = 1
+    int primvars:karma:object:holdoutmode = 2
     double3 xformOp:translate = (-1.6, 0.6, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
