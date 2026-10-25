@@ -2809,10 +2809,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // A run is final if it started so (filmMode 1); one that started from
     // the TAA image (2) stays interactive.
     _filmFinal = film && (filmMode == 1 || (filmMode == 0 && _filmFinal));
-    const float adaptiveThreshold = frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
-                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
-                                                                    : 0.0f;
-    _filmAdaptive = film && adaptiveThreshold > 0.0f;
     _filmRuns += filmMode != 0 ? 1 : 0;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
@@ -2848,6 +2844,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
                      gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
     const bool timeSample = film && _shutter.valid;
+    // Adaptive sampling stops a pixel on its own samples' variance, but
+    // the error of time samples is structured: every sample moves the
+    // whole scene, so a pixel the motion covers for 3% of the shutter
+    // misses all of its first 16 samples (zero variance) and would stop
+    // dark, and the copies of a moving object between samples are steps,
+    // not noise. Films with time samples run to filmSamples; the
+    // samples render the whole frame anyway, so only the film's early
+    // end is lost, which moving pixels prevent in most frames.
+    const float adaptiveThreshold = timeSample                      ? 0.0f
+                                  : frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
+                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
+                                                                    : 0.0f;
+    _filmAdaptive = film && adaptiveThreshold > 0.0f;
     // ponytail: a box shutter.
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);

@@ -136,7 +136,13 @@ marked [film] in the settings):
   (`giPreconverge`).
 - Adaptive sampling: off in interactive films (`adaptiveThreshold`, 0); in
   final-quality runs on by default (`adaptiveFinalThreshold`, 0.01), and a film
-  counts as converged once `adaptivePixelFraction` (0.99) of the pixels stopped.
+  counts as converged once `adaptivePixelFraction` (0.999) of the pixels
+  stopped. Films with motion blur time samples are not adaptive: a time
+  sample moves the whole scene, so the error is copies of the moving
+  object, not noise a pixel's variance shows, and a pixel the motion
+  covers for a few percent of the shutter misses all of its first samples
+  and would stop dark (a blur's faint tails were cut off). They run to
+  `filmSamples`.
 
 All stochastic effects take their noise from per-effect Sobol dimensions with
 blue-noise rotation (`eldr:sampleDimensions`), so the average converges
