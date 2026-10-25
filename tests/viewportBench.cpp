@@ -128,6 +128,7 @@ int main(int argc, char **argv)
         HdEngine engine;
         double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
         std::map<std::string, double> mapMs, passMs;
+        std::vector<double> times;  // per frame: their median resists other GPU users
         const int warmup = 10;
         for (int f = 0; f < warmup + frames; ++f) {
             // Orbit about the view's centre line: a camera move every frame.
@@ -148,6 +149,7 @@ int main(int argc, char **argv)
             if (f >= warmup) {
                 executeMs += Ms(t0, t1);
                 total += Ms(t0, t2);
+                times.push_back(Ms(t0, t2));
                 for (auto &[name, ms] : frameMaps) {
                     mapMs[name] += ms;
                 }
@@ -166,8 +168,10 @@ int main(int argc, char **argv)
         }
         std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s\n", width, height, frames,
                     TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "");
-        std::printf("  frame %.2f ms (%.1f fps): execute %.2f (Render %.2f), gpu %.2f", total / frames,
-                    1000.0 * frames / total, executeMs / frames, renderMs / frames, gpuMs / frames);
+        std::sort(times.begin(), times.end());
+        const double median = times[times.size() / 2];
+        std::printf("  frame %.2f ms (%.1f fps), median %.2f: execute %.2f (Render %.2f), gpu %.2f", total / frames,
+                    1000.0 * frames / total, median, executeMs / frames, renderMs / frames, gpuMs / frames);
         for (auto &[name, ms] : mapMs) {
             std::printf(", map %s %.2f", name.c_str(), ms / frames);
         }
