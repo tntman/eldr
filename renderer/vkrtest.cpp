@@ -3121,6 +3121,31 @@ int main()
                         tubePartial);
             Expect(tubeWorst < 0.05f && tubePartial >= 4,
                    "shadow jitter: the film converges to a cylinder light's penumbra across its axis");
+            // A sphere light of radius 0.05 at z = -0.5 with a ceiling just
+            // behind it (z = -0.42, 1.6 radii from the centre) that has a
+            // hole at x 0.7 .. 0.9. The floor seen through the hole is dark:
+            // the ceiling blocks every ray from the ball. (Clearing twice the
+            // radius for the jittered sample point dropped the ceiling.)
+            vkr::Scene leak(&device);
+            AddQuad(leak, -4, -4, 4, 4, 0.5f);
+            AddQuad(leak, -4, -4, 0.7f, 4, -0.42f);
+            AddQuad(leak, 0.9f, -4, 4, 4, -0.42f);
+            vkr::Light *bulb = AddSphereLight(leak, 0, 0, -0.5f, 0.05f, 50.0f);
+            bulb->castShadows = false;
+            leak.Commit();
+            frame.filmAccumulation = true;
+            frame.shadowJitter = true;
+            const Image leakOpen = film(leak, frame);
+            bulb->castShadows = true;
+            leak.Commit();
+            const Image leakOn = film(leak, frame);
+            float worstLeak = 0.0f;
+            for (int x = 56; x < 59; ++x) {
+                worstLeak = std::max(worstLeak, leakOn.At(x, 32, 0) / leakOpen.At(x, 32, 0));
+            }
+            std::printf("shadow jitter: floor behind a ceiling near a bulb lit to %.3f\n", worstLeak);
+            Expect(leakOpen.At(57, 32, 0) > 0.01f && worstLeak < 0.02f,
+                   "shadow jitter: a caster just outside a sphere light still shadows");
         }
 
         {
