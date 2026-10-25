@@ -500,6 +500,7 @@ private:
     }
     void _Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save);
     void _PrewarmWorker();
+    void _MergePrewarmCache();
     void _CreateConstantImages();
     void _Resize(uint32_t width, uint32_t height);
     void _ResizeScene(uint32_t width, uint32_t height);
@@ -596,6 +597,7 @@ private:
     std::vector<Prewarmed> _prewarmed;
     std::atomic<bool> _prewarmStop{false};
     bool _prewarmSave = false;         // Frame::pipelineCache when queued
+    bool _prewarmMerge = false;        // the worker compiled something not yet merged into the device's cache
     uint32_t _prewarmFor = kNone;      // the features the queue was made around
     VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only

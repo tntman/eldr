@@ -550,6 +550,7 @@ Renderer::~Renderer()
     if (_prewarmThread.joinable()) {
         _prewarmThread.join();
     }
+    _MergePrewarmCache();
     for (const Prewarmed &p : _prewarmed) {
         for (VkPipeline pipeline : p.pipelines) {
             vkDestroyPipeline(_dev.device, pipeline, nullptr);
@@ -1267,6 +1268,7 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
 // first queues.
 void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
 {
+    _MergePrewarmCache();
     if (features == _prewarmFor) {
         return;
     }
@@ -1335,7 +1337,6 @@ void Renderer::_PrewarmWorker()
         Prewarmed p{_prewarmQueue.front(), std::vector<VkPipeline>(5 * kVariants, VK_NULL_HANDLE)};
         _prewarmQueue.erase(_prewarmQueue.begin());
         _prewarmCurrent = p.job.features;
-        const bool save = _prewarmSave;
         lock.unlock();
         VkPipeline *base = p.pipelines.data();
         const ShadingTargets targets{base, base + kVariants, base + 2 * kVariants, base + 3 * kVariants,
@@ -1349,11 +1350,8 @@ void Renderer::_PrewarmWorker()
         } catch (const std::exception &) {
             ok = false;  // the frame that needs it compiles it (and reports why)
         }
-        if (_dev.pipelineCache && vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) ==
-                                      VK_SUCCESS && save && ok && !_prewarmStop) {
-            _dev.SavePipelineCache();
-        }
         lock.lock();
+        _prewarmMerge = true;  // the render thread merges (_MergePrewarmCache)
         _prewarmCurrent = kNone;
         if (ok && !_prewarmStop) {
             _prewarmed.push_back(std::move(p));
@@ -1363,6 +1361,26 @@ void Renderer::_PrewarmWorker()
             }
         }
         _prewarmChanged.notify_all();
+    }
+}
+
+// Merges what the worker compiled into the device's cache. Only the render
+// thread (and the destructor, after the join) does: vkMergePipelineCaches needs
+// its destination externally synchronized, and the render thread creates
+// pipelines (and saves) with that cache, so the worker merging into it raced.
+void Renderer::_MergePrewarmCache()
+{
+    bool save;
+    {
+        std::lock_guard<std::mutex> lock(_prewarmMutex);
+        if (!_prewarmMerge || !_dev.pipelineCache) {
+            return;
+        }
+        _prewarmMerge = false;
+        save = _prewarmSave;
+    }
+    if (vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) == VK_SUCCESS && save) {
+        _dev.SavePipelineCache();
     }
 }
 
