@@ -207,7 +207,11 @@ its own shape).
   and glass is shadowed by the maps (until sweep 4 they saw no shadow, and the
   sun shone through walls). Costs the cascades again: 1.05 ms on volume.usda
   at 1280x720; the crowd, without such users, traces only. Traced local lights
-  still leave translucent surfaces unshadowed.
+  likewise keep atlas tiles then, placed after the untraced lights' (whose
+  tiles don't change), for glass, fog and smoke (until sweep 4 glass and fog
+  saw no shadow from them). The tiles cost an atlas redraw only when lights or
+  casters move (three sphere lights on volume.usda: about 1.4 ms; still frames
+  0.0-0.2 ms).
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).
@@ -362,7 +366,9 @@ Fields bind by name: `density`, `temperature`, `Cd` or `color`, `emission`;
 by a fullscreen pass over the shaded image, empty space skipped with the
 tree. Lighting: Henyey-Greenstein phase, three-octave multiple scattering of
 distant lights, the sun's cascades for opaque occluders, the dome's SH
-convolved with the phase, local lights as points, and emission from
+convolved with the phase, local lights as points through one tap of their
+atlas tiles per step (until sweep 4 walls did not block them; three sphere
+lights on volume.usda: volumes 36.8 to 41.8 ms at 1280x720), and emission from
 temperature (blackbody) or an emission field. Volume materials come from
 MaterialX (`volume` shader: absorption/scattering per density, anisotropic
 vdf, uniform_edf emission, blackbody temperature emission). Settings

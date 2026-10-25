@@ -532,7 +532,8 @@ private:
     bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
-                                              uint32_t *rtLights, uint32_t rtSlots, const float *shapeSample);
+                                              uint32_t *rtLights, uint32_t rtSlots, bool tileTraced,
+                                              const float *shapeSample);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint,
                              const VolumePass::Settings *volume);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
