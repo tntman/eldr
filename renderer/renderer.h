@@ -95,6 +95,11 @@ public:
         // move along them in time samples and motion vectors. Off: they
         // are ignored.
         bool deformationBlur = true;
+        // Residual DOF (hdvk:dofResidualBlur): with dofJitter the post DOF
+        // still runs on each film sample, its circle of confusion scaled
+        // by 1/sqrt(filmSamples), to fill the gaps between lens samples
+        // (EEVEE's).
+        bool dofResidualBlur = true;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):

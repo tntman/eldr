@@ -3640,8 +3640,18 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     constexpr VkPipelineStageFlags2 kPostStages =
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     _adapting = frame.postProcess && frame.post.autoExposure;
-    // The camera's lens: depth of field when it has an fStop (motion blur above).
-    const bool dof = dofLens && !lensJitter;
+    // The camera's lens: depth of field when it has an fStop (motion blur
+    // above); under lens jitter only the residual blur between its samples,
+    // when its largest circle (at infinity) reaches 1.5 pixels: below, the
+    // lens samples leave no gaps and the gather's uneven edges (pixels
+    // under half a pixel of circle keep their colour, their neighbours
+    // take some) would only add light to small highlights.
+    const float cocPixels = dofLens ? 0.5f * frame.focalLength * frame.focalLength /
+                                          (frame.fStop * (frame.focusDistance - frame.focalLength)) *
+                                          float(frame.width) / frame.sensorWidth
+                                    : 0.0f;
+    const float residualScale = 1.0f / std::sqrt(float(std::max(frame.filmSamples, 1u)));
+    const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
     Lens::Params lens{};
     if (dof || postBlur) {
         const Mat4 back = postBlur ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj) : Mat4();
@@ -3650,9 +3660,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         if (dof) {
             // Thin lens: a circle of confusion f^2 / (N (S - f)) * |D - S| / D
             // across on the sensor, as a radius in pixels.
-            const float f = frame.focalLength, s = frame.focusDistance;
-            lens.cocScale = 0.5f * f * f / (frame.fStop * (s - f)) * float(frame.width) / frame.sensorWidth;
-            lens.focusDistance = s;
+            lens.cocScale = cocPixels * (lensJitter ? residualScale : 1.0f);
+            lens.focusDistance = frame.focusDistance;
         }
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
         lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);

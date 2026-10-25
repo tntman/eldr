@@ -317,6 +317,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
         {"Jittered Light Shape per Sample (final quality: true soft shadows)", t2.shadowJitter, VtValue(frame.shadowJitter)},
         {"Lens Jitter per Sample (film: depth of field without post)", t2.dofJitter, VtValue(frame.dofJitter)},
+        {"Residual DOF between Lens Samples (1/sqrt(samples))", t2.dofResidualBlur, VtValue(frame.dofResidualBlur)},
         {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,

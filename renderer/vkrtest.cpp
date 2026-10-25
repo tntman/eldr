@@ -3066,6 +3066,43 @@ int main()
             const Image post = film(frame);
             frame.dofJitter = false;
             Expect(MaxDifference(film(frame), post) == 0.0f, "dof jitter: TAA frames keep the post DOF");
+            // Residual DOF (Frame::dofResidualBlur, on above): a post DOF of
+            // 1/sqrt(samples) the circle between the lens samples. At 4
+            // samples it is nearer the converged spot (256 samples) than
+            // lens jitter alone; at 64 it converges to what jitter alone does.
+            frame.dofJitter = true;
+            frame.filmAccumulation = true;
+            auto error = [](const Image &a, const Image &b) {
+                double e = 0;
+                for (int y = 0; y < 42; ++y) {
+                    for (int x = 0; x < 64; ++x) {
+                        const double d = a.At(x, y, 1) - b.At(x, y, 1);
+                        e += d * d;
+                    }
+                }
+                return float(std::sqrt(e / (42 * 64)));
+            };
+            frame.filmSamples = 4;
+            const Image residual4 = film(frame);
+            frame.filmSamples = 64;
+            const Image residual64 = film(frame);
+            frame.dofResidualBlur = false;
+            const Image jitter64 = film(frame);
+            frame.filmSamples = 4;
+            const Image jitter4 = film(frame);
+            float rms64 = 0, jitterRms64 = 0;
+            const float sum64 = spot(residual64, &rms64), jitterSum64 = spot(jitter64, &jitterRms64);
+            std::printf("dof residual: 64 samples spot sum %.2f (jitter alone %.2f), RMS radius %.2f px (%.2f)\n",
+                        sum64, jitterSum64, rms64, jitterRms64);
+            std::printf("dof residual: 4 samples RMSE %.4f (jitter alone %.4f), 64 samples %.4f (%.4f), "
+                        "residual vs jitter at 64 %.4f, RMS radius %.2f px\n",
+                        error(residual4, jittered), error(jitter4, jittered), error(residual64, jittered),
+                        error(jitter64, jittered), error(residual64, jitter64), rms64);
+            Expect(error(residual4, jittered) < 0.8f * error(jitter4, jittered),
+                   "dof residual: fills the gaps between 4 lens samples");
+            Expect(error(residual64, jitter64) < 0.5f * error(jitter4, jittered) &&
+                       std::abs(rms64 / expected - 1.0f) < 0.08f && std::abs(sum64 / jitterSum64 - 1.0f) < 0.1f,
+                   "dof residual: 64 samples converge to lens jitter's image");
         }
 
         {

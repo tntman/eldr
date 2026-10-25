@@ -430,7 +430,9 @@ has no lens (no DOF, no blur).
   largest near-field circle so blurred foreground spreads, background never
   bleeds over sharper foreground. Film: `dofJitter` instead moves the camera
   across the aperture per sample, shearing the view so the focus plane stays
-  (true bokeh with occlusion; the post DOF is skipped).
+  (true bokeh with occlusion). With `dofResidualBlur` (on) the post DOF
+  still runs per sample at 1/√(film samples) of the circle of confusion,
+  filling the gaps between lens samples, as EEVEE does.
 - **Motion blur.** Interactive: McGuire's reconstruction along each pixel's
   motion (camera reprojection plus object motion vectors including skinning and
   blend shapes) after TAA. Film: `motionBlurTimeSamples` renders the scene at a
