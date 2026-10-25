@@ -2695,6 +2695,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
+    // No cascades (traced sun, shadows off): every split behind the camera, so
+    // lookups (volume.frag, fog, translucency) see no shadow instead of an
+    // empty cascade 0 (cameraForward is 0 too, so depth 0 fell into it).
+    std::fill_n(fd.cascadeSplits, kCascades, -1.0f);
     fd.features[0] = (frame.normalMaps ? kFeatureNormalMaps : 0) | (frame.materialGraphs ? kFeatureMaterialGraphs : 0) |
                      (frame.clusteredLights ? kFeatureClusters : 0);
     fd.features[0] |= frame.proceduralTextures ? kFeatureProcedurals : 0;
