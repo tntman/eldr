@@ -622,7 +622,11 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // the crowd 1.4 ms for nothing the pixel search doesn't already catch.
     bool estimator = frame.screenTrace.x > 0.0;
     float prevScene = 1.0;
-    int budget = 128;  // pixels searched between steps, per ray
+    // Pixels searched between steps, per ray: 4 per step (128 at the
+    // default 32), so fewer steps cost less. A fixed 128 let the search
+    // take over at few steps, whose gaps are wider: 8 steps were slower
+    // than 32.
+    int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     for (int i = 0; i < steps; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
