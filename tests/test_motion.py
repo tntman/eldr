@@ -18,6 +18,13 @@ from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdRender
 
+
+def run(*args, **kwargs):
+    """subprocess.run that fails the test after 10 minutes instead of hanging."""
+    kwargs.setdefault("timeout", 600)
+    return subprocess.run(*args, **kwargs)
+
+
 SIZE = 64
 exrinfo = sys.argv[1]
 app = QApplication(sys.argv)
@@ -82,7 +89,7 @@ PIXELS_PER_UNIT = SIZE / (2 * 8 * frustum.GetWindow().GetMax()[0])
 
 def red(x, y):
     """The product's red at pixel (x, y), y down."""
-    lines = subprocess.run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True).stdout.splitlines()
+    lines = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
     return {l.split()[1]: float(l.split()[2]) for l in lines if l.startswith("pixel ")}.get("R", -1.0)
 
 
@@ -130,7 +137,7 @@ def ramp(row):
 # pixels per edge here).
 if os.path.exists(exrPath):
     os.remove(exrPath)
-subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
                 "--frames", "2", "-w", str(SIZE), scenePath, os.path.join(folder, "unused.#.png")], check=True,
                shell=True)
 blurred = ramp(32)
@@ -155,7 +162,7 @@ for t, dx in ((1, -1.0), (3, 1.0)):
 stage.GetRootLayer().Save()
 if os.path.exists(exrPath):
     os.remove(exrPath)
-subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
                 "--frames", "2", "-w", str(SIZE), scenePath, os.path.join(folder, "unused.#.png")], check=True,
                shell=True)
 blurred = ramp(32)

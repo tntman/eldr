@@ -8,6 +8,13 @@ import subprocess
 import sys
 import tempfile
 
+
+def run(*args, **kwargs):
+    """subprocess.run that fails the test after 10 minutes instead of hanging."""
+    kwargs.setdefault("timeout", 600)
+    return subprocess.run(*args, **kwargs)
+
+
 exrinfo = sys.argv[1]
 folder = tempfile.mkdtemp(prefix="eldr_sums_")
 scenePath = os.path.join(folder, "scene.usda")
@@ -79,14 +86,14 @@ def expect(ok, what):
 
 
 def pixel(x, y):
-    out = subprocess.run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True).stdout.splitlines()
+    out = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
 
 VARIANTS = {"default": [], "gi": ["eldr:gi=true"], "ssrDenoise": ["eldr:ssr=true", "eldr:ssrDenoise=true"]}
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
-    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
+    run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                     scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
                    check=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
     for name, (x, y) in POSITIONS.items():

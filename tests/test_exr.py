@@ -12,6 +12,13 @@ import tempfile
 
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdRender, UsdShade
 
+
+def run(*args, **kwargs):
+    """subprocess.run that fails the test after 10 minutes instead of hanging."""
+    kwargs.setdefault("timeout", 600)
+    return subprocess.run(*args, **kwargs)
+
+
 exrinfo = sys.argv[1]
 folder = tempfile.mkdtemp(prefix="eldr_exr_")
 scenePath = os.path.join(folder, "scene.usda")
@@ -55,7 +62,7 @@ for name, sourceType, sourceName, dataType in VARS:
     product.CreateOrderedVarsRel().AddTarget(var.GetPath())
 stage.GetRootLayer().Save()
 
-subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
                 "-w", "64", scenePath, os.path.join(folder, "unused.png")], check=True, shell=True)
 
 failures = []
@@ -68,7 +75,7 @@ def expect(ok, what):
 
 
 expect(os.path.exists(exrPath), "the product's EXR is written")
-info = subprocess.run([exrinfo, exrPath, "32", "32"], capture_output=True, text=True).stdout.splitlines()
+info = run([exrinfo, exrPath, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
 channels = [l.split(" ", 1)[1] for l in info if l.startswith("channel ")]
 meta = dict(l[5:].split("=", 1) for l in info if l.startswith("meta "))
 pixel = {l.split()[1]: float(l.split()[2]) for l in info if l.startswith("pixel ")}
@@ -122,7 +129,7 @@ def record(name):
     path = os.path.join(folder, name + ".exr").replace("\\", "/")
     product.GetProductNameAttr().Set(path)
     stage.GetRootLayer().Save()
-    subprocess.run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath",
+    run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath",
                     "/Render/settings", "-w", "64", scenePath, os.path.join(folder, "unused.png")], check=True,
                    shell=True)
     return path
@@ -130,7 +137,7 @@ def record(name):
 
 def probe(path, x, y):
     """(size, window line, pixel) of `path` at (x, y) of its data window."""
-    out = subprocess.run([exrinfo, path, str(x), str(y)], capture_output=True, text=True).stdout.splitlines()
+    out = run([exrinfo, path, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
     size = next((tuple(map(int, l.split()[1:])) for l in out if l.startswith("size ")), None)
     window = next((l.split()[1:] for l in out if l.startswith("window ")), None)
     return size, window, {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
@@ -168,7 +175,7 @@ product.CreateDataWindowNDCAttr(Gf.Vec4f(0, 0, 1, 1))
 off = os.path.join(folder, "off.exr").replace("\\", "/")
 product.GetProductNameAttr().Set(off)
 stage.GetRootLayer().Save()
-subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
+run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                 scenePath, "/Render/settings", "/cam", "eldr:productResolution=false"], check=True)
 expect(probe(off, 0, 0)[0] == (64, 64), "eldr:productResolution off: the frame's size")
 UsdGeom.Xformable(camera).GetOrderedXformOps()[0].Set(Gf.Vec3d(0, 0, 6))
@@ -182,10 +189,10 @@ def beauty(tonemapper, linear):
     path = os.path.join(folder, "beauty_%s_%s.exr" % (tonemapper, linear)).replace("\\", "/")
     product.GetProductNameAttr().Set(path)
     stage.GetRootLayer().Save()
-    subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
+    run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                     scenePath, "/Render/settings", "/cam", "eldr:tonemapper=" + tonemapper,
                     "eldr:productLinear=" + linear], check=True)
-    out = subprocess.run([exrinfo, path, "32", "32"], capture_output=True, text=True).stdout.splitlines()
+    out = run([exrinfo, path, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
 

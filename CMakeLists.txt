@@ -288,3 +288,10 @@ set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "USD_ROOT=${usdRoot}")
 # Under VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation any validation message
 # fails a test (the Python ones would otherwise pass over it).
 set_property(TEST ${allTests} PROPERTY FAIL_REGULAR_EXPRESSION "Validation Error")
+# A hung test fails after 30 minutes (viewport's own 600 s stays) instead of blocking ctest.
+foreach(t ${allTests})
+    get_property(hasTimeout TEST ${t} PROPERTY TIMEOUT SET)
+    if(NOT hasTimeout)
+        set_property(TEST ${t} PROPERTY TIMEOUT 1800)
+    endif()
+endforeach()
