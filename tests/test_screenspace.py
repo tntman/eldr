@@ -89,9 +89,10 @@ UsdLux.DomeLight.Define(stage, "/dome")
 UsdGeom.Camera.Define(stage, "/cam").AddTranslateOp().Set(Gf.Vec3d(0, 0, 5))
 
 
-def halo(bitmask):
+def halo(bitmask, thickness=0.25):
     """How much darker the wall is just beside the pole's image than at the edge."""
-    image = render(stage, {"hdvk:taa": True, "hdvk:ssgi": True, "hdvk:ssgiRadius": 3.0, "hdvk:ssgiBitmask": bitmask},
+    image = render(stage, {"hdvk:taa": True, "hdvk:ssgi": True, "hdvk:ssgiRadius": 3.0, "hdvk:ssgiBitmask": bitmask,
+                           "hdvk:ssgiBitmaskThickness": thickness},
                    frames=20)
     row = [mean(image, x, SIZE // 2 - 2, x + 4, SIZE // 2 + 2) for x in range(0, SIZE // 2 - 24, 4)]
     return row[0] - min(row)
@@ -100,6 +101,9 @@ def halo(bitmask):
 horizon, bitmask = halo(False), halo(True)
 print("SSGI halo around a thin pole: %.1f with the highest horizon, %.1f with the bitmask" % (horizon, bitmask))
 expect(horizon > 2 and bitmask < 0.5 * horizon, "SSGI's bitmask doesn't darken a halo around a thin object")
+thick = halo(True, 4.0)
+print("SSGI bitmask halo: %.1f at hdvk:ssgiBitmaskThickness 0.25, %.1f at 4" % (bitmask, thick))
+expect(thick > bitmask + 1, "hdvk:ssgiBitmaskThickness: thicker objects hide more light")
 
 # Denoised glossy SSR: reflections.usda's floor at roughness 0.25. One
 # GGX-sampled ray per pixel and frame, denoised: the columns' glossy

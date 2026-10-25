@@ -306,10 +306,11 @@ public:
         // steps evenly and any object is 5% of its distance thick.
         bool ssgiThickness = true;
         // SSGI with a visibility bitmask (EEVEE's fast GI) instead of the
-        // highest horizon: 32 sectors per slice, objects a quarter of
-        // ssgiRadius thick, light from the sectors nothing nearer hides,
+        // highest horizon: 32 sectors per slice, objects
+        // ssgiBitmaskThickness of ssgiRadius thick, light from the sectors nothing nearer hides,
         // weighted by how much the surface it comes from faces the pixel.
         bool ssgiBitmask = false;
+        float ssgiBitmaskThickness = 0.25f;  // the bitmask's object thickness, in ssgiRadius
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.

@@ -202,6 +202,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
         {"Screen-Space Thickness Estimator (SSGI, SSR)", t2.ssgiThickness, VtValue(frame.ssgiThickness)},
         {"SSGI Visibility Bitmask (light behind thin objects)", t2.ssgiBitmask, VtValue(frame.ssgiBitmask)},
+        {"SSGI Bitmask Object Thickness (fraction of SSGI radius)", t2.ssgiBitmaskThickness,
+         VtValue(frame.ssgiBitmaskThickness)},
         {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
         {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
         {"Dome Sun Extraction (HDRI sun as a shadowed light)", t2.domeSun, VtValue(frame.domeSun)},
