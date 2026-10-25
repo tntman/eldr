@@ -8,13 +8,14 @@ const uint kFeatureSsgi = 8388608u;  // screen-space GI (gtao.frag's SSGI), no r
 
 // std140 mirror of RayTracingData in raytracing.cpp.
 layout(std140, set = 0, binding = 59) uniform RayTracingData {
-    uvec4 shadowLights;  // the light each channel of the traced shadows is for, kNone: unused
+    uvec4 shadowLights[4];  // the light each channel of the traced shadows is for, kNone after the last
     uvec4 params;        // x: frame (noise), y: shadow rays per light, z: reflection rays, w: light shadowed at hits
     vec4 giOrigin;       // xyz: the first probe, w: probe spacing
     uvec4 giCounts;      // probes along x, y, z; w: probe tiles per atlas row
     vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
     uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
+    vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), w: layer stride (rows)
 } rt;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
@@ -181,10 +182,14 @@ bool RtShadow(uint light, out float visibility)
     if (!Feature(kFeatureRtShadows)) {
         return false;
     }
-    for (int k = 0; k < 4; ++k) {
-        if (rt.shadowLights[k] == light) {
+    for (uint k = 0u; k < 16u; ++k) {
+        uint traced = rt.shadowLights[k >> 2u][k & 3u];
+        if (traced == kNone) {
+            break;
+        }
+        if (traced == light) {
             if (RtOpaque()) {
-                visibility = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy))[k];
+                visibility = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k >> 2u) * int(rt.shadowSample.w)))[k & 3u];
             }
             return true;
         }

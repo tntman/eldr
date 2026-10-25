@@ -375,7 +375,7 @@ uint32_t NestedUniformScramble(uint32_t x, uint32_t seed)
 // a (0, 2)-sequence: a disc's or sphere's projections converge about twice
 // as fast as through the sample dimensions' unscrambled pairs (measured on
 // 128 samples: 0.02-0.03 worst error in a slab's share, not 0.06-0.08).
-constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4;
+constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4, kSeedRtShadow = 5;
 void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
 {
     index = NestedUniformScramble(index, HashU32(seed));
@@ -2894,9 +2894,37 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     RayTracing::Work rt;
     const bool rtScene = _rt && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          gpu.instanceCapacity <= kMaxRtInstances - kMaxRtSkinned;
-    rt.shadows = rtScene && frame.depthPrepass && frame.rtShadows;
+    // Final quality (Frame::finalShadows) may trace them without rtShadows,
+    // one ray per light and film sample, and up to kMaxRtShadowLights.
+    // Auto traces when the maps would cost more: a final sample redraws every
+    // shadow view (jittered light shapes) over the scene's triangles, while
+    // tracing costs a ray per pixel and shadowed light. So: at least
+    // kAutoTriangles triangles per pixel and shadowed light (960 x 540, 64
+    // samples: City 94 per pixel, 5 lights, traced 2.2 against maps 4.5 s of
+    // GPU; Kitchen_set 1.0, 6 lights, traced 0.93 against 0.64 s), and every
+    // skinned instance blocking rays (the crowd's 20000 agents exceed
+    // rtSkinnedInstances: its traced shadows would miss most of them).
+    // ponytail: triangles before culling stand in for what each shadow view
+    // draws; a measured per-frame cost would place the switch better.
+    constexpr double kAutoTriangles = 2.0;
+    const bool finalRun = film && _filmFinal;
+    using FinalShadows = Frame::FinalShadows;
+    auto autoTraced = [&] {
+        const size_t local = frame.localShadows && frame.localLights ? gpu.shadowCasters.size() : 0;
+        const size_t lights = std::min<size_t>(local + (gpu.shadowLight != kNone ? 1 : 0), kMaxRtShadowLights);
+        const uint32_t skinCap = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
+        return lights > 0 && double(gpu.triangleCount) >= kAutoTriangles * double(_width) * _height * double(lights) &&
+               scene.LargestSkinned(frame.cameraPos, skinCap + 1).size() <= skinCap;
+    };
+    const bool tracedShadows =
+        frame.rtShadows ||
+        (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
+                      (frame.finalShadows == FinalShadows::Auto && autoTraced())));
+    rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
     rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
-    rt.shadowSamples = frame.rtShadowSamples;
+    rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
+    std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
+    ScrambledSobol(sobolIndex, kSeedRtShadow, rt.shadowSample, 2);
     rt.reflectionSamples = frame.rtReflectionSamples;
     rt.sun = gpu.shadowLight;
     rt.gi = rtScene && frame.gi;
@@ -2950,9 +2978,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _FitClusters(gpu, frame, &fd);
     }
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun, rt.shadows ? 4 - rtSun : 0,
+        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun,
+                          rt.shadows ? (finalRun ? kMaxRtShadowLights : 4) - rtSun : 0,
                           shapeJitter ? shapeSample : nullptr);
-    rt.shadows = rt.shadows && std::any_of(rt.shadowLights, rt.shadowLights + 4, [](uint32_t l) { return l != kNone; });
+    rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;

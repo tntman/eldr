@@ -1744,6 +1744,31 @@ int main()
             frame.rtShadows = true;
             const Image img = Render(renderer, scene, frame);
             Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
+
+            // Interactive frames trace three local lights, final quality up
+            // to 15: with six the atlas is drawn, then not.
+            for (int i = 0; i < 5; ++i) {
+                AddSphereLight(scene, 0.6f, -0.6f + 0.3f * float(i), 0, 0.02f, 50.0f)->castShadows = true;
+            }
+            scene.Commit();
+            auto atlasDrawn = [](const vkr::Renderer::Stats &stats) {
+                return std::any_of(stats.passMs.begin(), stats.passMs.end(),
+                                   [](const auto &p) { return std::strcmp(p.first, "localShadows") == 0; });
+            };
+            Render(renderer, scene, frame);
+            Expect(atlasDrawn(renderer.GetStats()), "rtShadows: interactive frames trace three local lights");
+            vkr::Renderer::Frame finalFrame = frame;
+            finalFrame.rtShadows = false;
+            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+            finalFrame.finalQuality = true;
+            finalFrame.postProcess = true;
+            finalFrame.post.autoExposure = false;
+            vkr::Renderer fresh(device);
+            Render(fresh, scene, finalFrame);
+            Expect(!atlasDrawn(fresh.GetStats()), "final shadows raytraced: six local lights all traced");
+            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Auto;
+            Render(fresh, scene, finalFrame);
+            Expect(atlasDrawn(fresh.GetStats()), "final shadows auto: maps with shadowed local lights");
         }
 
         if (device.rayTracing) {
@@ -3002,6 +3027,18 @@ int main()
             std::printf("shadow jitter: sun penumbra error %.3f over %.0f pixels (PCSS %.3f over %.0f)\n", jittered,
                         jitteredPartial, pcss, pcssPartial);
             Expect(jittered < 0.03f && jitteredPartial >= 8, "shadow jitter: the film converges to the sun's penumbra");
+            if (device.rayTracing) {
+                // Traced instead (Frame::finalShadows, without rtShadows):
+                // one ray per film sample, a new point of the disc each
+                // (the sample dimensions), converges to the same penumbra.
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                float tracedPartial = 0;
+                const float traced = error(film(scene, frame), &tracedPartial);
+                std::printf("final shadows: traced sun penumbra error %.3f over %.0f pixels\n", traced, tracedPartial);
+                Expect(traced < 0.03f && tracedPartial >= 8,
+                       "final shadows raytraced: the film converges to the sun's penumbra");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             // Off the film (TAA frames, film off) and for a point sun nothing changes.
             frame.filmAccumulation = false;
             const Image taaOff = film(scene, frame);
@@ -3032,6 +3069,20 @@ int main()
             // penumbra is up to about 0.1 away from PCSS.)
             Expect(MaxDifference(interactiveJitter, interactivePcss) < 0.01f,
                    "shadow jitter: only in final quality (an interactive film keeps PCSS)");
+            if (device.rayTracing) {
+                // (Its first frame is a fresh, final one, which traces.)
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                vkr::Renderer r(device);
+                Render(r, scene, frame);
+                vkr::Renderer::Frame changed = frame;
+                changed.sceneVersion = 7;
+                for (int i = 0; i < 400 && !r.IsConverged(); ++i) {
+                    Render(r, scene, changed);
+                }
+                Expect(r.GetStats().accelerationStructureBytes == 0,
+                       "final shadows raytraced: an interactive film keeps the maps");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             frame.shadowJitter = true;
             frame.finalQuality = true;
             sun->angle = 0.0f;
@@ -3083,6 +3134,16 @@ int main()
                         localJittered, jitteredPartial, localPcss, pcssPartial);
             Expect(localJittered < 0.03f && jitteredPartial >= 4,
                    "shadow jitter: the film converges to a sphere light's penumbra");
+            if (device.rayTracing) {
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                float tracedPartial = 0;
+                const float traced = localError(film(local, frame), &tracedPartial);
+                std::printf("final shadows: traced sphere light penumbra error %.3f over %.0f pixels\n", traced,
+                            tracedPartial);
+                Expect(traced < 0.03f && tracedPartial >= 4,
+                       "final shadows raytraced: the film converges to a sphere light's penumbra");
+                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+            }
             frame.filmAccumulation = false;
             const Image localTaa = film(local, frame);
             frame.shadowJitter = true;

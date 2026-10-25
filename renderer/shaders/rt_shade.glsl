@@ -111,15 +111,16 @@ vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
     return toPoint / max(dist, 1e-20);
 }
 
-// Fraction of the light visible from p (normal ng) over `samples` rays.
-float LightVisibility(uint index, vec3 p, vec3 ng, uvec3 seed, uint samples)
+// Fraction of the light visible from p (normal ng) over `samples` rays:
+// points u, then R2 steps from it, on the light's shape.
+float LightVisibility(uint index, vec3 p, vec3 ng, vec2 u, uint samples)
 {
     Light light = lights[index];
     vec3 origin = OffsetRay(p, ng);
     float sum = 0.0;
     for (uint s = 0u; s < samples; ++s) {
         float dist;
-        vec3 dir = SampleLight(light, p, Random2(seed + uvec3(0u, 0u, index * 64u), s), dist);
+        vec3 dir = SampleLight(light, p, fract(u + vec2(0.7548776662, 0.5698402910) * float(s)), dist);
         // Short of the light: its own surface (a rect on a ceiling) is not a blocker.
         sum += dot(dir, ng) > 0.0 ? TraceShadow(origin, dir, dist * 0.999) : 0.0;
     }
@@ -166,7 +167,7 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
         Light light = lights[i];
         float NoL = dot(n, light.position.xyz);
         if (NoL > 0.0) {
-            float shadow = i == rt.params.w ? LightVisibility(i, p, hit.geometric, seed, 1u) : 1.0;
+            float shadow = i == rt.params.w ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : 1.0;
             irradiance += light.color.rgb * (NoL * light.halfHeight.w * shadow);
         }
     }

@@ -303,6 +303,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
+    using FinalShadows = vkr::Renderer::Frame::FinalShadows;
+    const std::string finalShadows = delegate->GetRenderSetting<std::string>(t2.finalShadows, "maps");
+    frame.finalShadows = finalShadows == "raytraced" ? FinalShadows::Raytraced
+                       : finalShadows == "auto"      ? FinalShadows::Auto
+                                                     : FinalShadows::Maps;
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx

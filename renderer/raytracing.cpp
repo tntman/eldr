@@ -131,7 +131,7 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     _CreatePipelines(sceneLayout);
     // Placeholders until a frame needs the real sizes: every descriptor
     // stays valid.
-    _CreateImages(1, 1);
+    _CreateImages(1, 1, 1);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, 8, 8);
     _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, 16, 16);
 }
@@ -400,11 +400,12 @@ Image RayTracing::_CreateAtlas(VkFormat format, uint32_t width, uint32_t height)
 
 // The per-pixel results, in GENERAL layout for good (written by ray
 // generation, read by mesh.frag).
-void RayTracing::_CreateImages(uint32_t width, uint32_t height)
+void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers)
 {
     _dev.Destroy(_shadowImage);
     _dev.Destroy(_reflectionImage);
-    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height);
+    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
+    _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     _width = width;
     _height = height;
@@ -882,12 +883,21 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     const VkDeviceSize skinnedScratch = _PrepareSkinned(gpu);
     _PrepareTlas(gpu);
     _ReserveScratch(skinnedScratch);  // the skinned BLASes' builds share it with the TLAS's, one after the other
-    if ((work.shadows || work.reflections) && (width != _width || height != _height)) {
-        _CreateImages(width, height);
+    // Shadow layers grow (four lights each) and stay.
+    uint32_t lights = 0;
+    while (work.shadows && lights < kMaxRtShadowLights && work.shadowLights[lights] != kNone) {
+        ++lights;
+    }
+    const uint32_t layers = std::max((lights + 3) / 4, std::max(_shadowLayers, 1u));
+    if ((work.shadows || work.reflections) && (width != _width || height != _height || layers != _shadowLayers)) {
+        _CreateImages(width, height, layers);
     }
     RayTracingData &d = *static_cast<RayTracingData *>(_uniforms.mapped);
     d = RayTracingData{};
-    std::copy(work.shadowLights, work.shadowLights + 4, d.shadowLights);
+    std::copy(work.shadowLights, work.shadowLights + kMaxRtShadowLights, d.shadowLights);
+    d.shadowSample[0] = work.shadowSample[0];
+    d.shadowSample[1] = work.shadowSample[1];
+    d.shadowSample[3] = float(height);
     d.params[0] = _frame++;
     d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
     d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);
