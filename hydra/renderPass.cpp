@@ -6,6 +6,7 @@
 #include "renderDelegate.h"
 #include "renderer.h"
 
+#include "pxr/base/gf/half.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -136,6 +137,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         return b && b->GetFormat() == format && b->GetWidth() == frame.width &&
                b->GetHeight() == frame.height ? b : nullptr;
     };
+    // husk binds its colour as Float32Vec4 whatever the descriptor says:
+    // rendered as half and widened after the frame.
+    HdRenderBuffer *const colorFloat32 = color ? usable(color, HdFormatFloat32Vec4) : nullptr;
     color = usable(color, HdFormatFloat16Vec4);
     depth = usable(depth, HdFormatFloat32);
     primId = usable(primId, HdFormatInt32);
@@ -439,6 +443,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         out.primId = static_cast<int32_t *>(target(2));
         out.instanceId = static_cast<int32_t *>(target(3));
     }
+    std::vector<GfHalf> colorHalf;
+    if (colorFloat32 && !productSized) {
+        colorHalf.resize(size_t(frame.width) * frame.height * 4);
+        out.color = colorHalf.data();
+    }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
         out.aovComponents[k] = extraComponents[k];
@@ -493,6 +502,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    if (!colorHalf.empty()) {
+        float *dst = static_cast<float *>(colorFloat32->Map());
+        std::copy(colorHalf.begin(), colorHalf.end(), dst);
+        colorFloat32->Unmap();
+    }
     for (int i = 0; i < 4 && productSized; ++i) {
         if (!mapped[i]) {
             continue;
