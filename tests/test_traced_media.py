@@ -3,7 +3,8 @@ ceiling, the sun shining down through it. Smoke (tests/scenes/volume.vdb's
 cloud, scaled to fill the room), froxel fog and a translucent pane out of the
 beam must be lit only where the window lets the sun in, with eldr:rtShadows on
 as with shadow maps (the traced image covers opaque pixels only; the sun keeps
-its cascades for these). Float captures.
+its cascades for these). Then the same with a sphere light above the window
+(traced local lights keep their atlas tiles). Float captures.
 Run: usdenv.cmd python tests\\test_traced_media.py"""
 import os
 import sys
@@ -112,9 +113,9 @@ def compare(name, maps, traced, beam, shade):
     b, s = at(traced, *beam), at(traced, *shade)
     print("%s: maps mean %.4f traced %.4f, mean |diff| %.3f of the mean; beam %.4f shade %.4f (maps %.4f %.4f)" %
           (name, maps.mean(), traced.mean(), rel, b, s, at(maps, *beam), at(maps, *shade)))
-    expect(rel < 0.1, "%s: traced sun matches the shadow maps" % name)
+    expect(rel < 0.1, "%s: traced matches the shadow maps" % name)
     expect(s < 0.25 * b, "%s: lit only in the window's beam" % name)
-    expect(s < at(maps, *shade) * 1.5 + 1e-3, "%s: the walls block the traced sun" % name)
+    expect(s < at(maps, *shade) * 1.5 + 1e-3, "%s: the walls block the traced light" % name)
 
 
 # Smoke: the beam crosses the cloud's middle; (-3, 3, 0) is out of it.
@@ -146,6 +147,28 @@ open_ = render(**{"eldr:rtShadows": True})
 p, q, o = at(maps, -3, 2.5, -2.5), at(traced, -3, 2.5, -2.5), at(open_, -3, 2.5, -2.5)
 print("pane: maps %.4f traced %.4f, without the ceiling %.4f" % (p, q, o))
 expect(o > 0.01 and q < 0.1 * o and q < p * 1.5 + 1e-3, "translucent pane: the ceiling blocks the traced sun")
+
+# The same with a traced sphere light above the window instead of the sun:
+# traced local lights keep their atlas tiles for media and glass.
+UsdGeom.Imageable(stage.GetPrimAtPath("/room/ceil1")).MakeVisible()
+sun.GetPrim().SetActive(False)
+bulb = UsdLux.SphereLight.Define(stage, "/bulb")
+bulb.CreateRadiusAttr(0.2)
+bulb.CreateIntensityAttr(4000)
+bulb.AddTranslateOp().Set(Gf.Vec3d(0, 9, 0))
+pane.GetPrim().SetActive(False)
+cloud.GetPrim().SetActive(True)
+compare("smoke, sphere light", render(**smoke), render(**{"eldr:rtShadows": True, **smoke}), (0, 3, 0),
+        (-3.5, 3, 0))
+cloud.GetPrim().SetActive(False)
+compare("fog, sphere light", render(**fog), render(**{"eldr:rtShadows": True, **fog}), (0, 3, 0), (-3.5, 3, 0))
+pane.GetPrim().SetActive(True)
+maps, traced = render(), render(**{"eldr:rtShadows": True})
+UsdGeom.Imageable(stage.GetPrimAtPath("/room/ceil1")).MakeInvisible()
+open_ = render(**{"eldr:rtShadows": True})
+p, q, o = at(maps, -3, 2.5, -2.5), at(traced, -3, 2.5, -2.5), at(open_, -3, 2.5, -2.5)
+print("pane, sphere light: maps %.4f traced %.4f, without the ceiling %.4f" % (p, q, o))
+expect(o > 0.01 and q < 0.1 * o and q < p * 1.5 + 1e-3, "translucent pane: the ceiling blocks the traced sphere light")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

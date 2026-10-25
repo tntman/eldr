@@ -1958,12 +1958,12 @@ struct Renderer::ShadowTile {
 // the view, brightest at the camera first, until the atlas is full; the
 // rest stay unshadowed. Writes each light's first tile (or kNone).
 // The first rtSlots lights by priority are ray-traced instead (written to
-// rtLights, no tiles).
+// rtLights; tiles only with tileTraced, from what the others leave).
 // With shapeSample (three values in [0, 1), Frame::shadowJitter) each
 // light is seen from that point of its shape, and looked up hard.
 std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
                                                               float cutoff, uint32_t *rtLights, uint32_t rtSlots,
-                                                              const float *shapeSample)
+                                                              bool tileTraced, const float *shapeSample)
 {
     const uint32_t lights = gpu.lightCount + gpu.localLightCount;
     _dev.Reserve(_lightShadows, std::max(lights, 1u) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -2004,18 +2004,29 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     // win, the tiles (and the cached atlas) stay where they were.
     const uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
     const uint32_t perRow = kShadowAtlasSize / tileSize, capacity = perRow * perRow;
-    std::vector<Candidate> chosen;
+    // With tileTraced the traced lights get tiles too, after the others (whose
+    // tiles stay as without), for what the traced image misses.
+    std::vector<Candidate> chosen, traced;
     uint32_t used = 0;
-    for (const Candidate &cand : candidates) {
-        if (rtSlots > 0) {
-            *rtLights++ = cand.caster->light;
-            --rtSlots;
-            continue;
-        }
+    auto place = [&](const Candidate &cand) {
         const uint32_t need = cand.caster->coneAngle <= kSpotShadowCone ? 1 : 6;
         if (used + need <= capacity) {
             chosen.push_back(cand);
             used += need;
+        }
+    };
+    for (const Candidate &cand : candidates) {
+        if (rtSlots > 0) {
+            *rtLights++ = cand.caster->light;
+            --rtSlots;
+            traced.push_back(cand);
+            continue;
+        }
+        place(cand);
+    }
+    if (tileTraced) {
+        for (const Candidate &cand : traced) {
+            place(cand);
         }
     }
     std::sort(chosen.begin(), chosen.end(),
@@ -3006,7 +3017,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // the traced image (opaque pixels only) cannot cover: volumes and fog in
     // the medium, translucent surfaces (RtTraced falls back to the maps off
     // the prepass depth) and subsurface's thickness. Else the walls let the
-    // sun through to smoke and fog.
+    // sun through to smoke and fog. Traced local lights keep atlas tiles for
+    // them likewise (_PlanLocalShadows).
     // ponytail: the maps' resolution, not the rays'; a traced 3D sun
     // visibility grid would match the surfaces' sharpness.
     const bool cascadeUsers = (frame.volumes && gpu.volumeCount > 0) || (frame.fog && frame.fogDensity > 0.0f) ||
@@ -3038,7 +3050,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     const std::vector<ShadowTile> shadowTiles =
         _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun,
-                          rt.shadows ? (finalRun ? kMaxRtShadowLights : 4) - rtSun : 0,
+                          rt.shadows ? (finalRun ? kMaxRtShadowLights : 4) - rtSun : 0, cascadeUsers,
                           shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |

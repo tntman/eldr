@@ -5,7 +5,7 @@
 // image, nearest volume first, up to the opaque depth. Single scattering:
 // the distant lights through a shadow march across the grid (and the sun's
 // cascades for opaque occluders), sphere/rect/disk lights from the
-// clusters (unshadowed), the dome's SH convolved with the phase function
+// clusters (through their atlas tiles), the dome's SH convolved with the phase function
 // and attenuated by the optical depth up towards the dome's pole;
 // blackbody emission from temperature, emitted radiance from emission and
 // the material's per unit of density. The medium is the volume's material
@@ -19,7 +19,7 @@
 // tiles (and the background) of zero density.
 // ponytail: volumes are composited one after another along the ray (in
 // entry order, not interleaved where they overlap) and don't shadow each
-// other (surfaces only from the sun: volume_shadow.frag); local lights are unshadowed inside them, the
+// other (surfaces only from the sun: volume_shadow.frag); local lights get one atlas tap per step, the
 // dome's light only comes down from above (half its optical depth, as
 // light also arrives from the sides).
 
@@ -32,6 +32,17 @@ layout(set = 0, binding = 63) uniform sampler2D sceneDepth;  // window [0, 1], p
 #include "volume.glsl"
 // The nearest translucent surfaces' window depth (VolumePass::Part).
 layout(set = 0, binding = 68) uniform sampler2D translucentDepth;
+// Local lights' shadow atlas, as in mesh.frag.
+const float kSpotShadowCone = 1.3962634;
+struct ShadowTile {
+    mat4 viewProj;
+    vec4 rect;
+    vec4 params;
+    vec4 origin;
+};
+layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
+layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
+layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 
 layout(push_constant) uniform Params {
     float stepSize;     // density voxels per step
@@ -112,6 +123,32 @@ float SunShadow(vec3 x, vec3 l)
     vec4 clip = frame.cascadeViewProj[c] * vec4(x + l * frame.cascadeTexel[c] * 2.0, 1.0);
     vec3 ndc = clip.xyz / clip.w;
     return texture(shadowMap, vec4(ndc.xy * 0.5 + 0.5, float(c), ndc.z * 0.5 + 0.5));
+}
+
+// A local light's atlas tiles at a point in the medium, as fog_inject.comp
+// looks them up: one tap, TAA's jitter smooths it. Traced lights keep tiles
+// while volumes are in the scene (Renderer::_PlanLocalShadows).
+float LocalShadow(uint index, vec3 x)
+{
+    uint tile = lightShadow[index];
+    if (tile == kNone) {
+        return 1.0;
+    }
+    vec3 fromLight = x - shadowTiles[tile].origin.xyz;
+    if (lights[index].shaping.y > kSpotShadowCone) {
+        vec3 a = abs(fromLight);
+        tile += a.x >= a.y && a.x >= a.z ? (fromLight.x > 0.0 ? 0u : 1u)
+              : a.y >= a.z               ? (fromLight.y > 0.0 ? 2u : 3u)
+                                         : (fromLight.z > 0.0 ? 4u : 5u);
+    }
+    ShadowTile t = shadowTiles[tile];
+    float dist = length(fromLight);
+    vec4 clip = t.viewProj * vec4(x - fromLight / max(dist, 1e-8) * (t.params.x * dist * 2.0), 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    if (clip.w <= 0.0 || any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
+        return 1.0;  // outside a spot's tile: its cone doesn't light it anyway
+    }
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
 }
 
 // Light of a sphere/rect/disk light arriving at x, as from a point (its
@@ -280,12 +317,15 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     float viewDepth = dot(x - frame.cameraPos.xyz, frame.cameraForward.xyz);
                     uint base = ClusterIndex(fragCoord, viewDepth) * (kMaxClusterLights + 1u);
                     for (uint k = 0u; k < clusterLights[base]; ++k) {
-                        vec3 e = LocalIrradiance(clusterLights[base + 1u + k], x, l);
+                        uint index = clusterLights[base + 1u + k];
+                        vec3 e = LocalIrradiance(index, x, l);
+                        e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 } else {
                     for (uint k = frame.counts.x; k < frame.counts.x + frame.localLights.x; ++k) {
                         vec3 e = LocalIrradiance(k, x, l);
+                        e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 }
