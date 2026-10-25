@@ -940,10 +940,16 @@ void main()
 #endif
         vec3 tx = normalize(cross(abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0), n)), ty = cross(n, tx);
         vec3 ve = vec3(dot(v, tx), dot(v, ty), NoV);
-        // Interleaved gradient noise, two lookups shifted per frame.
-        vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
-        vec2 u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
-                                                dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        // Two sample dimensions; without them interleaved gradient noise,
+        // two lookups shifted per frame.
+        vec2 u;
+        if (frame.sampleInfo.x != 0u) {
+            u = vec2(SampleNoise(kDimSsrGgx, gl_FragCoord.xy, 0.0), SampleNoise(kDimSsrGgx2, gl_FragCoord.xy, 0.0));
+        } else {
+            vec2 q = gl_FragCoord.xy + 5.588238 * frame.ssr.y;
+            u = fract(52.9829189 * fract(vec2(dot(q, vec2(0.06711056, 0.00583715)),
+                                              dot(q.yx + vec2(19.0, 47.0), vec2(0.06711056, 0.00583715)))));
+        }
         vec3 h = SampleGgxVndf(ve, a, u);
         h = tx * h.x + ty * h.y + n * h.z;
         vec3 l = reflect(-v, h);

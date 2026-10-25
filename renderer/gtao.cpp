@@ -35,7 +35,7 @@ struct GtaoParams {  // mirror of the push block in gtao.frag (the SSGI part onl
     float prevViewProj[16];
     float ssgi[4];      // depth pixels per raw pixel, steps per side, history valid, max radiance
     float temporal[4];  // weight of this frame in SSGI's running average, thickness estimator, object thickness
-    float screen[4];    // back-face hits' share (< 0: off), -, the traced pixel of each tile
+    float screen[4];    // back-face hits' share (< 0: off), the sector jitter (< 0: none), the traced pixel of each tile
 };
 
 VkImageSubresourceRange Color()
@@ -250,7 +250,7 @@ void Gtao::_Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, 
 void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const float prevViewProj[16],
                       const float eye[3], float radius, float noise, uint32_t slices, uint32_t steps,
                       VkImageView history, bool historyValid, float maxRadiance, bool still, bool thickness,
-                      float objectThickness, float backface, uint32_t tile)
+                      float objectThickness, float backface, uint32_t tile, float jitter)
 {
     const VkDescriptorImageInfo images[2] = {{_sampler, history, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
                                              {_sampler, _ssgi[_current ^ 1u].view,
@@ -284,6 +284,7 @@ void Gtao::RecordSsgi(VkCommandBuffer cmd, const float invViewProj[16], const fl
     params.temporal[1] = thickness ? 1.0f : 0.0f;
     params.temporal[2] = objectThickness;
     params.screen[0] = backface;
+    params.screen[1] = jitter;
     // Morton order within the tile (EEVEE's): every pixel once before any
     // repeats, so the running average and the film converge evenly.
     tile %= _scale * _scale;

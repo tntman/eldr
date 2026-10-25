@@ -47,9 +47,13 @@ public:
     void Clear(VkCommandBuffer cmd);
     // After it: the three passes, adding the result to `color` (in
     // COLOR_ATTACHMENT_OPTIMAL). Matrices in row-vector order; `history`
-    // false starts the history over.
+    // false starts the history over. `dimension` in [0, 1): the sample
+    // dimension's value turning the blue noise (kDimSsrDenoise); < 0:
+    // gradient noise shifted by `noise`.
     void Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], const float prevViewProj[16],
-                 const float eye[3], uint32_t noise, bool history);
+                 const float eye[3], uint32_t noise, bool history, float dimension);
+    // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Prepare.
+    void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 
 private:
     void _Destroy();
@@ -65,7 +69,7 @@ private:
     Image _rays, _directions, _normals, _factor;  // GENERAL: mesh.frag's storage images
     Image _resolved, _history[2];
     uint32_t _current = 0;
-    VkImageView _depth = VK_NULL_HANDLE;
+    VkImageView _depth = VK_NULL_HANDLE, _blueNoise = VK_NULL_HANDLE;
     uint32_t _width = 0, _height = 0;
 };
 

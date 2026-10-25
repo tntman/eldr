@@ -39,7 +39,8 @@ layout(push_constant) uniform GtaoParams {
     vec4 ssgi;          // x: pixels of depth per output pixel (1, 2), y: steps per side, z: 1 = history valid,
                         // w: brightest radiance taken (fireflies: highlights a few pixels wide)
     vec4 temporal;      // (gtao_denoise.frag's); y: 1 = thickness estimator, z: object thickness (BITMASK)
-    vec4 screen;        // x: back-face hits' share of light (Frame::screenBackface; < 0: off),
+    vec4 screen;        // x: back-face hits' share of light (Frame::screenBackface; < 0: off), y: the
+                        // sector jitter's sample dimension (kDimSsgiJitter; < 0: off, from stepNoise),
                         // zw: the depth pixel of each ssgi.x-wide tile that traces (Frame::ssgiTileOrder)
 #endif
 } pc;
@@ -231,7 +232,13 @@ void main()
 #ifdef BITMASK
         uint occluded = 0u;
         float hidden = 0.0;  // the cosine-weighted share of the occluded sectors
-        float jitter = fract(stepNoise + 0.618034 * float(slice));
+        // frame.glsl's SampleNoise for kDimSsgiJitter (11: channel a,
+        // shifted by 11 x (23, 41)); without the sample dimensions the
+        // steps' noise.
+        float jitterNoise = pc.screen.y >= 0.0
+                          ? fract(texelFetch(blueNoise, (q + ivec2(253, 451)) & 63, 0).a + pc.screen.y)
+                          : stepNoise;
+        float jitter = fract(jitterNoise + 0.618034 * float(slice));
 #endif
         for (int s = 0; s < steps; ++s) {
             float t = (float(s) + stepNoise) / float(steps);

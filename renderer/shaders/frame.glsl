@@ -46,7 +46,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // y: LOD bias, z: frame (kFeatureLod)
     // Sample dimensions (SampleNoise): this sample's value per kDim*;
     // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.
-    vec4 sampleDims[2];
+    vec4 sampleDims[3];
     uvec4 sampleInfo;
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them, y 1 = the dome's visible light is direct
     vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
@@ -64,6 +64,9 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
 // elsewhere, so effects neither share a pattern nor leave one in the film.
 const uint kDimAo = 0u, kDimSsgi = 1u, kDimSsr = 2u, kDimShadow = 3u, kDimSunShadow = 4u, kDimRefraction = 5u,
            kDimVolume = 6u, kDimFog = 7u;
+// Denoised SSR's GGX sample (two: a 2D point, Renderer's kSeedSsrGgx), its spatial kernel's rotation
+// (ssr_denoise.frag's copy), the SSGI bitmask's sector jitter (gtao.frag's).
+const uint kDimSsrGgx = 8u, kDimSsrGgx2 = 9u, kDimSsrDenoise = 10u, kDimSsgiJitter = 11u;
 layout(set = 0, binding = 90) uniform sampler2D blueNoise;
 
 // In [0, 1): dimension `dim` of this sample at `pixel`. Off: interleaved

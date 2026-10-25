@@ -1,7 +1,7 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
 denoised glossy SSR, its footprint-filtered hits, its precision, SSGI's energy and
-tile order, and back-face hits.
+tile order, back-face hits and the denoiser's sample dimensions.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -231,6 +231,23 @@ def tileOrderChanges(resolution):
 half, full = tileOrderChanges(2), tileOrderChanges(1)
 print("SSGI tile order: %d pixels (of a quarter) change at half resolution, %d at full" % (half, full))
 expect(half > 100 and full == 0, "hdvk:ssgiTileOrder rotates the traced pixel at half resolution only")
+
+# Denoised SSR's noise through the sample dimensions (its GGX sample and
+# kernel rotation, like every other effect's): a different pattern per
+# frame than the gradient noise without them, the same converged film.
+stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
+stage.GetPrimAtPath("/mtl/polished/pbr").GetAttribute("inputs:roughness").Set(0.25)
+glossy = {**bright, "hdvk:ssrDenoise": True}
+frames = [render(stage, {**glossy, "hdvk:sampleDimensions": on}) for on in (False, True)]
+films = [render(stage, {**glossy, "hdvk:taa": True, "hdvk:sampleDimensions": on}, frames=70) for on in (False, True)]
+floor = (20, 220, 380, 330)
+changed = sum(frames[0].pixelColor(x, y) != frames[1].pixelColor(x, y)
+              for y in range(floor[1], floor[3], 2) for x in range(floor[0], floor[2], 2))
+converged = [mean(f, *floor) for f in films]
+print("denoised SSR, sample dimensions: %d floor pixels (of a quarter) differ in a frame; films %.2f off, %.2f on" % (
+    changed, converged[0], converged[1]))
+expect(changed > 100 and abs(converged[0] - converged[1]) < 0.5,
+       "denoised SSR's noise follows the sample dimensions to the same image")
 
 # Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
 # from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan
