@@ -1,6 +1,7 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
-denoised glossy SSR, its footprint-filtered hits, its precision and back-face hits.
+denoised glossy SSR, its footprint-filtered hits, its precision, SSGI's energy
+and back-face hits.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -167,6 +168,52 @@ selfHits = sum(abs(on.pixelColor(x, y).green() - off.pixelColor(x, y).green()) >
                for y in range(0, SIZE, 2) for x in range(0, SIZE, 2))
 print("SSR over a mirror facing the camera: %d pixels (of a quarter) hit something" % selfHits)
 expect(selfHits == 0, "SSR: rays towards the camera don't hit their own surface")
+
+# SSGI's energy (the white furnace): white diffuse walls, floor and a box
+# under a uniform dome. Light that SSGI takes for a hidden share of the
+# sky comes from surfaces as bright as the sky, so no pixel may end up
+# brighter than with the sky unoccluded (no AO, no SSGI); a 5% floor on
+# the slices' weights made grazing surfaces up to 2.3% too bright.
+stage = Usd.Stage.CreateInMemory()
+white = UsdShade.Material.Define(stage, "/white")
+pbr = UsdShade.Shader.Define(stage, "/white/pbr")
+pbr.CreateIdAttr("UsdPreviewSurface")
+pbr.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set((1, 1, 1))
+pbr.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(1.0)
+pbr.CreateInput("ior", Sdf.ValueTypeNames.Float).Set(1.0)
+white.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
+for name, points in (("floor", [(-4, 0, -4), (-4, 0, 4), (4, 0, 4), (4, 0, -4)]),
+                     ("back", [(-4, 0, -2), (4, 0, -2), (4, 2, -2), (-4, 2, -2)]),
+                     ("left", [(-2, 0, -4), (-2, 2, -4), (-2, 2, 4), (-2, 0, 4)])):
+    quad = UsdGeom.Mesh.Define(stage, "/" + name)
+    quad.CreatePointsAttr(points)
+    quad.CreateFaceVertexCountsAttr([4])
+    quad.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+    UsdShade.MaterialBindingAPI.Apply(quad.GetPrim()).Bind(white)
+box = UsdGeom.Cube.Define(stage, "/box")
+box.AddTranslateOp().Set(Gf.Vec3d(0.5, 0.5, -0.5))
+UsdShade.MaterialBindingAPI.Apply(box.GetPrim()).Bind(white)
+UsdLux.DomeLight.Define(stage, "/dome")
+cam = UsdGeom.Camera.Define(stage, "/cam")
+cam.AddTranslateOp().Set(Gf.Vec3d(1.8, 1.6, 3.2))
+cam.AddRotateXYZOp().Set(Gf.Vec3f(-8, 25, 0))
+cam.CreateFocalLengthAttr(24)
+linear = {"hdvk:taa": True, "hdvk:tonemapper": "none", "hdvk:exposureCompensation": -1.0, "hdvk:ssr": False,
+          "hdvk:bloomIntensity": 0.0, "hdvk:adaptiveThreshold": 0.0, "hdvk:adaptiveFinalThreshold": 0.0}
+sky = render(stage, {**linear, "hdvk:ambientOcclusion": False}, frames=70)
+for bitmask in (False, True):
+    gi = render(stage, {**linear, "hdvk:ssgi": True, "hdvk:ssgiBitmask": bitmask}, frames=70)
+    brighter = darker = lit = 0
+    for y in range(0, SIZE, 2):
+        for x in range(0, SIZE, 2):
+            s, g = sky.pixelColor(x, y).green(), gi.pixelColor(x, y).green()
+            if s > 0:
+                lit += 1
+                brighter += g > s + 1
+                darker += g < s - 6
+    print("SSGI %s in a white furnace: of %d pixels %d brighter than the open sky, %d much darker" % (
+        "bitmask" if bitmask else "horizon", lit, brighter, darker))
+    expect(brighter == 0 and darker < 0.12 * lit, "SSGI keeps a white furnace's energy")
 
 # Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
 # from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan

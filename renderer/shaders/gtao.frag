@@ -194,7 +194,7 @@ void main()
 #endif
     float sliceNoise = Noise(vec2(q) + 0.5);
     float stepNoise = Noise(vec2(q.yx) + 0.5 + vec2(17.0, 43.0));
-    float visibility = 0.0;
+    float visibility = 0.0, full = 0.0;
     int slices = max(int(pc.eye.w), 1);
     for (int slice = 0; slice < slices; ++slice) {
         float phi = (float(slice) + sliceNoise) * PI / float(slices);
@@ -211,7 +211,19 @@ void main()
         // Side 0 searches along +omega, side 1 along -omega.
         float lowCos0 = cos(angleN + HALF_PI), lowCos1 = cos(angleN - HALF_PI);
         float horizonCos0 = lowCos0, horizonCos1 = lowCos1;
+#ifdef SSGI
+        // SSGI's energy audit (after EEVEE 5.2's): the projected normal's
+        // length, the cosine weight itself (a 5% floor made surfaces at
+        // grazing angles up to 2.3% too bright), and the slices' sum
+        // normalized by what they'd see unoccluded (`full`), so visibility
+        // and hidden shares add up to exactly 1 at every pixel and sample:
+        // a white furnace stays the dome's brightness, and no visibility
+        // over 1 is clamped away (EEVEE renormalizes its SH alike).
+        float sliceWeight = projectedLength;
+        full += sliceWeight * (Arc(angleN - HALF_PI, angleN, cosN) + Arc(angleN + HALF_PI, angleN, cosN));
+#else
         float sliceWeight = mix(projectedLength, 1.0, 0.05);
+#endif
         float lastPixels = 0.0;
 #ifdef BITMASK
         uint occluded = 0u;
@@ -258,6 +270,9 @@ void main()
                 float hf = clamp(sgn * acos(clamp(c, -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                 float hb = clamp(sgn * acos(clamp(dot(normalize(back - p), v), -1.0, 1.0)) - angleN, -HALF_PI, HALF_PI);
                 float a0 = min(hf, hb), a1 = max(hf, hb);
+                if (a1 <= a0) {
+                    continue;  // wholly below the surface (both clamped): hides no sector
+                }
                 uint first = uint(clamp(floor((a0 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
                 uint last = uint(clamp(ceil((a1 / PI + 0.5) * 32.0 + jitter), 0.0, 32.0));
                 uint count = last > first ? last - first : 0u;
@@ -306,8 +321,9 @@ void main()
 #endif
     }
 #ifdef SSGI
-    light /= float(slices);
-    OUTPUT(clamp(visibility / float(slices), 0.0, 1.0), distanceToEye,
+    full = max(full, 1e-6);
+    light /= full;
+    OUTPUT(clamp(visibility / full, 0.0, 1.0), distanceToEye,
            any(isnan(light)) || any(isinf(light)) ? vec3(0.0) : light);
 #else
     visibility = max(pow(clamp(visibility / float(slices), 0.0, 1.0), 2.2), 0.03);

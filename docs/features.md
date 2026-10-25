@@ -210,7 +210,10 @@ SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 radius thick); `ssgiThickness` makes rays respect thin
 and grazing surfaces. `screenBackface` (on) gives hits on the back of what
 the camera sees `screenBackfaceScale` (0.25) of the front's light, in SSGI and
-SSR alike (Blender 5.2's Backface option). `emissiveLights`, `fogGiAmbient` and `probeNormalize`
+SSR alike (Blender 5.2's Backface option). Each pixel's slices are
+normalized by what they would see unoccluded, so visibility and gathered
+light add up to exactly the sky's share: in a white furnace no pixel gets
+brighter than under the open sky (before: up to 2.3% at grazing angles). `emissiveLights`, `fogGiAmbient` and `probeNormalize`
 use the GI. With the film, `giPreconverge` waits for the probes (about 33
 extra frames).
 
