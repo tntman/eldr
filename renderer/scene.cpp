@@ -54,10 +54,11 @@ static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4
 struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
     float params[4];      // Material::displacement, displacementBound
     GpuTexRef tex;
+    uint32_t program[4];  // Material::displacementProgram, as GpuMaterial::program (count 0: none)
 };
 struct GpuLod {           // mirror of Lod in shaders/cull.comp
     uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
-    uint32_t regions[4];  // where level 1 fills back from; levels 2, 3: the second range's start and end
+    uint32_t regions[4];  // where levels 1, 2, 3 fill from (Scene::_ReserveLodInstances)
     float errors[4];      // levels 1..3, relative to the bounding radius
 };
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
@@ -789,13 +790,25 @@ void Scene::_UploadGeometry(Mesh &m)
                     skin.push_back(key.skin2);
                 }
             }
+            // Camera-facing: as far as the half width or radius reaches.
+            const float reach = m.facing == Mesh::kNotFacing
+                                    ? 0.0f
+                                    : Length(Vec3{key.v.normal[0], key.v.normal[1], key.v.normal[2]});
             for (int k = 0; k < 3; ++k) {
-                m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k]);
-                m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k]);
+                m._boundsMin[k] = std::min(m._boundsMin[k], key.v.position[k] - reach);
+                m._boundsMax[k] = std::max(m._boundsMax[k], key.v.position[k] + reach);
             }
         }
     }
 
+    // The mean uv length of an edge: a texture's footprint at a vertex
+    // (displace.glsl's mip level).
+    double uvLength = 0.0;
+    for (size_t c = 0; !m.uvs.empty() && c < corners; ++c) {
+        const float *a = vertices[indices[c]].uv, *b = vertices[indices[c % 3 == 2 ? c - 2 : c + 1]].uv;
+        uvLength += std::hypot(double(b[0]) - a[0], double(b[1]) - a[1]);
+    }
+    m._uvSpacing = corners > 0 ? float(uvLength / double(corners)) : 0.0f;
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
     uint32_t vertexOffset, firstIndex;
     while (!_vertexAlloc.Allocate(vertexCount, &vertexOffset)) {
@@ -818,7 +831,7 @@ void Scene::_UploadGeometry(Mesh &m)
     m._indexCount = indexCount;
     // Levels of detail of heavy meshes (lod.h), built on other threads; a
     // later Commit stores them (the mesh draws whole until then).
-    if (indexCount / 3 >= kLodMinTriangles) {
+    if (indexCount / 3 >= kLodMinTriangles && m.facing == Mesh::kNotFacing) {
         // Position, then the shading attributes as distances (see BuildLods):
         // normals and colours relative to the bounding radius (a turn of
         // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
@@ -957,13 +970,14 @@ void Scene::_StoreLods(Mesh &m, std::vector<LodLevel> levels)
     _ReserveLodInstances(m);
 }
 
-// Levels 2 and 3 of detail fill a range of the visible lists of their own
-// (Gpu::lods): instance slots that stay invalid.
-// ponytail: past kLodMaxInstances instances a mesh keeps one coarser level
-// (no second range), so huge instancing doesn't double its pools.
+// Each level of detail fills a range of the visible lists of its own
+// (Gpu::lods), room for every instance (a crossfading one is in two
+// levels): instance slots that stay invalid.
+// ponytail: past kLodMaxInstances instances a mesh has no levels, so huge
+// instancing doesn't multiply its pools.
 void Scene::_ReserveLodInstances(Mesh &m)
 {
-    const uint32_t slots = m._lods.size() > 1 && m._instanceCount <= kLodMaxInstances ? m._instanceCount : 0;
+    const uint32_t slots = m._instanceCount <= kLodMaxInstances ? m._instanceCount * uint32_t(m._lods.size()) : 0;
     if (slots != m._lodInstanceCount) {
         _instanceAlloc.Free(m._lodInstanceBase, m._lodInstanceCount);
         while (!_instanceAlloc.Allocate(slots, &m._lodInstanceBase)) {
@@ -1471,6 +1485,25 @@ void Scene::Commit()
         std::copy(r.uvTransform + 3, r.uvTransform + 6, g.uvRows[1]);
         return g;
     };
+    // A program's code, constants and images (shaders/program.glsl); where
+    // they went in `out` (GpuMaterial::program).
+    auto appendProgram = [&](const MaterialProgram &p, uint32_t out[4]) {
+        if (p.Empty() || !p.Valid()) {
+            return;
+        }
+        out[0] = uint32_t(programCode.size() / 4);
+        out[1] = uint32_t(p.code.size() / 4);
+        out[2] = uint32_t(programConstants.size() / 4);
+        out[3] = uint32_t((programConstants.size() + p.constants.size()) / 4);
+        programCode.insert(programCode.end(), p.code.begin(), p.code.end());
+        programConstants.insert(programConstants.end(), p.constants.begin(), p.constants.end());
+        for (const TextureRef &image : p.images) {
+            const GpuTexRef r = texRef(image);
+            const size_t at = programConstants.size();
+            programConstants.resize(at + sizeof(GpuTexRef) / sizeof(float));
+            std::memcpy(&programConstants[at], &r, sizeof(r));
+        }
+    };
     auto materialIndex = [&](const Material &m) {
         const auto [it, inserted] = materialSlots.emplace(&m, uint32_t(materials.size()));
         if (inserted) {
@@ -1515,21 +1548,7 @@ void Scene::Commit()
             std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
             g.subsurface[3] = m.subsurface;
             std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
-            const MaterialProgram &p = m.program;
-            if (!p.Empty() && p.Valid()) {
-                g.program[0] = uint32_t(programCode.size() / 4);
-                g.program[1] = uint32_t(p.code.size() / 4);
-                g.program[2] = uint32_t(programConstants.size() / 4);
-                g.program[3] = uint32_t((programConstants.size() + p.constants.size()) / 4);
-                programCode.insert(programCode.end(), p.code.begin(), p.code.end());
-                programConstants.insert(programConstants.end(), p.constants.begin(), p.constants.end());
-                for (const TextureRef &image : p.images) {
-                    const GpuTexRef r = texRef(image);
-                    const size_t at = programConstants.size();
-                    programConstants.resize(at + sizeof(GpuTexRef) / sizeof(float));
-                    std::memcpy(&programConstants[at], &r, sizeof(r));
-                }
-            }
+            appendProgram(m.program, g.program);
             materials.push_back(g);
         }
         return it->second;
@@ -1563,7 +1582,7 @@ void Scene::Commit()
                    std::numeric_limits<float>::max()};
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                    std::numeric_limits<float>::lowest()};
-    bool anyDrawable = false;
+    bool anyDrawable = false, facing = false;
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
@@ -1578,18 +1597,25 @@ void Scene::Commit()
         d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
         d.motion = motionBase[slot];
         d.hair = m.hair ? 1 : 0;
+        d.facing = m.facing;
+        d.uvSpacing = m._uvSpacing;
+        facing = facing || (drawable && m.facing != Mesh::kNotFacing);
         const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
                                 (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
                                 (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
-                                (drawable && m.material && m.material->displacementBound > 0 ? Gpu::kDisplaced : 0);
+                                ((drawable && m.material && m.material->displacementBound > 0) ||
+                                         m.facing != Mesh::kNotFacing
+                                     ? Gpu::kDisplaced
+                                     : 0);
         // Where each of the program's primvars is; a missing one reads the
         // program's fallback.
         d.primvars = kNone;
         d.primvarVertices = m._primvarVertexCount > 0 ? m._primvarVertexOffset : kNone;
-        if (program && !m.material->program.primvars.empty()) {
+        const bool displacementProgram = drawable && m.material && !m.material->displacementProgram.Empty();
+        if ((program || displacementProgram) && !m.material->program.primvars.empty()) {
             d.primvars = uint32_t(primvarTable.size() / 4);
             for (const std::string &name : m.material->program.primvars) {
                 uint32_t e[4] = {0, 0, 0, 0};
@@ -1687,11 +1713,12 @@ void Scene::Commit()
         g.slots[0] = uint32_t(next);
         // Translucent meshes draw per slot, without levels; displaced ones
         // keep their density (the levels' errors don't see displacement).
-        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ? 0
-                     : m._lodInstanceCount > 0                           ? uint32_t(m._lods.size())
-                                                                         : std::min<uint32_t>(uint32_t(m._lods.size()), 1);
-        const uint32_t firsts[3] = {m._instanceBase + m._instanceCount, m._lodInstanceBase,
-                                    m._lodInstanceBase + m._lodInstanceCount};
+        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ||
+                             m._lodInstanceCount == 0
+                         ? 0
+                         : uint32_t(m._lods.size());
+        const uint32_t firsts[3] = {m._lodInstanceBase, m._lodInstanceBase + m._instanceCount,
+                                    m._lodInstanceBase + 2 * m._instanceCount};
         std::copy(firsts, firsts + 3, g.regions);
         for (size_t k = 0; k < m._lods.size(); ++k, ++next) {
             const Mesh::Lod &lod = m._lods[k];
@@ -1708,6 +1735,7 @@ void Scene::Commit()
 
     _gpu.drawChunks.assign(1, 0);
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
+    _gpu.chunkLevels.assign(1, 0);
     _gpu.instanceCount = _gpu.triangleCount = 0;
     double triangles = 0;
     for (size_t slot = 0; slot < commandSlots; ++slot) {
@@ -1719,12 +1747,16 @@ void Scene::Commit()
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
-        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back())) {
+        const uint8_t levels = slot >= slots || lods[slot].slots[1] > 0;
+        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back() ||
+                              levels != _gpu.chunkLevels.back())) {
             _gpu.drawChunks.push_back(uint32_t(slot));
             _gpu.chunkKind.push_back(kind[slot]);
+            _gpu.chunkLevels.push_back(levels);
             triangles = 0;
         }
         _gpu.chunkKind.back() = kind[slot];
+        _gpu.chunkLevels.back() = levels;
         triangles += t;
     }
     _gpu.drawChunks.push_back(uint32_t(commandSlots));
@@ -1736,6 +1768,7 @@ void Scene::Commit()
         _lastDrawn = std::move(drawn);
     }
     _gpu.hasBounds = anyDrawable;
+    _gpu.facing = facing;
     std::copy(lo, lo + 3, _gpu.boundsMin);
     std::copy(hi, hi + 3, _gpu.boundsMax);
 
@@ -1747,6 +1780,7 @@ void Scene::Commit()
         g.params[0] = material->displacement;
         g.params[1] = material->displacementBound;
         g.tex = texRef(material->displacementTex);
+        appendProgram(material->displacementProgram, g.program);
         _gpu.displaced = _gpu.displaced || material->displacementBound > 0;
     }
     _device->Reserve(_displacements, displacements.size() * sizeof(GpuDisplacement),

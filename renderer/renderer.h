@@ -216,10 +216,16 @@ public:
         // surfaces; the scale multiplies every material's offset.
         bool displacement = true;
         float displacementScale = 1.0f;
+        // Displacement from shading graphs (run per vertex); off, those
+        // materials don't displace.
+        bool displacementGraphs = true;
         // Levels of detail (Scene builds them for heavy meshes): off draws
         // every mesh whole; a bias of 1 allows twice the screen error.
         bool lod = true;
         float lodBias = 0.0f;
+        // A level of detail change crossfades over a few frames (dithered,
+        // the history blends it) instead of popping.
+        bool lodFade = true;
         // Film accumulation (with taa; TemporalAA::RecordFilm): once the
         // camera and the scene have been still for kFilmStillFrames, and
         // from the first sample of a final frame, the samples are averaged
@@ -551,6 +557,8 @@ private:
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
     Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    VkBuffer _lodInstances = VK_NULL_HANDLE;  // the instance pool _lodState is about
+    uint32_t _lodFadeLeft = 0, _lodDrawCount = 0;  // frames crossfades may still run; commands when counted
     float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
     uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;

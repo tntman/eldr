@@ -741,7 +741,7 @@ public:
 
     // Compiles input `name` of `node`, times `weight`, into output `target`.
     // False, with nothing kept, if a node on the way isn't supported.
-    bool Output(HdMaterialNode2 const &node, TfToken const &name, P::Input target, float weight)
+    bool Output(HdMaterialNode2 const &node, TfToken const &name, P::Input target, float weight, int channel = -1)
     {
         const size_t ops = _ops.size(), constants = _p.constants.size(), images = _p.images.size(),
                      primvars = _p.primvars.size();
@@ -756,6 +756,9 @@ public:
         if (v && target == P::kNormal &&
             !(v->op && (_ops[v->index].op == P::kNormalMap || _ops[v->index].op == P::kImage))) {
             v.reset();
+        }
+        if (v && channel >= 0) {
+            v = _Emit(P::kExtract, {*v}, 0, uint32_t(channel));
         }
         if (v && weight != 1.0f) {
             v = _Emit(P::kMultiply, {*v, _Const(GfVec4f(weight))});
@@ -1585,9 +1588,10 @@ float TexelBound(vkr::TextureRef const &ref)
 // The displacement terminal: a UsdPreviewSurface's `displacement` input, or
 // a MaterialX displacement shader's `displacement` (along the normal; of a
 // vector, its normal component z) times its `scale`. A constant, or a
-// texture through what ReadTexture follows, read with the material's uv set.
-// ponytail: no shading graphs (the vertex stage runs no programs), and
-// vector displacement drops its tangent components (per-vertex tangents).
+// texture through what ReadTexture follows, read with the material's uv set,
+// or else a graph compiled into m->displacementProgram (mesh.vert runs it).
+// ponytail: vector displacement drops its tangent components (per-vertex
+// tangents); a graph's bound is |scale| (its value taken as within -1..1).
 void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m,
                       TfToken *uvPrimvar)
 {
@@ -1612,6 +1616,31 @@ void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures,
     TfToken primvar;
     vkr::TextureRef &ref = m->displacementTex;
     ReadTexture(net, &node, input, textures, m, &ref, &primvar);
+    const auto c = node.inputConnections.find(input);
+    if (!ref.texture && c != node.inputConnections.end() && !c->second.empty()) {
+        vkr::MaterialProgram &p = m->displacementProgram;
+        GraphCompiler graph(net, textures, &p, uvPrimvar);
+        if (!graph.Output(node, input, vkr::MaterialProgram::kDisplacement, scale, vector ? 2 : -1) ||
+            !graph.Finish() || !p.Valid()) {
+            p = vkr::MaterialProgram();
+            TF_WARN("HdVk: can't run the displacement graph (node %s)", graph.Failed().c_str());
+            return;
+        }
+        // Its primvars read the surface program's slots (one table per draw).
+        for (size_t op = 0; op < p.code.size() / 4; ++op) {
+            if ((p.code[op * 4] & 0xFFu) == vkr::MaterialProgram::kPrimvar) {
+                const std::string &name = p.primvars[p.code[op * 4 + 2]];
+                std::vector<std::string> &slots = m->program.primvars;
+                const auto at = std::find(slots.begin(), slots.end(), name);
+                p.code[op * 4 + 2] = uint32_t(at - slots.begin());
+                if (at == slots.end()) {
+                    slots.push_back(name);
+                }
+            }
+        }
+        m->displacementBound = std::abs(scale);
+        return;
+    }
     if (!ref.texture) {
         return;
     }

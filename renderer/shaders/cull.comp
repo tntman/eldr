@@ -36,13 +36,28 @@ layout(push_constant) uniform CullParams {
 // Levels of detail (Scene::Gpu::lods), per mesh slot.
 struct Lod {
     uvec4 slots;    // x: level 1's command slot (2 and 3 follow), y: levels
-    uvec4 regions;  // visible ranges: x level 1 fills back from; y level 2 fills from, z level 3 back from
+    uvec4 regions;  // where levels 1, 2 and 3 fill their visible range from, room for every instance each
     vec4 errors;    // levels 1..3: how far the surface (or its shading) moved, relative to the bounding radius
 };
 layout(std430, set = 0, binding = 40) readonly buffer Lods { Lod lods[]; };
-// Per instance slot the camera's last level (bits 0..1) and the frame it
-// picked it in (frame.geometry.z).
+// Per instance slot two words: the camera's last level (bits 0..1) and the
+// frame it picked it in (frame.geometry.z); the level it last changed from
+// and the frame it did (a crossfade, frame.lodFade).
 layout(std430, set = 0, binding = 41) buffer LodState { uint lodState[]; };
+
+// The camera's crossfade of instance i: the entry flags (frame.glsl's
+// kLodFading, how far, bits 24..29) and the level it fades out of, or 0
+// flags when it isn't fading. Slots past 24 bits never fade.
+uint fadeFrom = 0u;
+uint FadeFlags(uint i, uint epoch)
+{
+    uint f = lodState[i * 2u + 1u], age = epoch - (f >> 2u);
+    if (frame.lodFade.x == 0u || i > 0x00FFFFFFu || f == 0u || age >= frame.lodFade.x) {
+        return 0u;
+    }
+    fadeFrom = f & 3u;
+    return kLodFading | (min((age + 1u) * 64u / (frame.lodFade.x + 1u), 63u) << 24u);
+}
 
 // The coarsest level whose error stays under a pixel (times 2^bias) at
 // `radius` pixels. The camera's keeps a band around its last level, so an
@@ -52,8 +67,8 @@ layout(std430, set = 0, binding = 41) buffer LodState { uint lodState[]; };
 uint LodLevel(Lod l, uint i, float radius)
 {
     uint epoch = uint(frame.geometry.z);  // this frame, as lodState holds it
-    if (pc.listBase != 0u && lodState[i] >> 2u == epoch) {
-        return min(lodState[i] & 3u, l.slots.y);
+    if (pc.listBase != 0u && lodState[i * 2u] >> 2u == epoch) {
+        return min(lodState[i * 2u] & 3u, l.slots.y);
     }
     float limit = exp2(frame.geometry.y);
     uint level = 0u, strict = 0u;
@@ -65,14 +80,35 @@ uint LodLevel(Lod l, uint i, float radius)
     if (pc.listBase != 0u) {
         return level;
     }
-    uint last = min(lodState[i] & 3u, l.slots.y);
+    uint state = lodState[i * 2u], last = min(state & 3u, l.slots.y);
     if (last > level && l.errors[last - 1u] * radius <= 1.25 * limit) {
         level = last;  // finer only clearly over the limit
     } else if (last < level) {
         level = max(strict, last);  // coarser only clearly under it
     }
-    lodState[i] = level | epoch << 2u;
+    // A change of an instance drawn last frame fades (one that just came
+    // into view, or was off, pops).
+    if (level != last && state >> 2u == epoch - 1u) {
+        lodState[i * 2u + 1u] = last | epoch << 2u;
+    }
+    lodState[i * 2u] = level | epoch << 2u;
     return level;
+}
+
+// Appends visible-list entry `entry` (instance i, maybe fading) to level
+// `level`'s draw.
+void Emit(uint level, uint i, uint entry, uint draw)
+{
+    uint command = pc.commandBase + draw;
+    if (level == 0u) {
+        uint slot = atomicAdd(commands[command].instanceCount, 1u);
+        visible[pc.listBase + commands[command].firstInstance + slot] = entry;
+        return;
+    }
+    Lod l = lods[draw];
+    command = pc.commandBase + l.slots.x + level - 1u;
+    uint n = atomicAdd(commands[command].instanceCount, 1u);
+    visible[pc.listBase + l.regions[level - 1u] + n] = entry;
 }
 
 layout(local_size_x = 64) in;
@@ -131,26 +167,18 @@ void main()
     if (radius < pc.minRadius) {
         return;
     }
-    uint command = pc.commandBase + inst.draw;
     // Levels judge their error where the bounds come nearest the camera (a
     // wall's near end, not its middle).
     float nearRadius = pc.orthographic > 0.5 ? radius
                                              : length(we) * pc.pixelScale / max(depth - length(we), 1e-6);
-    uint level = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u
-        ? LodLevel(lods[inst.draw], i, nearRadius) : 0u;
-    if (level == 0u) {
-        uint slot = atomicAdd(commands[command].instanceCount, 1u);
-        visible[pc.listBase + commands[command].firstInstance + slot] = i;
+    bool lod = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u;
+    uint level = lod ? LodLevel(lods[inst.draw], i, nearRadius) : 0u;
+    // The camera's crossfade: both levels, each with its share of pixels.
+    uint flags = lod && pc.listBase == 0u ? FadeFlags(i, uint(frame.geometry.z)) : 0u;
+    if (flags != 0u && fadeFrom != level && fadeFrom <= lods[inst.draw].slots.y) {
+        Emit(fadeFrom, i, i | flags | kLodFadingOut, inst.draw);
+        Emit(level, i, i | flags, inst.draw);
         return;
     }
-    // Levels 1 and 3 fill their range from its end: the command starts at
-    // the last one written.
-    Lod l = lods[inst.draw];
-    command = pc.commandBase + l.slots.x + level - 1u;
-    uint n = atomicAdd(commands[command].instanceCount, 1u);
-    uint at = level == 2u ? l.regions.y + n : (level == 1u ? l.regions.x : l.regions.z) - 1u - n;
-    if (level != 2u) {
-        atomicMin(commands[command].firstInstance, at);
-    }
-    visible[pc.listBase + at] = i;
+    Emit(level, i, i, inst.draw);
 }

@@ -158,7 +158,11 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((probeNormalize, "hdvk:probeNormalize")) \
     ((planarCount, "hdvk:planarCount")) \
     ((motionBlurTimeSamples, "hdvk:motionBlurTimeSamples")) \
-    ((renderScale, "hdvk:renderScale"))
+    ((renderScale, "hdvk:renderScale")) \
+    ((curveRibbons, "hdvk:curveRibbons")) \
+    ((pointSprites, "hdvk:pointSprites")) \
+    ((lodFade, "hdvk:lodFade")) \
+    ((displacementGraphs, "hdvk:displacementGraphs"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -203,9 +207,10 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
 
-// Dirties every mesh's display style in the scene upstream of `terminal` (a
-// render index's), so they sync again (sceneIndexPlugin.cpp).
-void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal);
+// Dirties every mesh's display style (or other `type` prims' primvars) in
+// the scene upstream of `terminal` (a render index's), so they sync again
+// (sceneIndexPlugin.cpp).
+void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type = HdPrimTypeTokens->mesh);
 
 class HdVkTextureCache;
 class HdVkGLInterop;

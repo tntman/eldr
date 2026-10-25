@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
 }
 
@@ -3472,6 +3473,49 @@ int main()
             }
             Expect(triangles[0] < 512u, "levels of detail: a flat grid with one normal draws a few triangles");
             Expect(triangles[1] == 2048u, "levels of detail: a flat grid with bumpy normals keeps every triangle");
+        }
+
+        {
+            // Level of detail crossfades: a bumpy grid 4 pixels wide (a
+            // coarse level) grows to fill the view (all 2048 triangles). With
+            // Frame::lodFade it draws both levels for a few frames, then the
+            // fine one alone; without, it switches at once.
+            for (const bool fade : {true, false}) {
+                vkr::Scene scene(&device);
+                AddLight(scene, 0, 0, -1);
+                vkr::Mesh *grid = scene.AddMesh();
+                const int n = 32;
+                for (int j = 0; j < n; ++j) {
+                    for (int i = 0; i < n; ++i) {
+                        for (const auto &[di, dj] : {std::pair{0, 0}, {1, 0}, {1, 1}, {0, 0}, {1, 1}, {0, 1}}) {
+                            const float x = float(i + di) / n * 2 - 1, y = float(j + dj) / n * 2 - 1;
+                            grid->points.insert(grid->points.end(), {x, y, 0.05f * std::sin(x * 9) * std::cos(y * 7)});
+                        }
+                    }
+                }
+                grid->transforms = {0.06f, 0, 0, 0, 0, 0.06f, 0, 0, 0, 0, 0.06f, 0, 0.5f, 0.5f, 0.2f, 1};
+                do {
+                    scene.Commit();
+                } while (scene.LodsPending());
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.lodFade = fade;
+                frame.lodBias = -4.0f;  // a sixteenth of a pixel: the full-size grid needs every triangle
+                Render(renderer, scene, frame);
+                Render(renderer, scene, frame);
+                const uint64_t small = renderer.GetStats().triangles;
+                grid->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.5f, 1};
+                grid->transformsDirty = true;
+                scene.Commit();
+                Render(renderer, scene, frame);
+                const uint64_t first = renderer.GetStats().triangles;
+                for (int k = 0; k < 10; ++k) {
+                    Render(renderer, scene, frame);
+                }
+                const uint64_t settled = renderer.GetStats().triangles;
+                Expect(small < 2048u && settled == 2048u, "lod fade: the grown grid ends at its finest level");
+                Expect(fade ? first == 2048u + small : first == 2048u,
+                       fade ? "Frame::lodFade: both levels while fading" : "lodFade off: the level switches at once");
+            }
         }
 
         {

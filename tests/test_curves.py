@@ -56,13 +56,22 @@ CameraUtil.ConformWindow(gfCamera, CameraUtil.Fit, 1.0)
 frustum = gfCamera.frustum
 viewProj = frustum.ComputeViewMatrix() * frustum.ComputeProjectionMatrix()
 
-engine = UsdImagingGL.Engine()
-assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
-engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
 root = stage.GetPseudoRoot()
-engine.Render(root, params)
+engine = None
+
+
+def start(**settings):
+    """A fresh engine with these hdvk: settings, rendered once; its triangles."""
+    global engine
+    engine = UsdImagingGL.Engine()
+    assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+    for name, value in settings.items():
+        engine.SetRendererSetting("hdvk:" + name, value)
+    engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
+    engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
+    engine.Render(root, params)
+    return engine.GetRenderStats()["trianglesDrawn"]
 
 
 def drawn(x, y):
@@ -86,19 +95,47 @@ def expect(x, y, prim):
         print(f"FAIL: at ({x}, {y}) expected {prim}, got {hit}")
 
 
-expect(-2, 3, "/linear")
-expect(-2, 3.35, None)            # radius 0.2
-expect(2, 3, "/facing")
-expect(2, 0, None)                # the edge-on ribbon has no area
-expect(0, 1.5, "/bspline")
-expect(1.2, 1.5, None)            # a bspline ends at (P1 + 4 P2 + P3) / 6, x = 5/6
-expect(0.95, -1, "/catmullRom")   # catmullRom runs from P1 to P2
-expect(1.3, -1, None)
-expect(1.9, -2, "/pinned")        # pinned reaches the last point
-expect(-2, -2.75, "/bezier")      # bezier middle: (P0 + 3 P1 + 3 P2 + P3) / 8
-expect(-2, -2.5, None)
-expect(2, -3, "/points")
-expect(2.45, -3, None)            # radius 0.3
+def expectAll():
+    expect(-2, 3, "/linear")
+    expect(-2, 3.35, None)            # radius 0.2
+    expect(2, 3, "/facing")
+    expect(2, 0, None)                # the edge-on ribbon has no area
+    expect(0, 1.5, "/bspline")
+    expect(1.2, 1.5, None)            # a bspline ends at (P1 + 4 P2 + P3) / 6, x = 5/6
+    expect(0.95, -1, "/catmullRom")   # catmullRom runs from P1 to P2
+    expect(1.3, -1, None)
+    expect(1.9, -2, "/pinned")        # pinned reaches the last point
+    expect(-2, -2.75, "/bezier")      # bezier middle: (P0 + 3 P1 + 3 P2 + P3) / 8
+    expect(-2, -2.5, None)
+    expect(2, -3, "/points")
+    expect(2.45, -3, None)            # radius 0.3
+
+
+tubes = start()
+expectAll()
+# Camera-facing ribbons (hdvk:curveRibbons): as wide, far fewer triangles;
+# a curve's primvars:eldr:ribbons = false keeps its tube.
+ribbons = start(curveRibbons=True)
+expectAll()
+UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/bspline")).CreatePrimvar(
+    "eldr:ribbons", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
+oneTube = start(curveRibbons=True)
+print(f"triangles: tubes {tubes}, ribbons {ribbons}, ribbons but one tube {oneTube}")
+if not ribbons * 3 < tubes or not ribbons < oneTube < tubes:
+    failures.append("triangles")
+    print("FAIL: ribbons should draw far fewer triangles, and the primvar keep a tube")
+# Points as camera-facing discs (hdvk:pointSprites): the point is as wide
+# (the picks above), 8 triangles instead of a sphere's 20; a point's
+# primvars:eldr:sprites = false keeps its sphere.
+sprites = start(curveRibbons=True, pointSprites=True)
+expectAll()
+UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/points")).CreatePrimvar(
+    "eldr:sprites", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
+sphere = start(curveRibbons=True, pointSprites=True)
+print(f"triangles: sphere {oneTube}, disc {sprites}, sprite primvar off {sphere}")
+if sprites != oneTube - 12 or sphere != oneTube:
+    failures.append("sprites")
+    print("FAIL: a disc should draw 8 triangles for a sphere's 20, and the primvar keep the sphere")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
