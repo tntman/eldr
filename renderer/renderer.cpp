@@ -59,6 +59,7 @@ struct FrameData {
     float screenTrace[4];    // thickness estimator (SSR) on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
+    float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on
 };
 
 namespace {
@@ -706,6 +707,8 @@ void Renderer::_CreateDescriptors()
         {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex},
         {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
+        // Deformation blur: point velocities (Scene::Gpu::velocities).
+        {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
@@ -1553,6 +1556,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     const VkDescriptorBufferInfo primvarTable{gpu.primvarTable, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarData{gpu.primvarData, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo primvarVertices{gpu.primvarVertices, 0, VK_WHOLE_SIZE};
+    const VkDescriptorBufferInfo velocities{gpu.velocities, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo displacements{gpu.displacements, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lods{gpu.lods, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo lodState{_lodState.buffer, 0, VK_WHOLE_SIZE};
@@ -1620,6 +1624,7 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarTable, nullptr);
     write(31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarData, nullptr);
     write(32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &primvarVertices, nullptr);
+    write(33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &velocities, nullptr);
     write(39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &displacements, nullptr);
     write(40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lods, nullptr);
     write(41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &lodState, nullptr);
@@ -2736,6 +2741,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);
     const float shutterT = timeSample ? 1.0f + frame.shutterOpen + frame.shutter * shutterU : 1.0f;
+    // Deformation blur: point velocities (mesh.vert) move by this.
+    fd.deform[0] = shutterT - 1.0f;
+    fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
             lensed.viewProj[i] = _shutter.viewProj[i] + (appFrame.viewProj[i] - _shutter.viewProj[i]) * shutterT;

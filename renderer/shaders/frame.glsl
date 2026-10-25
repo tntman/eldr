@@ -54,6 +54,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 shadowJitter;  // x 1: light shapes jittered this film sample (shadow maps seen from a point
                          // of each light, ShadowTile.origin): hard lookups, no PCSS
     uvec4 lodFade;       // x: frames a level of detail change crossfades over (0: it pops; LodKeep)
+    vec4 deform;         // x: the time sample's offset from this frame (frames), y: 1 = point velocities on
 } frame;
 
 // Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic

@@ -441,8 +441,11 @@ has no lens (no DOF, no blur).
   crowd). With `sampledMotion` (on) rigid prims, instances and the camera
   take their motion from the scene's transform samples at shutter open and
   close (continued linearly to a frame), not from the last rendered frame, so
-  a single usdrecord or husk frame is blurred too. Deforming points and
-  skinned joints still need a rendered frame before.
+  a single usdrecord or husk frame is blurred too. With `deformationBlur`
+  (on) meshes whose points move (point caches) get a velocity per point
+  from Hydra's point samples at shutter open and close, which time samples
+  and motion vectors follow (ray tracing still sees the frame's points).
+  Skinned joints still need a rendered frame before.
 - **Upscaling** (`renderScale` below 1): while TAA resolves, render at that
   fraction (min 0.25) and reconstruct into a full-size history (Gaussian
   weights from the 3x3 samples' sub-pixel positions). Interactive only: the

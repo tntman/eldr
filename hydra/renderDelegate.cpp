@@ -322,6 +322,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
          VtValue(frame.motionBlurTimeSamples)},
         {"Sampled Motion (shutter samples: first frames blur too)", t2.sampledMotion, VtValue(true)},
+        {"Deformation Blur (point caches through the shutter)", t2.deformationBlur, VtValue(frame.deformationBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},

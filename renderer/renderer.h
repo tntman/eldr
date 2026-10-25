@@ -90,6 +90,11 @@ public:
         // prevTransforms (Mesh::shutterMotion); the camera one frame before
         // is here (viewProj and cameraPos when it doesn't move).
         bool sampledMotion = false;
+        // Deformation blur (hdvk:deformationBlur): meshes with
+        // Mesh::velocities (point caches, sampled through the shutter)
+        // move along them in time samples and motion vectors. Off: they
+        // are ignored.
+        bool deformationBlur = true;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):

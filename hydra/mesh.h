@@ -44,6 +44,7 @@ private:
     void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();
     bool _Skinned() const;
+    VtVec3fArray _ShutterVelocities(HdSceneDelegate *sceneDelegate) const;
     std::vector<TfToken> _ProgramPrimvarNames(HdSceneDelegate *sceneDelegate) const;
     void _ApplyInstancePrimvars(vkr::Mesh &mesh) const;
 
@@ -59,6 +60,7 @@ private:
     VtVec3iArray _triangles;
     VtIntArray _primitiveParams;
     VtVec3fArray _points;
+    VtVec3fArray _velocities;  // deformation blur: per point, units per frame (empty: still)
     VtValue _normals, _uvs, _colors;
     TfToken _uvName;  // the primvar _uvs came from (see Sync)
     HdInterpolation _normalsInterp = HdInterpolationVertex;

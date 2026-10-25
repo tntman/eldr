@@ -214,7 +214,8 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         geometryDirty |= level != _refineLevel && _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
         _refineLevel = level;
     }
-    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points)) {
+    const bool pointsDirty = HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points);
+    if (pointsDirty) {
         const VtValue value = GetPoints(sceneDelegate);
         VtVec3fArray points = value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>()
                                                               : VtVec3fArray();
@@ -303,6 +304,14 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         // The joint count is baked into the flattened influences (index range).
         const size_t joints = _numJoints > 0 ? size_t(_numJoints) : _skinningXforms.size();
         geometryDirty |= _Skinned() && joints != _mesh->jointCount;
+    }
+    // Deformation blur: the points' motion through the shutter.
+    if (pointsDirty || geometryDirty) {
+        VtVec3fArray velocities = _ShutterVelocities(sceneDelegate);
+        if (velocities != _velocities) {
+            _velocities = std::move(velocities);
+            geometryDirty = true;
+        }
     }
     // Primvars the material programs read, as the mesh has them (re-read
     // with any primvar change; flattened with the geometry).
@@ -477,6 +486,7 @@ void HdVkMesh::_SplitSubsets()
         pick(m.normals, 3, tris, &d->normals);
         pick(m.uvs, 2, tris, &d->uvs);
         pick(m.colors, 3, tris, &d->colors);
+        pick(m.velocities, 3, tris, &d->velocities);
         pick(m.jointIndices, m.influences, tris, &d->jointIndices);
         pick(m.jointWeights, m.influences, tris, &d->jointWeights);
         d->influences = m.influences;
@@ -496,6 +506,7 @@ void HdVkMesh::_SplitSubsets()
     m.normals = std::move(rest.normals);
     m.uvs = std::move(rest.uvs);
     m.colors = std::move(rest.colors);
+    m.velocities = std::move(rest.velocities);
     m.jointIndices = std::move(rest.jointIndices);
     m.jointWeights = std::move(rest.jointWeights);
     m.blendRanges = std::move(rest.blendRanges);
@@ -569,6 +580,36 @@ void HdVkMesh::_ApplyInstancePrimvars(vkr::Mesh &mesh) const
 bool HdVkMesh::_Skinned() const
 {
     return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
+}
+
+// Deformation blur (hdvk:deformationBlur, with sampled motion's shutter):
+// the points' velocity per frame from their samples at shutter open and
+// close, continued linearly as the camera's and the transforms' are. Empty
+// when they don't move through it, when skinned (joints move those) or
+// when the point count changes inside it.
+VtVec3fArray HdVkMesh::_ShutterVelocities(HdSceneDelegate *sceneDelegate) const
+{
+    auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+    float open, close;
+    if (_Skinned() || !vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->deformationBlur, true) ||
+        !vk->SampledMotionShutter(&open, &close)) {
+        return {};
+    }
+    HdTimeSampleArray<VtValue, 4> boxed;
+    sceneDelegate->SamplePrimvar(GetId(), HdTokens->points, open, close, &boxed);
+    HdTimeSampleArray<VtVec3fArray, 4> samples;
+    if (boxed.count < 2 || !samples.UnboxFrom(boxed)) {
+        return {};
+    }
+    const VtVec3fArray a = samples.Resample(open), b = samples.Resample(close);
+    if (a.size() != _points.size() || b.size() != a.size() || a == b) {
+        return {};
+    }
+    VtVec3fArray velocities(a.size());
+    for (size_t i = 0; i < a.size(); ++i) {
+        velocities[i] = (b[i] - a[i]) / (close - open);
+    }
+    return velocities;
 }
 
 // Skinning transform of joint j: a rest point through geomBind, the joint's
@@ -686,6 +727,11 @@ void HdVkMesh::_Flatten()
 
     FlattenPrimvar<GfVec2f>(_uvs, _uvsInterp, util, _triangles, _primitiveParams,
                             HdTypeFloatVec2, &m.uvs);
+    m.velocities.clear();
+    if (!_velocities.empty()) {
+        FlattenPrimvar<GfVec3f>(VtValue(_velocities), HdInterpolationVertex, util, _triangles, _primitiveParams,
+                                HdTypeFloatVec3, &m.velocities);
+    }
     m.colors.clear();
     if (_colorsInterp != HdInterpolationConstant) {
         FlattenPrimvar<GfVec3f>(_colors, _colorsInterp, util, _triangles, _primitiveParams,

@@ -27,6 +27,9 @@ layout(std430, set = 0, binding = 26) readonly buffer PrevJoints { mat4 prevJoin
 layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
 // Last frame's blend shape weights (copied after each frame's draws).
 layout(std430, set = 0, binding = 60) readonly buffer PrevBlendWeights { float prevBlendWeights[]; };
+// Deformation blur: point velocities (object units per frame) of rigid
+// meshes whose points move (DrawInfo::velocities).
+layout(std430, set = 0, binding = 33) readonly buffer Velocities { vec4 velocities[]; };
 
 // Crowds are bound by what the vertex stage exports, so the outputs are
 // packed and the depth passes (built with DEPTH_ONLY) export only what
@@ -130,6 +133,13 @@ void main()
     bool facing = kDisplacement && d.facing != 0u;
     vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d, slot, model, inVertexColor.rgb),
          prevPosition = position;
+    // Moving points: at the time sample's time, a frame's velocity before
+    // for motion vectors.
+    if (d.velocities != kFreeSlot && frame.deform.y != 0.0) {
+        vec3 v = velocities[d.velocities + uint(gl_VertexIndex) - d.vertexBase].xyz;
+        position += v * frame.deform.x;
+        prevPosition = position - v;
+    }
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {

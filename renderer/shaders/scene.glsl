@@ -56,6 +56,8 @@ struct DrawInfo {
     uint holdout;          // 1: a holdout (transparency.glsl)
     uint facing;           // camera-facing: 1 ribbons, 2 discs (mesh.vert's Facing)
     float uvSpacing;       // mean uv length of an edge (displace.glsl's texture footprint)
+    uint velocities;       // its first vec4 of point velocities (mesh.vert), kFreeSlot: none
+    uint pad0, pad1, pad2;
 };
 
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).

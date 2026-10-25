@@ -316,6 +316,11 @@ struct Mesh {
     // prevTransforms are the transforms one frame before as the shutter's
     // samples continue (sampled motion): valid for new geometry too.
     bool shutterMotion = false;
+    // Deformation blur: per corner (or vertex) the points' velocity, object
+    // units per frame (a point cache sampled through the shutter), or empty.
+    // Rigid meshes only; mesh.vert moves the points by it for time samples
+    // and motion vectors (Frame::deformationBlur).
+    std::vector<float> velocities;
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
@@ -392,6 +397,7 @@ private:
     // Vertex-rate primvars packed in one vec4 per vertex (_vertexCount),
     // and per entry of `primvars` its first component there (kNone: not packed).
     uint32_t _primvarVertexOffset = 0, _primvarVertexCount = 0;
+    uint32_t _velocityOffset = 0, _velocityCount = 0;  // Gpu::velocities, vec4 per vertex
     std::vector<uint32_t> _primvarComponents;
     bool _blendPerInstance = false;
     bool _skinPerInstance = false;
@@ -505,6 +511,8 @@ struct DrawInfo {
     uint32_t holdout;          // 1: Mesh::holdout
     uint32_t facing;           // Mesh::facing
     float uvSpacing;           // mean uv length of an edge (vertex-stage texture footprint, displace.glsl)
+    uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
+    uint32_t pad[3];
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -625,6 +633,7 @@ public:
         VkBuffer primvarTable = VK_NULL_HANDLE;
         VkBuffer primvarData = VK_NULL_HANDLE;      // float
         VkBuffer primvarVertices = VK_NULL_HANDLE;  // vec4 per vertex of meshes with vertex-rate primvars
+        VkBuffer velocities = VK_NULL_HANDLE;       // vec4 per vertex of meshes with Mesh::velocities
         uint32_t drawCount = 0;         // command slots: meshCount meshes' (some may draw nothing), then levels'
         // Slots are drawn in indirect calls of [drawChunks[i], drawChunks[i + 1]),
         // each small enough to stay well under Windows' ~2 s GPU timeout (TDR)
@@ -816,9 +825,9 @@ private:
     std::vector<std::unique_ptr<Dome>> _domes;
     // Device-local pools and their allocators.
     Buffer _vertices, _indices, _instances, _visible, _skin, _joints, _skinXforms, _jointBoundsPool,
-        _blendOffsets, _blendWeights, _primvarVertices;
+        _blendOffsets, _blendWeights, _primvarVertices, _velocities;
     RangeAllocator _vertexAlloc, _indexAlloc, _instanceAlloc, _skinAlloc, _jointAlloc, _skinXformAlloc,
-        _boundsAlloc, _blendAlloc, _weightAlloc, _primvarVertexAlloc;
+        _boundsAlloc, _blendAlloc, _weightAlloc, _primvarVertexAlloc, _velocityAlloc;
     // Host-visible per-commit tables.
     Buffer _draws, _commandTemplate, _materials, _udimTiles, _motion, _lightBuffer, _staging, _programCode,
         _programConstants, _primvarTable, _primvarData;
