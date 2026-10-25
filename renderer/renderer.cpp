@@ -3646,6 +3646,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                             volumesUnder ? VolumePass::kInFront : VolumePass::kAll)) {
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
+    // Light shapes: the local lights seen by the camera, in front of the opaque depth.
+    if (draw && frame.lightShapesVisible && gpu.localLightCount > 0) {
+        _volumePass->RecordLightShapes(_cmd, _set, gpu.lightCount, gpu.localLightCount, _color.view, _width,
+                                       _height);
+        pass("lightShapes");
+    }
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,

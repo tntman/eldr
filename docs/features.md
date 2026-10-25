@@ -168,6 +168,10 @@ lights and each light is cut off where it would light a white surface at 1% of
 middle gray. Emissive meshes (constant `emissiveColor` above
 `emissiveLightThreshold`, small enough) are additionally promoted to lights
 (rects for flat panels, spheres otherwise; at most 32) and cast shadows.
+Light shapes are not drawn to the camera unless `lightShapesVisible` is on
+(a light with `primvars:ri:attributes:visibility:camera = 0` is never drawn;
+it still lights the scene and shows in reflections of what it lights, not of
+its own shape).
 
 **Shadows.**
 

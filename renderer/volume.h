@@ -153,12 +153,19 @@ public:
     void RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile, uint32_t x,
                           uint32_t y, uint32_t size, const Settings &settings);
 
+    // Frame::lightShapesVisible: the shapes of lights [first, first + count)
+    // of the renderer's light buffer over `color` (as Record, with the
+    // scene's depth at binding 63).
+    void RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,
+                           VkImageView color, uint32_t width, uint32_t height);
+
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;   // full resolution, blended over the image
     VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map
+    VkPipeline _shapePipeline = VK_NULL_HANDLE;   // light_shapes.frag over the image
     Image _half;
     uint32_t _halfWidth = 0, _halfHeight = 0;
     Image _translucentDepth;

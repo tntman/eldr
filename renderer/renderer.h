@@ -118,6 +118,9 @@ public:
         // Volumes also shadow surfaces from the local lights (their atlas tiles, through the tint
         // atlas; needs volumes.shadows and localShadows).
         bool localVolumeShadows = true;
+        // The local lights' shapes (sphere, rect, disk, cylinder) show to the camera as emitters of their
+        // radiance, unless the light is hidden from the camera (Light::cameraVisible).
+        bool lightShapesVisible = false;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;

@@ -176,7 +176,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
-                                {t2.localVolumeShadows, &frame.localVolumeShadows}}) {
+                                {t2.localVolumeShadows, &frame.localVolumeShadows},
+                                {t2.lightShapesVisible, &frame.lightShapesVisible}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},

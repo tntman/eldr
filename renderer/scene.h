@@ -442,6 +442,7 @@ struct Light {
     float diffuse = 1.0f;                // UsdLux diffuse/specular multipliers
     float specular = 1.0f;
     bool visible = true;
+    bool cameraVisible = true;           // its shape shows to the camera (Frame::lightShapesVisible)
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
     // Rect, disk: an image over the emitting surface (UsdLux

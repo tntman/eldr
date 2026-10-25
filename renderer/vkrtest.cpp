@@ -2821,6 +2821,34 @@ int main()
         }
 
         {
+            // Light shapes (Frame::lightShapesVisible): spheres at (+-0.5, 0.5) and a cylinder at (0.5, -0.5), all
+            // radiance 50, over a quad in front of the left half (z -0.8; the lights are at z -0.5). The shapes show
+            // as their radiance where nothing is nearer; one hidden from the camera doesn't.
+            vkr::Scene scene(&device);
+            AddQuad(scene, -1, -1, 0, 1, -0.8f);
+            vkr::Light *shown = AddSphereLight(scene, 0.5f, 0.5f, -0.5f, 0.2f, 50.0f);
+            AddSphereLight(scene, -0.5f, 0.5f, -0.5f, 0.2f, 50.0f);
+            vkr::Light *tube = AddSphereLight(scene, 0.5f, -0.5f, -0.5f, 0.1f, 50.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.3f;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image hidden = Render(renderer, scene, frame);
+            frame.lightShapesVisible = true;
+            const Image seen = Render(renderer, scene, frame);
+            shown->cameraVisible = false;
+            scene.Commit();
+            const Image camera = Render(renderer, scene, frame);
+            Expect(hidden.At(48, 48, 0) < 10.0f && hidden.At(48, 16, 0) < 10.0f,
+                   "light shapes are off by default");
+            Expect(std::abs(seen.At(48, 48, 0) - 50.0f) < 0.5f && std::abs(seen.At(48, 16, 0) - 50.0f) < 0.5f,
+                   "a sphere and a cylinder light show their radiance to the camera");
+            Expect(seen.At(16, 48, 0) < 10.0f, "a light shape behind a surface stays hidden");
+            Expect(camera.At(48, 48, 0) < 10.0f && std::abs(camera.At(48, 16, 0) - 50.0f) < 0.5f,
+                   "a light hidden from the camera still shines but isn't drawn");
+        }
+
+        {
             // Soft sun shadows: the sun shadow test's occluder (one unit above
             // the ground along z, light at 45 degrees). A 10 degree sun spreads
             // the shadow's right edge (around x = -0.75, pixel 8) over a

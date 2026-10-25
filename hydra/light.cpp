@@ -110,6 +110,13 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
 
     vkr::Light &light = *_light;
     light.visible = visible;
+    // Hidden from the camera (its shape, not its light): RenderMan's
+    // primvars:ri:attributes:visibility:camera = 0 (a bool or an int).
+    // ponytail: no UsdLux attribute for it exists; Karma's name isn't known.
+    const VtValue cameraVisibility = sceneDelegate->GetLightParamValue(id, TfToken("primvars:ri:attributes:visibility:camera"));
+    light.cameraVisible = cameraVisibility.IsHolding<bool>()  ? cameraVisibility.UncheckedGet<bool>()
+                          : cameraVisibility.IsHolding<int>() ? cameraVisibility.UncheckedGet<int>() != 0
+                                                              : true;
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
     light.specular = param(HdLightTokens->specular, 1.0f);
     if (_type == HdPrimTypeTokens->distantLight) {

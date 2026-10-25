@@ -20,6 +20,9 @@ namespace {
 const uint32_t kVolumeFrag[] =
 #include "volume.frag.inc"
 ;
+const uint32_t kShapesFrag[] =
+#include "light_shapes.frag.inc"
+;
 const uint32_t kUpsampleFrag[] =
 #include "volume_upsample.frag.inc"
 ;
@@ -154,6 +157,8 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     _halfPipeline = CreateFullscreenPipeline(d, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
     _upsamplePipeline = CreateFullscreenPipeline(d, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
+    _shapePipeline = CreateFullscreenPipeline(d, _layout, kShapesFrag, sizeof(kShapesFrag), Renderer::kColorFormat,
+                                              false, true);
     _shadowPipeline = CreateFullscreenPipeline(d, _layout, kShadowFrag, sizeof(kShadowFrag),
                                                Transparency::kTintFormat, false, false, true,
                                                Transparency::kTintDepthFormat);
@@ -162,7 +167,7 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
 VolumePass::~VolumePass()
 {
     vkDeviceWaitIdle(_dev.device);
-    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline}) {
+    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline, _shapePipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -236,6 +241,22 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     DrawFullscreen(cmd, _upsamplePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                    &p, sizeof(p));
     return true;
+}
+
+void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,
+                                   VkImageView color, uint32_t width, uint32_t height)
+{
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    const uint32_t push[2] = {first, count};
+    DrawFullscreen(cmd, _shapePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, push,
+                   sizeof(push));
 }
 
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,

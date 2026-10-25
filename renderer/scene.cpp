@@ -1929,6 +1929,7 @@ void Scene::Commit(bool keepMotion)
             GpuLight &g = lights[lightCount + localLightCount];
             g = GpuLight{};
             g.halfHeight[3] = l->diffuse;
+            g.color[3] = l->cameraVisible ? 1.0f : 0.0f;  // light_shapes.frag (the colour is copied over rgb)
             g.shaping[3] = l->specular;
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
