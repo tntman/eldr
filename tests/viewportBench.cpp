@@ -1,7 +1,7 @@
 // Times Eldr frames with a viewport's AOV bindings, as Houdini's Solaris
 // viewport sets them up (HdxTaskController render outputs, CPU maps after
 // each frame), while the camera orbits; and checks the id AOVs against the
-// render index. Not part of ctest's Python suite: run it by hand.
+// render index. ctest runs --check --ids (test viewport_bindings).
 //
 // viewportBench <scene> <camera prim> [options]
 //   --size WxH         render size (default 1280x720)
@@ -11,6 +11,8 @@
 //   --share 0|1        eldr:shareFrame (default 0: read back, as in Houdini)
 //   --still            don't move the camera
 //   --ids              check primId/instanceId against the render index
+//   --check            instead of timing: which AOVs render and read back
+//                      when the app reads only some (needs normal bound)
 #include "pxr/base/gf/frustum.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -26,6 +28,7 @@
 #include "pxr/usd/usdGeom/camera.h"
 #include "pxr/usdImaging/usdImaging/delegate.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -44,11 +47,11 @@ int main(int argc, char **argv)
 {
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
-                  "[--share 0|1] [--still] [--ids]");
+                  "[--share 0|1] [--still] [--ids] [--check]");
         return 2;
     }
     int width = 1280, height = 720, frames = 120, share = 0;
-    bool still = false, ids = false, mapAll = true;
+    bool still = false, ids = false, check = false, mapAll = true;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -67,6 +70,8 @@ int main(int argc, char **argv)
             still = true;
         } else if (a == "--ids") {
             ids = true;
+        } else if (a == "--check") {
+            check = true;
         }
     }
 
@@ -126,64 +131,109 @@ int main(int argc, char **argv)
             }
         }
         HdEngine engine;
-        double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
-        std::map<std::string, double> mapMs, passMs;
-        std::vector<double> times;  // per frame: their median resists other GPU users
-        const int warmup = 10;
-        for (int f = 0; f < warmup + frames; ++f) {
-            // Orbit about the view's centre line: a camera move every frame.
-            const double angle = still ? 0.0 : 0.25 * f;
-            const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
-            controller.SetFreeCameraMatrices(orbit * view, projection);
-            const auto t0 = Clock::now();
-            engine.Execute(index, &tasks);
-            const auto t1 = Clock::now();
-            std::map<std::string, double> frameMaps;
-            for (auto &[name, b] : buffers) {
-                const auto m0 = Clock::now();
+        int failures = 0;
+        if (check) {
+            // Houdini's pattern: colour read every frame, the rest now and then.
+            auto frame = [&](double angle) {
+                controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,
+                                                 projection);
+                engine.Execute(index, &tasks);
+                const VtDictionary stats = delegate->GetRenderStats();
+                auto it = stats.find("gpuPassMs");
+                return it != stats.end() && it->second.IsHolding<VtDictionary>() ? it->second.UncheckedGet<VtDictionary>()
+                                                                                : VtDictionary();
+            };
+            auto expect = [&](bool ok, const char *what) {
+                std::printf("%s: %s\n", ok ? "ok" : "FAIL", what);
+                failures += !ok;
+            };
+            auto read = [](HdRenderBuffer *b) {
                 b->Map();
                 b->Unmap();
-                frameMaps[name] = Ms(m0, Clock::now());
+            };
+            HdRenderBuffer *color = controller.GetRenderOutput(HdAovTokens->color);
+            HdRenderBuffer *normal = controller.GetRenderOutput(HdAovTokens->normal);
+            HdRenderBuffer *primId = controller.GetRenderOutput(HdAovTokens->primId);
+            if (!color || !normal || !primId) {
+                std::puts("FAIL: --check needs colour, normal and the ids bound");
+                std::exit(1);
             }
-            const auto t2 = Clock::now();
-            if (f >= warmup) {
-                executeMs += Ms(t0, t1);
-                total += Ms(t0, t2);
-                times.push_back(Ms(t0, t2));
-                for (auto &[name, ms] : frameMaps) {
-                    mapMs[name] += ms;
+            VtDictionary passes = frame(0);
+            expect(!passes.empty(), "GPU pass times are there");
+            expect(passes.count("aovs"), "new buffers: the extra AOVs render");
+            read(color);
+            passes = frame(1);
+            expect(!passes.count("aovs"), "moving: unread extra AOVs are left out");
+            const auto *p = static_cast<const int32_t *>(primId->Map());  // not read with the frame: fetched now
+            expect(std::any_of(p, p + size_t(width) * height, [](int32_t id) { return id >= 0; }),
+                   "an id AOV read after the frame has the ids");
+            primId->Unmap();
+            read(color);
+            read(normal);  // a frame old; rendered from the next one
+            passes = frame(2);
+            expect(passes.count("aovs"), "moving: a read extra AOV renders");
+            passes = frame(2);
+            expect(passes.count("aovs"), "still: the extra AOVs render, read or not");
+        }
+        if (!check) {
+            double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
+            std::map<std::string, double> mapMs, passMs;
+            std::vector<double> times;  // per frame: their median resists other GPU users
+            const int warmup = 10;
+            for (int f = 0; f < warmup + frames; ++f) {
+                // Orbit about the view's centre line: a camera move every frame.
+                const double angle = still ? 0.0 : 0.25 * f;
+                const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
+                controller.SetFreeCameraMatrices(orbit * view, projection);
+                const auto t0 = Clock::now();
+                engine.Execute(index, &tasks);
+                const auto t1 = Clock::now();
+                std::map<std::string, double> frameMaps;
+                for (auto &[name, b] : buffers) {
+                    const auto m0 = Clock::now();
+                    b->Map();
+                    b->Unmap();
+                    frameMaps[name] = Ms(m0, Clock::now());
                 }
-                const VtDictionary stats = delegate->GetRenderStats();
-                auto it = stats.find("gpuTimeMs");
-                gpuMs += it != stats.end() && it->second.IsHolding<double>() ? it->second.UncheckedGet<double>() : 0.0;
-                it = stats.find("renderTimeMs");
-                renderMs += it != stats.end() && it->second.IsHolding<double>() ? it->second.UncheckedGet<double>() : 0.0;
-                it = stats.find("gpuPassMs");
-                if (it != stats.end() && it->second.IsHolding<VtDictionary>()) {
-                    for (const auto &[name, ms] : it->second.UncheckedGet<VtDictionary>()) {
-                        passMs[name] += ms.IsHolding<double>() ? ms.UncheckedGet<double>() : 0.0;
+                const auto t2 = Clock::now();
+                if (f >= warmup) {
+                    executeMs += Ms(t0, t1);
+                    total += Ms(t0, t2);
+                    times.push_back(Ms(t0, t2));
+                    for (auto &[name, ms] : frameMaps) {
+                        mapMs[name] += ms;
+                    }
+                    const VtDictionary stats = delegate->GetRenderStats();
+                    auto it = stats.find("gpuTimeMs");
+                    gpuMs += it != stats.end() && it->second.IsHolding<double>() ? it->second.UncheckedGet<double>() : 0.0;
+                    it = stats.find("renderTimeMs");
+                    renderMs += it != stats.end() && it->second.IsHolding<double>() ? it->second.UncheckedGet<double>() : 0.0;
+                    it = stats.find("gpuPassMs");
+                    if (it != stats.end() && it->second.IsHolding<VtDictionary>()) {
+                        for (const auto &[name, ms] : it->second.UncheckedGet<VtDictionary>()) {
+                            passMs[name] += ms.IsHolding<double>() ? ms.UncheckedGet<double>() : 0.0;
+                        }
                     }
                 }
             }
-        }
-        std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s\n", width, height, frames,
-                    TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "");
-        std::sort(times.begin(), times.end());
-        const double median = times[times.size() / 2];
-        std::printf("  frame %.2f ms (%.1f fps), median %.2f: execute %.2f (Render %.2f), gpu %.2f", total / frames,
-                    1000.0 * frames / total, median, executeMs / frames, renderMs / frames, gpuMs / frames);
-        for (auto &[name, ms] : mapMs) {
-            std::printf(", map %s %.2f", name.c_str(), ms / frames);
-        }
-        std::printf("\n  gpu passes:");
-        for (auto &[name, ms] : passMs) {
-            if (ms / frames >= 0.1) {
-                std::printf(" %s %.2f", name.c_str(), ms / frames);
+            std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s\n", width, height, frames,
+                        TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "");
+            std::sort(times.begin(), times.end());
+            const double median = times[times.size() / 2];
+            std::printf("  frame %.2f ms (%.1f fps), median %.2f: execute %.2f (Render %.2f), gpu %.2f", total / frames,
+                        1000.0 * frames / total, median, executeMs / frames, renderMs / frames, gpuMs / frames);
+            for (auto &[name, ms] : mapMs) {
+                std::printf(", map %s %.2f", name.c_str(), ms / frames);
             }
+            std::printf("\n  gpu passes:");
+            for (auto &[name, ms] : passMs) {
+                if (ms / frames >= 0.1) {
+                    std::printf(" %s %.2f", name.c_str(), ms / frames);
+                }
+            }
+            std::puts("");
         }
-        std::puts("");
 
-        int failures = 0;
         if (ids) {
             // Every primId names an rprim of the index, and an instanceId is
             // in range of that rprim's instancer (Houdini's render keys).
