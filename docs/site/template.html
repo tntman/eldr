@@ -1,0 +1,159 @@
+<title>Eldr Documentation</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #fbfaf8; --panel: #f3f1ed; --fg: #1d1b18; --muted: #6a645b; --line: #e3dfd8;
+  --accent: #c2410c; --accent-soft: #fdeee4; --code-bg: #f0ede7; --mark: #fde68a;
+  --font: "Inter", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --nav-w: 280px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #15130f; --panel: #1d1a16; --fg: #ebe6de; --muted: #a39b8f; --line: #2f2b25;
+  --accent: #fb8a4a; --accent-soft: #2c1d13; --code-bg: #241f1a; --mark: #7c5d12; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #15130f; --panel: #1d1a16; --fg: #ebe6de; --muted: #a39b8f; --line: #2f2b25;
+  --accent: #fb8a4a; --accent-soft: #2c1d13; --code-bg: #241f1a; --mark: #7c5d12; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.6; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+.layout { display: grid; grid-template-columns: var(--nav-w) minmax(0, 1fr); min-height: 100vh; }
+nav { position: sticky; top: env(safe-area-inset-top, 0px); height: calc(100vh - env(safe-area-inset-top, 0px)); overflow-y: auto; background: var(--panel); border-right: 1px solid var(--line); padding: 20px 14px 40px max(16px, env(safe-area-inset-left, 0px)); display: flex; flex-direction: column; gap: 14px; }
+.brand { font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+.brand span { color: var(--accent); }
+.brand small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+#q { font: inherit; font-size: 14px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; width: 100%; }
+#q:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.hits { font-size: 12px; color: var(--muted); min-height: 1em; }
+.toc { display: flex; flex-direction: column; gap: 2px; }
+.toc .doc { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 4px; }
+.toc a { display: block; color: var(--fg); text-decoration: none; font-size: 13.5px; padding: 3px 8px; border-radius: 5px; border-left: 2px solid transparent; }
+.toc a:hover { background: var(--accent-soft); }
+.toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+.toc a.dim { opacity: 0.35; }
+main { min-width: 0; padding: 32px max(16px, env(safe-area-inset-right, 0px)) 120px 48px; }
+article { max-width: 920px; }
+article > section.doc + section.doc { border-top: 1px solid var(--line); margin-top: 56px; padding-top: 24px; }
+h1 { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 12px; text-wrap: balance; }
+h2 { font-size: 21px; font-weight: 600; margin: 40px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--line); text-wrap: balance; scroll-margin-top: 16px; }
+h3 { font-size: 16.5px; font-weight: 600; margin: 26px 0 6px; scroll-margin-top: 16px; }
+h1, h2, h3 { scroll-margin-top: 16px; }
+p, li { max-width: 74ch; }
+a { color: var(--accent); }
+code { font-family: var(--mono); font-size: 0.86em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+pre code { padding: 0; background: none; }
+.tw { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th { text-align: left; font-weight: 600; background: var(--panel); position: sticky; top: 0; }
+th, td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { min-width: 180px; }
+td:first-child code { white-space: nowrap; }
+mark { background: var(--mark); color: inherit; border-radius: 2px; }
+.hidden { display: none !important; }
+#menu { display: none; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: fixed; inset: 0 auto 0 0; width: min(86vw, 320px); z-index: 20; transform: translateX(-102%); transition: transform 0.2s; box-shadow: 0 0 40px rgba(0,0,0,0.2); }
+  nav.open { transform: none; }
+  #menu { display: inline-flex; position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); z-index: 21; font: inherit; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 999px; padding: 10px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
+  main { padding: 24px max(16px, env(safe-area-inset-right, 0px)) 100px max(16px, env(safe-area-inset-left, 0px)); }
+}
+</style>
+
+<div class="layout">
+  <nav id="nav" aria-label="Contents">
+    <div class="brand"><span>Eldr</span> documentation<small>Hydra/Vulkan renderer for VFX</small></div>
+    <input id="q" type="search" placeholder="Search settings and text" aria-label="Search">
+    <div class="hits" id="hits" aria-live="polite"></div>
+    <div class="toc" id="toc"></div>
+  </nav>
+  <main><article id="content">Loading…</article></main>
+</div>
+<button id="menu" type="button" aria-controls="nav" aria-expanded="false">Contents</button>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script id="docs" type="application/json">/*DOCS*/[]</script>
+<script>
+const DOCS = JSON.parse(document.getElementById("docs").textContent);
+const slug = t => t.toLowerCase().trim().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/ /g, "-");
+const content = document.getElementById("content"), toc = document.getElementById("toc");
+content.textContent = "";
+
+for (const d of DOCS) {
+  const sec = document.createElement("section");
+  sec.className = "doc"; sec.id = d.id;
+  sec.innerHTML = marked.parse(d.md);
+  // Headings get "<doc>-<slug>" ids; links to "x.md#y" go to "#x-y".
+  sec.querySelectorAll("h1,h2,h3").forEach(h => { h.id = h.tagName === "H1" ? d.id : d.id + "-" + slug(h.textContent); });
+  sec.querySelectorAll("a[href]").forEach(a => {
+    const m = a.getAttribute("href").match(/^([\w-]+)\.md(?:#(.*))?$/) || a.getAttribute("href").match(/^()#(.*)$/);
+    if (m) a.setAttribute("href", "#" + (m[1] || d.id) + (m[2] ? "-" + m[2] : ""));
+  });
+  sec.querySelectorAll("table").forEach(t => { const w = document.createElement("div"); w.className = "tw"; t.replaceWith(w); w.append(t); });
+  // Group each h2 with what follows it, so search can hide whole parts.
+  const kids = [...sec.children]; let part = null;
+  for (const k of kids) {
+    if (k.tagName === "H2") { part = document.createElement("div"); part.className = "part"; k.before(part); }
+    if (part) part.append(k);
+  }
+  content.append(sec);
+  const doc = document.createElement("div"); doc.className = "doc"; doc.textContent = d.title; toc.append(doc);
+  const top = document.createElement("a"); top.href = "#" + d.id; top.textContent = "Overview"; toc.append(top);
+  sec.querySelectorAll("h2").forEach(h => { const a = document.createElement("a"); a.href = "#" + h.id; a.textContent = h.textContent; toc.append(a); });
+}
+
+// Highlight the section in view.
+const links = new Map([...toc.querySelectorAll("a")].map(a => [a.getAttribute("href").slice(1), a]));
+const spy = new IntersectionObserver(es => {
+  for (const e of es) if (e.isIntersecting) {
+    toc.querySelectorAll("a.active").forEach(a => a.classList.remove("active"));
+    const a = links.get(e.target.id); if (a) { a.classList.add("active"); a.scrollIntoView({ block: "nearest" }); }
+  }
+}, { rootMargin: "0px 0px -75% 0px" });
+content.querySelectorAll("h1,h2").forEach(h => spy.observe(h));
+
+// Search: table rows, list items and paragraphs that don't match are hidden;
+// parts with no match at all collapse, and the nav dims them.
+const q = document.getElementById("q"), hits = document.getElementById("hits");
+const blocks = [...content.querySelectorAll("tbody tr, li, p, pre, h3")];
+const original = new Map();
+function search() {
+  const t = q.value.trim().toLowerCase();
+  for (const [el, html] of original) el.innerHTML = html;
+  original.clear();
+  let n = 0;
+  for (const b of blocks) {
+    const ok = !t || b.textContent.toLowerCase().includes(t);
+    b.classList.toggle("hidden", !ok);
+    if (ok && t) { n++; mark(b, t); }
+  }
+  content.querySelectorAll(".part").forEach(p => {
+    const any = !t || p.querySelector("h2").textContent.toLowerCase().includes(t) || [...p.querySelectorAll("tbody tr, li, p, pre, h3")].some(b => !b.classList.contains("hidden"));
+    p.classList.toggle("hidden", !any);
+    if (any && t) p.querySelectorAll(".hidden").length && p.querySelectorAll("table").forEach(tb => tb.closest(".tw").classList.toggle("hidden", !tb.querySelector("tbody tr:not(.hidden)")));
+    const a = links.get(p.querySelector("h2").id); if (a) a.classList.toggle("dim", !any);
+  });
+  if (!t) content.querySelectorAll(".tw.hidden").forEach(w => w.classList.remove("hidden"));
+  hits.textContent = t ? `${n} matching ${n === 1 ? "block" : "blocks"}` : "";
+}
+function mark(el, t) {
+  const walk = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  const nodes = []; while (walk.nextNode()) nodes.push(walk.currentNode);
+  if (!nodes.some(x => x.nodeValue.toLowerCase().includes(t))) return;
+  original.set(el, el.innerHTML);
+  for (const node of nodes) {
+    const i = node.nodeValue.toLowerCase().indexOf(t); if (i < 0) continue;
+    const m = document.createElement("mark"); const r = node.splitText(i); r.splitText(t.length);
+    m.textContent = r.nodeValue; r.replaceWith(m);
+  }
+}
+let timer; q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 120); });
+
+// Phone: the nav slides in from the left.
+const nav = document.getElementById("nav"), menu = document.getElementById("menu");
+menu.addEventListener("click", () => { const o = nav.classList.toggle("open"); menu.setAttribute("aria-expanded", o); });
+toc.addEventListener("click", e => { if (e.target.tagName === "A") { nav.classList.remove("open"); menu.setAttribute("aria-expanded", "false"); } });
+if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
+</script>
