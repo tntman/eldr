@@ -2306,6 +2306,9 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
         vkCmdSetViewport(_cmd, 0, 1, &vp);
         vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+        // Dynamic state does not survive other pipelines bound meanwhile
+        // (the sky's, volumes'): set per rendering, before any draw.
+        vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
         PushDraw(_cmd, _layout, viewProj, 0, motion);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
@@ -2534,6 +2537,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
     const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
     vkCmdSetViewport(_cmd, 0, 1, &vp);
     vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+    vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);  // see _RenderTranslucency
     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
     PushDraw(_cmd, _layout, viewProj, 0);
     const VkDeviceSize vertexOffset = 0;
@@ -3650,9 +3654,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _RenderTranslucentDepth(gpu, jitteredViewProj);
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
                             VolumePass::kBehind);
-        // Their pipelines dropped the dynamic depth write the translucency
-        // pass's rely on.
-        vkCmdSetDepthWriteEnable(_cmd, VK_FALSE);
         pass("volumes");
     }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
