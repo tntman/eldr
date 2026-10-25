@@ -47,7 +47,8 @@ void main()
     vec3 objectN = n0 * b.x + n1 * b.y + n2 * b.z;
     vec3 n = dot(objectN, objectN) > 1e-12 ? normalize(vec3(objectN * gl_WorldToObjectEXT)) : ng;
     hit.flags = (dot(n, dir) > 0.0 ? kHitBackface : 0u) |
-                ((rtSlots[slot].flags & kRtSlotEmitter) != 0u ? kHitEmitter : 0u);
+                ((rtSlots[slot].flags & kRtSlotEmitter) != 0u ? kHitEmitter : 0u) |
+                ((rtSlots[slot].flags & kRtSlotRefracts) != 0u ? kHitRefracts : 0u);
     ng = dot(ng, dir) > 0.0 ? -ng : ng;
     n = dot(n, ng) < 0.0 ? -n : n;
 
@@ -77,4 +78,5 @@ void main()
     hit.baseColor = baseColor;
     hit.metallic = metallic;
     hit.emissive = emissive;
+    hit.material = d.material;
 }

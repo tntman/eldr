@@ -9,7 +9,7 @@ layout(set = 0, binding = 52) uniform accelerationStructureEXT tlas;
 layout(std430, set = 0, binding = 55) readonly buffer RtVertices { float rtVertices[]; };
 layout(std430, set = 0, binding = 56) readonly buffer RtIndices { uint rtIndices[]; };
 // Per mesh slot: its BLAS's address (0: none), first index, flags
-// (kRtSlotEmitter, 2: cutout, see tlas.comp).
+// (kRtSlotEmitter, 2: cutout, kRtSlotRefracts, see tlas.comp).
 struct RtSlot {
     uvec2 blas;
     uint firstIndex;
@@ -19,6 +19,11 @@ layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]
 
 // Every instance of the mesh is also a light (Scene::SetEmissiveLights).
 const uint kRtSlotEmitter = 1u;
+// A refracting translucent mesh: in the TLAS under kMaskRefracts alone, so
+// only refraction rays (rt_refraction.rgen, cull mask kMaskAll) see it;
+// the others trace kMaskOpaque.
+const uint kRtSlotRefracts = 4u;
+const uint kMaskOpaque = 1u, kMaskRefracts = 2u, kMaskAll = 0xFFu;
 
 // Skinned instances (rt_skin.comp): the TLAS's instances from
 // rt.skinned.x on, one per entry here, each with a BLAS of its own over its
@@ -46,10 +51,11 @@ struct RtHit {
     vec3 baseColor;
     float metallic;
     vec3 emissive;
-    float pad;
+    uint material;  // the hit's (kNoMaterial: none)
 };
 const uint kHitBackface = 1u;  // the shading normal faces away from the ray
 const uint kHitEmitter = 2u;   // a light stands in for its emission (kRtSlotEmitter)
+const uint kHitRefracts = 4u;  // a refracting translucent mesh (kRtSlotRefracts)
 
 // Corner k (0..2) of a mesh slot's triangle in the vertex pool; then its
 // position, normal, uv (object space) and displayColor.

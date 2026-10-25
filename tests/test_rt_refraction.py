@@ -1,0 +1,177 @@
+"""Ray-traced refraction (eldr:rtRefraction) through Hydra, with an
+orthographic camera:
+- a glass ball (ior 1.5) bends rays from its rim far sideways, onto a red
+  emissive card that is off screen: traced, the rim shows red; screen
+  space (rtRefraction 0) can't show it;
+- a slab of glass (ior 1.5, thickness 1) turned 45 degrees in front of a
+  white/black edge shifts the edge sideways by t sin(45 - r) / cos(r), r the
+  refracted angle (0.329 units).
+Needs a GPU with ray tracing.
+Run: usdenv.cmd python tests\\test_rt_refraction.py"""
+import math
+import sys
+
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
+from PySide6.QtWidgets import QApplication
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdShade
+
+SIZE = 256  # pixels over 4 units
+
+app = QApplication(sys.argv)
+surface = QOffscreenSurface()
+surface.create()
+glContext = QOpenGLContext()  # must stay referenced while rendering
+glContext.create()
+glContext.makeCurrent(surface)
+fboFormat = QOpenGLFramebufferObjectFormat()
+fboFormat.setInternalTextureFormat(0x881A)  # GL_RGBA16F
+fbo = QOpenGLFramebufferObject(QSize(SIZE, SIZE), fboFormat)
+fbo.bind()
+
+C, F = Sdf.ValueTypeNames.Color3f, Sdf.ValueTypeNames.Float
+
+
+def material(stage, path, inputs):
+    mat = UsdShade.Material.Define(stage, path)
+    shader = UsdShade.Shader.Define(stage, path + "/surface")
+    shader.CreateIdAttr("UsdPreviewSurface")
+    for name, (type, value) in inputs.items():
+        shader.CreateInput(name, type).Set(value)
+    mat.CreateSurfaceOutput().ConnectToSource(shader.CreateOutput("surface", Sdf.ValueTypeNames.Token))
+    return mat
+
+
+def mesh(stage, path, points, counts, indices, mat, normals=None):
+    m = UsdGeom.Mesh.Define(stage, path)
+    m.CreatePointsAttr(points)
+    m.CreateFaceVertexCountsAttr(counts)
+    m.CreateFaceVertexIndicesAttr(indices)
+    m.CreateSubdivisionSchemeAttr("none")
+    if normals:
+        m.CreateNormalsAttr(normals)
+        m.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
+    UsdShade.MaterialBindingAPI.Apply(m.GetPrim()).Bind(mat)
+    return m
+
+
+def quad(stage, path, x0, y0, x1, y1, z, mat):
+    return mesh(stage, path, [(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z)], [4], [0, 1, 2, 3], mat)
+
+
+def stage_with_camera():
+    stage = Usd.Stage.CreateInMemory()
+    camera = UsdGeom.Camera.Define(stage, "/cam")
+    camera.CreateProjectionAttr("orthographic")
+    camera.CreateHorizontalApertureAttr(40.0)  # tenths of a unit: 4 units across
+    camera.CreateVerticalApertureAttr(40.0)
+    camera.AddTranslateOp().Set(Gf.Vec3d(0, 0, 5))
+    glass = material(stage, "/mtl/glass", {"opacity": (F, 0.0), "ior": (F, 1.5), "roughness": (F, 0.0),
+                                            "diffuseColor": (C, (0, 0, 0))})
+    return stage, camera.GetCamera(Usd.TimeCode.Default()).frustum, glass
+
+
+def render(stage, frustum, rt):
+    engine = UsdImagingGL.Engine()
+    assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+    engine.SetRendererSetting("eldr:postProcess", False)
+    engine.SetRendererSetting("eldr:rtRefraction", 2 if rt else 0)
+    engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
+    engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
+    params = UsdImagingGL.RenderParams()
+    params.clearColor = Gf.Vec4f(0, 0, 0, 1)
+    for _ in range(3):
+        engine.Render(stage.GetPseudoRoot(), params)
+    image = fbo.toImage()
+    del engine
+    return image
+
+
+def pixel(image, x, y):  # world (x, y) in [-2, 2]
+    c = image.pixelColor(min(int((x + 2) / 4 * SIZE), SIZE - 1), min(int((2 - y) / 4 * SIZE), SIZE - 1))
+    return c.redF(), c.greenF(), c.blueF()
+
+
+failures = []
+
+
+def expect(ok, what):
+    print("ok:  " if ok else "FAIL:", what)
+    if not ok:
+        failures.append(what)
+
+
+# The ball: radius 1 at the origin, the red card left of the frame.
+stage, frustum, glass = stage_with_camera()
+rings, segments = 48, 96
+points, normals, indices = [], [], []
+for i in range(rings + 1):
+    theta = math.pi * i / rings
+    for j in range(segments):
+        phi = 2 * math.pi * j / segments
+        n = (math.sin(theta) * math.cos(phi), math.cos(theta), math.sin(theta) * math.sin(phi))
+        points.append(n)
+        normals.append(n)
+for i in range(rings):
+    for j in range(segments):
+        a, b = i * segments + j, i * segments + (j + 1) % segments
+        indices += [a, b, b + segments, a + segments]
+mesh(stage, "/ball", points, [4] * (rings * segments), indices, glass, normals)
+red = material(stage, "/mtl/red", {"diffuseColor": (C, (0, 0, 0)), "emissiveColor": (C, (1, 0, 0))})
+quad(stage, "/card", -9, -4, -2.5, 4, -3, red)
+
+
+def red_pixels(image):
+    count = 0
+    for py in range(SIZE):
+        for px in range(SIZE):
+            x, y = px / SIZE * 4 - 2, 2 - py / SIZE * 4
+            r, g, b = pixel(image, x, y)
+            count += x * x + y * y < 0.95 and r > 0.2 and r > 4 * (g + b)
+    return count
+
+
+traced, screen = red_pixels(render(stage, frustum, True)), red_pixels(render(stage, frustum, False))
+print("red pixels in the ball: traced", traced, "screen space", screen)
+expect(traced > 200, "traced refraction shows the off-screen card through the ball")
+expect(screen == 0, "screen-space refraction can't")
+
+# The slab: 3 x 3 x 1, turned 45 degrees about y, in front of an edge
+# (white emissive left of x = 0, black right of it).
+stage, frustum, glass = stage_with_camera()
+corners = [(x, y, z) for x in (-1.5, 1.5) for y in (-1.5, 1.5) for z in (-0.5, 0.5)]
+faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+points, indices = [], []
+for f in faces:  # four points per face: flat normals
+    indices += [len(points) + k for k in range(4)]
+    points += [corners[k] for k in f]
+slab = mesh(stage, "/slab", points, [4] * 6, indices, glass)
+slab.AddRotateYOp().Set(45.0)
+white = material(stage, "/mtl/white", {"diffuseColor": (C, (0, 0, 0)), "emissiveColor": (C, (1, 1, 1))})
+black = material(stage, "/mtl/black", {"diffuseColor": (C, (0, 0, 0))})
+quad(stage, "/white", -4, -4, 0, 4, -3, white)
+quad(stage, "/black", 0, -4, 4, 4, -3, black)
+
+
+def edge(image):
+    """Where the rows through y in [-0.3, 0.3] fall from white to black."""
+    rows = [y / 20 for y in range(-6, 7)]
+    xs = [px / SIZE * 4 - 2 for px in range(SIZE)]
+    profile = [sum(pixel(image, x, y)[1] for y in rows) / len(rows) for x in xs]
+    inside = [i for i, x in enumerate(xs) if -0.9 < x < 0.9]
+    high = max(profile[i] for i in inside)
+    for i in inside:
+        if profile[i] < 0.5 * high:
+            return xs[i] - 2 / SIZE  # the crossing lies within this pixel
+    return None
+
+
+r = math.asin(math.sin(math.radians(45)) / 1.5)
+expected = math.sin(math.radians(45) - r) / math.cos(r)
+shift = edge(render(stage, frustum, True))
+print("edge shift: traced", shift, "expected", round(expected, 3))
+expect(shift is not None and abs(abs(shift) - expected) < 0.05, "the slab shifts the edge by t sin(45 - r) / cos(r)")
+
+print("FAILED" if failures else "OK")
+sys.exit(1 if failures else 0)

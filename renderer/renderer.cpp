@@ -61,6 +61,7 @@ struct FrameData {
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
     float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
 };
 
 namespace {
@@ -723,6 +724,8 @@ void Renderer::_CreateDescriptors()
         {57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {59, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        // Traced refraction (RayTracing::Work::refraction), bound while on.
+        {86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
         {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
@@ -770,7 +773,7 @@ void Renderer::_CreateDescriptors()
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
-    std::fill(bindingFlags + 33, bindingFlags + 42, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    std::fill(bindingFlags + 33, bindingFlags + 43, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86
     std::fill(bindingFlags + kBindings - 4, bindingFlags + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flags.bindingCount = kBindings;
@@ -2896,6 +2899,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                          gpu.instanceCapacity <= kMaxRtInstances - kMaxRtSkinned;
     rt.shadows = rtScene && frame.depthPrepass && frame.rtShadows;
     rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
+    // Traced refraction: in final quality (or always), for scenes with
+    // refracting meshes.
+    rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
+                    (frame.rtRefraction >= 2 || (frame.rtRefraction == 1 && film && _filmFinal));
+    rt.refractionBounces = frame.rtRefractionBounces;
     rt.shadowSamples = frame.rtShadowSamples;
     rt.reflectionSamples = frame.rtReflectionSamples;
     rt.sun = gpu.shadowLight;
@@ -3039,7 +3047,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
-    const bool rayTracing = rt.shadows || rt.reflections || rt.gi;
+    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction;
     // Time samples move the scene without a new version; the TLAS follows
     // (and once more when they end).
     rt.moving = timeSample || _shutterMoved;
@@ -3143,6 +3151,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.features[0] |= kFeatureRefraction;
         fd.translucency[0] = float(std::clamp(frame.refractionSamples, 1u, 16u));
         fd.translucency[1] = float(_transparency.BackgroundLevels());
+        fd.rtRefraction[0] = rt.refraction ? 1u : 0u;
     }
     // The shading pipelines with the code of this frame's optional features.
     // Bit 0 (kFeatureNormalMaps, never optional) marks the light splits'

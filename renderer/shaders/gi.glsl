@@ -15,6 +15,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
     uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
+    uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
 } rt;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile

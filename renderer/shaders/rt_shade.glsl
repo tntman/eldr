@@ -7,18 +7,24 @@ layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(location = 0) rayPayloadEXT RtHit hit;
 layout(location = 1) rayPayloadEXT float unoccluded;
 
-// Closest surface along a ray, cone: its spread angle in radians.
-void Trace(vec3 origin, vec3 dir, float cone)
+// Closest surface along a ray, cone: its spread angle in radians; of the
+// instances in `mask` (rt.glsl's kMask*).
+void TraceMask(vec3 origin, vec3 dir, float cone, uint mask)
 {
     hit.t = cone;
-    traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0xFF, 0, 0, 0, origin, 0.0, dir, 1e30, 0);
+    traceRayEXT(tlas, gl_RayFlagsNoneEXT, mask, 0, 0, 0, origin, 0.0, dir, 1e30, 0);
+}
+
+void Trace(vec3 origin, vec3 dir, float cone)
+{
+    TraceMask(origin, dir, cone, kMaskOpaque);
 }
 
 // 1 if nothing is in the way up to tMax.
 float TraceShadow(vec3 origin, vec3 dir, float tMax)
 {
     unoccluded = 0.0;
-    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF, 1, 0, 1,
+    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, kMaskOpaque, 1, 0, 1,
                 origin, 0.0, dir, tMax, 1);
     return unoccluded;
 }

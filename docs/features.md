@@ -292,6 +292,21 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
 - **Layers** (`multiRefraction`): refracting meshes draw back to front and the
   colour is copied again after each, so glass behind glass shows (up to
   `refractionLayers` copies).
+- **Ray-traced refraction** (`rtRefraction`, needs ray tracing and the
+  prepass; on in final quality by default): refracting meshes join the TLAS
+  under a mask of their own (shadow, reflection and GI rays still pass
+  through them). Per pixel a ray finds the nearest refracting surface and
+  follows its refracted ray through the glass, up to `rtRefractionBounces`
+  interfaces: into and out of each medium, glass behind glass, total internal
+  reflection, a Fresnel choice between reflecting and refracting after the
+  first surface, Beer-Lambert absorption over `transmission_depth`, and a GGX
+  microfacet normal per sample by the roughness (rough glass converges over
+  the film). It is shaded at its hit as traced reflections are, so what is
+  off screen or behind other objects shows through glass. The front surface
+  keeps its own Fresnel, tint and reflections; other refracting fragments at
+  the pixel stay screen space. Interfaces after the first use the materials'
+  constants and textures (not programs), the first the hit's interpolated
+  normal and constant ior.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
@@ -299,7 +314,7 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   alpha by their opacity.
 - **Subsurface** (`subsurface`): see Materials.
 
-Screen-space limits: only what is on screen is refracted, and OIT is an
+Screen-space limits (without ray-traced refraction): only what is on screen is refracted, and OIT is an
 approximation (sorting is per mesh, not per triangle).
 
 ## Volumes and fog
@@ -685,7 +700,9 @@ GI and reflections
 Transparency
 
 - OIT and sorting are per mesh; one mesh's triangles keep their order.
-- Refraction is screen space; the translucent depth for volumes covers whole
+- Refraction is screen space outside final quality (ray-traced refraction
+  traces only the nearest refracting surface's ray, and skips skinned glass);
+  the translucent depth for volumes covers whole
   meshes and only the nearest layer splits a volume ray.
 - Holdout mattes cut everything at the pixel (also layers in front); the
   holdout opacity comes from constants or textures, not material programs.

@@ -713,7 +713,7 @@ public:
         // Ray tracing (RayTracing builds a BLAS per slot from these, per
         // instance for skinned ones): per mesh slot its vertices and
         // triangles in the pools, `version` unique per upload, 0 for slots
-        // ray tracing skips (not drawn or translucent).
+        // ray tracing skips (not drawn, or translucent and not refracting).
         struct SlotGeometry {
             uint32_t vertexOffset, vertexCount, firstIndex, indexCount;
             uint64_t version;
@@ -721,6 +721,7 @@ public:
             bool emitter;  // every instance is also a light (SetEmissiveLights): GI must not count it twice
             bool skinned;  // posed per instance (LargestSkinned)
             bool displaced = false;  // its material displaces (Gpu::kDisplaced)
+            bool refracts = false;   // translucent and refracting: traced refraction only (RayTracing::Work)
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it
