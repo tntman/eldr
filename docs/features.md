@@ -209,8 +209,9 @@ SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
 (light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
 radius thick); `ssgiThickness` makes rays respect thin
 and grazing surfaces. `emissiveLights`, `fogGiAmbient` and `probeNormalize`
-use the GI. With the film, `giPreconverge` waits for the probes (about 33
-extra frames).
+use the GI. With the film, `giPreconverge` waits for the probes: their about 33
+updates run in the first frame, as probe traces and updates alone (no raster or
+shading in between), not as 33 frames.
 
 Typical costs on a 1080 Ti at 1280x720: probes 2-3 ms (Kitchen), SSGI
 0.67 ms at half resolution.

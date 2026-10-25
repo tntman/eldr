@@ -10,6 +10,17 @@
 
 namespace vkr {
 
+// std140 mirror of RayTracingData in shaders/gi.glsl.
+struct RayTracingData {
+    uint32_t shadowLights[4];
+    uint32_t params[4];  // frame, shadow rays per light, reflection rays, light shadowed at hits
+    float giOrigin[4];
+    uint32_t giCounts[4];
+    float giParams[4];
+    float giRotation[16];
+    uint32_t skinned[4];  // the TLAS's first skinned instance, how many
+};
+
 // Hardware ray tracing (Device::rayTracing): a BLAS per rigid opaque or
 // cutout mesh, a TLAS over the instance pool, and the passes tracing them.
 // Pascal has ray tracing pipelines (NVIDIA's compute fallback) but no ray
@@ -37,6 +48,7 @@ public:
         uint32_t giProbes = 16;     // along the scene's longest side
         uint32_t giRays = 64;       // per probe and frame
         float giHysteresis = 0.97f; // of the probes' running average
+        bool giBurst = false;       // fresh probes: all their settling updates in this frame
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
@@ -174,6 +186,7 @@ private:
     float _giOrigin[3] = {}, _giSpacing = 0;
     uint32_t _giCounts[3] = {}, _giPerRow = 1, _giAlong = 0;
     uint32_t _giFrames = 0;  // since the probes started over
+    std::vector<RayTracingData> _giBurst;  // uniforms of the extra updates this frame
 };
 
 } // namespace vkr

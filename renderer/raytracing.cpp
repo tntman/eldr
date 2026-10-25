@@ -48,16 +48,6 @@ const uint32_t kGiUpdateComp[] =
 constexpr uint32_t kMaxProbes = 16384, kProbesPerRow = 128, kMaxProbeRays = 512;
 constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors, as gi.glsl
 
-// std140 mirror of RayTracingData in shaders/gi.glsl.
-struct RayTracingData {
-    uint32_t shadowLights[4];
-    uint32_t params[4];  // frame, shadow rays per light, reflection rays, light shadowed at hits
-    float giOrigin[4];
-    uint32_t giCounts[4];
-    float giParams[4];
-    float giRotation[16];
-    uint32_t skinned[4];  // the TLAS's first skinned instance, how many
-};
 
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
 constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2;
@@ -133,7 +123,7 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     Check(vkCreateSampler(_dev.device, &sci, nullptr, &_sampler), "vkCreateSampler");
-    _dev.Reserve(_uniforms, sizeof(RayTracingData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+    _dev.Reserve(_uniforms, sizeof(RayTracingData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     std::memset(_uniforms.mapped, 0, sizeof(RayTracingData));
     _dev.Reserve(_slots, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _dev.Reserve(_skinnedTable, 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -249,12 +239,17 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     Check(vkCreatePipelineLayout(device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 
     VkResult r = VK_SUCCESS;
+    // The displacement, as displace.glsl's displaced pipelines (constant 10;
+    // tlas.comp has none).
+    const VkBool32 displaced = VK_TRUE;
+    const VkSpecializationMapEntry displacedEntry{10, 0, sizeof(VkBool32)};
+    const VkSpecializationInfo displacedSpec{1, &displacedEntry, sizeof(displaced), &displaced};
     for (auto [code, bytes, pipeline] : {std::tuple{kTlasComp, sizeof(kTlasComp), &_tlasPipeline},
                                          std::tuple{kSkinComp, sizeof(kSkinComp), &_skinPipeline}}) {
         VkShaderModule module = CreateShaderModule(device, code, bytes);
         VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
-                     module, "main"};
+                     module, "main", &displacedSpec};
         cci.layout = _layout;
         r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, pipeline);
         vkDestroyShaderModule(device, module, nullptr);
@@ -264,12 +259,8 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
                  VK_NULL_HANDLE, "main"};
     cci.layout = _layout;
-    // The displacement, as displace.glsl's displaced pipelines (constant 10).
     VkShaderModule displaceModule = CreateShaderModule(device, kDisplaceComp, sizeof(kDisplaceComp));
     cci.stage.module = displaceModule;
-    const VkBool32 displaced = VK_TRUE;
-    const VkSpecializationMapEntry displacedEntry{10, 0, sizeof(VkBool32)};
-    const VkSpecializationInfo displacedSpec{1, &displacedEntry, sizeof(displaced), &displaced};
     cci.stage.pSpecializationInfo = &displacedSpec;
     r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_displacePipeline);
     vkDestroyShaderModule(device, displaceModule, nullptr);
@@ -722,7 +713,8 @@ VkDeviceSize RayTracing::_PrepareSkinned(const Scene::Gpu &gpu)
         scratch += AlignUp(s.built ? s.updateScratch : s.buildScratch, _scratchAlignment);
         _skinnedMostVertices = std::max(_skinnedMostVertices, s.vertexCount);
         table.insert(table.end(), {uint32_t(s.blas.address), uint32_t(s.blas.address >> 32), s.slot, s.firstVertex,
-                                   instance, s.vertexCount, s.flags, 0u});
+                                   instance, s.vertexCount, s.flags,
+                                   gpu.slotGeometry[s.slot].displaced && _work.displacement != 0.0f ? 1u : 0u});
     }
     if (!table.empty()) {
         _dev.Reserve(_skinnedTable, table.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -916,27 +908,39 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.giOrigin[3] = _giSpacing;
     std::copy(_giCounts, _giCounts + 3, d.giCounts);
     d.giCounts[3] = _giPerRow;
-    // While the probes are fresh, a plain average of the frames so far.
+    // While the probes are fresh, a plain average of the frames so far; a
+    // random rotation of the ray directions (a random unit quaternion,
+    // Shoemake), different every update.
     const float hysteresis = std::clamp(work.giHysteresis, 0.0f, 0.99f);
-    d.giParams[0] = std::min(hysteresis, float(_giFrames) / float(_giFrames + 1));
-    d.giParams[1] = float(_work.giRays);
-    d.giParams[2] = 2.0f * _giSpacing;
-    // A random rotation of the ray directions (a random unit quaternion,
-    // Shoemake), different every frame.
-    uint32_t seed = _frame * 747796405u + 2891336453u;
-    auto random = [&]() {
-        seed = seed * 747796405u + 2891336453u;
-        return float((seed >> 8) & 0xFFFFFF) / 16777216.0f;
+    auto step = [&](RayTracingData &u) {
+        u.giParams[0] = std::min(hysteresis, float(_giFrames) / float(_giFrames + 1));
+        u.giParams[1] = float(_work.giRays);
+        u.giParams[2] = 2.0f * _giSpacing;
+        uint32_t seed = _frame * 747796405u + 2891336453u;
+        auto random = [&]() {
+            seed = seed * 747796405u + 2891336453u;
+            return float((seed >> 8) & 0xFFFFFF) / 16777216.0f;
+        };
+        const float u0 = random(), u1 = 6.2831853f * random(), u2 = 6.2831853f * random();
+        const float x = std::sqrt(1 - u0) * std::sin(u1), y = std::sqrt(1 - u0) * std::cos(u1),
+                    z = std::sqrt(u0) * std::sin(u2), w = std::sqrt(u0) * std::cos(u2);
+        const float m[16] = {1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y), 0,
+                             2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x), 0,
+                             2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y), 0,
+                             0, 0, 0, 1};
+        std::copy(m, m + 16, u.giRotation);
+        ++_giFrames;
     };
-    const float u0 = random(), u1 = 6.2831853f * random(), u2 = 6.2831853f * random();
-    const float x = std::sqrt(1 - u0) * std::sin(u1), y = std::sqrt(1 - u0) * std::cos(u1),
-                z = std::sqrt(u0) * std::sin(u2), w = std::sqrt(u0) * std::cos(u2);
-    const float m[16] = {1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y), 0,
-                         2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x), 0,
-                         2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y), 0,
-                         0, 0, 0, 1};
-    std::copy(m, m + 16, d.giRotation);
-    ++_giFrames;
+    step(d);
+    // Preconverge: the updates the probes still need, recorded after this
+    // one (Record) with their own rotation, hysteresis and noise.
+    _giBurst.clear();
+    for (uint32_t n = work.giBurst ? std::min(uint32_t(1.0f / (1.0f - hysteresis)), 100u) : 0; _giFrames < n;) {
+        RayTracingData u = d;
+        u.params[0] = _frame++;
+        step(u);
+        _giBurst.push_back(u);
+    }
 
     const VkDescriptorBufferInfo rays{_giRays.buffer, 0, VK_WHOLE_SIZE};
     const VkDescriptorImageInfo atlases[2] = {{VK_NULL_HANDLE, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
@@ -1109,9 +1113,28 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 2, sets, 0, nullptr);
-        for (VkPipeline p : _giUpdate) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
-            vkCmdDispatch(cmd, probes, 1, 1);
+        for (size_t i = 0; i <= _giBurst.size(); ++i) {
+            if (i > 0) {
+                // The next update's uniforms, after the last one's passes read them.
+                MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                              VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                vkCmdUpdateBuffer(cmd, _uniforms.buffer, 0, sizeof(RayTracingData), &_giBurst[i - 1]);
+                MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                              VK_ACCESS_2_UNIFORM_READ_BIT);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
+                _fn->cmdTraceRays(cmd, &_raygenProbes, &_miss, &_hit, &_callable, _work.giRays, probes, 1);
+                MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                              VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                              VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            }
+            for (VkPipeline p : _giUpdate) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
+                vkCmdDispatch(cmd, probes, 1, 1);
+            }
         }
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,

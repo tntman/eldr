@@ -2676,8 +2676,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // DDGI preconverge: fresh GI probes (their first 1 / (1 - hysteresis)
     // updates, weighted 1 / (n + 1)) would stay in the film's average, so
     // TAA resolves until they settled and the film starts after.
-    // ponytail: full frames, not probe updates alone; K probe-only
-    // dispatches would need K sets of the probes' uniforms.
+    // The updates run in one frame (RayTracing::Record's giBurst), so this
+    // holds for one frame only.
     const bool giSettling = frame.giPreconverge && frame.gi && _rt && !_rt->Converged();
     // Motion blur time samples: the film samples the shutter, so motion
     // no longer keeps it off.
@@ -2846,6 +2846,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giProbes = frame.giProbes;
     rt.giRays = frame.giRays;
     rt.giHysteresis = frame.giHysteresis;
+    rt.giBurst = frame.giPreconverge;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;

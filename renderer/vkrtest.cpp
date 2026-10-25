@@ -1804,16 +1804,20 @@ int main()
                 img = Render(renderer, scene, frame);
                 ++frames;
             } while (!renderer.IsConverged() && frames < 200);
+            for (int k = 0; k < 40; ++k) {  // the probes keep blending: the image stays put
+                last = img;
+                img = Render(renderer, scene, frame);
+            }
             const float r = img.At(28, 32, 0), g = img.At(28, 32, 1);
             Expect(std::abs(direct.At(28, 32, 0) - direct.At(28, 32, 1)) < 1e-3f && r > 1.2f * g && g > 0.0f,
                    "GI bounces the red panel's light onto the white wall");
-            Expect(frames > 8 && frames < 200, "GI holds convergence back while its probes settle");
+            Expect(frames < 200, "GI converges");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
 
             // GI preconverge: the film's 8 samples start once the probes
-            // have settled (their first 1 / (1 - 0.97) = 33 updates), so no
-            // sample sees half-filled probes; off, the film starts at once
-            // and averages them in.
+            // have settled (their first 1 / (1 - 0.97) = 33 updates, all in
+            // the first frame), so no sample sees half-filled probes; off,
+            // the film starts at once and averages them in.
             auto filmFrames = [&](bool preconverge, Image *out) {
                 vkr::Renderer r(device);
                 vkr::Renderer::Frame f = frame;
@@ -1832,8 +1836,20 @@ int main()
             };
             Image settledFilm, earlyFilm;
             const int settledFrames = filmFrames(true, &settledFilm), earlyFrames = filmFrames(false, &earlyFilm);
-            Expect(settledFrames >= 33 + 8 - 1 && earlyFrames < settledFrames,
-                   "GI preconverge: the film starts after the probes settled");
+            Expect(settledFrames >= 8 && settledFrames <= 8 + 3 && earlyFrames >= 33,
+                   "GI preconverge: the 33 updates cost one frame, not 33");
+            Image slowGi;
+            {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame f = frame;
+                f.giPreconverge = false;
+                for (int n = 0; n < 150; ++n) {
+                    slowGi = Render(r, scene, f);
+                }
+            }
+            Expect(std::abs(img.At(28, 32, 0) - slowGi.At(28, 32, 0)) < 0.05f * slowGi.At(28, 32, 0) &&
+                       std::abs(img.At(28, 32, 1) - slowGi.At(28, 32, 1)) < 0.05f * slowGi.At(28, 32, 1),
+                   "GI preconverge: the burst's probes match the frame by frame ones");
             Expect(settledFilm.At(28, 32, 0) > earlyFilm.At(28, 32, 0),
                    "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
