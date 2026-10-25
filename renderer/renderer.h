@@ -479,6 +479,8 @@ public:
         uint32_t sample = 0;      // the sample dimensions' sample (0: no TAA)
         uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
+        bool film = false;        // the film is accumulating (else interactive TAA)
+        double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
@@ -566,6 +568,9 @@ private:
     // Film: samples in it (0: TAA resolves), frames the camera and the
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
+    std::chrono::steady_clock::time_point _accumStart = std::chrono::steady_clock::now();
+    double _accumSeconds = 0;  // Stats::accumSeconds
+    bool _accumDone = false;
     bool _filmAdaptive = false;
     bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
     bool _freshRun = false;

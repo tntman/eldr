@@ -2789,6 +2789,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _filmKey = filmKey;
     _stillFrames = changed ? 0 : _stillFrames + 1;
     _freshRun = fresh || (_freshRun && !changed);
+    if (fresh || changed) {
+        _accumStart = std::chrono::steady_clock::now();
+        _accumDone = false;
+    }
     // DDGI preconverge: fresh GI probes (their first 1 / (1 - hysteresis)
     // updates, weighted 1 / (n + 1)) would stay in the film's average, so
     // TAA resolves until they settled and the film starts after.
@@ -4239,6 +4243,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                         float(_width) * float(_height)) {
         _taaConverged = true;
     }
+    // Time to converge: counts from the last change, stops at convergence.
+    if (!_accumDone) {
+        _accumSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - _accumStart).count();
+        _accumDone = IsConverged();
+    }
+    _stats.accumSeconds = _accumSeconds;
+    _stats.film = film;
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
 }
 

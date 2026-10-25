@@ -103,6 +103,35 @@ Block menu); the Geometry tab the per-prim primvars (`primvars:eldr:reflectionPr
 creates both LOPs, sets parameters and checks the authored attributes. Nodes
 made before Eldr was installed need "Rebuild Renderer-Specific Parameters".
 
+## Render statistics in Solaris
+
+Houdini reads `GetRenderStats()` (a dictionary, JSON-converted, plus
+`__delegate`) and maps it through `houdini/UsdRenderers.json`'s
+`statsdatapaths` (jsonpath into the stats) to its standard names. The viewport
+text and the Render Statistics pane (`renderstats`, QML templates in
+`$HFS/qt/qml/houdini/renderstats`) read these:
+
+| Name | Type | Shown as |
+|---|---|---|
+| `rendererStage` | string | the word before the percentage in the viewport ("Accumulating 24%") and in the pane |
+| `percentDone` | number, 0-100 | the percentage; the pane's progress bar and ETA |
+| `totalClockTime` | seconds | the pane's Elapsed (ETA = elapsed / fraction) |
+| `totalMemory`, `peakMemory` | bytes | the pane's Memory and Peak Memory |
+| `renderProgressAnnotation`, `renderStatsAnnotation` | string | free text lines (Karma uses them for its progress and stats lines) |
+| `viewstats` entries | any | the labels listed in `viewstats` ("GPU Time (ms)", "Triangles", ...) |
+
+Eldr reports: `rendererStage` `accumulating` (film), `interactive` (TAA),
+`converged`; `percentDone` as the film's samples over target (with adaptive
+sampling the share of pixels that stopped, whichever is further), 100 while
+interactive (TAA settles in a blink after each camera move, counting it up
+would flicker) and when converged; `totalClockTime` as the wall time since the
+image last changed, frozen at convergence (the time to converge);
+`renderProgressAnnotation` "film 24/64 samples, 12% of pixels done";
+`renderStatsAnnotation` "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". No
+Python API reads a delegate's stats; Houdini polls them itself.
+`hython` with an offscreen GL context confirms the stats dictionary and the
+`statsdatapaths` (through `renderstats.widgets.findStats`).
+
 ## Volumes, tested
 
 - `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
