@@ -12,7 +12,7 @@ GROUPS = [
      "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect directIntensity indirectIntensity renderProducts productResolution productLinear pipelineCache "
      "pipelinePrewarm"),
     ("Lighting",
-     "imageBasedLighting localLights clusteredLights lightTextures emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
+     "imageBasedLighting localLights clusteredLights lightTextures lightShapesVisible emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
      "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution "
      "ssgiThickness ssgiBitmask ssgiBitmaskThickness directClamp indirectClamp"),
     ("Shadows",
@@ -29,7 +29,7 @@ GROUPS = [
     ("Fog and volumes",
      "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
      "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
-     "volumeResolution volumeUnderTransparency volumeShadows"),
+     "volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows"),
     ("Camera and image",
      "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveFinalThreshold adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter dofResidualBlur motionBlur motionBlurTimeSamples sampledMotion deformationBlur lensDistortion postProcess "
      "autoExposure exposureCompensation bloomIntensity tonemapper"),

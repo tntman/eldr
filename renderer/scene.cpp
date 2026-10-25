@@ -1958,6 +1958,7 @@ void Scene::Commit(bool keepMotion)
             GpuLight &g = lights[lightCount + localLightCount];
             g = GpuLight{};
             g.halfHeight[3] = l->diffuse;
+            g.color[3] = l->cameraVisible ? 1.0f : 0.0f;  // light_shapes.frag (the colour is copied over rgb)
             g.shaping[3] = l->specular;
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
@@ -2016,6 +2017,7 @@ void Scene::Commit(bool keepMotion)
                     c.rangeIntensity = radiance * 4.0f * l->radius * h / 3.14159265f;
                     c.size = std::sqrt(4.0f * l->radius * h / 3.14159265f);
                     c.extent = h;
+                    c.cylinderRadius = l->point ? 0.0f : l->radius;
                 } else {
                     const float cx = l->halfWidth[1] * l->halfHeight[2] - l->halfWidth[2] * l->halfHeight[1];
                     const float cy = l->halfWidth[2] * l->halfHeight[0] - l->halfWidth[0] * l->halfHeight[2];

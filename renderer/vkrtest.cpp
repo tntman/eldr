@@ -2885,6 +2885,34 @@ int main()
         }
 
         {
+            // Light shapes (Frame::lightShapesVisible): spheres at (+-0.5, 0.5) and a cylinder at (0.5, -0.5), all
+            // radiance 50, over a quad in front of the left half (z -0.8; the lights are at z -0.5). The shapes show
+            // as their radiance where nothing is nearer; one hidden from the camera doesn't.
+            vkr::Scene scene(&device);
+            AddQuad(scene, -1, -1, 0, 1, -0.8f);
+            vkr::Light *shown = AddSphereLight(scene, 0.5f, 0.5f, -0.5f, 0.2f, 50.0f);
+            AddSphereLight(scene, -0.5f, 0.5f, -0.5f, 0.2f, 50.0f);
+            vkr::Light *tube = AddSphereLight(scene, 0.5f, -0.5f, -0.5f, 0.1f, 50.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.3f;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            const Image hidden = Render(renderer, scene, frame);
+            frame.lightShapesVisible = true;
+            const Image seen = Render(renderer, scene, frame);
+            shown->cameraVisible = false;
+            scene.Commit();
+            const Image camera = Render(renderer, scene, frame);
+            Expect(hidden.At(48, 48, 0) < 10.0f && hidden.At(48, 16, 0) < 10.0f,
+                   "light shapes are off by default");
+            Expect(std::abs(seen.At(48, 48, 0) - 50.0f) < 0.5f && std::abs(seen.At(48, 16, 0) - 50.0f) < 0.5f,
+                   "a sphere and a cylinder light show their radiance to the camera");
+            Expect(seen.At(16, 48, 0) < 10.0f, "a light shape behind a surface stays hidden");
+            Expect(camera.At(48, 48, 0) < 10.0f && std::abs(camera.At(48, 16, 0) - 50.0f) < 0.5f,
+                   "a light hidden from the camera still shines but isn't drawn");
+        }
+
+        {
             // Soft sun shadows: the sun shadow test's occluder (one unit above
             // the ground along z, light at 45 degrees). A 10 degree sun spreads
             // the shadow's right edge (around x = -0.75, pixel 8) over a
@@ -3059,6 +3087,40 @@ int main()
             const Image localTaa = film(local, frame);
             frame.shadowJitter = true;
             Expect(MaxDifference(film(local, frame), localTaa) == 0.0f, "shadow jitter: TAA frames keep local PCSS");
+
+            // A cylinder light along y (radius 0.1) in the same place: the
+            // plane through the occluder's edge contains its axis, so it
+            // cuts the strip it shows (2r wide, emission uniform across it)
+            // at one place, and the lit part is linear in that place.
+            vkr::Scene tubeScene(&device);
+            AddQuad(tubeScene, -1, -1, 1, 1, 0.5f);
+            AddQuad(tubeScene, -4, -4, 0, 4, 0.0f);
+            vkr::Light *tube = AddSphereLight(tubeScene, -0.3f, 0, -0.5f, 0.1f, 50.0f);
+            tube->type = vkr::Light::Type::Cylinder;
+            tube->halfWidth[0] = 0.0f;
+            tube->halfWidth[1] = 0.5f;
+            tube->castShadows = false;
+            tubeScene.Commit();
+            frame.filmAccumulation = true;
+            frame.shadowJitter = true;
+            const Image tubeOpen = film(tubeScene, frame);
+            tube->castShadows = true;
+            tubeScene.Commit();
+            const Image tubeImg = film(tubeScene, frame);
+            float tubeWorst = 0.0f, tubePartial = 0.0f;
+            for (int x = 34; x < 52; ++x) {
+                const float gx = PixelNdc(x), len = std::sqrt(0.25f + gx * gx);
+                const float s = (-0.15f + 0.5f * gx) / len;
+                const float d = std::sqrt((gx + 0.3f) * (gx + 0.3f) + 1.0f);
+                const float lit = std::clamp(0.5f + 0.5f * std::asin(s / d) / std::asin(0.1f / d), 0.0f, 1.0f);
+                const float v = tubeImg.At(x, 32, 0) / tubeOpen.At(x, 32, 0);
+                tubeWorst = std::max(tubeWorst, std::abs(v - lit));
+                tubePartial += v > 0.05f && v < 0.95f ? 1.0f : 0.0f;
+            }
+            std::printf("shadow jitter: cylinder light penumbra error %.3f over %.0f pixels\n", tubeWorst,
+                        tubePartial);
+            Expect(tubeWorst < 0.05f && tubePartial >= 4,
+                   "shadow jitter: the film converges to a cylinder light's penumbra across its axis");
         }
 
         {
@@ -3586,6 +3648,30 @@ int main()
                    "without volume shadows the ground is as without volumes");
             std::printf("volume shadow %.3f (expected %.3f) on ground %.3f, glass beside it %.3f\n", ratio,
                         std::exp(-1.48f), uncast.At(3, 32, 0), uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
+
+            // The same from a small sphere light on the sun's line, 8 away
+            // from the ground point (the ray to pixel 3 crosses the ball
+            // as the sun's did): its atlas tiles take the volume's
+            // transmittance (Frame::localVolumeShadows).
+            vkr::Scene lamp(&device);
+            vkr::Volume *puff = lamp.AddVolume();
+            puff->fields["density"] = ball->fields["density"];
+            puff->transforms = smoke->transforms;
+            vkr::Light *lampLight = AddSphereLight(lamp, 4.75f, 0.0156f, -5.157f, 0.05f, 4000.0f);
+            lampLight->castShadows = true;
+            AddQuad(lamp, -1, -1, 1, 1, 0.5f);
+            lamp.Commit();
+            const Image lampLit = Render(renderer, lamp, frame);
+            frame.localVolumeShadows = false;
+            const Image lampUnlit = Render(renderer, lamp, frame);
+            frame.localVolumeShadows = true;
+            const float lampRatio = lampLit.At(3, 32, 0) / lampUnlit.At(3, 32, 0);
+            std::printf("local volume shadow %.3f (expected %.3f) on ground %.3f\n", lampRatio, std::exp(-1.48f),
+                        lampUnlit.At(3, 32, 0));
+            Expect(lampUnlit.At(3, 32, 0) > 0.05f && std::abs(lampRatio - std::exp(-1.48f)) < 0.06f,
+                   "a volume shadows surfaces from a local light by its transmittance");
+            Expect(std::abs(lampLit.At(40, 32, 0) / lampUnlit.At(40, 32, 0) - 1.0f) < 0.02f,
+                   "local volume shadows leave the ground out of the smoke's shadow alone");
         }
 
         {

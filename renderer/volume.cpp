@@ -5,6 +5,7 @@
 #include "scene.h"
 #include "transparency.h"
 
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -18,6 +19,9 @@ namespace {
 
 const uint32_t kVolumeFrag[] =
 #include "volume.frag.inc"
+;
+const uint32_t kShapesFrag[] =
+#include "light_shapes.frag.inc"
 ;
 const uint32_t kUpsampleFrag[] =
 #include "volume_upsample.frag.inc"
@@ -36,7 +40,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t scale;  // 1: full resolution, 2: half
     uint32_t part;   // VolumePass::Part
     uint32_t cascade, mapSize;  // RecordShadow's
-    uint32_t pad;
+    uint32_t originX, originY;
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -153,6 +157,8 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     _halfPipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
     _upsamplePipeline = CreateFullscreenPipeline(_dev, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
+    _shapePipeline = CreateFullscreenPipeline(_dev, _layout, kShapesFrag, sizeof(kShapesFrag), Renderer::kColorFormat,
+                                              false, true);
     _shadowPipeline = CreateFullscreenPipeline(_dev, _layout, kShadowFrag, sizeof(kShadowFrag),
                                                Transparency::kTintFormat, false, false, true,
                                                Transparency::kTintDepthFormat);
@@ -161,7 +167,7 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
 VolumePass::~VolumePass()
 {
     vkDeviceWaitIdle(_dev.device);
-    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline}) {
+    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline, _shapePipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -237,12 +243,43 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     return true;
 }
 
+void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,
+                                   VkImageView color, uint32_t width, uint32_t height)
+{
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+    b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    const uint32_t push[2] = {first, count};
+    DrawFullscreen(cmd, _shapePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, push,
+                   sizeof(push));
+}
+
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
                               uint32_t mapSize, const Settings &s)
 {
     VolumeParams p = Params(s, volumeCount);
     p.cascade = cascade;
     p.mapSize = mapSize;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
+void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
+                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s)
+{
+    VolumeParams p = Params(s, volumeCount);
+    p.part = 1;
+    p.cascade = tile;
+    p.mapSize = size;
+    p.originX = x;
+    p.originY = y;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -302,7 +339,8 @@ void Scene::_CommitVolumes()
         offsets.push_back(uint32_t(bytes));
         bytes += (u.first->words.size() * 4 + 31) & ~VkDeviceSize(31);
     }
-    if (used != _poolGrids || !_volumeGrids.buffer) {
+    bool changed = used != _poolGrids || !_volumeGrids.buffer;
+    if (changed) {
         _Flush();
         _device->Destroy(_volumeGrids);
         _volumeGrids = _device->CreateDeviceBuffer(std::max<VkDeviceSize>(bytes, 256),
@@ -410,6 +448,13 @@ void Scene::_CommitVolumes()
                 }
             }
         }
+    }
+    // A new stamp when the table or the grids changed (the local lights' cached atlas holds volume shadows).
+    changed = changed || table.size() != _gpu.volumeCount ||
+              (!table.empty() && std::memcmp(table.data(), _volumeTable.mapped, table.size() * sizeof(GpuVolume)) != 0);
+    if (changed) {
+        static std::atomic<uint64_t> versions{0};
+        _gpu.volumeVersion = ++versions;
     }
     _device->Reserve(_volumeTable, std::max<size_t>(table.size(), 1) * sizeof(GpuVolume),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

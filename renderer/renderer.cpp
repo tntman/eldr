@@ -2005,10 +2005,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             // sphere with density 1 / sqrt(1 - r^2), whose projection along
             // any direction is uniform over the disc it shows a receiver
             // (the Abel transform of (1 - r^2)^-1/2 is constant).
-            // ponytail: a cylinder only along its axis (across, its radius
-            // stays hard); the near plane clears the sphere from the offset
-            // point, so casters within a radius of a sphere light's surface
-            // drop out of its shadow.
+            // A cylinder: uniform along its axis, and across it the disc
+            // of its section with density 1 / sqrt(1 - r^2) (the same
+            // Abel pair, one dimension down: every chord integrates to pi).
+            // ponytail: the near plane clears the sphere or cylinder from
+            // the offset point, so casters within a radius of such a light's
+            // surface drop out of its shadow.
             using Shape = Scene::Gpu::ShadowCaster::Shape;
             const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
             const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
@@ -2030,7 +2032,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             } else if (c.shape == Shape::Disk) {
                 offset = (hw * std::cos(phi) + hh * std::sin(phi)) * std::sqrt(u);
             } else {
-                offset = hw * (2.0f * u - 1.0f);
+                const Vec3 a = Normalize(hw);
+                const Vec3 b = Normalize(Cross(a, std::abs(a.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0}));
+                const float w = 1.0f - shapeSample[1], r = std::sqrt(std::max(1.0f - w * w, 0.0f)) * c.cylinderRadius,
+                            ang = 6.2831853f * shapeSample[2];
+                offset = hw * (2.0f * u - 1.0f) + b * (r * std::cos(ang)) + Cross(a, b) * (r * std::sin(ang));
+                n += c.cylinderRadius;
             }
             position = position + offset;
         }
@@ -2077,7 +2084,8 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
 // accumulation frames). Without tiles the atlas is only transitioned for
 // its descriptor.
 // ponytail: all or nothing; a moving caster redraws every light's tiles.
-void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint)
+void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint,
+                                   const VolumePass::Settings *volume)
 {
     const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
     std::vector<float> key;
@@ -2086,6 +2094,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         key.insert(key.end(), t.rect, t.rect + 4);
     }
     key.push_back(tint ? float(_transparency.AtlasTint().size) : 0.0f);
+    key.push_back(volume ? float(gpu.volumeVersion % (1u << 24)) + 1.0f : 0.0f);  // ponytail: a stamp wrapping at 2^24 can miss a change
     if (!tiles.empty() && gpu.version == _atlasVersion && key == _atlasKey) {
         return;  // still in SHADER_READ_ONLY_OPTIMAL from when it was drawn
     }
@@ -2128,7 +2137,8 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
     const VkDeviceSize tileCommands = (1 + kCascades) * commandBytes;
     const uint32_t tileList = (1 + kCascades) * gpu.instanceCapacity;
     const VkDeviceSize vertexOffset = 0;
-    for (const ShadowTile &t : tiles) {
+    for (uint32_t tileIndex = 0; tileIndex < tiles.size(); ++tileIndex) {
+        const ShadowTile &t = tiles[tileIndex];
         // The previous tile's draw is done with the list and commands.
         memoryBarrier(VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | kTests,
                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
@@ -2207,6 +2217,12 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
             const VkViewport tvp{float(tx), float(ty), float(tsize), float(tsize), 0, 1};
             vkCmdSetViewport(_cmd, 0, 1, &tvp);
             vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
+            if (volume) {
+                _volumePass->RecordTileShadow(_cmd, _set, gpu.volumeCount, tileIndex, uint32_t(tx), uint32_t(ty),
+                                              tsize, *volume);
+                vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                PushDraw(_cmd, _layout, t.viewProj, tileList);  // the volume pipeline's layout dropped them
+            }
             _DrawTintCasters(gpu, tileCommands);
             vkCmdEndRendering(_cmd);
         }
@@ -3047,14 +3063,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                     !gpu.translucent.empty();
     // Volume shadows: the volumes' transmittance goes into the sun's tint
     // map as well (VolumePass::RecordShadow), read with the translucent
-    // casters'. ponytail: the sun only, not the local lights' atlas.
-    const bool volumeShadows = shadows && draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
+    // casters'.
+    const bool volumeBase = draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
+    const bool volumeShadows = shadows && volumeBase;
+    // and the local lights' (Frame::localVolumeShadows): into the atlas tint map, tile by tile.
+    const bool localVolumeShadows = volumeBase && frame.localVolumeShadows && frame.localShadows &&
+                                    frame.localLights && !gpu.shadowCasters.empty();
     const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
     if (_transparency.EnsureTintMaps(translucentShadows || volumeShadows ? std::max(_shadowSize / divisor, 1u) : 1u,
-                                     kCascades, translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
+                                     kCascades,
+                                     translucentShadows || localVolumeShadows ? kShadowAtlasSize / divisor : 1u)) {
         _atlasVersion = 0;
     }
-    if (translucentShadows || volumeShadows) {
+    if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
     if (frame.holdouts && gpu.holdouts) {
@@ -3514,7 +3535,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (timeSample || _shutterMoved) {
         _atlasVersion = 0;  // the casters moved without a new version
     }
-    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
+    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows || localVolumeShadows,
+                        localVolumeShadows ? &frame.volume : nullptr);
     if (!shadowTiles.empty()) {
         pass("localShadows");
     }
@@ -3655,6 +3677,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
                             volumesUnder ? VolumePass::kInFront : VolumePass::kAll)) {
         pass(volumesUnder ? "volumesInFront" : "volumes");
+    }
+    // Light shapes: the local lights seen by the camera, in front of the opaque depth.
+    if (draw && frame.lightShapesVisible && gpu.localLightCount > 0) {
+        _volumePass->RecordLightShapes(_cmd, _set, gpu.lightCount, gpu.localLightCount, _color.view, _width,
+                                       _height);
+        pass("lightShapes");
     }
     ImageBarrier(_cmd, _velocity.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

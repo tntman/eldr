@@ -129,6 +129,12 @@ public:
         // indirect light in the final pixel (the light splits' division, the
         // dome per splitDomeDirect), not of the light transport. 1: off, no cost.
         float directIntensity = 1.0f, indirectIntensity = 1.0f;
+        // Volumes also shadow surfaces from the local lights (their atlas tiles, through the tint
+        // atlas; needs volumes.shadows and localShadows).
+        bool localVolumeShadows = true;
+        // The local lights' shapes (sphere, rect, disk, cylinder) show to the camera as emitters of their
+        // radiance, unless the light is hidden from the camera (Light::cameraVisible).
+        bool lightShapesVisible = false;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;
@@ -489,7 +495,8 @@ private:
     struct ShadowTile;
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
                                               uint32_t *rtLights, uint32_t rtSlots, const float *shapeSample);
-    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint);
+    void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint,
+                             const VolumePass::Settings *volume);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);
     void _RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj);
     void _RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, const float *viewProj,

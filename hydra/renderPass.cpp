@@ -207,7 +207,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
                                 {t2.deformationBlur, &frame.deformationBlur},
                                 {t2.dofResidualBlur, &frame.dofResidualBlur},
-                                {t2.productResolution, &frame.productResolution}}) {
+                                {t2.productResolution, &frame.productResolution},
+                                {t2.localVolumeShadows, &frame.localVolumeShadows},
+                                {t2.lightShapesVisible, &frame.lightShapesVisible}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
     // Render products at their own framing (hdvk:productResolution): the

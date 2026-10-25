@@ -448,6 +448,7 @@ struct Light {
     float diffuse = 1.0f;                // UsdLux diffuse/specular multipliers
     float specular = 1.0f;
     bool visible = true;
+    bool cameraVisible = true;           // its shape shows to the camera (Frame::lightShapesVisible)
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
     // Rect, disk: an image over the emitting surface (UsdLux
@@ -691,6 +692,7 @@ public:
             // rect or disk of these half extents, a cylinder's axis.
             enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
             float halfWidth[3], halfHeight[3];
+            float cylinderRadius;  // a cylinder's radius (jittered across its section)
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,
@@ -756,6 +758,7 @@ public:
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        uint64_t volumeVersion = 0;  // unique per commit that held volumes (the local lights' cached atlas)
         float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
         // and texture (shaders/displace.glsl); whether a drawn one displaces.
