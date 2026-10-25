@@ -43,6 +43,7 @@ VARS = [("C", "lpe", "C.*[LO]", "color4f"), ("depth", "raw", "ray:hitPz", "float
         ("N", "raw", "ray:hitN", "normal3f"), ("P", "raw", "ray:hitP", "point3f"),
         ("combineddiffuse", "lpe", "C<RD>.*L", "color3f"), ("directdiffuse", "lpe", "C<RD>L", "color3f"),
         ("indirectdiffuse", "lpe", "C<RD>.+L", "color3f"), ("combinedglossyreflection", "lpe", "C<RG>.*[LO]", "color3f"),
+        ("directglossy", "lpe", "C<RG>L", "color3f"), ("indirectglossy", "lpe", "C<RG>.+L", "color3f"),
         ("combinedemission", "lpe", "C.*O", "color3f"),
         ("CryptoObject", "primvar", "__name", "float3"), ("CryptoMaterial", "primvar", "__materialname", "float3")]
 for name, sourceType, sourceName, dataType in VARS:
@@ -102,8 +103,14 @@ expect(struct.unpack("<f", struct.pack("<I", cubeId))[0] == f32(pixel.get("Crypt
        pixel.get("CryptoObject00.G") == 1.0, "the cube's id at full coverage in the image's centre")
 expect(abs(pixel.get("N.B", 0) - 1.0) < 0.01, "N: the cube's front face (+z)")
 expect(abs(pixel.get("depth.Z", 0) - 5.0) < 0.05, "depth: the front face is 5 units away")
-expect(abs(pixel.get("directdiffuse.G", 0) + pixel.get("indirectdiffuse.G", 0) - pixel.get("combineddiffuse.G", 0))
-       < 1e-3 and pixel.get("indirectdiffuse.G", 0) > 0, "diffuse splits: direct + indirect (the dome) = combined")
+# Karma's convention: the sun's and the dome's light is direct; on the
+# unoccluded front face nothing is left for indirect (no GI by default).
+direct, indirect = pixel.get("directdiffuse.G", 0), pixel.get("indirectdiffuse.G", 0)
+expect(abs(direct + indirect - pixel.get("combineddiffuse.G", 0)) < 1e-3, "diffuse splits: direct + indirect = combined")
+expect(direct > 0 and abs(indirect) < 0.02 * direct, "diffuse splits: the dome's light is direct")
+expect(abs(pixel.get("directglossy.G", 0) + pixel.get("indirectglossy.G", 0) -
+           pixel.get("combinedglossyreflection.G", 0)) < 1e-3 and pixel.get("directglossy.G", 0) > 0,
+       "glossy splits: direct + indirect = combined")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

@@ -856,6 +856,7 @@ void main()
     // reflection probe's captured surroundings instead of the dome.
     // Material and screen-space occlusion; specular occlusion derived from
     // it (Lagarde 2014), as in Filament.
+    vec3 domeSpecular = specular, domeDiffuse = Lavg;  // the dome's alone (light splits)
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
     int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
@@ -908,10 +909,15 @@ void main()
         imageStore(ssrNormals, px, vec4(OctEncode(n), 0.0, 0.0));
         imageStore(ssrFactor, px, vec4(FssEss * ssrWeight, 1.0));
         specular *= 1.0 - ssrWeight;
+        domeKept *= 1.0 - ssrWeight;  // ponytail: the denoised rays' misses aren't in the splits
     } else if (ssrWeight > 0.0) {
         vec4 hit;
         ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
+        domeKept *= 1.0 - ssrWeight * hit.a;
+    }
+    if (LightSplits() && Feature(kFeatureRtReflections) && RtOpaque()) {
+        domeKept *= 1.0 - imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;  // as RtReflection
     }
     specular = RtReflection(specular, inWorldPos, n, perceptual);
     float Ems = 1.0 - Ess;
@@ -925,10 +931,32 @@ void main()
                                                     SsgiDiffuse() * occlusion);
     vec3 splitIndirectGlossy = FssEss * specular;
     vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
+    // Karma's convention (frame.aovs.y): the dome's light that reaches the
+    // surface unblocked is direct. Diffuse: its irradiance under the
+    // visibility (AO, or SSGI's); what GI's probes, the multi-bounce
+    // approximation and SSGI add beyond it is indirect. Glossy: its
+    // reflection under the specular occlusion where no probe, mirror, SSR
+    // or traced reflection replaced it. At most the whole (where the probes
+    // see less of the dome than the AO does), so the splits still add up.
+    vec3 splitDomeGlossy = vec3(0.0);
+    if (LightSplits() && frame.aovs.y != 0u) {
+        vec3 domeDirect = min((Fms * Ems + kd) * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        splitDirectDiffuse += domeDirect;
+        splitDirect += domeDirect;  // layer 2 is splitDirect - splitDirectDiffuse
+        splitIndirectDiffuse -= domeDirect;
+        splitDomeGlossy = min(FssEss * domeSpecular * domeKept * specularAO, splitIndirectGlossy);
+        splitIndirectGlossy -= splitDomeGlossy;
+    }
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
-        splitIndirectGlossy += color - splitAmbient;
+        // ponytail: the lobes' dome light (coat, sheen, hair) all one way;
+        // a sheen under GI's probes counts their light as the dome's too.
+        if (frame.aovs.y != 0u) {
+            splitDomeGlossy += color - splitAmbient;
+        } else {
+            splitIndirectGlossy += color - splitAmbient;
+        }
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
@@ -953,7 +981,7 @@ void main()
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse, 1.0));
         imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse + splitDomeGlossy, 1.0));
         imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy, 1.0));
     }
     outPrimId = inPrimId;

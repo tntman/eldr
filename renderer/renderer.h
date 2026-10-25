@@ -102,6 +102,11 @@ public:
         // cameraDepth; row-vector order) and per primId its Cryptomatte
         // object and material ids (CryptomatteHash), 2 per id.
         bool extraAovs = true;
+        // Light splits (Karma's convention): the dome's directly visible
+        // light (its irradiance under the AO's or SSGI's visibility, its
+        // reflection where nothing replaces it) counts as direct; off: as
+        // indirect, with GI, probes and reflections.
+        bool splitDomeDirect = true;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;

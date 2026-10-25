@@ -49,6 +49,10 @@ vec3 ProbeAmbient(uint i, vec3 n)
 // GI or SSGI) over the ambient light the probe saw where it was captured
 // (EEVEE's normalization): a probe captured in daylight doesn't light a
 // dark corner's reflections. ponytail: by luminance, at most 4x.
+// The share of the dome's reflection that ProbeSpecular and PlanarSpecular
+// left in what they return (mesh.frag's light splits: the dome's is direct).
+float domeKept = 1.0;
+
 vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome, vec3 n, vec3 local)
 {
     const vec3 kLuma = vec3(0.2126, 0.7152, 0.0722);
@@ -66,6 +70,7 @@ vec3 ProbeSpecular(vec3 p, vec3 r, float perceptual, vec3 dome, vec3 n, vec3 loc
             weight += w * (1.0 - weight);
         }
     }
+    domeKept *= 1.0 - weight;
     return sum + dome * (1.0 - weight);
 }
 
@@ -95,5 +100,7 @@ vec3 PlanarSpecular(int i, vec3 specular, vec3 p, vec3 n, float perceptual)
     vec4 b = frame.viewProj * vec4(p + tilt * (0.1 * length(p - frame.cameraPos.xyz)), 1.0);
     vec2 uv = gl_FragCoord.xy / frame.viewport.xy + (b.xy / b.w - a.xy / a.w) * 0.5;
     vec4 hit = textureLod(planarReflections[nonuniformEXT(i)], uv, 0.0);
-    return mix(specular, hit.rgb + (1.0 - hit.a) * specular, 1.0 - smoothstep(0.3, 0.6, perceptual));
+    float w = 1.0 - smoothstep(0.3, 0.6, perceptual);
+    domeKept *= 1.0 - w * hit.a;
+    return mix(specular, hit.rgb + (1.0 - hit.a) * specular, w);
 }

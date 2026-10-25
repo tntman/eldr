@@ -53,7 +53,7 @@ struct FrameData {
     // stochastic effect (kDim*); x of sampleInfo 1 with them on.
     float sampleDims[2][4];
     uint32_t sampleInfo[4];
-    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them
+    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
     float screenTrace[4];    // thickness estimator (SSR) on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
@@ -3033,6 +3033,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool splits = frame.extraAovs && Aovs::NeedsSplits(out.aovs);
     _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
     fd.aovs[0] = splits ? 1u : 0u;
+    fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);

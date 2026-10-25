@@ -3550,6 +3550,23 @@ int main()
                    "light splits: a distant light's light is direct");
             Expect(std::abs(sum - img.At(32, 32, 1)) < 2e-3f, "light splits add up to the colour");
 
+            // Under a white dome alone (Karma's convention): its light is
+            // direct; Frame::splitDomeDirect off: indirect. Both add up.
+            vkr::Scene sky(&device);
+            sky.AddDome();
+            AddQuad(sky, -1, -1, 1, 1, 0)->primId = 1;
+            sky.Commit();
+            for (bool domeDirect : {true, false}) {
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.splitDomeDirect = domeDirect;
+                renderer.Render(sky, frame, out);
+                const float direct = at(A::kDirectDiffuse, 1) + at(A::kDirectGlossy, 1);
+                const float indirect = at(A::kIndirectDiffuse, 1) + at(A::kIndirectGlossy, 1);
+                Expect((domeDirect ? direct : indirect) > 0.5f && std::abs(domeDirect ? indirect : direct) < 1e-3f &&
+                           std::abs(direct + indirect - img.At(32, 32, 1)) < 2e-3f,
+                       domeDirect ? "light splits: the dome's light is direct" : "splitDomeDirect off: the dome's is indirect");
+            }
+
             // Under the film the splits average its jittered samples:
             // a slanted edge gets values between none and the inside's.
             vkr::Scene slanted(&device);
