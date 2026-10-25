@@ -190,7 +190,8 @@ with OpenVDB only).
 | Volume Phase Anisotropy<br>`hdvk:volumeAnisotropy` | float, 0.2 | Phase g for volumes without a MaterialX volume material. | |
 | Volume Resolution<br>`hdvk:volumeResolution` | int, 1 | 1 full resolution, 2 half with a depth-aware upsample. | volume.usda: 22.0 ms to 7.3 ms. |
 | Volumes under Transparency<br>`hdvk:volumeUnderTransparency` | flag, on | Rays are split at the nearest translucent surface, so smoke behind glass is dimmed and refracted. Only the nearest layer splits. | volume pass 4.2 ms against 5.8 ms off (glass+volume scene). |
-| Volume Shadows<br>`hdvk:volumeShadows` | flag, on | Volumes darken surfaces from the sun through the tint maps. One depth per texel, no shadows from local lights. | sunShadows pass 1.0 ms against 0.07 ms on volume.usda. |
+| Volume Shadows<br>`hdvk:volumeShadows` | flag, on | Volumes darken surfaces from the sun through the tint maps. One depth per texel. | sunShadows pass 1.0 ms against 0.07 ms on volume.usda. |
+| Local Volume Shadows<br>`hdvk:localVolumeShadows` | flag, on | Volumes also darken surfaces from the local lights (spot, sphere, rect, disk, cylinder), through the atlas tint map, one perspective ray per tile texel. Needs *Volume Shadows* and *Local Light Shadows*. | Redrawing the atlas with a spot (1 tile) costs 0.17 ms and with two shadowed sphere lights (12 cube tiles) 0.8 ms on volume.usda; the atlas stays cached while the scene and lights are still, so a still frame adds 0.00 ms. |
 
 ## Camera and image
 

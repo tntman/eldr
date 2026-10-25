@@ -3482,6 +3482,30 @@ int main()
                    "without volume shadows the ground is as without volumes");
             std::printf("volume shadow %.3f (expected %.3f) on ground %.3f, glass beside it %.3f\n", ratio,
                         std::exp(-1.48f), uncast.At(3, 32, 0), uncast.At(3, 52, 0) / noVolumes.At(3, 20, 0));
+
+            // The same from a small sphere light on the sun's line, 8 away
+            // from the ground point (the ray to pixel 3 crosses the ball
+            // as the sun's did): its atlas tiles take the volume's
+            // transmittance (Frame::localVolumeShadows).
+            vkr::Scene lamp(&device);
+            vkr::Volume *puff = lamp.AddVolume();
+            puff->fields["density"] = ball->fields["density"];
+            puff->transforms = smoke->transforms;
+            vkr::Light *lampLight = AddSphereLight(lamp, 4.75f, 0.0156f, -5.157f, 0.05f, 4000.0f);
+            lampLight->castShadows = true;
+            AddQuad(lamp, -1, -1, 1, 1, 0.5f);
+            lamp.Commit();
+            const Image lampLit = Render(renderer, lamp, frame);
+            frame.localVolumeShadows = false;
+            const Image lampUnlit = Render(renderer, lamp, frame);
+            frame.localVolumeShadows = true;
+            const float lampRatio = lampLit.At(3, 32, 0) / lampUnlit.At(3, 32, 0);
+            std::printf("local volume shadow %.3f (expected %.3f) on ground %.3f\n", lampRatio, std::exp(-1.48f),
+                        lampUnlit.At(3, 32, 0));
+            Expect(lampUnlit.At(3, 32, 0) > 0.05f && std::abs(lampRatio - std::exp(-1.48f)) < 0.06f,
+                   "a volume shadows surfaces from a local light by its transmittance");
+            Expect(std::abs(lampLit.At(40, 32, 0) / lampUnlit.At(40, 32, 0) - 1.0f) < 0.02f,
+                   "local volume shadows leave the ground out of the smoke's shadow alone");
         }
 
         {

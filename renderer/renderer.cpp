@@ -2062,7 +2062,8 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
 // accumulation frames). Without tiles the atlas is only transitioned for
 // its descriptor.
 // ponytail: all or nothing; a moving caster redraws every light's tiles.
-void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint)
+void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint,
+                                   const VolumePass::Settings *volume)
 {
     const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
     std::vector<float> key;
@@ -2071,6 +2072,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         key.insert(key.end(), t.rect, t.rect + 4);
     }
     key.push_back(tint ? float(_transparency.AtlasTint().size) : 0.0f);
+    key.push_back(volume ? float(gpu.volumeVersion % (1u << 24)) + 1.0f : 0.0f);  // ponytail: a stamp wrapping at 2^24 can miss a change
     if (!tiles.empty() && gpu.version == _atlasVersion && key == _atlasKey) {
         return;  // still in SHADER_READ_ONLY_OPTIMAL from when it was drawn
     }
@@ -2113,7 +2115,8 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
     const VkDeviceSize tileCommands = (1 + kCascades) * commandBytes;
     const uint32_t tileList = (1 + kCascades) * gpu.instanceCapacity;
     const VkDeviceSize vertexOffset = 0;
-    for (const ShadowTile &t : tiles) {
+    for (uint32_t tileIndex = 0; tileIndex < tiles.size(); ++tileIndex) {
+        const ShadowTile &t = tiles[tileIndex];
         // The previous tile's draw is done with the list and commands.
         memoryBarrier(VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | kTests,
                       VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT |
@@ -2192,6 +2195,12 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
             const VkViewport tvp{float(tx), float(ty), float(tsize), float(tsize), 0, 1};
             vkCmdSetViewport(_cmd, 0, 1, &tvp);
             vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
+            if (volume) {
+                _volumePass->RecordTileShadow(_cmd, _set, gpu.volumeCount, tileIndex, uint32_t(tx), uint32_t(ty),
+                                              tsize, *volume);
+                vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+                PushDraw(_cmd, _layout, t.viewProj, tileList);  // the volume pipeline's layout dropped them
+            }
             _DrawTintCasters(gpu, tileCommands);
             vkCmdEndRendering(_cmd);
         }
@@ -3028,14 +3037,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                     !gpu.translucent.empty();
     // Volume shadows: the volumes' transmittance goes into the sun's tint
     // map as well (VolumePass::RecordShadow), read with the translucent
-    // casters'. ponytail: the sun only, not the local lights' atlas.
-    const bool volumeShadows = shadows && draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
+    // casters'.
+    const bool volumeBase = draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
+    const bool volumeShadows = shadows && volumeBase;
+    // and the local lights' (Frame::localVolumeShadows): into the atlas tint map, tile by tile.
+    const bool localVolumeShadows = volumeBase && frame.localVolumeShadows && frame.localShadows &&
+                                    frame.localLights && !gpu.shadowCasters.empty();
     const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
     if (_transparency.EnsureTintMaps(translucentShadows || volumeShadows ? std::max(_shadowSize / divisor, 1u) : 1u,
-                                     kCascades, translucentShadows ? kShadowAtlasSize / divisor : 1u)) {
+                                     kCascades,
+                                     translucentShadows || localVolumeShadows ? kShadowAtlasSize / divisor : 1u)) {
         _atlasVersion = 0;
     }
-    if (translucentShadows || volumeShadows) {
+    if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
     if (frame.holdouts && gpu.holdouts) {
@@ -3489,7 +3503,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (timeSample || _shutterMoved) {
         _atlasVersion = 0;  // the casters moved without a new version
     }
-    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows);
+    _RenderLocalShadows(gpu, draw ? shadowTiles : std::vector<ShadowTile>(), translucentShadows || localVolumeShadows,
+                        localVolumeShadows ? &frame.volume : nullptr);
     if (!shadowTiles.empty()) {
         pass("localShadows");
     }

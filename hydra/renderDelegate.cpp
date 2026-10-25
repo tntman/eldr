@@ -325,6 +325,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
+        {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,
+         VtValue(frame.localVolumeShadows)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},

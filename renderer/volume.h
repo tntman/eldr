@@ -147,6 +147,11 @@ public:
     // with its own layout: rebind the renderer's after.
     void RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
                       uint32_t mapSize, const Settings &settings);
+    // The same for a local light's atlas tile (index `tile` of the
+    // renderer's ShadowTiles): rendering into the tint atlas with the
+    // viewport and scissor on its rectangle (x, y, size texels).
+    void RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile, uint32_t x,
+                          uint32_t y, uint32_t size, const Settings &settings);
 
 private:
     Device &_dev;

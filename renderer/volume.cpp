@@ -5,6 +5,7 @@
 #include "scene.h"
 #include "transparency.h"
 
+#include <atomic>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -36,7 +37,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t scale;  // 1: full resolution, 2: half
     uint32_t part;   // VolumePass::Part
     uint32_t cascade, mapSize;  // RecordShadow's
-    uint32_t pad;
+    uint32_t originX, originY;
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -249,6 +250,21 @@ void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t
     vkCmdDraw(cmd, 3, 1, 0, 0);
 }
 
+void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
+                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s)
+{
+    VolumeParams p = Params(s, volumeCount);
+    p.part = 1;
+    p.cascade = tile;
+    p.mapSize = size;
+    p.originX = x;
+    p.originY = y;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+}
+
 // Builds the volume table (a GpuVolume per drawn instance) and, when the
 // grids they read or their versions changed, the grid pool.
 // ponytail: the whole pool is uploaded again whenever any grid changes; keep
@@ -302,7 +318,8 @@ void Scene::_CommitVolumes()
         offsets.push_back(uint32_t(bytes));
         bytes += (u.first->words.size() * 4 + 31) & ~VkDeviceSize(31);
     }
-    if (used != _poolGrids || !_volumeGrids.buffer) {
+    bool changed = used != _poolGrids || !_volumeGrids.buffer;
+    if (changed) {
         _Flush();
         _device->Destroy(_volumeGrids);
         _volumeGrids = _device->CreateDeviceBuffer(std::max<VkDeviceSize>(bytes, 256),
@@ -410,6 +427,13 @@ void Scene::_CommitVolumes()
                 }
             }
         }
+    }
+    // A new stamp when the table or the grids changed (the local lights' cached atlas holds volume shadows).
+    changed = changed || table.size() != _gpu.volumeCount ||
+              (!table.empty() && std::memcmp(table.data(), _volumeTable.mapped, table.size() * sizeof(GpuVolume)) != 0);
+    if (changed) {
+        static std::atomic<uint64_t> versions{0};
+        _gpu.volumeVersion = ++versions;
     }
     _device->Reserve(_volumeTable, std::max<size_t>(table.size(), 1) * sizeof(GpuVolume),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

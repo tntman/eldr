@@ -312,7 +312,8 @@ multiply density and emission, and `volumeAnisotropy` is for volumes without
 a material.
 
 Interactions: volumes shadow surfaces from the sun through the translucent
-tint maps (`volumeShadows`); volumes behind glass are dimmed and refracted
+tint maps (`volumeShadows`) and from the local lights' atlas tiles
+(`localVolumeShadows`); volumes behind glass are dimmed and refracted
 (`volumeUnderTransparency`); a half-resolution march
 (`volumeResolution` 2) cuts cost by about 3x.
 
