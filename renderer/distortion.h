@@ -23,9 +23,9 @@ public:
     // tangential (2 p1 x y + p2 (r^2 + 2 x^2), p1 (r^2 + 2 y^2) + 2 p2 x y);
     // positive k1 is barrel, as there. HdCamera's k1 and k2 are its first
     // two terms.
-    // ponytail: Karma's lens shader works in its NDC, which its docs leave
-    // unclear for wide images; Eldr's r is in the screen units above (x
-    // across the width). Compare with a husk render to settle it.
+    // Karma's lens shader agrees with r in the screen units above (x across
+    // the width): posts of a 5-post fence at x = 0.469 and 0.938 land at
+    // 0.4555 and 0.852 here and 0.4547 and 0.850 in Karma (k1 .12, k2 .02).
     struct Params {
         bool fisheye = false;   // lensDistortion:type "fisheye", else "standard"
         float k1 = 0, k2 = 0;   // radial; fisheye: of the angle (r * (1 + k1 r^2 + k2 r^4))
@@ -57,24 +57,27 @@ public:
 
     // Warps the frame in place: colour (RGBA16F), depth (D32), primId and
     // instanceId (R32_SINT), all width x height and in TRANSFER_SRC_OPTIMAL,
-    // left so. Where nothing is seen the clear values go.
+    // left so. Where nothing is seen the clear values go. `linear` (RGBA16F,
+    // an EXR's beauty, same layout) is warped like the colour; none: null.
     void Record(VkCommandBuffer cmd, const Params &params, uint32_t width, uint32_t height, VkImage color,
                 VkImageView colorView, VkImage depth, VkImageView depthView, VkImage primId,
                 VkImageView primIdView, VkImage instanceId, VkImageView instanceIdView, const float clearColor[4],
-                float clearDepth);
+                float clearDepth, VkImage linear = VK_NULL_HANDLE, VkImageView linearView = VK_NULL_HANDLE);
 
 private:
     void _Resize(uint32_t width, uint32_t height);
 
     Device &_dev;
-    VkSampler _linear = VK_NULL_HANDLE, _nearest = VK_NULL_HANDLE;
+    VkSampler _linearSampler = VK_NULL_HANDLE, _nearest = VK_NULL_HANDLE;
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipeline = VK_NULL_HANDLE;
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
-    Image _color, _depth, _primId, _instanceId;  // copies the warp reads
+    Image _color, _depth, _primId, _instanceId, _linear;  // copies the warp reads
+    Image _sink;  // the linear attachment's stand-in when there is no EXR beauty
     uint32_t _width = 0, _height = 0;
+    bool _linearReady = false;  // _linear is in SHADER_READ_ONLY_OPTIMAL
 };
 
 } // namespace vkr

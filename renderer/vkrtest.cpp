@@ -2239,6 +2239,30 @@ int main()
             Expect(warped.Prim(46, 32) == 7 && warped.Prim(51, 32) == -1 && warped.depth[32 * 64 + 51] == 1.0f &&
                        std::abs(warped.depth[32 * 64 + 46] - 0.5f) < 1e-3f,
                    "ids and depth are warped with the colour");
+            {
+                // An EXR's linear beauty (what husk and render products
+                // read) is warped like the colour.
+                vkr::Renderer::Frame linear = IdentityFrame();
+                linear.distortion.k1 = 0.5f;
+                linear.postProcess = true;
+                linear.linearColor = true;
+                linear.taa = false;
+                linear.post.autoExposure = false;
+                linear.post.bloomIntensity = 0.0f;
+                linear.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                Render(renderer, scene, linear);
+                std::vector<uint16_t> pixels(64 * 64 * 4);
+                vkr::Renderer::Targets read;
+                read.linearColor = pixels.data();
+                renderer.Read(read);
+                float sum = 0, count = 0;
+                for (int x = 0; x < 64; ++x) {
+                    const bool lit = HalfToFloat(pixels[(55 * 64 + x) * 4]) > 0.5f;
+                    sum += lit ? float(x) : 0.0f;
+                    count += lit ? 1.0f : 0.0f;
+                }
+                Expect(count > 0 && std::abs(sum / count - 43.5f) < 1.0f, "distortion warps the linear beauty too");
+            }
 
             // The warp's reach: a corner of k1 = 0.1 looks 1.2 times as far
             // out; a fisheye's 45 degree half view reaches tan(1 rad).

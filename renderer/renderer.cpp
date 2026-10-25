@@ -4055,7 +4055,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const bool post = frame.postProcess;
         _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
                            post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
-                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth);
+                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth,
+                           post && frame.linearColor ? _post.LinearOutput() : VK_NULL_HANDLE,
+                           post && frame.linearColor ? _post.LinearOutputView() : VK_NULL_HANDLE);
         pass("lensDistortion");
     }
 

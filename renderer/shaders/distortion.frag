@@ -7,6 +7,7 @@ layout(set = 0, binding = 0) uniform sampler2D color;
 layout(set = 0, binding = 1) uniform sampler2D depth;
 layout(set = 0, binding = 2) uniform isampler2D primId;
 layout(set = 0, binding = 3) uniform isampler2D instanceId;
+layout(set = 0, binding = 4) uniform sampler2D linearColor;  // an EXR's beauty, if there is one
 
 layout(push_constant) uniform Params {
     vec4 a;           // k1, k2, anaSq, scale
@@ -20,6 +21,7 @@ layout(push_constant) uniform Params {
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out int outPrimId;
 layout(location = 2) out int outInstanceId;
+layout(location = 3) out vec4 outLinear;
 
 // As LensDistortion::Warp.
 bool Warp(vec2 s, out vec2 source)
@@ -60,13 +62,14 @@ void main()
     bool valid = Warp(s, source);
     vec2 uv = source / pc.c.y * vec2(1.0, aspect) * 0.5 + 0.5;
     if (!valid || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) {
-        outColor = pc.clearColor;
+        outColor = outLinear = pc.clearColor;
         outPrimId = outInstanceId = -1;
         gl_FragDepth = pc.d.x;
         return;
     }
     ivec2 texel = min(ivec2(uv * size), ivec2(size) - 1);
     outColor = textureLod(color, uv, 0.0);
+    outLinear = textureLod(linearColor, uv, 0.0);
     gl_FragDepth = texelFetch(depth, texel, 0).r;
     outPrimId = texelFetch(primId, texel, 0).r;
     outInstanceId = texelFetch(instanceId, texel, 0).r;
