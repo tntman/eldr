@@ -387,7 +387,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     vkDelegate->SetFrameShared(shared);
     try {
-        _products.Write(*_renderer, objects, materials);
+        _products.Write(*_renderer, frame, objects, materials);
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
     }

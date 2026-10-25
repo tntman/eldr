@@ -101,17 +101,28 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
     }
 }
 
-void HdVkRenderProducts::Write(vkr::Renderer &renderer, const std::string &objectManifest,
-                               const std::string &materialManifest)
+void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame,
+                               const std::string &objectManifest, const std::string &materialManifest)
 {
+    // FNV-1a over what the image shows; a time step of usdrecord or a
+    // script can converge in its first frame (the post motion blur's).
+    uint64_t key = 1469598103934665603ull;
+    auto mix = [&](const void *data, size_t size) {
+        for (size_t i = 0; i < size; ++i) {
+            key = (key ^ static_cast<const unsigned char *>(data)[i]) * 1099511628211ull;
+        }
+    };
+    mix(&frame.sceneVersion, sizeof(frame.sceneVersion));
+    mix(frame.viewProj, sizeof(frame.viewProj));
     if (_products.empty() || !renderer.IsConverged()) {
         _written = false;
         return;
     }
-    if (_written) {
+    if (_written && key == _writtenKey) {
         return;
     }
     _written = true;
+    _writtenKey = key;
 #ifdef HDVK_EXR
     const size_t pixels = size_t(_width) * _height;
     // Colour, depth and the ids from the frame's images.

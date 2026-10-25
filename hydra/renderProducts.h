@@ -42,8 +42,10 @@ public:
     // for the extra AOVs they need that no Hydra buffer asked for.
     void Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height, vkr::Renderer::Targets *out);
     bool Needs(vkr::Aovs::Kind kind) const { return _need[kind]; }
-    // After Render: writes the products once `renderer` converged.
-    void Write(vkr::Renderer &renderer, const std::string &objectManifest, const std::string &materialManifest);
+    // After Render: writes the products once `renderer` converged on what
+    // `frame` (its scene version and camera) shows.
+    void Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame, const std::string &objectManifest,
+               const std::string &materialManifest);
 
 private:
     enum class Source { Color, Depth, PrimId, InstanceId, Aov };
@@ -61,6 +63,7 @@ private:
     std::vector<float> _aovs[vkr::Aovs::kCount];  // the extra AOVs the products asked for
     uint32_t _width = 0, _height = 0;
     bool _written = false;
+    uint64_t _writtenKey = 0;  // the frame _written is of: a new one (a post blur frame converges at once) writes again
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
