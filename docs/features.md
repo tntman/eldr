@@ -46,7 +46,7 @@ A sensible final-quality starting point:
 | Goal | Settings |
 |---|---|
 | Converge from scratch, no interactive shortcuts | `hdvk:finalQuality` on, `hdvk:filmSamples` 128-512 |
-| Linear, ungraded EXR for comp | `hdvk:tonemapper` `none`, `hdvk:autoExposure` off, `hdvk:bloomIntensity` 0 (the beauty is what post processing presents) |
+| Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`hdvk:productLinear`); `hdvk:autoExposure` off and `hdvk:exposureCompensation` 0 for unexposed values |
 | True soft shadows, bokeh, motion blur | leave `shadowJitter`, `dofJitter`, `motionBlurTimeSamples` on (defaults) |
 | Indirect light | `hdvk:gi` and `hdvk:ssgi` (and `hdvk:ssgiBitmask` for thin occluders) |
 | Accurate shadows and reflections off screen | `hdvk:rtShadows`, `hdvk:rtReflections` with 1 ray (the film averages) |
@@ -126,14 +126,17 @@ every change, never from the TAA image. Use it for offline renders.
 What the film enables (each has its own switch, all on by default and
 marked [film] in the settings):
 
-- Jittered light shapes: true soft-shadow penumbrae (`shadowJitter`).
+- Jittered light shapes: true soft-shadow penumbrae (`shadowJitter`), in
+  final-quality runs only (a fresh film or `finalQuality`).
 - Lens jitter: true depth of field with occlusion (`dofJitter`).
 - Motion blur by rendering the scene at shutter times
   (`motionBlurTimeSamples`).
 - Per-sample froxel fog without history (`fogFilmJitter`).
 - GI preconvergence: the film waits until fresh probes have settled
   (`giPreconverge`).
-- Adaptive sampling (`adaptiveThreshold`, off by default).
+- Adaptive sampling: off in interactive films (`adaptiveThreshold`, 0); in
+  final-quality runs on by default (`adaptiveFinalThreshold`, 0.01), and a film
+  counts as converged once `adaptivePixelFraction` (0.99) of the pixels stopped.
 
 All stochastic effects take their noise from per-effect Sobol dimensions with
 blue-noise rotation (`hdvk:sampleDimensions`), so the average converges
@@ -183,11 +186,11 @@ middle gray. Emissive meshes (constant `emissiveColor` above
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).
 
-**Dome sun.** `domeSun` pulls the bright texels of an HDRI out of the
-image-based light and turns them into a shadowed distant light.
+**Dome sun.** `domeSun` (on by default) pulls the bright texels of an HDRI out
+of the image-based light and turns them into a shadowed distant light.
 
 **Clamps.** `directClamp` / `indirectClamp` limit brightness against
-fireflies. 0 is off.
+fireflies. 0 is off; `indirectClamp` is 10 by default, `directClamp` 0.
 
 Ambient: GTAO (visibility, bent AO and multi-bounce on the dome's light) or,
 with SSGI, the traced visibility.
@@ -203,7 +206,8 @@ Three layers, each separately switchable:
 | SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
 
 SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
-(light passes behind thin objects); `ssgiThickness` makes rays respect thin
+(light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
+radius thick); `ssgiThickness` makes rays respect thin
 and grazing surfaces. `emissiveLights`, `fogGiAmbient` and `probeNormalize`
 use the GI. With the film, `giPreconverge` waits for the probes (about 33
 extra frames).
@@ -495,10 +499,12 @@ layout:
 - Files are zip-compressed float32 EXR at the frame's size (the product's own
   resolution is ignored).
 
-**Colour in the EXR.** The beauty is what the post chain presents: with
-`postProcess` on it is exposed, bloomed and tonemapped (ACES by default). For
-linear scene-referred files set `hdvk:tonemapper` to `none`, turn off
-`hdvk:autoExposure` and `hdvk:bloomIntensity`.
+**Colour in the EXR.** By default (`productLinear`) the beauty is linear and
+untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
+`hdvk:tonemapper` says (the viewport keeps its tonemapper). For values exactly
+as rendered turn off `hdvk:autoExposure` and set `hdvk:exposureCompensation` to
+0. With `productLinear` off the beauty is what the post chain presents:
+exposed, bloomed and tonemapped (ACES by default).
 
 **Holdouts and mattes** produce black with zero alpha; see
 [authoring](#usd-authoring-conventions).
@@ -550,7 +556,7 @@ shading inputs.
 | `bool primvars:hdvk:planarReflection = 1` | a flat mesh | Marks the mirror for planar reflections. Without any, the largest flat glossy opaque mesh is used. Needs `hdvk:planarReflections`. |
 | `bool primvars:eldr:hair = 0` | BasisCurves, constant | Opt out of hair shading: the curves shade as ordinary surfaces with SSR (cables, ropes). Unauthored or true: hair. An int works. |
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | a material's surface shader | Toon bands per unit of light (0: none) and band edge width, in bands. |
-| `inputs:clearcoatColor` | UsdPreviewSurface shader | Coat tint (UsdPreviewSurface has none; read as standard_surface `coat_color`). Constant or connected. |
+| `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (UsdPreviewSurface has none; read as standard_surface `coat_color`). Constant or connected. |
 | `int primvars:ri:attributes:Ri:Matte = 1` or `int primvars:karma:object:holdoutmode = 1` | a gprim | Holdout: black, zero alpha, keeps depth, ids and shadows. Karma's mode 2 (background) is treated as matte. |
 | `collection:matte` on a UsdRenderPass | active render pass | Everything in the collection is a holdout (the delegate reads the pass itself; usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, which needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | Active settings write EXR products with the AOVs and Cryptomatte listed above. `sourceType` `lpe` and `primvar` are honoured. |
@@ -558,7 +564,7 @@ shading inputs.
 | `karma:camera:material:binding`, `karma:camera:use_lensshader` | camera | A Karma Physical Lens (`kma_physicallens`) material's `opencv_k1..k6`, `opencv_p1`, `opencv_p2` become the same distortion. Edits reach the camera on its next sync. |
 | `primvars:skel:skinningMethod = "dualQuaternion"` | skinned mesh | Dual-quaternion skinning (otherwise linear blend). |
 | `inputs:angle` | DistantLight | Sun angular diameter for soft shadows (plus the film's jitter). |
-| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image over the light's surface (rect and disk; st (0,0) is the -X -Y corner) or the dome's latlong. |
+| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image over the light's surface (rect and disk; as UsdLux specifies, st (0,0) is the +X +Y corner) or the dome's latlong. |
 | `shadow:enable` | lights | Lights without it cast no shadows. |
 | `emissiveColor` (constant) | UsdPreviewSurface or standard_surface emission | Small bright emitters are promoted to lights. |
 | Camera `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field and motion blur. |
