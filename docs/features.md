@@ -235,8 +235,8 @@ roughness:
 2. **SSR denoiser** (`ssrDenoise`, off): one GGX-visible-normal ray per pixel,
    a ratio-estimator spatial filter (9 rays), temporal reprojection through the
    reflected point and a variance-guided bilateral filter. Handles roughness
-   up to 0.8 (fade 0.5 to 0.8). Costly (the crowd's shading goes from 12.5 to
-   21 ms); not combined with ray-traced reflections.
+   up to 0.8 (fade 0.5 to 0.8). Costly (the crowd's shading goes from 11.7 to
+   20.4 ms); not combined with ray-traced reflections.
 3. **Reflection probes** (`reflectionProbe`): a cube captured in the scene,
    prefiltered like the dome, with parallax correction against a box and the
    captured distances. One automatic probe at the scene centre, or up to 8

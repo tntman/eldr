@@ -628,7 +628,9 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // than 32.
     int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
-    for (int i = 0; i < steps; ++i) {
+    float lo = 0.0, hi = 0.0;  // the crossing's bracket
+    bool crossed = false;
+    for (int i = 0; i < steps && !crossed; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
         if (estimator) {
             u = max(u, uPrev + uEnd / pixels);
@@ -675,8 +677,9 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         // refined first and judged where it crosses: at grazing angles a
         // whole step can land far behind a surface it did pass through
         // (otherwise a miss that TAA's clipping keeps as grain).
-        bool behind = Behind(z, scene), crossed = false;
-        float lo = uPrev, hi = u;
+        bool behind = Behind(z, scene);
+        lo = uPrev;
+        hi = u;
         if (behind) {
             float stepLength = length(Unproject(s) - Unproject(sPrev));
             if (!wasBehind) {
@@ -713,55 +716,57 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             }
         }
         wasBehind = behind;
-        if (crossed) {
-            for (int k = 0; k < 5; ++k) {
-                float mid = 0.5 * (lo + hi);
-                vec3 m = mix(s0, s1, mid);
-                if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            vec2 ndc = mix(s0.xy, s1.xy, hi);
-            vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
-            ssrHitDistance = length(hitPos - p);
-            vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
-            vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
-            if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
-                return 0.0;  // not in last frame's image: a miss (the probe or dome)
-            }
-            // Footprint-filtered (Frame::ssrHitFilter, EEVEE 5.2): the
-            // history's mip whose pixels are as wide as the ray's cone at
-            // the hit, so a rough ray doesn't pick one sparkling pixel.
-            float lod = 0.0, prevEdge = 1.0;
-            if (frame.screenTrace.z > 0.0) {
-                float hitNdcZ = SceneDepth(ndc) * 2.0 - 1.0;
-                float pixel = length(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, hitNdcZ)) - hitPos);
-                lod = clamp(log2(2.0 * ssrHitDistance * cone / max(pixel, 1e-20)), 0.0, 5.0);
-                // Faded out at the edges of last frame's image too, where
-                // the footprint reaches past it.
-                vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
-                prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
-            }
-            hit = textureLod(previousColor, prevUv, lod);
-            hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
-            // Met from behind (the ray went behind an object): the light of
-            // its unseen side is guessed as a share of the front's
-            // (Frame::screenBackface).
-            // A small tolerance: grazing hits (normal from depth across
-            // the ray, rounding either way) count as front faces.
-            if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
-                hit.rgb *= frame.screenTrace.y;
-            }
-            // Fade towards the screen edges, beyond which the ray is blind.
-            vec2 edge = 1.0 - abs(ndc);
-            return smoothstep(0.0, 0.1, min(edge.x, edge.y)) * prevEdge;
-        }
         uPrev = u;
         sPrev = s;
     }
-    return 0.0;
+    // Resolved after the march, so its code holds no registers in the
+    // loop (it went 1 ms faster on the crowd than inside it).
+    if (!crossed) {
+        return 0.0;
+    }
+    for (int k = 0; k < 5; ++k) {
+        float mid = 0.5 * (lo + hi);
+        vec3 m = mix(s0, s1, mid);
+        if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    vec2 ndc = mix(s0.xy, s1.xy, hi);
+    vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
+    ssrHitDistance = length(hitPos - p);
+    vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
+    vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
+    if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
+        return 0.0;  // not in last frame's image: a miss (the probe or dome)
+    }
+    // Footprint-filtered (Frame::ssrHitFilter, EEVEE 5.2): the
+    // history's mip whose pixels are as wide as the ray's cone at
+    // the hit, so a rough ray doesn't pick one sparkling pixel.
+    float lod = 0.0, prevEdge = 1.0;
+    if (frame.screenTrace.z > 0.0) {
+        float hitNdcZ = SceneDepth(ndc) * 2.0 - 1.0;
+        float pixel = length(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, hitNdcZ)) - hitPos);
+        lod = clamp(log2(2.0 * ssrHitDistance * cone / max(pixel, 1e-20)), 0.0, 5.0);
+        // Faded out at the edges of last frame's image too, where
+        // the footprint reaches past it.
+        vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
+        prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
+    }
+    hit = textureLod(previousColor, prevUv, lod);
+    hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
+    // Met from behind (the ray went behind an object): the light of
+    // its unseen side is guessed as a share of the front's
+    // (Frame::screenBackface).
+    // A small tolerance: grazing hits (normal from depth across
+    // the ray, rounding either way) count as front faces.
+    if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+        hit.rgb *= frame.screenTrace.y;
+    }
+    // Fade towards the screen edges, beyond which the ray is blind.
+    vec2 edge = 1.0 - abs(ndc);
+    return smoothstep(0.0, 0.1, min(edge.x, edge.y)) * prevEdge;
 }
 
 // Same SH9 basis order as BuildEnvironment.
