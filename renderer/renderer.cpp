@@ -2003,6 +2003,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         Vec3 position{c.position[0], c.position[1], c.position[2]};
         float n = std::max(c.radius * 1.05f, cand.range * 1e-4f);
         Vec3 offset{};  // the sample point's offset from the light's centre
+        using Shape = Scene::Gpu::ShadowCaster::Shape;
         if (shapeSample && frame.softShadows) {
             // Uniform over a rect's or disk's area, a cylinder's axis; in a
             // sphere with density 1 / sqrt(1 - r^2), whose projection along
@@ -2011,9 +2012,9 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             // A cylinder: uniform along its axis, and across it the disc
             // of its section with density 1 / sqrt(1 - r^2) (the same
             // Abel pair, one dimension down: every chord integrates to pi).
-            // A sphere's near plane clears its own radius along each face
-            // axis from the offset point, no more (see add()).
-            using Shape = Scene::Gpu::ShadowCaster::Shape;
+            // A sphere's near plane clears its own radius (a cylinder's, its
+            // section's) along each face axis from the offset point, no
+            // more (see add()).
             const float u = shapeSample[0], v = shapeSample[1], phi = 6.2831853f * v;
             const Vec3 hw{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]};
             const Vec3 hh{c.halfHeight[0], c.halfHeight[1], c.halfHeight[2]};
@@ -2037,12 +2038,12 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
                 const float w = 1.0f - shapeSample[1], r = std::sqrt(std::max(1.0f - w * w, 0.0f)) * c.cylinderRadius,
                             ang = 6.2831853f * shapeSample[2];
                 offset = hw * (2.0f * u - 1.0f) + b * (r * std::cos(ang)) + Cross(a, b) * (r * std::sin(ang));
-                n += c.cylinderRadius;
             }
             position = position + offset;
         }
         const float f = std::max(cand.range, (n + c.radius) * 2.0f);
-        const bool sphereJitter = shapeSample && frame.softShadows && c.shape == Scene::Gpu::ShadowCaster::Shape::Sphere;
+        const bool jitter = shapeSample && frame.softShadows;
+        const Vec3 tubeAxis = Normalize(Vec3{c.halfWidth[0], c.halfWidth[1], c.halfWidth[2]});
         // A few texels of margin: PCF near a tile's (or cube face's) edge
         // must not read the neighbour.
         const float margin = 1.0f + 6.0f / float(tileSize);
@@ -2050,9 +2051,18 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
         auto add = [&](Vec3 direction) {
             ShadowTile t{};
             // The sphere reaches radius - offset.direction in front of the
-            // sample point along this axis; clear that and not more.
-            const float nf = sphereJitter ? std::max(c.radius * 1.05f - Dot(offset, direction), cand.range * 1e-4f)
-                                         : n;
+            // sample point along this axis, a cylinder's section through
+            // the sample point its projected radius - the radial offset's
+            // share; clear that and not more.
+            const float along = Dot(tubeAxis, direction);
+            const float extent = c.shape == Shape::Sphere ? c.radius
+                               : c.shape == Shape::Cylinder
+                                   ? c.cylinderRadius * std::sqrt(std::max(1.0f - along * along, 0.0f))
+                                   : -1.0f;
+            const Vec3 own = c.shape == Shape::Cylinder ? offset - tubeAxis * Dot(offset, tubeAxis) : offset;
+            const float nf = jitter && extent >= 0.0f
+                                 ? std::max(extent * 1.05f - Dot(own, direction), cand.range * 1e-4f)
+                                 : n;
             const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, nf, f);
             std::memcpy(t.viewProj, viewProj.m, sizeof(t.viewProj));
             const uint32_t k = uint32_t(tiles.size());
