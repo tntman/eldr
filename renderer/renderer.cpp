@@ -2007,7 +2007,17 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
 
     // Pick by priority, then place in light order: as long as the same lights
     // win, the tiles (and the cached atlas) stay where they were.
-    const uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
+    // Tiles shrink (halving, down to 64) until every light that needs one fits
+    // (all of them on 4096x4096 up to ~680 sphere lights at 64 texels); past
+    // that the farthest or dimmest go unshadowed.
+    uint32_t tileSize = std::clamp(frame.localShadowResolution, 64u, kShadowAtlasSize / 2);
+    uint32_t demand = 0;
+    for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()); i < candidates.size(); ++i) {
+        demand += candidates[i].caster->coneAngle <= kSpotShadowCone ? 1 : 6;
+    }
+    while (tileSize > 64 && (kShadowAtlasSize / tileSize) * (kShadowAtlasSize / tileSize) < demand) {
+        tileSize /= 2;
+    }
     const uint32_t perRow = kShadowAtlasSize / tileSize, capacity = perRow * perRow;
     // With tileTraced the traced lights get tiles too, after the others (whose
     // tiles stay as without), for what the traced image misses.

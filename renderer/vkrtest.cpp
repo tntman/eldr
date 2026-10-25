@@ -879,6 +879,31 @@ int main()
                 scene.RemoveLight(light);
             }
 
+            {
+                // 20 shadowed point lights (120 cube faces, more than 64
+                // tiles of 512): each has a small occluder in front of its
+                // own spot on the wall, whose shadow must be there for all.
+                vkr::Scene many(&device);
+                AddQuad(many, -1, -1, 1, 1, 0.5f)->material = white;
+                for (int i = 0; i < 20; ++i) {
+                    const float x = -0.8f + 0.4f * float(i % 5), y = -0.6f + 0.4f * float(i / 5);
+                    AddQuad(many, x - 0.1f, y - 0.1f, x + 0.1f, y + 0.1f, 0.42f)->material = white;
+                    vkr::Light *l = AddSphereLight(many, x, y, 0.35f, 0.02f, 1.0f);
+                    l->castShadows = true;
+                }
+                many.Commit();
+                vkr::Renderer::Frame off = IdentityFrame();
+                off.localShadows = false;
+                const Image shadowed = Render(renderer, many), open = Render(renderer, many, off);
+                int dark = 0;
+                for (int i = 0; i < 20; ++i) {
+                    const int px = int(std::floor((-0.8f + 0.4f * float(i % 5) + 0.15f + 1.0f) * 32.0f));
+                    const int py = int(std::floor((-0.6f + 0.4f * float(i / 5) + 1.0f) * 32.0f));
+                    dark += shadowed.At(px, py, 0) < 0.4f * open.At(px, py, 0);
+                }
+                Expect(dark == 20, "20 shadowed point lights: every light's shadow is there");
+            }
+
             // A big sphere light (same power) softens the shadow's edges:
             // many more partly lit pixels along the row than from a point.
             auto penumbra = [&](float radius, bool soft, uint32_t samples = 16) {
