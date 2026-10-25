@@ -115,6 +115,10 @@ public:
         // reflection where nothing replaces it) counts as direct; off: as
         // indirect, with GI, probes and reflections.
         bool splitDomeDirect = true;
+        // Blender 5.1's Light Path Intensity: multipliers of the direct and
+        // indirect light in the final pixel (the light splits' division, the
+        // dome per splitDomeDirect), not of the light transport. 1: off, no cost.
+        float directIntensity = 1.0f, indirectIntensity = 1.0f;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;

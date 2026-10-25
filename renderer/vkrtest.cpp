@@ -1814,6 +1814,31 @@ int main()
             Expect(frames < 200, "GI converges");
             Expect(std::abs(img.At(28, 32, 0) - last.At(28, 32, 0)) < 0.02f * r, "settled GI is stable frame to frame");
 
+            // Light path intensity: indirect 0 leaves the direct light (the
+            // GI-less image), direct 0 the bounced light alone; they add up.
+            auto intensity = [&](float d, float i) {
+                vkr::Renderer::Frame f = frame;
+                f.directIntensity = d;
+                f.indirectIntensity = i;
+                Image out;
+                for (int k = 0; k < 4; ++k) {
+                    out = Render(renderer, scene, f);
+                }
+                return out;
+            };
+            const Image noIndirect = intensity(1.0f, 0.0f), noDirect = intensity(0.0f, 1.0f), twice = intensity(2.0f, 2.0f);
+            for (int c = 0; c < 2; ++c) {
+                Expect(std::abs(noIndirect.At(28, 32, c) - direct.At(28, 32, c)) < 0.03f * direct.At(28, 32, c),
+                       "indirectIntensity 0: the GI-lit wall keeps its direct light");
+                Expect(std::abs(noDirect.At(28, 32, c) + noIndirect.At(28, 32, c) - img.At(28, 32, c)) <
+                           0.03f * img.At(28, 32, c),
+                       "directIntensity 0 + indirectIntensity 0 images add up to the beauty");
+                Expect(std::abs(twice.At(28, 32, c) - 2.0f * img.At(28, 32, c)) < 0.03f * img.At(28, 32, c),
+                       "both intensities 2: twice the light");
+            }
+            Expect(noDirect.At(28, 32, 0) > 1.2f * noDirect.At(28, 32, 1) && noDirect.At(28, 32, 0) < 0.8f * img.At(28, 32, 0),
+                   "directIntensity 0: only the red bounce is left");
+
             // GI preconverge: the film's 8 samples start once the probes
             // have settled (their first 1 / (1 - 0.97) = 33 updates, all in
             // the first frame), so no sample sees half-filled probes; off,

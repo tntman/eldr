@@ -59,6 +59,7 @@ struct FrameData {
     float screenTrace[4];    // thickness estimator (SSR) on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
+    float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
 };
 
 namespace {
@@ -3062,6 +3063,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
     fd.aovs[0] = splits ? 1u : 0u;
     fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
+    // Light path intensity: the splits' code (compiled with the splits' key
+    // bit) scales the final pixel's direct and indirect light.
+    const bool lightPath = frame.directIntensity != 1.0f || frame.indirectIntensity != 1.0f;
+    fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
+    fd.lightPath[1] = std::max(frame.indirectIntensity, 0.0f);
+    fd.lightPath[2] = lightPath ? 1.0f : 0.0f;
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -3076,7 +3083,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // code (mesh.frag's kCompiledLightSplits); kFeatureLod (never optional)
     // the levels of detail crossfade's dither (mesh.frag).
     static_assert((kOptionalFeatures & (1u | kFeatureLod)) == 0, "the light splits' and crossfade's key bits");
-    _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits ? 1u : 0u) |
+    _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
                                (fd.lodFade[0] > 0 ? kFeatureLod : 0)) *
                    kVariants;
     if (frame.pipelinePrewarm) {

@@ -500,6 +500,11 @@ only compiled into the shading pipelines when an AOV asks for them (one bit of
 the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
 lights test scene. They accumulate like the colour: over TAA frames, or the film.
 
+**Light path intensity** (`directIntensity`, `indirectIntensity`, both 1; Blender 5.1)
+multiplies the same direct and indirect light in the final pixel, not in the light transport
+(GI still bounces unscaled light) nor in the AOVs. Closures outside the splits (subsurface
+transmission, refraction, fog, toon) stay unscaled. At 1 the shaders compile without it.
+
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes
 one EXR through OpenImageIO, once the frame has converged. Render vars name
