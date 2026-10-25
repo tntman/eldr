@@ -51,7 +51,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them, y 1 = the dome's visible light is direct
     vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
     vec4 screenTrace;    // x: 1 = thickness estimator in SSR (Frame::ssgiThickness), y: back-face hits'
-                         // share of light (Frame::screenBackface; 1: off)
+                         // share of light (Frame::screenBackface; 1: off), z: 1 = SSR hits
+                         // footprint-filtered (Frame::ssrHitFilter, the history's mips)
     uvec4 shadowJitter;  // x 1: light shapes jittered this film sample (shadow maps seen from a point
                          // of each light, ShadowTile.origin): hard lookups, no PCSS
     uvec4 lodFade;       // x: frames a level of detail change crossfades over (0: it pops; LodKeep)

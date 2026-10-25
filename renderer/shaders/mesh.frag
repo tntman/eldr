@@ -574,8 +574,9 @@ vec3 DepthNormal(vec2 ndc, vec3 p)
 // result reprojected to the hit. Returns the hit's weight (0 = miss) and
 // its premultiplied radiance in `hit`.
 // Without the denoiser (Frame::ssrDenoise): mirror rays only, faded out
-// from roughness 0.3 to 0.6.
-float TraceReflection(vec3 p, vec3 r, out vec4 hit)
+// from roughness 0.3 to 0.6. `cone`: the tangent of the half angle of the
+// cone of directions the ray stands for (Frame::ssrHitFilter).
+float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
 {
     int steps = int(frame.features.y);
     hit = vec4(0.0);
@@ -714,9 +715,22 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
             vec2 prevUv = prev.xy / prev.w * 0.5 + 0.5;
             if (prev.w <= 0.0 || any(lessThan(prevUv, vec2(0.0))) || any(greaterThan(prevUv, vec2(1.0)))) {
-                return 0.0;
+                return 0.0;  // not in last frame's image: a miss (the probe or dome)
             }
-            hit = textureLod(previousColor, prevUv, 0.0);
+            // Footprint-filtered (Frame::ssrHitFilter, EEVEE 5.2): the
+            // history's mip whose pixels are as wide as the ray's cone at
+            // the hit, so a rough ray doesn't pick one sparkling pixel.
+            float lod = 0.0, prevEdge = 1.0;
+            if (frame.screenTrace.z > 0.0) {
+                float hitNdcZ = SceneDepth(ndc) * 2.0 - 1.0;
+                float pixel = length(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, hitNdcZ)) - hitPos);
+                lod = clamp(log2(2.0 * ssrHitDistance * cone / max(pixel, 1e-20)), 0.0, 5.0);
+                // Faded out at the edges of last frame's image too, where
+                // the footprint reaches past it.
+                vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
+                prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
+            }
+            hit = textureLod(previousColor, prevUv, lod);
             hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
             // Met from behind (the ray went behind an object): the light of
             // its unseen side is guessed as a share of the front's
@@ -726,7 +740,7 @@ float TraceReflection(vec3 p, vec3 r, out vec4 hit)
             }
             // Fade towards the screen edges, beyond which the ray is blind.
             vec2 edge = 1.0 - abs(ndc);
-            return smoothstep(0.0, 0.1, min(edge.x, edge.y));
+            return smoothstep(0.0, 0.1, min(edge.x, edge.y)) * prevEdge;
         }
         uPrev = u;
         sPrev = s;
@@ -928,7 +942,9 @@ void main()
         // The visible normals' pdf: D(h) G1(v) / (4 NoV).
         float pdf = D_GGX(max(dot(n, h), 0.0), a) * 2.0 / (NoV + sqrt(a * a + (1.0 - a * a) * NoV * NoV)) / 4.0;
         vec4 hit;
-        float w = TraceReflection(inWorldPos, l, hit);
+        // The ray's share of the lobe: the solid angle of one of the 9
+        // rays the denoiser's spatial pass reuses.
+        float w = TraceReflection(inWorldPos, l, sqrt(1.0 / (9.0 * PI * max(pdf, 1e-6))), hit);
         ivec2 px = ivec2(gl_FragCoord.xy);
         imageStore(ssrRays, px, vec4(mix(specular, hit.rgb + (1.0 - hit.a) * specular, w), pdf));
         imageStore(ssrDirections, px, vec4(OctEncode(l), w > 0.0 ? ssrHitDistance : -1.0, a));
@@ -938,7 +954,7 @@ void main()
         domeKept *= 1.0 - ssrWeight;  // ponytail: the denoised rays' misses aren't in the splits
     } else if (ssrWeight > 0.0) {
         vec4 hit;
-        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), hit);
+        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), a, hit);  // the lobe's width
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
         domeKept *= 1.0 - ssrWeight * hit.a;
     }

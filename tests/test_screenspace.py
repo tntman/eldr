@@ -1,6 +1,6 @@
 """Headless check of HdVk's screen-space effects through Hydra: the
 thickness estimator (SSR at grazing angles), SSGI's visibility bitmask,
-denoised glossy SSR and back-face hits.
+denoised glossy SSR, its footprint-filtered hits and back-face hits.
 Run: usdenv.cmd python tests\\test_screenspace.py"""
 import os
 import sys
@@ -131,6 +131,16 @@ grain = roughness(denoised, 100, 240, 160, 300)
 print("glossy SSR: the column's reflection %.1f (dome alone %.1f), grain %.2f" % (glossy, dome, grain))
 expect(glossy > dome + 5, "denoised SSR shows a glossy floor's reflections")
 expect(grain < 3, "denoised SSR is smooth without TAA")
+
+# Footprint-filtered SSR hits (hdvk:ssrHitFilter): at roughness 0.25 the
+# mirror ray reads the mip of last frame's image as wide as the lobe at
+# the hit, so the columns' reflections blur (smaller steps between
+# neighbouring pixels across their edges) instead of staying mirror-sharp.
+edges = (40, 230, 110, 300)  # the left column's reflection and its edges
+sharp = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": False}), *edges)
+blurred = roughness(render(stage, {**bright, "hdvk:ssrHitFilter": True}), *edges)
+print("SSR hit filter: steps across the column's reflection %.2f without, %.2f with" % (sharp, blurred))
+expect(blurred < 0.8 * sharp, "hdvk:ssrHitFilter blurs glossy reflections by the ray's footprint")
 
 # Back-face hits (hdvk:screenBackface): rays that meet what the camera sees
 # from behind take hdvk:screenBackfaceScale of its light. SSGI's horizon scan

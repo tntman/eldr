@@ -225,7 +225,10 @@ roughness:
 1. **SSR** (`ssr`): ray marching against the depth buffer, 32 steps by
    default, bisection refinement at crossings, shaded from last frame's image,
    fades with roughness (0.3 to 0.6) and at screen edges. Thickness estimator
-   (`ssgiThickness`) handles thin strips and grazing surfaces.
+   (`ssgiThickness`) handles thin strips and grazing surfaces. `ssrHitFilter`
+   reads each hit from the mip of last frame's image that matches the ray's
+   cone (the history keeps 6 mips for it), so rough reflections blur instead
+   of sparkling; hits outside last frame's view are misses (probe or dome).
 2. **SSR denoiser** (`ssrDenoise`, off): one GGX-visible-normal ray per pixel,
    a ratio-estimator spatial filter (9 rays), temporal reprojection through the
    reflected point and a variance-guided bilateral filter. Handles roughness

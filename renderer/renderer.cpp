@@ -56,7 +56,7 @@ struct FrameData {
     uint32_t sampleInfo[4];
     uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
-    float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light
+    float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light, SSR hit filter on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
 };
@@ -2819,9 +2819,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Reflections shade hits with last frame's resolved image, which exists
     // once post (TAA resolve) ran at this size.
     std::memcpy(fd.prevViewProj, _historyValid ? _prevViewProj : frame.viewProj, sizeof(fd.prevViewProj));
+    // SSR's hits from the history's mip their footprint spans: built at
+    // the end of each frame for the next.
+    const bool ssrHitFilter = frame.ssr && frame.ssrHitFilter && frame.postProcess && frame.depthPrepass;
+    _taa.SetHistoryMips(ssrHitFilter);
     if (frame.ssr && frame.postProcess && frame.depthPrepass && _historyValid) {
         fd.ssr[0] = 1.0f;
         fd.ssr[1] = float(sample);
+        fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
         if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {

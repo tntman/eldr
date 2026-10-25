@@ -344,6 +344,11 @@ public:
         // takes none and its horizon scan all, as before.
         bool screenBackface = true;
         float screenBackfaceScale = 0.25f;
+        // SSR hits read last frame's image at the mip as wide as the ray's
+        // cone there (EEVEE 5.2): glossy reflections without sparkle. The
+        // history then keeps mips (6 levels, blitted each frame). Off: one
+        // texel, sharp at any roughness.
+        bool ssrHitFilter = true;
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
