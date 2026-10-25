@@ -154,6 +154,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtDisplacement, "eldr:rtDisplacement"))                \
     ((ssrDenoise, "eldr:ssrDenoise"))                        \
     ((shadowJitter, "eldr:shadowJitter"))                    \
+    ((finalShadows, "eldr:finalShadows"))                    \
+    ((rtTranslucentShadows, "eldr:rtTranslucentShadows"))    \
     ((dofJitter, "eldr:dofJitter")) \
     ((lightTextures, "eldr:lightTextures")) \
     ((domeSun, "eldr:domeSun")) \

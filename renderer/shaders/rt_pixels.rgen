@@ -9,11 +9,12 @@
 #include "material.glsl"
 #include "rt.glsl"
 #include "gi.glsl"
+#include "volume.glsl"
 #include "rt_shade.glsl"
 
 // Per pixel, for mesh.frag: a ray through the pixel finds the surface the
 // rasterizer shades there (same jittered camera), then shadow rays towards
-// the lights of rt.shadowLights (one channel each) and reflection rays
+// the lights of rt.shadowLights (one channel each, four per layer) and reflection rays
 // (GGX samples, so rough reflections are noisy per frame and TAA averages
 // them). Without a hit both images get neutral values. Where the ray
 // finds another surface than the prepass did (a skinned instance beyond
@@ -68,14 +69,36 @@ void main()
     }
     uvec3 seed = uvec3(pixel, rt.params.x);
 
+    // Shadows, rt.shadowInfo.z lights per layer of the image (four grey
+    // ones, or one in colour). With the sample dimensions each film sample
+    // takes a new point on every light's shape: the CPU's scrambled Sobol
+    // point turned by blue noise (each light reading it elsewhere), so the
+    // film converges to the exact penumbra.
     if ((frame.features.x & kFeatureRtShadows) != 0u) {
+        uint perTexel = rt.shadowInfo.z;
         vec4 shadows = vec4(1.0);
-        for (int k = 0; k < 4; ++k) {
-            if (rt.shadowLights[k] != kNone) {
-                shadows[k] = LightVisibility(rt.shadowLights[k], p, ng, seed, rt.params.y);
+        for (uint k = 0u; k < 16u; ++k) {
+            uint light = rt.shadowLights[k >> 2u][k & 3u];
+            if (light == kNone) {
+                break;
+            }
+            vec2 u = Random2(seed + uvec3(0u, 0u, light * 64u), 0u);
+            if (frame.sampleInfo.x != 0u) {
+                vec4 noise = texelFetch(blueNoise, (pixel + ivec2(k * 23u + 7u, k * 41u + 13u)) & 63, 0);
+                u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
+            }
+            vec3 v = LightVisibility(light, p, ng, u, rt.params.y);
+            if (perTexel == 1u) {
+                shadows.rgb = v;
+            } else {
+                shadows[k & 3u] = v.r;
+            }
+            uint next = k + 1u < 16u ? rt.shadowLights[(k + 1u) >> 2u][(k + 1u) & 3u] : kNone;
+            if ((k + 1u) % perTexel == 0u || next == kNone) {
+                imageStore(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)), shadows);
+                shadows = vec4(1.0);
             }
         }
-        imageStore(rtShadowImage, pixel, shadows);
     }
 
     if ((frame.features.x & kFeatureRtReflections) != 0u) {

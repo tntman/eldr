@@ -9,6 +9,7 @@
 #include "material.glsl"
 #include "rt.glsl"
 #include "gi.glsl"
+#include "volume.glsl"
 #include "rt_shade.glsl"
 
 // Global illumination: rt.giParams.y rays per probe (x: ray, y: probe),

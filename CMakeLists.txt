@@ -46,14 +46,15 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     list(APPEND shader_incs ${spv})
 endforeach()
 # Ray tracing stages (raytracing.cpp), only used with Device::rayTracing.
-foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit)
+foreach(shader rt_pixels.rgen rt_probes.rgen rt.rmiss rt_shadow.rmiss rt.rchit rt.rahit rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -o ${spv}
-                ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+                -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
-                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl)
+                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+                third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate

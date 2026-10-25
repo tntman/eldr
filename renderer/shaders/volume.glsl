@@ -56,3 +56,38 @@ pnanovdb_readaccessor_t Accessor(uint offset)
     pnanovdb_readaccessor_init(acc, pnanovdb_tree_get_root(buf, pnanovdb_grid_get_tree(buf, grid)));
     return acc;
 }
+
+const uint kShadowSteps = 64u;     // per volume and shadow ray, at most
+const float kShadowOpaque = 6.9;  // optical depth of 1e-3 transmittance: nothing is left to dim
+
+// Optical depth of the first `count` volumes along origin + dir * s, s in
+// [0, 1] (volume_shadow.frag's texels, traced shadow rays), stepping
+// 2 x stepSize density voxels (VolumeParams); `weighted`: its integral
+// times s. Segments outside a volume's box are skipped and the march stops
+// at kShadowOpaque, but empty tiles inside it are still stepped.
+float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, out float weighted)
+{
+    float len = length(dir);
+    float tau = 0.0;
+    weighted = 0.0;
+    for (uint i = 0u; i < count && tau < kShadowOpaque; ++i) {
+        vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
+        vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
+        vec2 span = Slabs(oi, di, volumes[i].indexMin.xyz, volumes[i].indexMax.xyz);
+        span = vec2(max(span.x, 0.0), min(span.y, 1.0));
+        if (!(span.x < span.y)) {
+            continue;
+        }
+        uint steps = uint(clamp(ceil((span.y - span.x) * length(di) / (2.0 * stepSize)), 1.0, float(kShadowSteps)));
+        float ds = (span.y - span.x) / float(steps);
+        float sigma = volumes[i].medium.x * density * ds * len;  // per unit of density
+        pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
+        for (uint k = 0u; k < steps && tau < kShadowOpaque; ++k) {
+            float s = span.x + (float(k) + 0.5) * ds;
+            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0) * sigma;
+            tau += d;
+            weighted += d * s;
+        }
+    }
+    return tau;
+}

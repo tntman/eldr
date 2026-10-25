@@ -49,7 +49,7 @@ A sensible final-quality starting point:
 | Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
 | True soft shadows, bokeh, motion blur | leave `shadowJitter`, `dofJitter`, `motionBlurTimeSamples` on (defaults) |
 | Indirect light | `eldr:gi` and `eldr:ssgi` (and `eldr:ssgiBitmask` for thin occluders) |
-| Accurate shadows and reflections off screen | `eldr:rtShadows`, `eldr:rtReflections` with 1 ray (the film averages) |
+| Accurate shadows and reflections off screen | `eldr:finalShadows` `raytraced` (or `auto`), `eldr:rtReflections` with 1 ray (the film averages) |
 | Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off, `--complexity veryhigh` (or `eldr:maxRefineLevel`) |
 | Fireflies | `eldr:directClamp` / `eldr:indirectClamp` |
 
@@ -188,8 +188,15 @@ its own shape).
 - Translucent casters and volumes tint shadows through colour maps beside the
   shadow maps.
 - Ray-traced shadows (`rtShadows`) replace maps for the sun and the three most
-  important local lights, soft from the light's size, with a skinned-character
-  cap (`rtSkinnedInstances`).
+  important local lights (15 in final quality), soft from the light's size,
+  with a skinned-character cap (`rtSkinnedInstances`). In final quality they
+  take one ray per light and film sample at the sample dimensions' point of
+  the light's shape, so the film converges to the exact penumbra.
+  Traced shadow rays pass translucent casters, taking their colour, and march
+  the volumes (`rtTranslucentShadows`), as the tint maps do.
+  `finalShadows` (`maps`, `raytraced`, `auto`) traces them in final quality
+  without `rtShadows`; `auto` traces dense scenes (2 triangles per pixel and
+  shadowed light) whose skinned instances all block rays.
 - Under the film, `shadowJitter` renders the maps from a point on the light so
   the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
   0.065).

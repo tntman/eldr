@@ -183,6 +183,10 @@ vec3 TintLookup(sampler2DArray tint, sampler2DArray tintDepth, sampler2D atlas, 
 // distant light (direction l), looked up as Shadow() does in mesh.frag.
 vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 {
+    vec3 traced;
+    if (RtShadowTint(frame.counts.y, traced)) {
+        return traced;
+    }
     if (!Feature(kFeatureTranslucentShadows)) {
         return vec3(1.0);
     }
@@ -205,6 +209,10 @@ vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 // The same for local light `index`, looked up as LocalShadow() does.
 vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 {
+    vec3 traced;
+    if (RtShadowTint(index, traced)) {
+        return traced;
+    }
     uint tile = lightShadow[index];
     if (!Feature(kFeatureTranslucentShadows) || tile == kNone) {
         return vec3(1.0);
