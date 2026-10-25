@@ -2893,7 +2893,33 @@ int main()
             const Image taaOff = film(scene, frame);
             frame.shadowJitter = true;
             Expect(MaxDifference(film(scene, frame), taaOff) == 0.0f, "shadow jitter: TAA frames keep PCSS");
+            // The film a change handed back to TAA (usdview's still camera) is
+            // interactive too: PCSS, jitter on or off.
             frame.filmAccumulation = true;
+            frame.finalQuality = false;
+            auto interactive = [&](const vkr::Renderer::Frame &f) {
+                vkr::Renderer r(device);
+                Render(r, scene, f);
+                vkr::Renderer::Frame changed = f;
+                changed.sceneVersion = 7;
+                Image img;
+                for (int i = 0; i < 400; ++i) {
+                    img = Render(r, scene, changed);
+                    if (r.IsConverged()) {
+                        break;
+                    }
+                }
+                return img;
+            };
+            const Image interactiveJitter = interactive(frame);
+            frame.shadowJitter = false;
+            const Image interactivePcss = interactive(frame);
+            // (Measured 0.004 apart, not bit for bit; a jittered film's
+            // penumbra is up to about 0.1 away from PCSS.)
+            Expect(MaxDifference(interactiveJitter, interactivePcss) < 0.01f,
+                   "shadow jitter: only in final quality (an interactive film keeps PCSS)");
+            frame.shadowJitter = true;
+            frame.finalQuality = true;
             sun->angle = 0.0f;
             scene.Commit();
             const Image pointOn = film(scene, frame);

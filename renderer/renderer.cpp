@@ -2837,7 +2837,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on
     // every shape, the sun's direction within its disc.
-    const bool shapeJitter = film && frame.shadowJitter && frame.softShadows;
+    const bool shapeJitter = film && _filmFinal && frame.shadowJitter && frame.softShadows;
     float shapeSample[3];
     ScrambledSobol(sobolIndex, kSeedLightShape, shapeSample, 3);
     float toSun[3];
