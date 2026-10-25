@@ -765,7 +765,7 @@ int main()
             Expect(std::abs(Render(renderer, scene).At(32, 32, 0) / (2.0f * formFactor) - 1.0f) < 0.03f,
                    "rect light: exact form factor head-on");
 
-            // Textured (inputs:texture:file), 2 wide; st (0,0) is at +X +Y (UsdLux): black over its +X
+            // Textured (inputs:texture:file), 2 wide; s = 0 is at +X (UsdLux): black over its +X
             // half (texture u < 0.5), white over its -X half. The wall under each half takes
             // its colour; Frame::lightTextures off: as without one.
             rect->halfWidth[0] = 1.0f;
@@ -790,6 +790,22 @@ int main()
             untextured.lightTextures = false;
             Expect(MaxDifference(Render(renderer, scene, untextured), plain) == 0.0f,
                    "Frame::lightTextures off: as without a texture");
+            // As Karma: the image's top row is at +Y. Rows are stored bottom-up, so the last
+            // rows are the image's top: white there, black below, and the wall under +Y is lit.
+            rect->halfHeight[1] = 1.0f;
+            auto tall = std::make_shared<vkr::Texture>();
+            tall->width = 2;
+            tall->height = 64;
+            tall->pixels.assign(2 * 64 * 4, 255);
+            for (int y = 0; y < 32; ++y) {
+                std::fill_n(&tall->pixels[y * 2 * 4], 2 * 4, uint8_t(0));
+            }
+            rect->texture = tall;
+            scene.Commit();
+            const Image upright = Render(renderer, scene);
+            Expect(upright.At(32, 16, 0) < 0.2f * upright.At(32, 48, 0) && upright.At(32, 48, 0) > 0.0f,  // +Y is the lower rows here
+                   "rect light texture: the image's top row is at +Y (Karma)");
+            rect->halfHeight[1] = 0.25f;
             rect->texture = nullptr;
             rect->halfWidth[0] = 0.25f;
             rect->direction[2] = -1;  // now faces away from the wall

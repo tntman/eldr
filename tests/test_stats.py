@@ -59,6 +59,18 @@ expect(abs(sum(stats["gpuPassMs"].values()) - stats["gpuTimeMs"]) < 1e-3, "passe
 expect(stats.get("numCompletedSamples") == stats.get("taaTarget") == 64, "film samples")
 expect(stats.get("percentDone") == 100.0 and stats.get("rendererStage") == "converged", "converged")
 expect(stats.get("gpuMemoryUsed", 0) > stats.get("primvar", 0) > 0, "graphics memory")
+# Houdini's viewport text (houdini/UsdRenderers.json maps these).
+expect(stats.get("renderProgressAnnotation", "").startswith("film 64/64") and "triangles" in stats.get("renderStatsAnnotation", ""),
+       "annotations")
+expect(stats.get("totalClockTime", 0) > 0 and stats.get("pixelsConvergedPercent") == 100.0, "time to converge")
+# Interactive TAA is not counted up: it reads "interactive 100%".
+engine.SetRendererSetting("eldr:filmAccumulation", False)
+moved = frustum.ComputeViewMatrix() * Gf.Matrix4d().SetTranslate(Gf.Vec3d(0.3, 0, 0))
+engine.SetCameraState(moved, frustum.ComputeProjectionMatrix())
+engine.Render(stage.GetPseudoRoot(), params)
+tmp = engine.GetRenderStats()
+expect(tmp.get("rendererStage") == "interactive" and tmp.get("percentDone") == 100.0, "interactive TAA stage")
+engine.SetRendererSetting("eldr:filmAccumulation", True)
 rows = dict(hdvkUsdview.Rows(stats))
 expect(rows.get("Triangles") == "12 of 24" and "Shading" in rows, "the usdview window's rows")
 

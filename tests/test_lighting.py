@@ -201,6 +201,26 @@ expect(gray(image, 52, 32) < 0.2 * gray(image, 12, 32) and gray(image, 12, 32) >
 image = render(stage, {**linear, "eldr:lightTextures": False})
 expect(abs(gray(image, 12, 32) - gray(image, 52, 32)) < 10, "eldr:lightTextures off: lit evenly")
 
+# As Karma, the image's top row is at the light's +Y (not UsdLux's st (0,0)
+# corner): a white top half and a black bottom half light the wall's upper half.
+vertical = QImage(2, 64, QImage.Format_RGB32)
+vertical.fill(QColor(0, 0, 0))
+for y in range(32):
+    for x in range(2):
+        vertical.setPixelColor(x, y, QColor(255, 255, 255))
+verticalFile = os.path.join(tempfile.mkdtemp(), "top_white.png")
+vertical.save(verticalFile)
+stage = wall_stage()
+panel = UsdLux.RectLight.Define(stage, "/panel")
+panel.CreateWidthAttr(2)
+panel.CreateHeightAttr(6)
+panel.CreateIntensityAttr(4)
+panel.CreateTextureFileAttr(verticalFile)
+panel.AddTranslateOp().Set(Gf.Vec3d(0, 0, 0.3))
+image = render(stage, linear)
+expect(gray(image, 32, 52) < 0.2 * gray(image, 32, 12) and gray(image, 32, 12) > 50,
+       "rect light texture: the image's top row is at +Y (Karma)")
+
 # Ray-traced shadows don't shadow the surface itself far from the origin:
 # a grey floor of 16x16 quads at z = 0.04 from (200, 200) to (400, 400), as Kitchen_set's
 # tiles (centimetres), under a 35 degree sun, is as bright traced as

@@ -84,6 +84,58 @@ copy `eldr.json` to `Documents/houdini22.0/packages/`, or set
 `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`. Then pick Eldr in the Solaris
 viewport's renderer menu or on a Render Settings LOP.
 
+## Solaris UI (Eldr tabs)
+
+Solaris builds a renderer's tab on the Render Settings LOP from
+`<HOUDINI_PATH>/soho/parameters/<RendererPlugin>_Global.ds`, on the Render
+Geometry Settings LOP from `..._Geometry.ds` (`loputils.addRendererParmFolders`,
+run when the node is created or "Rebuild Renderer-Specific Parameters" is
+picked), and the viewport's Display Options from `..._Viewport.ds`
+(`uiscope viewport`). For Eldr that is `HdVkRendererPlugin_*.ds`.
+
+`houdini/gen_ui.py` writes the three files into `build-h22/houdini/soho/parameters`
+(CMake target `eldrHoudiniUi`, part of the Houdini build, run with hython) from
+the renderer's own `GetRendererSettingsList()`, grouped as usdview's settings
+window (`GROUPS` in `usdview/hdvkUsdview/settings.py`). The Render Settings tab
+authors every `eldr:*` setting (each with Karma's Do Nothing / Set or Create /
+Block menu); the Geometry tab the per-prim primvars (`primvars:eldr:reflectionProbe`,
+`planarReflection`, `hair`, `ribbons`, `sprites`). `hython tests\houdini_ui.py`
+creates both LOPs, sets parameters and checks the authored attributes and the
+viewport file. Houdini does not list a delegate's `GetRenderSettingDescriptors`
+by itself: without `HdVkRendererPlugin_Viewport.ds` the viewport's Display
+Options had no Eldr settings (the Embree sample in
+`$HFS/houdini/soho/parameters` shows the mechanism). Nodes
+made before Eldr was installed need "Rebuild Renderer-Specific Parameters".
+
+## Render statistics in Solaris
+
+Houdini reads `GetRenderStats()` (a dictionary, JSON-converted, plus
+`__delegate`) and maps it through `houdini/UsdRenderers.json`'s
+`statsdatapaths` (jsonpath into the stats) to its standard names. The viewport
+text and the Render Statistics pane (`renderstats`, QML templates in
+`$HFS/qt/qml/houdini/renderstats`) read these:
+
+| Name | Type | Shown as |
+|---|---|---|
+| `rendererStage` | string | the word before the percentage in the viewport ("Accumulating 24%") and in the pane |
+| `percentDone` | number, 0-100 | the percentage; the pane's progress bar and ETA |
+| `totalClockTime` | seconds | the pane's Elapsed (ETA = elapsed / fraction) |
+| `totalMemory`, `peakMemory` | bytes | the pane's Memory and Peak Memory |
+| `renderProgressAnnotation`, `renderStatsAnnotation` | string | free text lines (Karma uses them for its progress and stats lines) |
+| `viewstats` entries | any | the labels listed in `viewstats` ("GPU Time (ms)", "Triangles", ...) |
+
+Eldr reports: `rendererStage` `accumulating` (film), `interactive` (TAA),
+`converged`; `percentDone` as the film's samples over target (with adaptive
+sampling the share of pixels that stopped, whichever is further), 100 while
+interactive (TAA settles in a blink after each camera move, counting it up
+would flicker) and when converged; `totalClockTime` as the wall time since the
+image last changed, frozen at convergence (the time to converge);
+`renderProgressAnnotation` "film 24/64 samples, 12% of pixels done";
+`renderStatsAnnotation` "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". No
+Python API reads a delegate's stats; Houdini polls them itself.
+`hython` with an offscreen GL context confirms the stats dictionary and the
+`statsdatapaths` (through `renderstats.widgets.findStats`).
+
 ## Volumes, tested
 
 - `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
@@ -178,7 +230,7 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 
 | What | Karma | Eldr | Action |
 |---|---|---|---|
-| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | st (0,0) at +X +Y with the image's bottom row at t = 0, as UsdUVTexture reads images | None: UsdLux's text gives the corner, not the image flip. Left as is; flagged for the user. |
+| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | Matches since the change below: the image's top row at +Y, left edge at +X (before: the bottom row at +Y) | Changed to Karma's orientation at the user's request (`renderer/shaders/mesh.frag`; vkrtest and test_lighting check it). |
 | `primvars:displayColor` | read as sRGB (0.5 becomes 0.214 linear) | linear, as USD defines colour attributes | None, USD followed. A floor of displayColor 0.5 is 0.43 as bright in Karma. |
 | Dome in the camera | not drawn by default | drawn (`domeLightCameraVisibility`, true) | None; Hydra's own setting. |
 | Glossy highlights of small lights on a rough 0.15 floor | | up to 2.4x brighter peaks (lights.usda reflections) | Open: Eldr's representative-point specular. |
