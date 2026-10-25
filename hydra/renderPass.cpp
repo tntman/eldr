@@ -562,6 +562,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         colorHalf.resize(size_t(frame.width) * frame.height * 4);
         out.color = colorHalf.data();
     }
+    // While the camera moves, extra AOVs the app didn't read last frame
+    // aren't rendered: Houdini's viewport binds normal and primvars:st beside
+    // the colour but reads them only when it shows them, and they cost a
+    // G-buffer pass and a readback. One mapped then is a frame old once,
+    // and rendered from the next frame on; still frames render them all.
+    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
+    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    for (HdRenderBuffer *&b : extra) {
+        b = b && moving && !frame.finalQuality && !productSized && !read.count(b) ? nullptr : b;
+    }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
         out.aovComponents[k] = extraComponents[k];
