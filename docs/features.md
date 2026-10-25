@@ -243,7 +243,8 @@ roughness:
 5. **Ray-traced reflections** (`rtReflections`): GGX-sampled rays, shaded at
    hits, up to roughness 0.7, replace the dome and SSR; rough ones are
    averaged over up to 12 pixels in the surface plane before the film.
-   Displacement is seen (`rtDisplacement`); skinned instances only up to the
+   Displacement is seen (`rtDisplacement`), also on skinned instances (displaced
+   before skinning, as the raster does, in rt_skin.comp); skinned instances only up to the
    cap.
 
 Mirror pixels take their planar reflection instead of SSR; other surfaces

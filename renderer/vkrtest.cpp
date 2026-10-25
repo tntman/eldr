@@ -2015,6 +2015,29 @@ int main()
             frame.rtSkinnedInstances = 0;
             Expect(Render(renderer, scene, frame).At(3, 48, 0) > 0.9f * lit,
                    "Frame::rtSkinnedInstances 0: skinned meshes don't block rays");
+
+            // Displaced after skinning: the occluder's material moves it 0.5
+            // up along its normals, so its shadow does what the lifted
+            // joint's did; with rtDisplacement off, rays see the rest quad.
+            auto material = std::make_shared<vkr::Material>();
+            material->displacement = 0.5f;
+            material->displacementBound = 0.5f;
+            occluder->material = material;
+            occluder->normals.clear();
+            for (size_t c = 0; c < occluder->points.size() / 3; ++c) {
+                occluder->normals.insert(occluder->normals.end(), {0, 1, 0});
+            }
+            occluder->geometryDirty = true;
+            lift(0);
+            frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image displaced = Render(renderer, scene, frame);
+            Expect(displaced.At(3, 32, 0) > 0.9f * lit && displaced.At(3, 48, 0) < 0.01f * lit,
+                   "a skinned occluder's traced shadow follows its displacement");
+            frame.rtDisplacement = false;
+            const Image restShadow = Render(renderer, scene, frame);
+            Expect(restShadow.At(3, 32, 0) < 0.01f * lit && restShadow.At(3, 48, 0) > 0.9f * lit,
+                   "Frame::rtDisplacement off: rays see the skinned rest surface");
         }
 
         {
