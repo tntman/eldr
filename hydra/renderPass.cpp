@@ -9,6 +9,7 @@
 #include "pxr/base/gf/half.h"
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/cameraUtil/conformWindow.h"
 #include "pxr/imaging/hd/camera.h"
@@ -137,9 +138,40 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         return b && b->GetFormat() == format && b->GetWidth() == frame.width &&
                b->GetHeight() == frame.height ? b : nullptr;
     };
-    // husk binds its colour as Float32Vec4 whatever the descriptor says:
-    // rendered as half and widened after the frame.
-    HdRenderBuffer *const colorFloat32 = color ? usable(color, HdFormatFloat32Vec4) : nullptr;
+    // HDVK_DEBUG_AOVS=1: print what the app binds, once per set of bindings.
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
+        std::string list;
+        for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+            list += TfStringPrintf(" %s:%d:%ux%u", b.aovName.GetText(), b.renderBuffer ? int(b.renderBuffer->GetFormat()) : -1,
+                                   b.renderBuffer ? b.renderBuffer->GetWidth() : 0,
+                                   b.renderBuffer ? b.renderBuffer->GetHeight() : 0);
+        }
+        static std::string last;
+        if (list != last) {
+            last = list;
+            std::fprintf(stderr, "Eldr AOV bindings:%s\n", list.c_str());
+            std::fflush(stderr);
+        }
+    }
+    // Apps may bind the colour in another format whatever the descriptor
+    // says (husk: Float32Vec4; Houdini's viewport may differ): rendered as
+    // half and converted after the frame.
+    HdRenderBuffer *colorFloat32 = nullptr;
+    if (color && color->GetFormat() != HdFormatFloat16Vec4) {
+        const HdFormat f = color->GetFormat();
+        const HdFormat component = HdGetComponentFormat(f);
+        const size_t n = HdGetComponentCount(f);
+        const bool convertible = (component == HdFormatFloat32 || component == HdFormatFloat16 ||
+                                  component == HdFormatUNorm8) && (n == 3 || n == 4);
+        colorFloat32 = convertible && color->GetWidth() == frame.width && color->GetHeight() == frame.height ? color
+                                                                                                           : nullptr;
+        static bool warned = false;
+        if (!colorFloat32 && !warned) {
+            warned = true;
+            TF_WARN("Eldr: the colour AOV's format %d (%ux%u) can't be written; the frame is %ux%u", int(f),
+                    color->GetWidth(), color->GetHeight(), frame.width, frame.height);
+        }
+    }
     color = usable(color, HdFormatFloat16Vec4);
     depth = usable(depth, HdFormatFloat32);
     primId = usable(primId, HdFormatInt32);
@@ -503,9 +535,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     vkDelegate->SetFrameShared(shared);
     if (!colorHalf.empty()) {
-        float *dst = static_cast<float *>(colorFloat32->Map());
-        std::copy(colorHalf.begin(), colorHalf.end(), dst);
+        const HdFormat f = colorFloat32->GetFormat();
+        const HdFormat component = HdGetComponentFormat(f);
+        const size_t n = HdGetComponentCount(f), pixels = colorHalf.size() / 4;
+        void *dst = colorFloat32->Map();
+        for (size_t p = 0; p < pixels; ++p) {
+            for (size_t c = 0; c < n; ++c) {
+                const float v = colorHalf[p * 4 + c];
+                if (component == HdFormatFloat32) {
+                    static_cast<float *>(dst)[p * n + c] = v;
+                } else if (component == HdFormatFloat16) {
+                    static_cast<GfHalf *>(dst)[p * n + c] = GfHalf(v);
+                } else {
+                    static_cast<uint8_t *>(dst)[p * n + c] = uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+                }
+            }
+        }
         colorFloat32->Unmap();
+    }
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
+        static int frames = 0;
+        if (++frames % 60 == 1 && color && mapped[0]) {
+            const GfHalf *c = static_cast<const GfHalf *>(mapped[0]) + (size_t(frame.height / 2) * frame.width + frame.width / 2) * 4;
+            const float d = mapped[1] ? static_cast<const float *>(mapped[1])[size_t(frame.height / 2) * frame.width + frame.width / 2] : -1.0f;
+            std::fprintf(stderr, "Eldr frame %d: centre colour %g %g %g %g depth %g, shared %d, camera %s\n", frames,
+                         float(c[0]), float(c[1]), float(c[2]), float(c[3]), d, int(shared),
+                         camera ? camera->GetId().GetText() : "(none)");
+            std::fflush(stderr);
+        }
     }
     for (int i = 0; i < 4 && productSized; ++i) {
         if (!mapped[i]) {
