@@ -1,6 +1,6 @@
 r"""Renders step4 with husk and Eldr from a Karma-style Render Settings (Karma
-Cryptomatte for primitives and materials), then checks the EXR with
-OpenImageIO: Cryptomatte rank layers and manifests that parse. Houdini
+Cryptomatte for primitives and materials, Prim ID), then checks the EXR with
+OpenImageIO: Cryptomatte rank layers and manifests that parse, and ids that are not 0 on objects. Houdini
 only, not part of ctest.
 Run: hython tests\houdini_cryptomatte.py <build-h22 dir>
 husk runs with a throw-away HOUDINI_USER_PREF_DIR and
@@ -19,12 +19,13 @@ build = os.path.abspath(sys.argv[1])
 scene = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes", "step4.usda")
 work = tempfile.mkdtemp(prefix="eldr_crypto_")
 
-# A Karma Render Settings LOP with the Cryptomatte vars.
+# A Karma Render Settings LOP with the Cryptomatte and Prim ID vars.
 stage = hou.node("/stage")
 sub = stage.createNode("sublayer")
 sub.parm("filepath1").set(scene)
 std = stage.createNode("karmastandardrendervars")
 std.setInput(0, sub)
+std.parm("primid").set(1)
 crypto = stage.createNode("karmacryptomatte")
 crypto.setInput(0, std)
 crypto.parm("doprimcrypto").set(1)
@@ -70,3 +71,9 @@ for name in ("CryptoPrimitives", "CryptoMaterials"):
     assert drawn and drawn <= ids, (name, sorted(drawn - ids))
     assert (layer[..., 1] == 1).sum() == (layer[..., 0].view(np.uint32) != 0).sum(), "coverage 1 where an id is"
     print(name, "ok:", len(drawn), "ids drawn,", len(manifest), "in the manifest")
+
+# Prim ID: a float, 0 on the background, counting from 1 on objects.
+primid = parts["primid"][1][..., 0]
+assert primid[0, 0] == 0 and primid[primid.shape[0] // 2, primid.shape[1] // 2] > 0, primid[0, 0]
+assert len(np.unique(primid)) >= 3, np.unique(primid)
+print("primid ok:", np.unique(primid)[:8])

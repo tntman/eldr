@@ -134,6 +134,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     // husk's var name of the extra AOVs it binds ("driver:parameters:aov:husk:name").
     std::string huskName[vkr::Aovs::kCount];
+    bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b);
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
@@ -155,6 +156,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         } else if (aovName == HdAovTokens->primId) {
             primId = b.renderBuffer;
+            huskPrimId = !BindingText(b, "driver:parameters:aov:husk:name").empty();
         } else if (aovName == HdAovTokens->instanceId) {
             instanceId = b.renderBuffer;
         }
@@ -213,6 +215,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     color = usable(color, HdFormatFloat16Vec4);
     depth = usable(depth, HdFormatFloat32);
+    // husk's id var is a float in the image (it reads an Int32 buffer as a
+    // normalised int, which is 0): that buffer becomes Float32 below.
+    HdRenderBuffer *const idForHusk = huskPrimId && primId && primId->GetWidth() == frame.width &&
+                                      primId->GetHeight() == frame.height ? primId : nullptr;
     primId = usable(primId, HdFormatInt32);
     instanceId = usable(instanceId, HdFormatInt32);
 
@@ -521,6 +527,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
     HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
+    // ponytail: at a product's framing husk's ids stay as they are (Int32).
+    std::vector<int32_t> huskIds;
+    if (idForHusk && !productSized &&
+        (idForHusk->GetFormat() == HdFormatFloat32 ||
+         static_cast<HdVkRenderBuffer *>(idForHusk)->Allocate(GfVec3i(frame.width, frame.height, 1), HdFormatFloat32, false))) {
+        huskIds.resize(size_t(frame.width) * frame.height);
+        primId = nullptr;
+    }
     HdVkRenderBuffer *const buffers[4] = {static_cast<HdVkRenderBuffer *>(color), static_cast<HdVkRenderBuffer *>(depth),
                                           static_cast<HdVkRenderBuffer *>(primId),
                                           static_cast<HdVkRenderBuffer *>(instanceId)};
@@ -614,6 +628,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         out.aovComponents[k] = 4;
     }
 #endif
+    if (!huskIds.empty()) {
+        out.primId = huskIds.data();
+    }
 
     bool shared = false;
     try {
@@ -665,6 +682,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
     }
 #endif
+    if (!huskIds.empty()) {
+        // 0 is the background, ids count from 1.
+        auto *dst = static_cast<float *>(idForHusk->Map());
+        for (size_t p = 0; p < huskIds.size(); ++p) {
+            dst[p] = huskIds[p] < 0 ? 0.0f : float(huskIds[p] + 1);
+        }
+        idForHusk->Unmap();
+    }
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
         static int frames = 0;
         if (++frames % 60 == 1 && color && mapped[0]) {
