@@ -85,17 +85,17 @@ LensDistortion::LensDistortion(Device &device)
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sci.magFilter = sci.minFilter = VK_FILTER_LINEAR;
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-    Check(vkCreateSampler(d, &sci, nullptr, &_linear), "vkCreateSampler");
+    Check(vkCreateSampler(d, &sci, nullptr, &_linearSampler), "vkCreateSampler");
     sci.magFilter = sci.minFilter = VK_FILTER_NEAREST;
     Check(vkCreateSampler(d, &sci, nullptr, &_nearest), "vkCreateSampler");
 
     // The copies of colour, depth, primId and instanceId.
-    VkDescriptorSetLayoutBinding bindings[4] = {};
-    for (uint32_t i = 0; i < 4; ++i) {
+    VkDescriptorSetLayoutBinding bindings[5] = {};
+    for (uint32_t i = 0; i < 5; ++i) {
         bindings[i] = {i, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT};
     }
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 4;
+    slci.bindingCount = 5;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(Push)};
@@ -105,7 +105,7 @@ LensDistortion::LensDistortion(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 1;
     pci.poolSizeCount = 1;
@@ -140,21 +140,21 @@ LensDistortion::LensDistortion(Device &device)
     depth.depthTestEnable = VK_TRUE;
     depth.depthWriteEnable = VK_TRUE;
     depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
-    VkPipelineColorBlendAttachmentState attachments[3] = {};
+    VkPipelineColorBlendAttachmentState attachments[4] = {};
     for (VkPipelineColorBlendAttachmentState &a : attachments) {
         a.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
                            VK_COLOR_COMPONENT_A_BIT;
     }
     VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    blend.attachmentCount = 3;
+    blend.attachmentCount = 4;
     blend.pAttachments = attachments;
     const VkDynamicState dynamicStates[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynamicStates;
-    const VkFormat formats[3] = {kColorFormat, kIdFormat, kIdFormat};
+    const VkFormat formats[4] = {kColorFormat, kIdFormat, kIdFormat, kColorFormat};
     VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    rendering.colorAttachmentCount = 3;
+    rendering.colorAttachmentCount = 4;
     rendering.pColorAttachmentFormats = formats;
     rendering.depthAttachmentFormat = kDepthFormat;
     VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
@@ -179,25 +179,26 @@ LensDistortion::~LensDistortion()
 {
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
-    for (Image *img : {&_color, &_depth, &_primId, &_instanceId}) {
+    for (Image *img : {&_color, &_depth, &_primId, &_instanceId, &_linear, &_sink}) {
         _dev.Destroy(*img);
     }
     vkDestroyPipeline(d, _pipeline, nullptr);
     vkDestroyDescriptorPool(d, _pool, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
-    vkDestroySampler(d, _linear, nullptr);
+    vkDestroySampler(d, _linearSampler, nullptr);
     vkDestroySampler(d, _nearest, nullptr);
 }
 
 // The GPU is idle while Render records, so the copies can be remade here.
 void LensDistortion::_Resize(uint32_t width, uint32_t height)
 {
-    for (Image *img : {&_color, &_depth, &_primId, &_instanceId}) {
+    for (Image *img : {&_color, &_depth, &_primId, &_instanceId, &_linear, &_sink}) {
         _dev.Destroy(*img);
     }
     _width = width;
     _height = height;
+    _linearReady = false;
     constexpr VkImageUsageFlags kUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     _color = _dev.CreateImage(kColorFormat, width, height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
                               VK_IMAGE_VIEW_TYPE_2D);
@@ -207,12 +208,14 @@ void LensDistortion::_Resize(uint32_t width, uint32_t height)
                                VK_IMAGE_VIEW_TYPE_2D);
     _instanceId = _dev.CreateImage(kIdFormat, width, height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
                                    VK_IMAGE_VIEW_TYPE_2D);
+    _linear = _dev.CreateImage(kColorFormat, width, height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
+                               VK_IMAGE_VIEW_TYPE_2D);
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[4] = {
-        {_linear, _color.view, ro}, {_nearest, _depth.view, ro}, {_nearest, _primId.view, ro},
-        {_nearest, _instanceId.view, ro}};
-    VkWriteDescriptorSet writes[4] = {};
-    for (uint32_t i = 0; i < 4; ++i) {
+    const VkDescriptorImageInfo images[5] = {
+        {_linearSampler, _color.view, ro}, {_nearest, _depth.view, ro}, {_nearest, _primId.view, ro},
+        {_nearest, _instanceId.view, ro}, {_linearSampler, _linear.view, ro}};
+    VkWriteDescriptorSet writes[5] = {};
+    for (uint32_t i = 0; i < 5; ++i) {
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = _set;
         writes[i].dstBinding = i;
@@ -220,13 +223,13 @@ void LensDistortion::_Resize(uint32_t width, uint32_t height)
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[i].pImageInfo = &images[i];
     }
-    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 5, writes, 0, nullptr);
 }
 
 void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t height, VkImage color,
                             VkImageView colorView, VkImage depth, VkImageView depthView, VkImage primId,
                             VkImageView primIdView, VkImage instanceId, VkImageView instanceIdView,
-                            const float clearColor[4], float clearDepth)
+                            const float clearColor[4], float clearDepth, VkImage linear, VkImageView linearView)
 {
     if (width != _width || height != _height) {
         _Resize(width, height);
@@ -242,7 +245,7 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
     constexpr VkPipelineStageFlags2 kColorStage = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
     constexpr VkPipelineStageFlags2 kDepthStage =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    const Target targets[4] = {
+    const Target targets[5] = {
         {color, _color.image, VK_IMAGE_ASPECT_COLOR_BIT, kColorStage, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
         {depth, _depth.image, VK_IMAGE_ASPECT_DEPTH_BIT, kDepthStage,
@@ -252,8 +255,28 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
         {instanceId, _instanceId.image, VK_IMAGE_ASPECT_COLOR_BIT, kColorStage,
          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
+        {linear, _linear.image, VK_IMAGE_ASPECT_COLOR_BIT, kColorStage, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+         VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL},
     };
-    for (const Target &t : targets) {
+    // Without an EXR beauty the shader still samples the linear copy: it
+    // just has to be in a readable layout (its content is never used).
+    const size_t count = linear ? 5 : 4;
+    if (!linear && !_linearReady) {
+        ImageBarrier(cmd, _linear.image, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        _linearReady = true;
+    }
+    // ...and the fourth attachment needs an image to be written to.
+    if (!linear && !_sink.image) {
+        _sink = _dev.CreateImage(kColorFormat, width, height, 1, 1, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        ImageBarrier(cmd, _sink.image, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
+    for (const Target *tp = targets; tp != targets + count; ++tp) {
+        const Target &t = *tp;
         ImageBarrier(cmd, t.copy, Range(t.aspect), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -269,9 +292,9 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
                      t.stage, t.access, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, t.layout);
     }
 
-    VkRenderingAttachmentInfo colors[3] = {};
-    const VkImageView views[3] = {colorView, primIdView, instanceIdView};
-    for (int i = 0; i < 3; ++i) {
+    VkRenderingAttachmentInfo colors[4] = {};
+    const VkImageView views[4] = {colorView, primIdView, instanceIdView, linear ? linearView : _sink.view};
+    for (int i = 0; i < 4; ++i) {
         colors[i].sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
         colors[i].imageView = views[i];
         colors[i].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -286,7 +309,7 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, {width, height}};
     ri.layerCount = 1;
-    ri.colorAttachmentCount = 3;
+    ri.colorAttachmentCount = 4;
     ri.pColorAttachments = colors;
     ri.pDepthAttachment = &depthAtt;
     vkCmdBeginRendering(cmd, &ri);
@@ -305,7 +328,8 @@ void LensDistortion::Record(VkCommandBuffer cmd, const Params &p, uint32_t width
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRendering(cmd);
 
-    for (const Target &t : targets) {
+    for (const Target *tp = targets; tp != targets + count; ++tp) {
+        const Target &t = *tp;
         ImageBarrier(cmd, t.image, Range(t.aspect), t.stage, t.access, VK_PIPELINE_STAGE_2_COPY_BIT,
                      VK_ACCESS_2_TRANSFER_READ_BIT, t.layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }

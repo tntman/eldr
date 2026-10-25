@@ -38,6 +38,17 @@ def Camera "karma"
     rel karma:camera:material:binding = </lens>
 }
 
+# /solaris is the same lens as Solaris authors it: the lens VOP compiled
+# into a string on the camera (only its non-default parameters).
+def Camera "solaris"
+{
+    float focalLength = 18
+    double3 xformOp:translate = (0, 2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    bool karma:camera:use_lensshader = 1
+    custom string karma:camera:lensshader = "opdef:/Vop/kma_physicallens?VflCode aramp_the_key_values ( 1 0 ) opencv_enabled 1 opencv_k1 0.12 opencv_k2 0.02 toffset_ramp_the_key_values ( 0 1 )"
+}
+
 def Material "lens"
 {
     def Shader "physicallens"

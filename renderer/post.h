@@ -41,6 +41,7 @@ public:
     VkImageView OutputView() const { return _output.view; }
     // In TRANSFER_SRC_OPTIMAL after Record(.., linear).
     VkImage LinearOutput() const { return _exr.image; }
+    VkImageView LinearOutputView() const { return _exr.view; }
 
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;

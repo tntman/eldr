@@ -619,6 +619,16 @@ layout:
   The app's colour, depth and ids get that frame resampled; its other AOVs
   stay empty. Off: the frame's size.
 
+**husk and the settings prim.** husk binds its render vars by its own channel
+names ("C", "depth") and carries UsdRender's `sourceName`/`sourceType` in the
+binding; Eldr takes the AOV from that source, so the table above holds under
+husk too, and husk writes the EXR from the buffers (Float32Vec4 colour is
+rendered as half and widened). A settings prim with `husk:` attributes makes
+the frame offline: final quality, no auto exposure (unless it authors
+`eldr:autoExposure`), the linear beauty. Any `eldr:<setting>` attribute on the
+active UsdRenderSettings prim is that render setting (typed like its default),
+applied when the prim's value changes. See [houdini.md](houdini.md).
+
 **Colour in the EXR.** By default (`productLinear`) the beauty is linear and
 untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
 `eldr:tonemapper` says (the viewport keeps its tonemapper). For values exactly
