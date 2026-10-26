@@ -29,6 +29,10 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <exception>
 
@@ -127,7 +131,52 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
 }
 
-HdVkRenderDelegate::~HdVkRenderDelegate() = default;
+HdVkRenderDelegate::~HdVkRenderDelegate()
+{
+    using Clock = std::chrono::steady_clock;
+    const bool timing = std::getenv("HDVK_TIMING") != nullptr;
+    auto lap = [&, last = Clock::now()](const char *what) mutable {
+        const auto now = Clock::now();
+        if (timing) {
+            std::fprintf(stderr, "HdVk teardown: %s %.3f s\n", what, std::chrono::duration<double>(now - last).count());
+        }
+        last = now;
+    };
+    // The GL side goes here, on the caller's thread and context.
+    _interop.reset();
+    lap("interop");
+    _textures.reset();
+    lap("textures");
+    if (!_renderer) {
+        return;
+    }
+    // The Vulkan side goes in the background: the renderer's destructor waits
+    // for the prewarm worker's in-flight pipeline compiles (seconds), and the
+    // caller (Houdini's viewport switch, a scene change) has no reason to.
+    // Nothing else uses these any more: Hydra has destroyed the prims, and
+    // the next delegate makes its own device. The cache file is saved as sets
+    // are compiled, so that one still finds it. HDVK_SYNC_TEARDOWN=1 waits
+    // (validation runs then see the leak check). ponytail: a process exit
+    // does not wait (the cache file is written aside and renamed).
+    _renderer->StopPrewarm();
+    auto teardown = [renderer = std::move(_renderer), scene = std::move(_scene), device = std::move(_device),
+                     timing]() mutable {
+        const auto start = std::chrono::steady_clock::now();
+        renderer.reset();
+        scene.reset();
+        device.reset();
+        if (timing) {
+            std::fprintf(stderr, "HdVk teardown (background): %.3f s\n",
+                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        }
+    };
+    if (std::getenv("HDVK_SYNC_TEARDOWN")) {
+        teardown();
+    } else {
+        std::thread(std::move(teardown)).detach();
+    }
+    lap("handed off");
+}
 
 uint32_t HdVkRenderTagBit(TfToken const &tag)
 {
