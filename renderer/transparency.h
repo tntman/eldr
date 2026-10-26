@@ -42,13 +42,17 @@ public:
     // Refraction: a copy of the opaque colour with a mip chain that
     // translucent surfaces sample through themselves, blurrier the
     // rougher they are. Made on first use at the current size (the GPU is
-    // idle there), then waiting in SHADER_READ_ONLY_OPTIMAL.
+    // idle there), then waiting in SHADER_READ_ONLY_OPTIMAL. Called every
+    // frame that refracts, before recording.
     VkImageView EnsureBackground();
     uint32_t BackgroundLevels() const { return _backgroundLevels; }
     // `color` (premultiplied, in COLOR_ATTACHMENT_OPTIMAL after the opaque
     // pass) into the background and its mips; `color` stays a colour
-    // attachment.
-    void RecordBackground(VkCommandBuffer cmd, VkImage color);
+    // attachment. With `splits` (the light splits, GENERAL, stored by the
+    // shading pass) the light path intensities `direct` and `indirect` are
+    // taken out again (background_unscale.comp).
+    void RecordBackground(VkCommandBuffer cmd, VkImage color, VkImageView splits = VK_NULL_HANDLE,
+                          float direct = 1.0f, float indirect = 1.0f);
 
     // Translucent shadows: per sun cascade (layers) and for the local
     // lights' atlas, the colour translucent casters let through
@@ -72,6 +76,7 @@ public:
 
 private:
     void _Destroy();
+    void _Unscale(VkCommandBuffer cmd, VkImageView splits, float direct, float indirect);
 
     Device &_dev;
     VkSampler _sampler = VK_NULL_HANDLE;
@@ -82,7 +87,15 @@ private:
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _accum, _revealage;
     Image _background;
+    VkImageView _backgroundLevel0 = VK_NULL_HANDLE;  // storage view for the unscale
     uint32_t _backgroundLevels = 0;
+    // background_unscale.comp, made on first use.
+    VkDescriptorSetLayout _unscaleSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout _unscaleLayout = VK_NULL_HANDLE;
+    VkPipeline _unscale = VK_NULL_HANDLE;
+    VkDescriptorPool _unscalePool = VK_NULL_HANDLE;
+    VkDescriptorSet _unscaleSet = VK_NULL_HANDLE;
+    VkImageView _unscaleViews[2] = {};  // what _unscaleSet holds
     TintMap _sunTint, _atlasTint;
     uint32_t _tintCascades = 0;
     void _DestroyTint(TintMap &map);

@@ -11,6 +11,9 @@ namespace {
 const uint32_t kOitResolveFrag[] =
 #include "oit_resolve.frag.inc"
 ;
+const uint32_t kBackgroundUnscaleComp[] =
+#include "background_unscale.comp.inc"
+;
 
 constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // Renderer::kColorFormat
 
@@ -57,6 +60,10 @@ Transparency::~Transparency()
     _Destroy();
     _DestroyTint(_sunTint);
     _DestroyTint(_atlasTint);
+    vkDestroyPipeline(d, _unscale, nullptr);
+    vkDestroyPipelineLayout(d, _unscaleLayout, nullptr);
+    vkDestroyDescriptorPool(d, _unscalePool, nullptr);
+    vkDestroyDescriptorSetLayout(d, _unscaleSetLayout, nullptr);
     vkDestroyPipeline(d, _resolve, nullptr);
     vkDestroyPipelineLayout(d, _layout, nullptr);
     vkDestroyDescriptorSetLayout(d, _setLayout, nullptr);
@@ -69,6 +76,8 @@ void Transparency::_Destroy()
     _pool = VK_NULL_HANDLE;
     _dev.Destroy(_accum);
     _dev.Destroy(_revealage);
+    vkDestroyImageView(_dev.device, _backgroundLevel0, nullptr);
+    _backgroundLevel0 = VK_NULL_HANDLE;
     _dev.Destroy(_background);
     _backgroundLevels = 0;
 }
@@ -112,6 +121,9 @@ void Transparency::Resize(uint32_t width, uint32_t height)
 
 VkImageView Transparency::EnsureBackground()
 {
+    // Called per frame before recording: the unscale's set is rewritten on
+    // its first use (a view made since may reuse an old handle).
+    _unscaleViews[0] = _unscaleViews[1] = VK_NULL_HANDLE;
     if (!_background.image) {
         uint32_t levels = 1;
         while ((std::max(_width, _height) >> levels) > 0) {
@@ -119,9 +131,15 @@ VkImageView Transparency::EnsureBackground()
         }
         _background = _dev.CreateImage(kColorFormat, _width, _height, 1, levels,
                                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                           VK_IMAGE_USAGE_SAMPLED_BIT,
+                                           VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                                        VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
         _backgroundLevels = levels;
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = _background.image;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = kColorFormat;
+        vci.subresourceRange = Color();
+        Check(vkCreateImageView(_dev.device, &vci, nullptr, &_backgroundLevel0), "vkCreateImageView");
         _dev.Submit([&](VkCommandBuffer cmd) {
             ImageBarrier(cmd, _background.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1},
                          VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -132,7 +150,92 @@ VkImageView Transparency::EnsureBackground()
     return _background.view;
 }
 
-void Transparency::RecordBackground(VkCommandBuffer cmd, VkImage color)
+void Transparency::_Unscale(VkCommandBuffer cmd, VkImageView splits, float direct, float indirect)
+{
+    const VkDevice d = _dev.device;
+    if (!_unscale) {
+        const VkDescriptorSetLayoutBinding bindings[2] = {
+            {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+            {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        };
+        VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        slci.bindingCount = 2;
+        slci.pBindings = bindings;
+        Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_unscaleSetLayout), "vkCreateDescriptorSetLayout");
+        const VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+        VkPipelineLayoutCreateInfo lci{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        lci.setLayoutCount = 1;
+        lci.pSetLayouts = &_unscaleSetLayout;
+        lci.pushConstantRangeCount = 1;
+        lci.pPushConstantRanges = &range;
+        Check(vkCreatePipelineLayout(d, &lci, nullptr, &_unscaleLayout), "vkCreatePipelineLayout");
+        VkShaderModule m = CreateShaderModule(d, kBackgroundUnscaleComp, sizeof(kBackgroundUnscaleComp));
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, m,
+                    "main"};
+        ci.layout = _unscaleLayout;
+        const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_unscale);
+        vkDestroyShaderModule(d, m, nullptr);
+        Check(r, "vkCreateComputePipelines");
+        const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};
+        VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pci.maxSets = 1;
+        pci.poolSizeCount = 1;
+        pci.pPoolSizes = &size;
+        Check(vkCreateDescriptorPool(d, &pci, nullptr, &_unscalePool), "vkCreateDescriptorPool");
+        VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        ai.descriptorPool = _unscalePool;
+        ai.descriptorSetCount = 1;
+        ai.pSetLayouts = &_unscaleSetLayout;
+        Check(vkAllocateDescriptorSets(d, &ai, &_unscaleSet), "vkAllocateDescriptorSets");
+    }
+    // Once per frame (EnsureBackground), as Subsurface::Blur updates its
+    // sets; not again while this command buffer has it bound (refraction
+    // layers copy with the same views).
+    if (_unscaleViews[0] != _backgroundLevel0 || _unscaleViews[1] != splits) {
+        _unscaleViews[0] = _backgroundLevel0;
+        _unscaleViews[1] = splits;
+        const VkDescriptorImageInfo images[2] = {{VK_NULL_HANDLE, _backgroundLevel0, VK_IMAGE_LAYOUT_GENERAL},
+                                                 {VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL}};
+        VkWriteDescriptorSet writes[2] = {};
+        for (uint32_t i = 0; i < 2; ++i) {
+            writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            writes[i].dstSet = _unscaleSet;
+            writes[i].dstBinding = i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(d, 2, writes, 0, nullptr);
+    }
+
+    // The shading pass's splits; level 0 from the copy to GENERAL and back.
+    VkMemoryBarrier2 stored{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    stored.srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+    stored.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+    stored.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+    stored.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &stored;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    ImageBarrier(cmd, _background.image, Color(), VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _unscale);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _unscaleLayout, 0, 1, &_unscaleSet, 0, nullptr);
+    const float params[4] = {direct, indirect, 0.0f, 0.0f};
+    vkCmdPushConstants(cmd, _unscaleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(params), params);
+    vkCmdDispatch(cmd, (_width + 7) / 8, (_height + 7) / 8, 1);
+    ImageBarrier(cmd, _background.image, Color(), VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT,
+                 VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+}
+
+void Transparency::RecordBackground(VkCommandBuffer cmd, VkImage color, VkImageView splits, float direct,
+                                    float indirect)
 {
     const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, _backgroundLevels, 0, 1};
     ImageBarrier(cmd, color, Color(), VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -149,6 +252,9 @@ void Transparency::RecordBackground(VkCommandBuffer cmd, VkImage color)
     ImageBarrier(cmd, color, Color(), VK_PIPELINE_STAGE_2_COPY_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    if (splits) {
+        _Unscale(cmd, splits, direct, indirect);
+    }
     // Each mip a linear 2x2 average of the one above (premultiplied, so
     // coverage averages with the colour).
     for (uint32_t level = 1; level < _backgroundLevels; ++level) {
