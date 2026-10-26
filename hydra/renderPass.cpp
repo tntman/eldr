@@ -293,8 +293,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
-    frame.showEnvironment = delegate->GetRenderSetting<bool>(
-        HdRenderSettingsTokens->domeLightCameraVisibility, true);
     // Each setting over the renderer's default (renderDelegate.cpp lists
     // them); counts are ints in Hydra, at least 1.
     const auto &t = *HdVkRenderSettingsTokens;
@@ -360,12 +358,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.volumeMutualShadows, &frame.volume.mutualShadows},
                                 {t2.volumeDefaultFields, &frame.volume.defaultFields},
                                 {t2.lightShapesVisible, &frame.lightShapesVisible},
+                                {t2.domeCameraVisible, &frame.showEnvironment},
                                 {t2.overlapReadback, &frame.overlapReadback},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
+    // Hydra's own switch (usdview's Lights menu) also hides the dome.
+    frame.showEnvironment = frame.showEnvironment &&
+        delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->domeLightCameraVisibility, true);
     // Render products at their own framing (eldr:productResolution): the
     // first raster product's resolution, pixel aspect ratio and data window
     // when they aren't the buffers' size (usdrecord sizes them from -w and

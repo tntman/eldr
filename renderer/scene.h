@@ -487,6 +487,7 @@ struct Dome {
     float radiance[3] = {1, 1, 1};       // texture multiplier: intensity * 2^exposure * color
     float worldToLocal[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // USD order
     bool visible = true;
+    bool cameraVisible = true;           // the camera sees its texture (Karma: renderlightgeo); lighting and reflections always do
 
 private:
     friend class Scene;
@@ -728,6 +729,7 @@ public:
 
         VkImageView environment = VK_NULL_HANDLE;  // prefiltered cube; null if no dome
         uint32_t environmentLevels = 0;
+        bool environmentCameraVisible = true;  // the dome shows as background (Dome::cameraVisible)
         uint32_t environmentLatlong = kNone;  // bindless index of the dome texture
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};

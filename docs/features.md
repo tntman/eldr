@@ -125,7 +125,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 - **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Diffuse is unchanged. Textured lights are read at the lobe's mip.
 - **Clustered lights:** 63 per cluster, cut off at 1% of mid-gray on a white surface.
 - **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows.
-- **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one.
+- **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one. The same attribute on a dome hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
 - **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
 - **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` (10) limit fireflies.
 - **Ambient:** GTAO on the dome's light, or with SSGI the traced visibility.
