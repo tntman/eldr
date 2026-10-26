@@ -25,6 +25,9 @@ layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 // translucent casters) let through, receivers behind the stored depth.
 layout(set = 0, binding = 43) uniform sampler2DArray sunTint;
 layout(set = 0, binding = 44) uniform sampler2DArray sunTintDepth;
+// The local lights' atlas tint map, tiles as the shadow atlas's.
+layout(set = 0, binding = 45) uniform sampler2D atlasTint;
+layout(set = 0, binding = 46) uniform sampler2D atlasTintDepth;
 // Local lights' shadow atlas, as in mesh.frag.
 const float kSpotShadowCone = 1.3962634;
 struct ShadowTile {
@@ -60,7 +63,6 @@ const uint kFeatureTranslucentShadows = 8192u;  // as transparency.glsl's
 
 // The sun's tint map at p (kFeatureTranslucentShadows: whenever volumes or
 // translucent casters draw into it, as surfaces read it): one nearest tap.
-// ponytail: the sun only; local lights' atlas tint isn't read.
 vec3 SunTint(vec3 p, float viewDepth)
 {
     int c = 0;
@@ -77,11 +79,13 @@ vec3 SunTint(vec3 p, float viewDepth)
     return ndc.z * 0.5 + 0.5 > texelFetch(sunTintDepth, q, 0).r ? texelFetch(sunTint, q, 0).rgb : vec3(1.0);
 }
 
-float LocalShadow(uint index, Light light, vec3 p)
+// A local light's shadow at p, its atlas tile's depth times its tint
+// (kFeatureTranslucentShadows: volumes and translucent casters).
+vec3 LocalShadow(uint index, Light light, vec3 p)
 {
     uint tile = lightShadow[index];
     if (tile == kNone) {
-        return 1.0;
+        return vec3(1.0);
     }
     vec3 fromLight = p - shadowTiles[tile].origin.xyz;
     if (light.shaping.y > kSpotShadowCone) {
@@ -94,9 +98,17 @@ float LocalShadow(uint index, Light light, vec3 p)
     vec4 clip = t.viewProj * vec4(p, 1.0);
     vec3 ndc = clip.xyz / clip.w;
     if (clip.w <= 0.0 || any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
-        return 1.0;  // outside a spot's tile: its cone doesn't light it anyway
+        return vec3(1.0);  // outside a spot's tile: its cone doesn't light it anyway
     }
-    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+    vec2 uv = t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw;
+    float ref = ndc.z * 0.5 + 0.5;
+    vec3 shadow = vec3(texture(shadowAtlas, vec3(uv, ref)));
+    if (Feature(kFeatureTranslucentShadows)) {
+        ivec2 size = textureSize(atlasTint, 0);
+        ivec2 q = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
+        shadow *= ref > texelFetch(atlasTintDepth, q, 0).r ? texelFetch(atlasTint, q, 0).rgb : vec3(1.0);
+    }
+    return shadow;
 }
 
 float Phase(float cosTheta)

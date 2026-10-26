@@ -3817,6 +3817,26 @@ int main()
             Expect(redFog.At(12, 32, 0) > 0.1f && redFog.At(12, 32, 1) < 0.4f * redFog.At(12, 32, 0) &&
                        plainFog.At(12, 32, 1) >= 0.9f * plainFog.At(12, 32, 0),
                    "fog: glass between it and the sun tints it, without volumes too");
+            {
+                // The same cloud under a sphere light above (y 3): its atlas
+                // tiles' tint (localVolumeShadows) darkens the fog under it.
+                vkr::Scene lamp(&device);
+                AddEmitter(lamp, -10, -10, 10, 10, -4, 0.0f);
+                AddSphereLight(lamp, 0, 3, -2, 0.1f, 2000.0f)->castShadows = true;
+                vkr::Volume *puff = lamp.AddVolume();
+                puff->fields["density"] = cloud->fields["density"];
+                puff->transforms = cloud->transforms;
+                lamp.Commit();
+                const Image dark = Render(*std::make_unique<vkr::Renderer>(device), lamp, frame);
+                frame.localVolumeShadows = false;
+                const Image lampLit = Render(*std::make_unique<vkr::Renderer>(device), lamp, frame);
+                frame.localVolumeShadows = true;
+                std::printf("fog under a volume from a sphere light %.3f / %.3f (off), beside it %.3f / %.3f\n",
+                            dark.At(12, 32, 0), lampLit.At(12, 32, 0), dark.At(52, 32, 0), lampLit.At(52, 32, 0));
+                Expect(lampLit.At(12, 32, 0) > 0.02f && dark.At(12, 32, 0) < 0.6f * lampLit.At(12, 32, 0) &&
+                           std::abs(dark.At(52, 32, 0) - lampLit.At(52, 32, 0)) < 0.05f * lampLit.At(52, 32, 0),
+                       "fog: volumes shadow it from local lights");
+            }
 
             // Height fog: thinner upwards (y), so less light scatters at the
             // top of the view than at the bottom.
