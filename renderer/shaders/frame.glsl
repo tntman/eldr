@@ -94,6 +94,10 @@ const uint kFeatureLod = 2048u;           // levels of detail (cull.comp)
 // Soft sun shadows (PCSS from the distant light's angle), volumetric fog,
 // the reflection probe, planar reflections.
 const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 262144u, kFeaturePlanar = 524288u;
+// The sun disc's region in mesh.frag (a wide sun or a glossy material).
+const uint kFeatureSunRegion = 16777216u;
+// A motion blur time sample (mesh.vert's shutter reads, frame.deform.z).
+const uint kFeatureTimeSample = 33554432u;
 
 // The optional frame.features.x bits whose code a pipeline has: the
 // shading pipelines are specialized with the ones their frame uses

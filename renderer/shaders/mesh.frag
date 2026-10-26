@@ -1084,7 +1084,7 @@ void main()
         float tanHalf = tan(light.axis.w), sunNorm = 1.0, sunArea = 0.0;
         vec3 ls = l;
         regionStretch = vec2(1.0);
-        if (tanHalf * tanHalf > 4e-3 * NoV * a * a) {
+        if (Feature(kFeatureSunRegion) && tanHalf * tanHalf > 4e-3 * NoV * a * a) {
             sunNorm = SphereRegion(n, v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
         }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
