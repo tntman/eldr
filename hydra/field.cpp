@@ -11,6 +11,12 @@
 #endif
 #include "pxr/usd/sdf/assetPath.h"
 
+// NanoVDB's fallback without TBB runs the conversion on raw std::threads
+// (nested, ~100 per grid): an exception in one, a failed thread start
+// included, terminates the process (Houdini, playing a VDB sequence).
+#ifndef NANOVDB_USE_TBB
+#error "build hdVk's volumes with NANOVDB_USE_TBB"
+#endif
 #include <nanovdb/util/OpenToNanoVDB.h>
 
 #include <cstring>
