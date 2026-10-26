@@ -10,6 +10,10 @@
 #include "pxr/base/gf/color.h"
 #include "pxr/base/gf/colorSpace.h"
 #include "pxr/base/gf/half.h"
+#include "pxr/base/gf/matrix3d.h"
+#include "pxr/base/gf/matrix3f.h"
+#include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
@@ -1055,6 +1059,51 @@ private:
         return v;
     }
 
+    // A string input (a space's name, a note): authored, else its nodedef's.
+    std::string _String(HdMaterialNode2 const &node, const char *input) const
+    {
+        TfToken token;
+        std::string s;
+        if (Read(node.parameters, TfToken(input), &token)) {
+            return token.GetString();
+        }
+        if (Read(node.parameters, TfToken(input), &s)) {
+            return s;
+        }
+        const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId);
+        const mx::InputPtr i = def ? def->getActiveInput(input) : nullptr;
+        return i ? i->getValueString() : std::string();
+    }
+
+    // Input `mat` as `rows` rows (Gf's, MaterialX's order: v * M), else its
+    // nodedef's (identity).
+    bool _Matrix(HdMaterialNode2 const &node, uint32_t rows, std::vector<GfVec4f> *out) const
+    {
+        GfMatrix4d m(1.0);
+        const auto it = node.parameters.find(TfToken("mat"));
+        if (it != node.parameters.end()) {
+            const VtValue &v = it->second;
+            if (v.IsHolding<GfMatrix3d>() || v.IsHolding<GfMatrix3f>()) {
+                const GfMatrix3d m3 = v.IsHolding<GfMatrix3d>() ? v.UncheckedGet<GfMatrix3d>()
+                                                                 : GfMatrix3d(v.UncheckedGet<GfMatrix3f>());
+                for (int r = 0; r < 3; ++r) {
+                    for (int c = 0; c < 3; ++c) {
+                        m[r][c] = m3[r][c];
+                    }
+                }
+            } else if (v.IsHolding<GfMatrix4d>() || v.IsHolding<GfMatrix4f>()) {
+                m = v.IsHolding<GfMatrix4d>() ? v.UncheckedGet<GfMatrix4d>() : GfMatrix4d(v.UncheckedGet<GfMatrix4f>());
+            } else {
+                return false;
+            }
+        }
+        for (uint32_t r = 0; r < rows; ++r) {
+            out->push_back(rows == 3 ? GfVec4f(m[r][0], m[r][1], m[r][2], 0.0f)
+                                     : GfVec4f(m[r][0], m[r][1], m[r][2], m[r][3]));
+        }
+        return true;
+    }
+
     bool _Connected(HdMaterialNode2 const &node, TfToken const &input) const
     {
         const auto c = node.inputConnections.find(input);
@@ -1347,6 +1396,16 @@ private:
             {"combine2", {P::kCombine, {"in1", "in2"}}},
             {"combine3", {P::kCombine, {"in1", "in2", "in3"}}},
             {"combine4", {P::kCombine, {"in1", "in2", "in3", "in4"}}},
+            {"fract", {P::kFract, {"in"}}},
+            {"round", {P::kRound, {"in"}}},
+            {"sign", {P::kSign, {"in"}}},
+            {"tan", {P::kTan, {"in"}}},
+            {"asin", {P::kAsin, {"in"}}},
+            {"acos", {P::kAcos, {"in"}}},
+            {"atan2", {P::kAtan2, {"iny", "inx"}}},
+            {"crossproduct", {P::kCross, {"in1", "in2"}}},
+            {"rotate2d", {P::kRotate2d, {"in", "amount"}}},
+            {"rotate3d", {P::kRotate3d, {"in", "amount", "axis"}}},
         };
         if (const auto it = plain.find(k.name); it != plain.end()) {
             std::vector<Value> args;
@@ -1362,8 +1421,106 @@ private:
         if (k.name == "constant") {
             return in("value");  // connected inside expanded nodegraphs (blur's)
         }
+        if (k.name == "dot") {
+            // Karma's notes on dot (its kma_camerafalloff nodegraph): the ray's
+            // direction and the hit normal, world space.
+            const std::string note = _String(n, "note");
+            if (note == "ray:direction") {
+                return _Emit(P::kViewDirection, {}, 1);
+            }
+            if (note == "ray:hitN") {
+                return _Emit(P::kGeomNormal, {}, 1);
+            }
+        }
         if (k.name == "convert" || k.name == "dot") {
             return in("in");
+        }
+        if (k.name == "magnitude") {
+            const std::optional<Value> v = in("in");
+            return v ? std::optional<Value>(_Emit(P::kMagnitude, {*v}, 0, Components(k.type))) : std::nullopt;
+        }
+        if (k.name == "logical") {  // booleans are 0 and 1
+            const std::optional<Value> a = in(k.type == "not" ? "in" : "in1");
+            const std::optional<Value> b = k.type == "not" ? std::optional<Value>(_Const(GfVec4f(1.0f))) : in("in2");
+            if (!a || !b) {
+                return std::nullopt;
+            }
+            return k.type == "and"   ? _Emit(P::kMin, {*a, *b})
+                   : k.type == "or"  ? _Emit(P::kMax, {*a, *b})
+                   : k.type == "not" ? _Emit(P::kInvert, {*a, *b})
+                                     : _Emit(P::kAbs, {_Emit(P::kSubtract, {*a, *b})});
+        }
+        if (k.name == "switch") {
+            // in1 .. in10 by floor(which), 0 for in1; a constant `which`
+            // compiles only the input it picks.
+            const std::optional<float> which = _ConstantInput(n, TfToken("which"));
+            if (which) {
+                return in(("in" + std::to_string(std::clamp(int(std::floor(*which)), 0, 9) + 1)).c_str());
+            }
+            std::optional<Value> w = in("which"), r = in("in1");
+            for (int i = 1; i < 10 && w && r; ++i) {
+                const std::optional<Value> v = in(("in" + std::to_string(i + 1)).c_str());
+                r = v ? std::optional<Value>(_Emit(P::kIfGreaterEq, {*w, _Const(GfVec4f(float(i))), *v, *r}))
+                      : std::nullopt;
+            }
+            return r;
+        }
+        if (k.name == "splitlr" || k.name == "splittb") {
+            // mix(valuel, valuer, aastep(center, u)), mix(valueb, valuet, aastep(center, v)).
+            const bool lr = k.name == "splitlr";
+            const std::optional<Value> uv = _Uv(n, _tokens->texcoord, depth), center = in("center");
+            const std::optional<Value> from = in(lr ? "valuel" : "valueb"), to = in(lr ? "valuer" : "valuet");
+            if (!uv || !center || !from || !to) {
+                return std::nullopt;
+            }
+            const Value s = _Emit(P::kAaStep, {_Emit(P::kExtract, {*uv}, 0, lr ? 0 : 1), *center});
+            return _Emit(P::kMix, {*from, *to, s});
+        }
+        if (k.name == "frame" || k.name == "time") {
+            return _Emit(P::kTime, {}, k.name == "time" ? 1 : 0);
+        }
+        if (k.name == "geomcolor") {  // the mesh's displayColor (index 0)
+            const Value c = _Emit(P::kDisplayColor, {});
+            return k.type == "float" ? _Emit(P::kExtract, {c}, 0, 0) : c;
+        }
+        if (k.name == "tangent" || k.name == "bitangent" || k.name == "viewdirection") {
+            const uint32_t world = _String(n, "space") == "world" ? 1 : 0;
+            return k.name == "viewdirection" ? _Emit(P::kViewDirection, {}, world)
+                                             : _Emit(P::kTangent, {}, world, k.name == "bitangent" ? 1 : 0);
+        }
+        if (n.nodeTypeId == "ND_artistic_ior") {
+            const std::optional<Value> r = in("reflectivity"), e = in("edge_color");
+            if (!r || !e) {
+                return std::nullopt;
+            }
+            return _Emit(P::kArtisticIor, {*r, *e}, 0, output == TfToken("extinction") ? 1 : 0);
+        }
+        if (k.name == "transformpoint" || k.name == "transformvector" || k.name == "transformnormal") {
+            auto object = [](std::string const &s) { return s == "object" || s == "model"; };
+            const std::string from = _String(n, "fromspace"), to = _String(n, "tospace");
+            const uint32_t dir = object(from) && to == "world" ? 1 : from == "world" && object(to) ? 2 : 0;
+            const std::optional<Value> v = in("in");
+            if (!v) {
+                return std::nullopt;
+            }
+            return _Emit(P::kSpaceTransform, {*v}, k.name == "transformpoint" ? 0 : k.name == "transformvector" ? 1 : 2,
+                         dir);
+        }
+        if (k.name == "transformmatrix") {
+            // v * mat, mat a constant: vector2 by matrix33 and vector3 by
+            // matrix44 as points (a 1 appended).
+            const std::string &id = n.nodeTypeId.GetString();
+            const uint32_t d = Components(k.type.substr(0, 7)), rows = id.back() == '4' ? 4 : 3;
+            const std::optional<Value> v = in("in");
+            std::vector<GfVec4f> m;
+            if (!v || _Connected(n, TfToken("mat")) || !_Matrix(n, rows, &m)) {
+                return std::nullopt;
+            }
+            const uint32_t first = uint32_t(_p.constants.size() / 4);
+            for (const GfVec4f &row : m) {
+                _NewConst(row);
+            }
+            return _Emit(P::kTransformMatrix, {*v}, first, d | rows << 4);
         }
         if (k.name == "extract" || k.name.rfind("separate", 0) == 0) {
             // separateN's outputs outr/outx .. outa/outw.

@@ -42,7 +42,10 @@ GRAPH = {"add", "subtract", "multiply", "divide", "min", "max", "power", "modulo
          "separate3", "separate4", "remap", "ramplr", "ramptb", "texcoord", "geompropvalue", "UsdPrimvarReader",
          "image", "tiledimage", "UsdUVTexture", "noise2d", "noise3d", "fractal2d", "fractal3d", "cellnoise2d",
          "cellnoise3d", "worleynoise2d", "worleynoise3d", "position", "normal", "place2d", "UsdTransform2d",
-         "hinvlinear", "huniformramp", "heighttonormal"}
+         "hinvlinear", "huniformramp", "heighttonormal", "fract", "round", "sign", "tan", "asin", "acos", "atan2",
+         "magnitude", "crossproduct", "rotate2d", "rotate3d", "logical", "switch", "splitlr", "splittb", "frame",
+         "time", "geomcolor", "tangent", "bitangent", "viewdirection", "artistic_ior", "transformpoint",
+         "transformvector", "transformnormal", "transformmatrix", "and", "or", "not", "xor"}
 
 
 def eldr_name(node_id):

@@ -29,6 +29,15 @@ def out_float(src):
     return f("out", "convert", {"in": ("float", "@" + src)}, "color3")
 
 
+def c(name, typ, value):
+    return f(name, "constant", {"value": (typ, value)}, typ)
+
+
+def grey(label, node, inputs, value, typ="float"):
+    """A case: float `node` of `inputs`, as grey."""
+    return (label, f("k", node, inputs, typ) + out_float("k"), (value,) * 3)
+
+
 def u_times(k, name="h"):
     """`name`: texcoord u times k (float)."""
     return (f(name + "uv", "texcoord", {}, "vector2") +
@@ -66,6 +75,65 @@ CASES = [
     ("bump on the normal",
      u_times(4) + f("nrm", "bump", {"height": ("float", "@h"), "scale": ("float", "0.5")}, "vector3") +
      f("out", "constant", {"value": ("color3", "0.25, 0.5, 0.75")}, "color3"), (0.25, 0.5, 0.75)),
+    # MaterialX math (genglsl's formulas).
+    grey("fract", "fract", {"in": ("float", "2.3")}, 0.3),
+    grey("round", "round", {"in": ("float", "0.7")}, 1.0),
+    ("sign", f("s", "sign", {"in": ("float", "-2")}) + f("k", "multiply", {"in1": ("float", "@s"), "in2": ("float", "-0.4")})
+     + out_float("k"), (0.4,) * 3),
+    grey("tan", "tan", {"in": ("float", "0.5")}, math.tan(0.5)),
+    grey("asin", "asin", {"in": ("float", "0.5")}, math.asin(0.5)),
+    grey("acos", "acos", {"in": ("float", "0.9")}, math.acos(0.9)),
+    grey("atan2", "atan2", {"iny": ("float", "1"), "inx": ("float", "2")}, math.atan2(1, 2)),
+    grey("magnitude", "magnitude", {"in": ("vector3", "0.3, 0.4, 0")}, 0.5),
+    ("crossproduct", f("x", "crossproduct", {"in1": ("vector3", "1, 0, 0"), "in2": ("vector3", "0, 1, 0")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@x")}, "color3"), (0, 0, 1)),
+    ("rotate2d", f("r", "rotate2d", {"in": ("vector2", "0, 0.5"), "amount": ("float", "90")}, "vector2") +
+     f("k", "extract", {"in": ("vector2", "@r"), "index": ("integer", "0")}) + out_float("k"), (0.5,) * 3),
+    ("rotate3d", f("r", "rotate3d", {"in": ("vector3", "0.5, 0, 0"), "amount": ("float", "-90"),
+                                     "axis": ("vector3", "0, 0, 1")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@r")}, "color3"), (0, 0.5, 0)),
+    ("switch, constant which",
+     f("out", "switch", {"in1": ("color3", "1, 0, 0"), "in3": ("color3", "0.1, 0.2, 0.3"), "which": ("float", "2")},
+       "color3"), (0.1, 0.2, 0.3)),
+    ("switch, which 3 u = 1.5", u_times(3) +
+     f("out", "switch", {"in1": ("color3", "1, 0, 0"), "in2": ("color3", "0.2, 0.4, 0.6"), "in3": ("color3", "0, 0, 1"),
+                         "which": ("float", "@h")}, "color3"), (0.2, 0.4, 0.6)),
+    ("logical or, xor, and", f("a", "or", {"in1": ("boolean", "false"), "in2": ("boolean", "true")}, "boolean") +
+     f("b", "xor", {"in1": ("boolean", "true"), "in2": ("boolean", "true")}, "boolean") +
+     f("n", "not", {"in": ("boolean", "false")}, "boolean") +
+     f("d", "and", {"in1": ("boolean", "@n"), "in2": ("boolean", "true")}, "boolean") +
+     f("af", "convert", {"in": ("boolean", "@a")}) + f("bf", "convert", {"in": ("boolean", "@b")}) +
+     f("df", "convert", {"in": ("boolean", "@d")}) +
+     f("out", "combine3", {"in1": ("float", "@af"), "in2": ("float", "@bf"), "in3": ("float", "@df")}, "color3"),
+     (1, 0, 1)),
+    ("splitlr (center 0.4: right)",
+     f("out", "splitlr", {"valuel": ("color3", "1, 0, 0"), "valuer": ("color3", "0, 0.5, 0"), "center": ("float", "0.4")},
+       "color3"), (0, 0.5, 0)),
+    ("splittb (center 0.6: bottom)",
+     f("out", "splittb", {"valuet": ("color3", "1, 0, 0"), "valueb": ("color3", "0, 0, 0.5"), "center": ("float", "0.6")},
+       "color3"), (0, 0, 0.5)),
+    # Rendered at frame 12 of a 24 fps stage.
+    grey("time", "time", {}, 0.5),
+    ("frame", f("t", "frame", {}) + f("k", "multiply", {"in1": ("float", "@t"), "in2": ("float", "0.04")}) + out_float("k"),
+     (0.48,) * 3),
+    ("tangent (world): +x", f("t", "tangent", {"space": ("string", "world")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@t")}, "color3"), (1, 0, 0)),
+    ("bitangent (world): +y", f("t", "bitangent", {"space": ("string", "world")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@t")}, "color3"), (0, 1, 0)),
+    ("viewdirection is a unit vector", f("v", "viewdirection", {}, "vector3") + f("k", "magnitude", {"in": ("vector3", "@v")})
+     + out_float("k"), (1,) * 3),
+    ("artistic_ior", f("i", "artistic_ior", {"reflectivity": ("color3", "0.5, 0.5, 0.5"),
+                                             "edge_color": ("color3", "0.5, 0.5, 0.5")}, "multioutput") +
+     '<multiply name="out" type="color3"><input name="in1" type="color3" nodename="i" output="ior"/>'
+     '<input name="in2" type="float" value="0.25"/></multiply>',
+     (((1 + 0.5 ** 0.5) / (1 - 0.5 ** 0.5) + 1 / 3) / 2 * 0.25,) * 3),  # Gulbrandsen's ior, a quarter
+    ("transformmatrix vector3 by matrix33",
+     f("m", "transformmatrix", {"in": ("vector3", "0.2, 0.3, 0.4"), "mat": ("matrix33", "0,1,0, 0,0,1, 1,0,0")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@m")}, "color3"), (0.4, 0.2, 0.3)),
+    ("transformmatrix vector3 by matrix44 (a point)",
+     f("m", "transformmatrix", {"in": ("vector3", "0.2, 0.3, 0.4"),
+                                "mat": ("matrix44", "1,0,0,0, 0,1,0,0, 0,0,1,0, 0.1,0.2,0.3,1")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@m")}, "color3"), (0.3, 0.5, 0.7)),
 ]
 
 SIZE = 512
@@ -142,6 +210,7 @@ engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
 params.clearColor = Gf.Vec4f(0, 0, 0, 1)
+params.frame = Usd.TimeCode(12)  # MaterialX time and frame
 for _ in range(2):  # textures arrive with the first commit
     engine.Render(stage.GetPseudoRoot(), params)
 image = fbo.toImage()
