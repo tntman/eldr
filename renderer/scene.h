@@ -207,9 +207,23 @@ struct Material {
     float occlusion = 1;
     float opacity = 1;           // below 1 (or a texture) without a threshold: translucent
     float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
-    // Dielectric specular weight times colour (standard_surface's specular
-    // and specular_color); metals keep theirs.
+    // The surface model whose spec the shading follows (shaders/brdf.glsl's
+    // SetupBase): its Fresnel, layering and multiple scattering.
+    enum class Model : uint32_t { kPreviewSurface, kStandardSurface, kOpenPbr };
+    Model model = Model::kPreviewSurface;
+    // Specular colour and weight (standard_surface's specular_color and
+    // specular, OpenPBR's specular_color and specular_weight): the
+    // dielectric's tint and weight, the metal's edge tint (F82 in OpenPBR,
+    // artistic edge colour in standard_surface).
     float specular[3] = {1, 1, 1};
+    float specularWeight = 1;
+    // Diffuse roughness (standard_surface's Oren-Nayar, OpenPBR's
+    // energy-compensated Oren-Nayar; 0: Lambert). Constants only.
+    float diffuseRoughness = 0;
+    // standard_surface's coat_affect_color and coat_affect_roughness;
+    // OpenPBR's coat_darkening (in coatAffectColor). Constants only.
+    float coatAffectColor = 0;
+    float coatAffectRoughness = 0;
     bool baseColorFromDisplayColor = false;  // diffuseColor <- primvar reader "displayColor"
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
         normalTex,  // tangent space, after scale/bias

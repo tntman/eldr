@@ -408,7 +408,7 @@ EnvironmentMaps BuildEnvironment(const float *faces, uint32_t size)
 
 std::vector<float> BuildBrdfLut(uint32_t size)
 {
-    std::vector<float> lut(size_t(size) * size * 2);
+    std::vector<float> lut(size_t(size) * size * 4);
     constexpr uint32_t kSamples = 512;
     ParallelFor(size, [&](size_t j) {
         const float roughness = (j + 0.5f) / size;
@@ -416,7 +416,7 @@ std::vector<float> BuildBrdfLut(uint32_t size)
         for (uint32_t i = 0; i < size; ++i) {
             const float NoV = (i + 0.5f) / size;
             const Vec3 V{std::sqrt(1 - NoV * NoV), 0, NoV};
-            float A = 0, B = 0;
+            float A = 0, B = 0, C = 0;
             for (uint32_t s = 0; s < kSamples; ++s) {
                 const Vec3 H = SampleGgx(s, kSamples, a);
                 const Vec3 L = H * (2 * Dot(V, H)) - V;
@@ -429,9 +429,12 @@ std::vector<float> BuildBrdfLut(uint32_t size)
                 const float fc = std::pow(1 - VoH, 5.0f);
                 A += (1 - fc) * g;
                 B += fc * g;
+                C += VoH * std::pow(1 - VoH, 6.0f) * g;  // Hoffman's F82 term
             }
-            lut[(j * size + i) * 2] = A / kSamples;
-            lut[(j * size + i) * 2 + 1] = B / kSamples;
+            lut[(j * size + i) * 4] = A / kSamples;
+            lut[(j * size + i) * 4 + 1] = B / kSamples;
+            lut[(j * size + i) * 4 + 2] = C / kSamples;
+            lut[(j * size + i) * 4 + 3] = 0;
         }
     });
     return lut;

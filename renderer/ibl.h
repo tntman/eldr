@@ -43,8 +43,10 @@ EnvironmentMaps BuildEnvironment(const Texture *latlong, float threshold, Extrac
 // layout of `data`'s level 0, `size` a power of two (reflection probes).
 EnvironmentMaps BuildEnvironment(const float *faces, uint32_t size);
 
-// Split-sum DFG terms (A, B) with f0 * A + B = directional albedo, indexed by
-// (NoV, perceptual roughness). RG32F, size x size.
+// Split-sum DFG terms (A, B, C) with f0 * A + f90 * B - a * C = directional
+// albedo of GGX with Hoffman's F82 Fresnel (C: the integral of the
+// mu (1 - mu)^6 term), indexed by (NoV, perceptual roughness). RGBA32F
+// (alpha 0), size x size.
 std::vector<float> BuildBrdfLut(uint32_t size);
 
 } // namespace vkr

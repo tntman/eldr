@@ -323,8 +323,10 @@ int main()
             const Image img = Render(renderer, scene);
             Expect(renderer.VisibleInstances() == 1, "inconsistent mesh skipped");
             // Default material (roughness 0.5, f0 0.04) at normal incidence:
-            // diffuse = 1, specular = D*V*F*E = (1/(pi*a^2)) * 0.25 * 0.04 * pi = 0.16.
-            Expect(std::abs(img.At(32, 32, 0) - 1.16f) < 0.02f, "red = albedo + specular");
+            // specular = D*V*F*E = (1/(pi*a^2)) * 0.25 * 0.04 * pi = 0.16; the
+            // diffuse (1) beneath it loses the specular's directional albedo
+            // (0.037, MaterialX's layering): 0.963.
+            Expect(std::abs(img.At(32, 32, 0) - 1.123f) < 0.02f, "red = albedo + specular");
             Expect(std::abs(img.At(32, 32, 1) - 0.16f) < 0.02f, "green = specular only");
             Expect(img.At(0, 0, 0) == 0 && img.At(0, 0, 2) == 1, "corner is clear color");
             Expect(std::abs(img.depth[32 * 64 + 32] - 0.5f) < 0.01f, "center depth 0.5");
@@ -683,10 +685,17 @@ int main()
             Expect(scene.GetGpu().environment != VK_NULL_HANDLE, "dome builds an environment");
             float v = Render(renderer, scene).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white dielectric returns 1");
+            // A metal keeps its energy where the surface model has multiple
+            // scattering (OpenPBR); UsdPreviewSurface is single scattering.
             material->metallic = 1;
+            material->model = vkr::Material::Model::kOpenPbr;
             scene.Commit();
             v = Render(renderer, scene).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white metal returns 1");
+            material->model = vkr::Material::Model::kPreviewSurface;
+            scene.Commit();
+            v = Render(renderer, scene).At(32, 32, 0);
+            Expect(v > 0.65f && v < 0.75f, "furnace: UsdPreviewSurface's white metal is single scattering (0.70)");
             vkr::Renderer::Frame noIbl = IdentityFrame();
             noIbl.imageBasedLighting = false;
             Expect(Render(renderer, scene, noIbl).At(32, 32, 0) == 0.0f, "Frame::imageBasedLighting off: no dome light");
@@ -2546,7 +2555,7 @@ int main()
         {
             // Specular workflow: F0 is specularColor. A black quad with F0
             // (0.5, 0, 0) under the head-on light reflects 12.5 times the
-            // default material's 0.16 (plus multiple scattering) in red and
+            // default material's 0.16 in red (single scattering) and
             // nothing in green; the setting off falls back to F0 0.04.
             vkr::Scene scene(&device);
             AddLight(scene, 0, 0, -1);
@@ -2560,7 +2569,7 @@ int main()
             const Image on = Render(renderer, scene, frame);
             frame.specularWorkflow = false;
             const Image off = Render(renderer, scene, frame);
-            Expect(on.At(32, 32, 0) > 2.0f && on.At(32, 32, 0) < 2.2f && on.At(32, 32, 1) < 0.001f,
+            Expect(on.At(32, 32, 0) > 1.9f && on.At(32, 32, 0) < 2.1f && on.At(32, 32, 1) < 0.001f,
                    "specular workflow: specularColor is F0");
             Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
                    "Frame::specularWorkflow off: F0 0.04");
@@ -2620,13 +2629,16 @@ int main()
             auto material = std::make_shared<vkr::Material>();
             std::fill(material->baseColor, material->baseColor + 3, 0.0f);
             material->sheen = 1;
+            material->model = vkr::Material::Model::kStandardSurface;
             strip->material = material;
             scene.Commit();
             vkr::Renderer::Frame frame = IdentityFrame();
             const float on = Render(renderer, scene, frame).At(32, 32, 1);
             frame.sheen = false;
             const float off = Render(renderer, scene, frame).At(32, 32, 1);
-            Expect(on - off > 0.3f && on - off < 0.4f, "sheen brightens grazing angles");
+            // standard_surface's sheen sits under the specular: it loses the
+            // dielectric's albedo towards the viewer (0.14 here), 0.35 -> 0.30.
+            Expect(on - off > 0.26f && on - off < 0.34f, "sheen brightens grazing angles");
 
             vkr::Scene furnace(&device);
             furnace.AddDome();
@@ -3716,7 +3728,8 @@ int main()
             // above it, where the fog stays dark.
             vkr::Scene scene(&device);
             vkr::Mesh *backdrop = AddEmitter(scene, -10, -10, 10, 10, -4, 1.0f);
-            std::fill(backdrop->material->specular, backdrop->material->specular + 3, 0.0f);  // no highlight
+            backdrop->material->model = vkr::Material::Model::kStandardSurface;  // its specular weight 0: no highlight
+            backdrop->material->specularWeight = 0.0f;
             vkr::Renderer::Frame frame = PerspectiveFrame();
             frame.fog = true;
             frame.fogDensity = 0.2f;
@@ -3846,7 +3859,8 @@ int main()
                 // With one depth per texel the fog above y 0 was unshadowed.
                 vkr::Scene pan(&device);
                 vkr::Mesh *back = AddEmitter(pan, -10, -10, 10, 10, -4, 0.0f);
-                std::fill(back->material->specular, back->material->specular + 3, 0.0f);
+                back->material->model = vkr::Material::Model::kStandardSurface;
+                back->material->specularWeight = 0.0f;
                 vkr::Light *top = AddLight(pan, 0, 1, 0);
                 std::fill(top->irradiance, top->irradiance + 3, 4.0f * 3.14159265f);
                 top->castShadows = true;

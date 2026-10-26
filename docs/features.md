@@ -222,9 +222,35 @@ Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSp
 
 Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`).
 
+### Spec conformance
+
+Eldr shades each surface model by its spec: the USD spec for UsdPreviewSurface, MaterialX's nodegraphs and pbrlib (`libraries/bxdf`, `libraries/pbrlib/genglsl`) for standard_surface and OpenPBR (`renderer/shaders/brdf.glsl`'s `SetupBase`). Checked lobe by lobe against the spec formulas: tilted patches under one distant light (9 light and view directions per case, 23 cases) agree within 0.3% (worst 2.5%), and under a white furnace dome within 1% facing the camera. Differences from Karma come from rasterised lighting, not the materials (Karma agrees with the spec within 1% on coated standard_surface and OpenPBR, and on furnace albedos).
+
+| Lobe | Spec | Status |
+|---|---|---|
+| GGX distribution, height-correlated Smith masking, alpha = roughness² | all models | Exact (roughness under 0.045 shades as 0.045, alpha 0.002, so point lights keep a finite highlight) |
+| UsdPreviewSurface Fresnel | Schlick: F0 = ((1 - ior) / (1 + ior))² to white; metals albedo to albedo; interpolated by `metallic`; specular workflow `specularColor` to white | Exact |
+| Diffuse under the specular | MaterialX `layer`: the diffuse loses the dielectric's directional albedo towards the viewer | Exact (albedo from the split-sum table) |
+| Multiple scattering | MaterialX's energy compensation on every GGX lobe of standard_surface and OpenPBR; UsdPreviewSurface single scattering (Storm, Karma) | Exact form; `eldr:multiScatter` off makes everything single scattering |
+| standard_surface dielectric | exact Fresnel of `specular_IOR`, weight `specular`, tint `specular_color` | Exact for lights; image lights use Schlick's albedo at F0, as MaterialX's GLSL (1-3% under exact at 50 degrees) |
+| standard_surface metal | conductor of `artistic_ior(base_color, specular_color)` | Hoffman's F82 form fitted to the conductor (exact at 0, 82 and 90 degrees; within 0.5%, a dark channel up to 6% at grazing light) |
+| OpenPBR metal | F82-tint Schlick (`specular_color`) times `specular_weight` | Exact |
+| OpenPBR dielectric | `specular_weight` scales F0 through the index, the index relative to the coat's under a coat | Exact for lights; image lights as standard_surface's |
+| Diffuse roughness | standard_surface: MaterialX's Oren-Nayar; OpenPBR: energy-compensated Oren-Nayar (Fujii) | Exact for lights (area lights: towards their centre); image lights through MaterialX's albedo fits |
+| Coat | dielectric of the coat's IOR (UsdPreviewSurface: Schlick, white), coat colour on the base, albedo scaling; standard_surface `coat_affect_color`, `coat_affect_roughness`; OpenPBR roughening and `coat_darkening`; emission under the coat | Exact for lights; image lights Schlick's albedo. No `coat_normal`, coat anisotropy or coat rotation (the base's normal) |
+| Sheen (standard_surface) | Imageworks microfiber over the diffuse, under the specular | Exact; image lights through MaterialX's albedo fit |
+| Fuzz (OpenPBR) | Zeltner's LTC sheen over the coat and base | Exact (MaterialX's fits) |
+| Anisotropy | `mx_roughness_anisotropy`, OpenPBR's mapping | Exact; tangent from the uv set's u direction (no tangent primvars) |
+| Thin film | Airy reflectance with polarization, per light | Approximated: unpolarized, at the view angle, standing in for F0 |
+| Transmission | dielectric BTDF | Approximated: refraction of the screen (or traced), Schlick at the interface, roughness as blur |
+| Subsurface | random walk | Approximated: separable screen-space blur of the diffuse light |
+| Constants only | `diffuse_roughness`, `base_diffuse_roughness`, `coat_affect_*`, `coat_darkening` | Textured or graph-driven values keep the constant |
+
+Not mapped: MaterialX `gltf_pbr` (no surface), UsdPreviewSurface `opacityMode` presence (shaded as transparent). Ray-traced hits (GI rays, reflections of reflections) shade with a simplified F0 = 0.04 / metallic base.
+
 | Topic | Support |
 |---|---|
-| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Charlie), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation (`eldr:multiScatter`; Karma's UsdPreviewSurface is single-scatter, turn it off to match) |
+| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Imageworks; OpenPBR fuzz: Zeltner), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation (`eldr:multiScatter`: standard_surface and OpenPBR; UsdPreviewSurface single-scatter, as Karma) |
 | Texturable inputs | base colour, roughness, metallic, emission, opacity, normal, displacement; with `eldr:texturedLobes` / `eldr:texturedTransmission`: specularColor, coat (colour, roughness), sheen, anisotropy, thin film, ior, transmission (colour, depth, thin walled), subsurface (colour, radius, scale) |
 | Texture reads | UsdUVTexture, MaterialX `image` / `tiledimage`, UDIM, wrap modes, uv transforms, several uv sets |
 | Material programs (`eldr:materialGraphs`) | Graphs compiled whole into per-pixel programs: math, mix, overlay, clamp, remap, conditionals, HSV, extract/combine, `image`, `tiledimage`, `place2d`, `texcoord`, `geompropvalue`, ramps, `normalmap`, UsdUVTexture, UsdTransform2d, primvar readers, Houdini ramps `hinvlinear` and `huniformramp`. With `eldr:proceduralTextures`: MaterialX noise (noise2d/3d, fractal2d/3d, cellnoise, worleynoise, position, normal), matching Storm. An uncompilable graph keeps the input's constant (one warning per node type). |

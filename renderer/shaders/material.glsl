@@ -20,7 +20,7 @@ struct Material {
     vec4 params;     // metallic, roughness, occlusion, opacity
     TexRef tex[7];   // baseColor, emissive, metallic, roughness, occlusion, normal, opacity
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
-    vec4 specular;   // dielectric specular weight times colour
+    vec4 specular;   // specular colour, w: weight (brdf.glsl's SetupBase)
     // Lobes (brdf.glsl).
     vec4 specularColor;  // specular workflow F0, w = 1 when used
     vec4 coat;           // weight (0: none), roughness, F0
@@ -34,6 +34,8 @@ struct Material {
     vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
     vec4 subsurface;        // colour, weight (subsurface.glsl)
     vec4 subsurfaceRadius;  // per channel, world units
+    vec4 surface;           // model (0 UsdPreviewSurface, 1 standard_surface, 2 OpenPBR), diffuse roughness,
+                            // coat affect colour (OpenPBR: coat darkening), coat affect roughness
 };
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile

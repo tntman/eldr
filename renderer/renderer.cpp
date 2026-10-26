@@ -1513,7 +1513,7 @@ void Renderer::_CreateConstantImages()
                                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                     VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
+    _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _blueNoise = _dev.CreateImage(VK_FORMAT_R8G8B8A8_UNORM, kBlueNoiseSize, kBlueNoiseSize, 1, 1,

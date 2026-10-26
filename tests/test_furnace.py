@@ -1,7 +1,7 @@
-"""White furnace for eldr:multiScatter: a rough white metal sphere (F0 = 1,
-roughness 0.8) under a uniform white dome of intensity 1 (tests/scenes/
-furnace.usda). With multiple scattering it conserves energy and reads 1;
-off (single scattering, as Karma) it is darker.
+"""White furnace for eldr:multiScatter: a rough white OpenPBR metal sphere
+(F0 = 1, roughness 0.8) under a uniform white dome of intensity 1 (tests/
+scenes/furnace.usda). With multiple scattering (OpenPBR's spec) it conserves
+energy and reads 1; off (single scattering) it is darker.
 Run: usdenv.cmd python tests\\test_furnace.py"""
 import os
 import sys
