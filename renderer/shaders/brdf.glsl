@@ -283,19 +283,21 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
 }
 
 // The lobes' reflection of light from direction l, times cos, per unit of
-// the light's specular radiance. `widen`: what a local light's size adds
-// to roughness (Karis' representative point, normalized as the base).
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float widen)
+// the light's specular radiance. `regionArea`: the light's area in
+// half-vector space / pi (mesh.frag's LightRegion); the coat normalizes its
+// own lobe for it as for a disc of that area.
+// ponytail: the coat shares the base's representative point.
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
 {
     vec3 c = vec3(0.0);
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
     if (layers.coat > 0.0) {
-        float a = layers.coatPerceptual * layers.coatPerceptual, aWide = clamp(a + widen, 0.0, 1.0);
+        float a = layers.coatPerceptual * layers.coatPerceptual;
         float F = F_Schlick(vec3(layers.coatF0), max(dot(l, h), 0.0)).x;
         c += layers.coat * D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F * NoL *
-             (a * a) / (aWide * aWide);
+             (a * a) / (a * a + regionArea);
     }
     if (layers.sheen != vec3(0.0)) {
         c += layers.sheen * D_Sheen(NoH, layers.sheenRoughness) / (4.0 * (NoL + NoV - NoL * NoV)) * NoL;
@@ -341,7 +343,7 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
     return n;
 }
 
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float widen)
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
 {
     return vec3(0.0);
 }
