@@ -13,9 +13,11 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 PASSES = [
     ("probeCapture", "Reflection probe capture"),
     ("planarReflection", "Planar reflection"),
+    ("shutter", "Shutter (motion blur samples)"),
     ("culling", "Culling, skinning"),
     ("lightClusters", "Light clusters"),
     ("sunShadows", "Sun shadows"),
+    ("sunShadowMin", "Sun shadow minimum"),
     ("depthPrepass", "Depth prepass"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("ssgi", "Screen-space GI"),
@@ -25,11 +27,14 @@ PASSES = [
     ("giProbes", "Global illumination probes"),
     ("rayTracing", "Ray-traced shadows, reflections"),
     ("shading", "Shading"),
+    ("ssrDenoise", "Reflection denoise"),
     ("subsurface", "Subsurface scattering"),
     ("volumes", "Volumes"),
     ("translucency", "Translucency (refraction, OIT)"),
     ("volumesInFront", "Volumes in front of translucency"),
+    ("lightShapes", "Light shapes"),
     ("depthOfField", "Depth of field"),
+    ("film", "Film accumulation"),
     ("taa", "TAA"),
     ("motionBlur", "Motion blur"),
     ("post", "Bloom, exposure, tonemap"),
@@ -39,42 +44,79 @@ PASSES = [
 ]
 
 
+# What the window shows, in order: (heading, [(label, GetRenderStats() key,
+# unit)]). Units: ms, n (count), B (bytes), EV, % and str. A dotted key reaches
+# into a dictionary (gpuPassMs.shading). houdini/gen_ui.py reads this table
+# (and PASSES) to write the stats Houdini's Render Statistics pane lists
+# (houdini/UsdRenderers.json), so the two cannot drift.
+STATS = [
+    ("Frame", [("GPU time", "gpuTimeMs", "ms"),
+               ("Render call (CPU, waits for GPU)", "renderTimeMs", "ms"),
+               ("Scene upload (CPU)", "commitTimeMs", "ms"),
+               ("Frame to the viewport", "frameSharing", "str")]),
+    ("GPU passes", "PASSES"),
+    ("Drawn (after culling)", [("Triangles drawn", "trianglesDrawn", "n"),
+                               ("Triangles in scene", "trianglesTotal", "n"),
+                               ("Instances drawn", "instancesDrawn", "n"),
+                               ("Instances in scene", "instancesTotal", "n"),
+                               ("Meshes", "meshes", "n"),
+                               ("Volumes", "volumes", "n"),
+                               ("Draw calls", "drawCalls", "n")]),
+    ("Image", [("Stage", "rendererStage", "str"),
+               ("Samples done", "numCompletedSamples", "n"),
+               ("Samples target", "taaTarget", "n"),
+               ("Pixels converged", "pixelsConvergedPercent", "%"),
+               ("Time to converge", "totalClockTime", "s"),
+               ("Exposure", "exposureEV", "EV")]),
+    ("Memory", [("Graphics memory (HdVk)", "gpuMemoryUsed", "B"),
+                ("  textures", "textureMemory", "B"),
+                ("  vertices, instances", "primvar", "B"),
+                ("  indices", "topology", "B"),
+                ("  acceleration structures", "accelerationStructureMemory", "B"),
+                ("  volumes", "volumeMemory", "B"),
+                ("  peak", "peakMemory", "B"),
+                ("System memory the GPU reads", "hostMemoryUsed", "B"),
+                ("Card: this process", "vramUsage", "B"),
+                ("Card: budget", "vramBudget", "B"),
+                ("Card: size", "vramSize", "B")]),
+]
+
+
+def Lookup(stats, key):
+    for part in key.split("."):
+        stats = stats.get(part) if isinstance(stats, dict) else None
+    return stats
+
+
+def Format(value, unit):
+    if unit == "ms":
+        return "%.2f ms" % value
+    if unit == "n":
+        return "{:,}".format(int(value)).replace(",", " ")
+    if unit == "B":
+        return ReportMetricSize(value)
+    if unit == "EV":
+        return "%+.2f EV" % value
+    if unit == "%":
+        return "%.0f %%" % value
+    if unit == "s":
+        return "%.2f s" % value
+    return str(value)
+
+
 def Rows(stats):
     """The window's (label, value) rows; a row without a value is a heading."""
     if stats.get("rendererName") != "Eldr":
         return [("Eldr is not the viewport's renderer.", "")]
-    get = lambda key: stats.get(key, 0)
-    ms = lambda key: "%.2f ms" % get(key)
-    count = lambda key: "{:,}".format(get(key)).replace(",", " ")
-    rows = [("Frame", None),
-            ("GPU", ms("gpuTimeMs")),
-            ("Render call (CPU, waits for GPU)", ms("renderTimeMs")),
-            ("Scene upload (CPU)", ms("commitTimeMs")),
-            ("Frame to the viewport", "GPU (OpenGL)" if stats.get("frameSharing") == "OpenGL" else "CPU readback"),
-            ("GPU passes", None)]
-    passes = stats.get("gpuPassMs", {})
-    rows += [(label, "%.2f ms" % passes[key]) for key, label in PASSES if key in passes]
-    rows += [("Drawn (after culling)", None),
-             ("Triangles", count("trianglesDrawn") + " of " + count("trianglesTotal")),
-             ("Instances", count("instancesDrawn") + " of " + count("instancesTotal")),
-             ("Meshes", count("meshes")),
-             ("Draw calls", count("drawCalls")),
-             ("Image", None),
-             ("TAA samples", "%d of %d (%s)" % (get("numCompletedSamples"), get("taaTarget"),
-                                                stats.get("rendererStage", ""))),
-             ("Exposure", "%+.2f EV" % get("exposureEV")),
-             ("Memory", None),
-             ("Graphics memory (HdVk)", ReportMetricSize(get("gpuMemoryUsed"))),
-             ("  textures", ReportMetricSize(get("textureMemory"))),
-             ("  vertices, instances", ReportMetricSize(get("primvar"))),
-             ("  indices", ReportMetricSize(get("topology"))),
-             ("  acceleration structures", ReportMetricSize(get("accelerationStructureMemory"))),
-             ("  volumes", ReportMetricSize(get("volumeMemory"))),
-             ("  peak", ReportMetricSize(get("peakMemory"))),
-             ("System memory the GPU reads", ReportMetricSize(get("hostMemoryUsed")))]
-    if get("vramSize"):
-        rows.append(("Card: this process / budget / size",
-                     " / ".join(ReportMetricSize(get(k)) for k in ("vramUsage", "vramBudget", "vramSize"))))
+    rows = []
+    for heading, entries in STATS:
+        rows.append((heading, None))
+        if entries == "PASSES":
+            entries = [(label, "gpuPassMs." + key, "ms") for key, label in PASSES]
+        for label, key, unit in entries:
+            value = Lookup(stats, key)
+            if value is not None and not (key.startswith("vram") and not stats.get("vramSize")):
+                rows.append((label, Format(value, unit)))
     return rows
 
 
