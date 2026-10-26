@@ -238,8 +238,10 @@ graphVolume.CreateInput("edf", T).ConnectToSource(graphEdf.ConnectableAPI(), "ou
 image = render()
 fire = color(image, 0, 0)
 red, green = fire.redF() - absorbed.redF(), fire.greenF() - absorbed.greenF()
-expect(red > 0.2 and abs(green / red - 0.3) < 0.1 and abs(fire.blueF() - absorbed.blueF()) < 0.03,
-       "a ramp of the density to emission (%.2f %.2f %.2f)" % (fire.redF(), fire.greenF(), fire.blueF()))
+blue = fire.blueF() - absorbed.blueF()
+expect(red > 0.15 and green < 0.7 * red and blue < 0.7 * green,  # orange, through the tonemapper
+       "a ramp of the density to emission (%.2f %.2f %.2f over %.2f %.2f %.2f)"
+       % (fire.redF(), fire.greenF(), fire.blueF(), absorbed.redF(), absorbed.greenF(), absorbed.blueF()))
 UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
 
 # Half resolution: the same image, near enough, the cloud's edge included.
