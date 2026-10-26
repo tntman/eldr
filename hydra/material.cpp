@@ -16,6 +16,7 @@
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "pxr/imaging/hdMtlx/hdMtlx.h"
 #include "pxr/imaging/hio/image.h"
 #include "pxr/usd/ar/resolver.h"
 #include "pxr/usd/sdf/assetPath.h"
@@ -23,9 +24,13 @@
 #include "pxr/usd/sdr/shaderNode.h"
 #include "pxr/usd/sdr/shaderProperty.h"
 
+#include <MaterialXCore/Document.h>
+#include <MaterialXFormat/Util.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <optional>
 #include <set>
@@ -34,6 +39,80 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 namespace {
+
+namespace mx = MaterialX;
+
+// MaterialX's libraries: USD's (HdMtlxStdLibraries) and, with $HFS set,
+// Houdini's own nodes (houdini/materialx/libraries/houdini: hmtlx*, kma_*),
+// read as files: no Houdini link. Read-only once built.
+mx::DocumentPtr const &MxLibraries()
+{
+    static const mx::DocumentPtr doc = [] {
+        mx::DocumentPtr d = mx::createDocument();
+        d->importLibrary(HdMtlxStdLibraries());
+        const char *hfs = std::getenv("HFS");
+        const mx::FilePath dir = mx::FilePath(hfs ? hfs : "") / "houdini" / "materialx" / "libraries";
+        if (hfs && (dir / "houdini").exists()) {
+            try {
+                mx::loadLibraries({"houdini"}, mx::FileSearchPath(dir), d);  // duplicates are skipped
+            } catch (std::exception const &e) {
+                TF_WARN("HdVk: can't read Houdini's MaterialX library in '%s': %s", dir.asString().c_str(), e.what());
+            }
+        }
+        return d;
+    }();
+    return doc;
+}
+
+// A node id's MaterialX nodedef: the libraries', else a document's own
+// (HdMtlxGetNodeDef finds it through Sdr's implementation URI).
+mx::NodeDefPtr MxNodeDef(TfToken const &id)
+{
+    static std::mutex mutex;
+    static std::map<TfToken, mx::NodeDefPtr> cache;
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto it = cache.find(id);
+    if (it != cache.end()) {
+        return it->second;
+    }
+    mx::NodeDefPtr def = MxLibraries()->getNodeDef(id.GetString());
+    if (!def && !id.IsEmpty() && SdrRegistry::GetInstance().GetShaderNodeByIdentifier(id)) {
+        def = HdMtlxGetNodeDef(id);
+    }
+    return cache[id] = def;
+}
+
+// A MaterialX value as Hydra holds it (GfVec*f, float, int, bool, string).
+VtValue MxValue(mx::ValuePtr const &v)
+{
+    if (!v) {
+        return VtValue();
+    }
+    if (v->isA<float>()) {
+        return VtValue(v->asA<float>());
+    }
+    if (v->isA<int>()) {
+        return VtValue(v->asA<int>());
+    }
+    if (v->isA<bool>()) {
+        return VtValue(v->asA<bool>());
+    }
+    if (v->isA<mx::Color3>() || v->isA<mx::Vector3>()) {
+        const auto c = v->isA<mx::Color3>() ? v->asA<mx::Color3>().data() : v->asA<mx::Vector3>().data();
+        return VtValue(GfVec3f(c[0], c[1], c[2]));
+    }
+    if (v->isA<mx::Color4>() || v->isA<mx::Vector4>()) {
+        const auto c = v->isA<mx::Color4>() ? v->asA<mx::Color4>().data() : v->asA<mx::Vector4>().data();
+        return VtValue(GfVec4f(c[0], c[1], c[2], c[3]));
+    }
+    if (v->isA<mx::Vector2>()) {
+        return VtValue(GfVec2f(v->asA<mx::Vector2>()[0], v->asA<mx::Vector2>()[1]));
+    }
+    if (v->isA<std::string>()) {
+        return VtValue(v->asA<std::string>());
+    }
+    return VtValue();
+}
 
 TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
@@ -725,8 +804,11 @@ bool ToVec4(VtValue const &v, GfVec4f *out)
 // into m->program, mesh.frag's per-pixel interpreter (scene.h). Values are
 // an op's result or a constant; ops collect with one virtual register each
 // and get the program's kRegisters in Finish.
-// ponytail: an input's graph is either compiled whole or not at all (a
-// node HdVk lacks, e.g. hextiledimage, leaves the input at its constant).
+// A node HdVk can't compile (e.g. hextiledimage) is bypassed as MaterialX
+// bypasses nodes: its nodedef output's defaultinput, else its first input of
+// the output's type (colorcorrect, contrast: `in`; image: `default`), else
+// the output's default value, else 0. Without a nodedef at all the input
+// keeps its constant. Each such input counts in fallbackInputs.
 class GraphCompiler
 {
 public:
@@ -747,9 +829,14 @@ public:
         const size_t ops = _ops.size(), constants = _p.constants.size(), images = _p.images.size(),
                      primvars = _p.primvars.size();
         const auto memo = _memo;
+        const auto tainted = _tainted;
         const TfToken uv = *_uvPrimvar;
+        const size_t events = _fallbackEvents;
         _failed.clear();
         std::optional<Value> v = _Input(node, name, 0);
+        if (!v || _fallbackEvents != events) {
+            ++fallbackInputs;
+        }
         // A normal is a tangent-space one only out of a normalmap or a
         // texture (UsdPreviewSurface's, decoded by its scale and bias).
         // ponytail: the tangent frame follows the mesh's uv set, whichever
@@ -770,6 +857,7 @@ public:
             _p.images.resize(images);
             _p.primvars.resize(primvars);
             _memo = memo;
+            _tainted = tainted;
             *_uvPrimvar = uv;
             return false;
         }
@@ -779,6 +867,11 @@ public:
 
     // The node id that made the last Output fail (empty: a malformed graph).
     std::string const &Failed() const { return _failed; }
+
+    // Inputs compiled with a node bypassed or not at all, and those nodes
+    // ("name (id)", once each).
+    int fallbackInputs = 0;
+    std::vector<std::string> fallbackNodes;
 
     // Gives each value a register from its op until its last reader; false
     // (program left empty) if more than kRegisters values are live at once
@@ -878,6 +971,10 @@ private:
             if (SdrShaderPropertyConstPtr p = def->GetShaderInput(input)) {
                 ToVec4(p->GetDefaultValue(), &v);
             }
+        } else if (mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId)) {  // e.g. Houdini's nodes outside Houdini
+            if (mx::InputPtr i = def->getActiveInput(input.GetString())) {
+                ToVec4(MxValue(i->getValue()), &v);
+            }
         }
         return v;
     }
@@ -946,20 +1043,78 @@ private:
         const auto key = std::make_pair(path, output);
         const auto memo = _memo.find(key);
         if (memo != _memo.end()) {
+            _fallbackEvents += _tainted.count(key);
             return memo->second;
         }
         const auto it = _net.nodes.find(path);
         if (depth > 64 || it == _net.nodes.end()) {
             return std::nullopt;
         }
-        std::optional<Value> v = _Compile(it->second, Kind(it->second.nodeTypeId), output, depth);
-        if (!v && _failed.empty()) {
-            _failed = it->second.nodeTypeId.GetString();
+        const HdMaterialNode2 &node = it->second;
+        const size_t events = _fallbackEvents, hard = _hardFailures;
+        std::optional<Value> v = _Compile(node, Kind(node.nodeTypeId), output, depth);
+        if (!v) {
+            // Failed itself, or an input of it failed with nothing to stand in.
+            const bool own = _hardFailures == hard;
+            const std::string &id = node.nodeTypeId.GetString();
+            if (_failed.empty()) {
+                _failed = id;
+            }
+            v = _Bypass(node, output, depth);
+            ++_fallbackEvents;
+            _hardFailures += !v;
+            const std::string entry = path.GetName() + " (" + id + ")";
+            if (own && std::find(fallbackNodes.begin(), fallbackNodes.end(), entry) == fallbackNodes.end()) {
+                fallbackNodes.push_back(entry);
+            }
+            static std::mutex mutex;
+            static std::set<std::string> warned;
+            std::lock_guard<std::mutex> lock(mutex);
+            if (own && warned.insert(id).second) {
+                TF_WARN("HdVk: shading node '%s' isn't supported; %s", id.c_str(),
+                        v ? "bypassed (its pass-through input or default stands in)"
+                          : "the material input it feeds keeps its constant");
+            }
         }
         if (v) {
             _memo[key] = *v;
+            if (_fallbackEvents != events) {
+                _tainted.insert(key);
+            }
         }
         return v;
+    }
+
+    // A node bypassed as MaterialX bypasses it (the class comment); none
+    // without a nodedef.
+    std::optional<Value> _Bypass(HdMaterialNode2 const &n, TfToken const &output, int depth)
+    {
+        const mx::NodeDefPtr def = MxNodeDef(n.nodeTypeId);
+        if (!def) {
+            return std::nullopt;
+        }
+        mx::OutputPtr out = output.IsEmpty() ? nullptr : def->getActiveOutput(output.GetString());
+        if (!out) {
+            const std::vector<mx::OutputPtr> outs = def->getActiveOutputs();
+            if (outs.empty()) {
+                return std::nullopt;
+            }
+            out = outs[0];
+        }
+        std::string through = out->getAttribute("defaultinput");
+        for (const mx::InputPtr &i : def->getActiveInputs()) {
+            if (through.empty() && i->getType() == out->getType()) {
+                through = i->getName();
+            }
+        }
+        if (!through.empty()) {
+            return _Input(n, TfToken(through), depth);
+        }
+        GfVec4f v(0.0f);
+        if (out->hasAttribute("default")) {
+            ToVec4(MxValue(mx::Value::createValueFromStrings(out->getAttribute("default"), out->getType())), &v);
+        }
+        return _Const(v);
     }
 
     std::optional<Value> _Compile(HdMaterialNode2 const &n, NodeKind const &k, TfToken const &output, int depth)
@@ -1065,8 +1220,8 @@ private:
             if (!Read(n.parameters, param, &name) && Read(n.parameters, param, &str)) {
                 name = TfToken(str);
             }
-            if (name.IsEmpty()) {
-                return std::nullopt;
+            if (name.IsEmpty()) {  // no primvar named: its default (an empty geomprop reads nothing)
+                return in(k.name == "geompropvalue" ? "default" : "fallback");
             }
             if (name == _tokens->displayColor) {
                 return _Emit(P::kDisplayColor, {});
@@ -1210,6 +1365,9 @@ private:
     TfToken *_uvPrimvar;
     std::vector<Ins> _ops;
     std::map<std::pair<SdfPath, TfToken>, Value> _memo;
+    // Memoized values with a bypassed node upstream (they count again where reused).
+    std::set<std::pair<SdfPath, TfToken>> _tainted;
+    size_t _fallbackEvents = 0, _hardFailures = 0;
     std::string _failed;
 };
 
@@ -1261,15 +1419,7 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         if (c == surface.inputConnections.end() || c->second.empty()) {
             return false;
         }
-        if (!graph.Output(surface, name, target, scale, channel)) {
-            static std::mutex mutex;
-            static std::set<std::string> warned;
-            std::lock_guard<std::mutex> lock(mutex);
-            if (warned.insert(graph.Failed()).second) {
-                TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
-                        graph.Failed().c_str());
-            }
-        }
+        graph.Output(surface, name, target, scale, channel);  // warns about what it can't compile
         return true;
     };
     if (id == _tokens->UsdPreviewSurface || id == _tokens->ND_UsdPreviewSurface_surfaceshader) {
@@ -1441,19 +1591,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         const auto c = surface.inputConnections.find(name);
         if (!ref->texture && c != surface.inputConnections.end() && !c->second.empty() &&
             !(ref == &m->baseColorTex && m->baseColorFromDisplayColor) &&
-            !graph.Output(surface, name, target, size == 3 ? weight : 1.0f)) {
-            static std::mutex mutex;
-            static std::set<std::string> warned;
-            std::lock_guard<std::mutex> lock(mutex);
-            if (otherUvSet.texture) {
-                std::swap(otherUvSet, *ref);
-                TF_WARN("HdVk: a material reads uv sets '%s' and '%s' but can't run a graph for '%s'; its "
-                        "textures read '%s'", uvPrimvar->GetText(), primvar.GetText(), name.GetText(),
-                        uvPrimvar->GetText());
-            } else if (warned.insert(graph.Failed()).second) {
-                TF_WARN("HdVk: shading node '%s' isn't supported; the material input it feeds keeps its constant",
-                        graph.Failed().c_str());
-            }
+            !graph.Output(surface, name, target, size == 3 ? weight : 1.0f) && otherUvSet.texture) {
+            std::swap(otherUvSet, *ref);
+            TF_WARN("HdVk: a material reads uv sets '%s' and '%s' but can't run a graph for '%s'; its "
+                    "textures read '%s'", uvPrimvar->GetText(), primvar.GetText(), name.GetText(),
+                    uvPrimvar->GetText());
         }
         for (int i = 0; ref->texture && i < 3; ++i) {
             ref->scale[i] *= weight;

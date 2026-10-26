@@ -12,7 +12,7 @@ find_package(Houdini REQUIRED)
 
 # HoudiniConfig has no Dep target for garch, hgi and hio: link those import
 # libraries by path.
-set(hdvk_pxr_libs ar cameraUtil garch hd hdsi hgi hio pxOsd sdr usd usdGeom usdImaging)
+set(hdvk_pxr_libs ar cameraUtil garch hd hdMtlx hdsi hgi hio pxOsd sdr usd usdGeom usdImaging)
 foreach(lib ${hdvk_pxr_libs})
     add_library(${lib} INTERFACE)
     if(TARGET Houdini::Dep::pxr_${lib})

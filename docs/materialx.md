@@ -79,3 +79,9 @@ Eldr matches Storm here.
 | OpenPBR `emission_luminance` | Karma scales nits down (10000 renders as about 20) |
 | negative values | Karma keeps negative radiance; Eldr clamps at 0 (the harness clamps both) |
 | `kma_*` nodes | Karma-only VEX shaders, not MaterialX |
+
+## Plan status
+
+| Item | Status |
+|---|---|
+| partialFallback | Done. An uncompilable node is bypassed (nodedef output `defaultinput`, else first input of the output's type, else the output's default) instead of dropping the whole input. Houdini basic + quick materials: median dE vs Karma 7.0 -> 2.7; Ceramic, Leather, Wood, Concrete, Asphalt get their textures back (dE 20-48 -> 1-9). |

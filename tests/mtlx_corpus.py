@@ -494,6 +494,7 @@ def main():
     ap.add_argument("--static", action="store_true", help="inventory only, no rendering")
     ap.add_argument("--reuse", action="store_true", help="compare the EXRs of an earlier run in --out again")
     ap.add_argument("--storm", action="store_true", help="also render with Storm (MaterialX's GLSL) as a referee")
+    ap.add_argument("--refs", help="an earlier run's --out: render Eldr only, compare with its Karma (and Storm) EXRs")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -538,7 +539,10 @@ def main():
             else:
                 scene_path, cols = scene(out, group, [c[:3] for c in cells])
                 exr, warned, rc, err = run_eldr(out, group, scene_path, cols)
-                kexr, krc, klog = run_karma(out, group, scene_path, cols) if not a.no_karma else (None, None, "")
+                if a.refs:  # same corpus and --skip, so the same cells
+                    kexr, krc, klog = os.path.join(a.refs, group + "_karma.exr"), 0, ""
+                else:
+                    kexr, krc, klog = run_karma(out, group, scene_path, cols) if not a.no_karma else (None, None, "")
             predicted = sorted({u for c in cells for u in c[3]["unsupported"]})
             e_img, k_img = read_exr(out, exr), read_exr(out, kexr) if kexr else None
             renders[group] = dict(eldr_rc=rc, eldr_warned=warned, predicted_unsupported=predicted,
@@ -547,7 +551,9 @@ def main():
             s_img = None
             if a.storm:
                 sexr = os.path.join(out, group + "_storm.exr")
-                if not (a.reuse and os.path.exists(sexr)):
+                if a.refs:
+                    sexr = os.path.join(a.refs, group + "_storm.exr")
+                elif not (a.reuse and os.path.exists(sexr)):
                     sexr = run_storm(out, group, scene_path if not a.reuse else os.path.join(out, group + ".usda"), cols)
                 s_img = read_exr(out, sexr)
             for i, c in enumerate(cells):

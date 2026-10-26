@@ -159,7 +159,7 @@ add_library(hdVk SHARED
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
     hydra/camera.cpp hydra/renderProducts.cpp)
-target_link_libraries(hdVk PRIVATE ar cameraUtil garch hd hdsi hgi hio pxOsd sdr vkrenderer)
+target_link_libraries(hdVk PRIVATE ar cameraUtil garch hd hdMtlx hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
 # which installs OpenVDB and its NanoVDB headers beside USD): the volume
@@ -261,6 +261,9 @@ if(WIN32)
     set_tests_properties(stats PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME materialx COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_materialx.py)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    # MaterialX nodes one inline graph each, unlit: pixel = the graph's value.
+    add_test(NAME mtlx_ops COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_mtlx_ops.py)
+    set_tests_properties(mtlx_ops PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     # The MaterialX corpus audit's wrapping and node rule, no rendering (the audit: tests/mtlx_corpus.py --out).
     add_test(NAME mtlx_corpus COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/mtlx_corpus.py --selftest)
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
