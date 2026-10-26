@@ -865,6 +865,12 @@ public:
         return true;
     }
 
+    // Material inputs compiled so far.
+    int Outputs() const
+    {
+        return int(std::count_if(_ops.begin(), _ops.end(), [](Ins const &i) { return i.op == P::kOutput; }));
+    }
+
     // The node id that made the last Output fail (empty: a malformed graph).
     std::string const &Failed() const { return _failed; }
 
@@ -1528,7 +1534,24 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
 // Transmission and subsurface below. Ignored for now: displacement.
 // *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
 // reads; textures on other sets are read by the program, through primvars.
-void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar)
+// What a material's graphs couldn't compile (HdVkMaterialFallbacks).
+struct Fallbacks {
+    int inputs = 0;
+    std::vector<std::string> nodes;
+
+    void Add(int n, std::vector<std::string> const &more)
+    {
+        inputs += n;
+        for (const std::string &node : more) {
+            if (std::find(nodes.begin(), nodes.end(), node) == nodes.end()) {
+                nodes.push_back(node);
+            }
+        }
+    }
+};
+
+void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar,
+                 Fallbacks *fallbacks)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
     if (terminal == net.terminals.end()) {
@@ -1542,6 +1565,15 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     const auto kind = std::find_if(Surfaces().begin(), Surfaces().end(),
                                    [&](SurfaceInputs const &k) { return k.id == surface.nodeTypeId; });
     if (kind == Surfaces().end()) {
+        const std::string &id = surface.nodeTypeId.GetString();
+        fallbacks->Add(1, {surfaceIt->first.GetName() + " (" + id + ")"});
+        static std::mutex mutex;
+        static std::set<std::string> warned;
+        std::lock_guard<std::mutex> lock(mutex);
+        if (warned.insert(id).second) {
+            TF_WARN("HdVk: surface shader '%s' isn't supported; its materials render with UsdPreviewSurface's "
+                    "defaults", id.c_str());
+        }
         return;
     }
 
@@ -1688,10 +1720,14 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // texture is read through its first channel.
     input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex, P::kOpacity);
     ReadLobes(surface, m, graph);
+    const int outputs = graph.Outputs();
     if (!graph.Finish()) {
         TF_WARN("HdVk: a material's shading graph needs more than %u registers; its inputs keep their constants",
                 P::kRegisters);
+        graph.fallbackInputs = outputs;
+        graph.fallbackNodes.push_back("(registers)");
     }
+    fallbacks->Add(graph.fallbackInputs, graph.fallbackNodes);
     if (!Read(surface.parameters, _tokens->opacityThreshold, &m->opacityThreshold) && m->opacityTex.texture &&
         StartsWith(surface.nodeTypeId, "ND_")) {
         // MaterialX has no threshold: an opacity texture is a cutout, as
@@ -1744,7 +1780,7 @@ float TexelBound(vkr::TextureRef const &ref)
 // ponytail: vector displacement drops its tangent components (per-vertex
 // tangents); a graph's bound is |scale| (its value taken as within -1..1).
 void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m,
-                      TfToken *uvPrimvar)
+                      TfToken *uvPrimvar, Fallbacks *fallbacks)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->displacement);
     const auto it = terminal == net.terminals.end() ? net.nodes.end() : net.nodes.find(terminal->second.upstreamNode);
@@ -1771,8 +1807,12 @@ void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures,
     if (!ref.texture && c != node.inputConnections.end() && !c->second.empty()) {
         vkr::MaterialProgram &p = m->displacementProgram;
         GraphCompiler graph(net, textures, &p, uvPrimvar);
-        if (!graph.Output(node, input, vkr::MaterialProgram::kDisplacement, scale, vector ? 2 : -1) ||
-            !graph.Finish() || !p.Valid()) {
+        const bool compiled = graph.Output(node, input, vkr::MaterialProgram::kDisplacement, scale, vector ? 2 : -1);
+        fallbacks->Add(graph.fallbackInputs, graph.fallbackNodes);
+        if (!compiled || !graph.Finish() || !p.Valid()) {
+            if (compiled) {
+                fallbacks->Add(1, {"(registers)"});
+            }
             p = vkr::MaterialProgram();
             TF_WARN("HdVk: can't run the displacement graph (node %s)", graph.Failed().c_str());
             return;
@@ -1843,12 +1883,53 @@ std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string
     return tiles;
 }
 
-HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
+void HdVkMaterialFallbacks::Set(SdfPath const &material, int inputs, std::vector<std::string> nodes)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (inputs > 0) {
+        _byMaterial[material] = {inputs, std::move(nodes)};
+    } else {
+        _byMaterial.erase(material);
+    }
+}
+
+int HdVkMaterialFallbacks::Inputs() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    int n = 0;
+    for (const auto &[path, f] : _byMaterial) {
+        n += f.first;
+    }
+    return n;
+}
+
+std::string HdVkMaterialFallbacks::Nodes(size_t max) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::string out;
+    size_t n = 0;
+    for (const auto &[path, f] : _byMaterial) {
+        for (const std::string &node : f.second) {
+            if (n++ < max) {
+                out += (out.empty() ? "" : ", ") + path.GetName() + ": " + node;
+            }
+        }
+    }
+    return n > max ? out + ", and " + std::to_string(n - max) + " more" : out;
+}
+
+HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures, HdVkMaterialFallbacks *fallbacks)
     : HdMaterial(id)
     , _textures(textures)
+    , _fallbacks(fallbacks)
     , _material(std::make_shared<vkr::Material>())
     , _volume(std::make_shared<vkr::VolumeShading>())
 {
+}
+
+HdVkMaterial::~HdVkMaterial()
+{
+    _fallbacks->Set(GetId(), 0, {});
 }
 
 void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
@@ -1859,16 +1940,18 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         vkr::Material m;  // UsdPreviewSurface defaults
         vkr::VolumeShading volume;
         _uvPrimvar = TfToken();
+        Fallbacks fallbacks;
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
-            ReadSurface(net, _textures, &m, &_uvPrimvar);
-            ReadDisplacement(net, _textures, &m, &_uvPrimvar);
+            ReadSurface(net, _textures, &m, &_uvPrimvar, &fallbacks);
+            ReadDisplacement(net, _textures, &m, &_uvPrimvar, &fallbacks);
 #ifdef HDVK_VOLUMES
             HdVkReadVolumeShading(net, &volume);
 #endif
         }
         *_volume = std::move(volume);
+        _fallbacks->Set(GetId(), fallbacks.inputs, std::move(fallbacks.nodes));
         _primvars.clear();
         for (const std::string &name : m.program.primvars) {
             _primvars.emplace_back(name);

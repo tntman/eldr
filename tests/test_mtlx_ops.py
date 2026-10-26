@@ -127,6 +127,12 @@ for i, (label, _, rgb) in enumerate(cases):
         failures.append(label)
         print("FAIL: %s: expected %s, got %s" % (label, tuple(round(e, 3) for e in rgb), tuple(round(g, 3) for g in got)))
 
+# The render stats count the bypassed blur and name it (usdview's Eldr > Render Statistics, Houdini's viewstats).
+stats = engine.GetRenderStats()
+if not only and not (stats.get("materialFallbackInputs") == 1 and "ND_blur_color3" in stats.get("materialFallbackNodes", "")):
+    failures.append("stats")
+    print("FAIL: fallback stats", stats.get("materialFallbackInputs"), stats.get("materialFallbackNodes"))
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK (%d cases)" % len(cases))
 sys.exit(1 if failures else 0)

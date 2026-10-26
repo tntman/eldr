@@ -85,3 +85,4 @@ Eldr matches Storm here.
 | Item | Status |
 |---|---|
 | partialFallback | Done. An uncompilable node is bypassed (nodedef output `defaultinput`, else first input of the output's type, else the output's default) instead of dropping the whole input. Houdini basic + quick materials: median dE vs Karma 7.0 -> 2.7; Ceramic, Leather, Wood, Concrete, Asphalt get their textures back (dE 20-48 -> 1-9). |
+| fallbackSignal | Done. Render stats `materialFallbackInputs` (inputs with a bypassed or dropped node, plus 1 per unknown surface) and `materialFallbackNodes` ("material: node (id)", first 12), shown under Materials in usdview's Eldr > Render Statistics and Houdini's viewport stats (gen_ui reads the same table). Unknown surface types warn once. |
