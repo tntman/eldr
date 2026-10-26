@@ -536,7 +536,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.finalQuality = frame.finalQuality || offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
     // unless the render settings prim asks for eldr:autoExposure.
-    if (offline && !_appliedSettings.count(t.autoExposure)) {
+    // Houdini's viewport colour-corrects every delegate's colour itself (its
+    // OCIO view, gamma, LUT): with eldr:productLinear it gets the EXR's
+    // linear beauty, as from Karma, not Eldr's tonemap, bloom or auto exposure.
+    const bool hostLinear = houdiniViewport && frame.linearBeauty;
+    if (hostLinear) {
+        frame.post.tonemapper = Tonemapper::None;
+        frame.post.bloomIntensity = 0.0f;
+    }
+    if ((offline || hostLinear) && !_appliedSettings.count(t.autoExposure)) {
         frame.post.autoExposure = false;
     }
     // Any edit to the scene or the settings starts the film over; the

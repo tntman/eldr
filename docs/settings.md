@@ -60,7 +60,7 @@ The settings people change most come first and are open in the UIs; rarely touch
 | Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added; fixed exposure when auto is off. | |
 | Tonemapper<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). | |
 | Bloom Intensity<br>`eldr:bloomIntensity` | float 0.04 | Bloom strength (0 = off). | |
-| Linear EXR Beauty<br>`eldr:productLinear` | on | Product beauty is linear scene colour with auto exposure, no bloom, no tonemap. Off writes the tonemapped beauty. Lens distortion is not applied to it. | One extra pass |
+| Linear Beauty<br>`eldr:productLinear` | on | Product beauty and the Houdini viewport's colour are linear scene colour, the frame's exposure, no bloom or tonemap. husk and the viewport skip auto exposure unless the settings prim asks; Houdini applies its own view. Off: Eldr's tonemapped colour. | One extra pass |
 
 ## Advanced
 

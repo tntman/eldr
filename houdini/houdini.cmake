@@ -36,7 +36,8 @@ file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/eldr.json CONTENT
 "{
     \"path\": \"$<TARGET_FILE_DIR:hdVk>/houdini\",
     \"env\": [
-        {\"PXR_PLUGINPATH_NAME\": {\"method\": \"append\", \"value\": \"$<TARGET_FILE_DIR:hdVk>\"}}
+        {\"PXR_PLUGINPATH_NAME\": {\"method\": \"append\", \"value\": \"$<TARGET_FILE_DIR:hdVk>\"}},
+        {\"PXR_AR_DEFAULT_SEARCH_PATH\": {\"method\": \"append\", \"value\": \"$HFS/bin/usd_plugins/hdx/resources/textures\"}}
     ]
 }
 ")
