@@ -578,20 +578,17 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         }
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
         bool rect = uint(light.position.w) == kLightRect;
-        float sourceRadius;
         if (rect) {
             vec3 formFactor = RectFormFactor(toLight, hw, hh);
             float f = length(formFactor);
             diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
             specularE = PI * f;
-            sourceRadius = sqrt(4.0 * length(cross(hw, hh)) / PI);
         } else {
             float r2 = length(cross(hw, hh));  // radius^2 of the equal-area circle
             float cosLight = clamp(dot(light.axis.xyz, -toLight / d), 0.0, 1.0);
             float sinSigmaSqr = r2 / (r2 + d * d);
             diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr) * cosLight;
             specularE = PI * sinSigmaSqr * cosLight;
-            sourceRadius = sqrt(r2);
         }
         // Where the reflection ray meets the light's plane (in units of its
         // half extents); LightRegion clamps it to the rectangle or disk.
@@ -603,14 +600,16 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
             // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
             // above p (its foot on the plane) for diffuse, each at the mip
-            // of what it gathers: the lobe's footprint at the light, and
-            // the light seen from its height over the plane.
+            // of what it gathers: the lobe's footprint at the light (its
+            // radius in light directions, 2 a, stretched as LightRegion
+            // stretched it), and the light seen from its height over the
+            // plane.
             // ponytail: two taps; no prefiltered form factor (Heitz's
             // filtered polygon lights would get the wide lobes right).
             float extent = length(hw) + length(hh);
             float texels = float(max(textureSize(textures[nonuniformEXT(tex)], 0).x,
                                      textureSize(textures[nonuniformEXT(tex)], 0).y));
-            float aLobe = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+            float aLobe = min(2.0 * a * max(regionStretch.x, regionStretch.y), 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
             specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
             vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));

@@ -222,7 +222,11 @@ because other highlights overlap it.
 | Sun, 4 degrees | 2.61 / 1.00 / 0.77 / 0.94 | 0.99 / 1.00 / 1.03 / 0.96 | 1.02 / 1.04 / 1.00 / 1.03 |
 | Cylinder (tube) | 3.76 / 4.05 / 1.00 / 0.86 | 1.00 / 0.94 / 1.00 / 0.93 | 0.99 / 0.96 / 0.99 / 0.97 |
 
-vkrtest checks a sphere light on a tilted floor against the same integral.
+A rect or disk light's texture is read at the representative point, at the
+mip of the stretched lobe's footprint at the light. Before, the mip came
+from the light's own size, which blurred a glossy reflection of the texture
+as if it were rough. vkrtest checks a sphere light on a tilted floor against
+the same integral, and a textured rect light's sharp reflection.
 The coat lobe is normalized for the light's half-vector area as for a disc,
 and shares the base lobe's point (not its stretch). LTC (Heitz 2016) would be
 exact for polygons of any size.
