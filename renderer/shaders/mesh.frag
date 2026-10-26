@@ -1042,10 +1042,13 @@ void main()
         ng = -ng;
     }
     vec3 n = dot(inNormal, inNormal) > 1e-12 ? normalize(inNormal) : ng;
-    if (dot(n, ng) < 0.0) {
+    // Bumped in the authored orientation (displacement moves along it, so
+    // a back face's heights run the other way), then turned to the viewer.
+    bool backface = dot(n, ng) < 0.0;
+    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
+    if (backface) {
         n = -n;
     }
-    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
     if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }
