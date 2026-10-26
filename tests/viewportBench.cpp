@@ -13,14 +13,20 @@
 //   --no-overlap       eldr:overlapReadback off (each frame waits for its own)
 //   --app-ms N         the app's own work after each frame's maps (busy, N ms:
 //                      Houdini's viewport uploads, composites and draws)
+//   --houdini          Houdini 22's viewport: maps colour, depth and the ids
+//                      every frame, sends houdini:viewport/interactive, and
+//                      moves the scene camera (shutter -0.25..0.25, as its
+//                      free camera) on the stage instead of a free camera
+//   --set name=value   a render setting (bool 0/1, int, float or string)
+//   --csv path         per-frame times (begin, execute, maps, frame)
 //   --ids              check primId/instanceId against the render index
 //   --check            instead of timing: which AOVs render and read back
 //                      when the app reads only some (needs normal bound)
 //   --nav              instead of timing: what Houdini's camera tools read
 //                      (depth vs the scene's /ground at y = 0) and a still
 //                      camera's convergence and stability
-//   --overlap          instead of timing: eldr:overlapReadback's frames
-//                      (colour, depth) against read back at once
+//   --overlap          instead of timing: eldr:overlapReadback's frames, mapped
+//                      in place (eldr:inPlaceReadback), against copied at once
 #include "pxr/base/gf/frustum.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -39,6 +45,7 @@
 #include "pxr/usdImaging/usdImaging/delegate.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -64,7 +71,9 @@ int main(int argc, char **argv)
     int width = 1280, height = 720, frames = 120, share = 0;
     double appMs = 0;
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
-    std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped;
+    bool houdini = false;
+    std::string csvPath;
+    std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
         const char *next = i + 1 < argc ? argv[i + 1] : "";
@@ -80,6 +89,13 @@ int main(int argc, char **argv)
             share = std::atoi(next), ++i;
         } else if (a == "--app-ms") {
             appMs = std::atof(next), ++i;
+        } else if (a == "--houdini") {
+            houdini = true;
+            mapped = {"color", "depth", "primId", "instanceId"}, mapAll = false;
+        } else if (a == "--set") {
+            sets.push_back(next), ++i;
+        } else if (a == "--csv") {
+            csvPath = next, ++i;
         } else if (a == "--still") {
             still = true;
         } else if (a == "--ids") {
@@ -109,6 +125,21 @@ int main(int argc, char **argv)
     }
     delegate->SetRenderSetting(TfToken("eldr:shareFrame"), VtValue(share != 0));
     delegate->SetRenderSetting(TfToken("eldr:overlapReadback"), VtValue(!noOverlap));
+    if (houdini) {
+        delegate->SetRenderSetting(TfToken("houdini:viewport"), VtValue(true));
+        delegate->SetRenderSetting(TfToken("houdini:interactive"), VtValue(TfToken(still ? "normal" : "tumbling")));
+    }
+    for (const std::string &s : sets) {  // typed like the setting's current value
+        const size_t eq = s.find('=');
+        const TfToken name(s.substr(0, eq));
+        const std::string text = eq == std::string::npos ? "1" : s.substr(eq + 1);
+        const VtValue current = delegate->GetRenderSetting(name);
+        VtValue v = current.IsHolding<bool>()    ? VtValue(text != "0" && text != "false")
+                    : current.IsHolding<int>()   ? VtValue(std::atoi(text.c_str()))
+                    : current.IsHolding<float>() ? VtValue(float(std::atof(text.c_str())))
+                                                 : VtValue(text);
+        delegate->SetRenderSetting(name, v);
+    }
     HdRenderIndex *index = HdRenderIndex::New(delegate, {});
     int result = 0;
     {
@@ -354,6 +385,8 @@ int main(int argc, char **argv)
             using Image = std::pair<std::vector<GfHalf>, std::vector<float>>;
             auto run = [&](bool on) {
                 delegate->SetRenderSetting(TfToken("eldr:overlapReadback"), VtValue(on));
+                // The reference copies; overlapped frames are mapped where they were read back.
+                delegate->SetRenderSetting(TfToken("eldr:inPlaceReadback"), VtValue(on));
                 std::vector<Image> images;
                 for (int f = 0; f <= 6; ++f) {  // moving, then still at the last angle
                     controller.SetFreeCameraMatrices(
@@ -400,26 +433,47 @@ int main(int argc, char **argv)
             double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
             std::map<std::string, double> mapMs, passMs;
             std::vector<double> times;  // per frame: their median resists other GPU users
+            std::vector<std::array<double, 4>> rows;  // begin, execute, maps, frame
             const int warmup = 10;
+            const SdfPath camPath(argv[2]);
+            UsdGeomCamera usdCam(stage->GetPrimAtPath(camPath));
+            const GfMatrix4d camXform = usdCam.ComputeLocalToWorldTransform(UsdTimeCode::Default());
+            UsdGeomXformOp camOp;
+            if (houdini) {
+                usdCam.GetShutterOpenAttr().Set(-0.25);
+                usdCam.GetShutterCloseAttr().Set(0.25);
+                usdCam.ClearXformOpOrder();
+                camOp = usdCam.AddTransformOp();
+                controller.SetCameraPath(camPath);
+            }
+            const auto runStart = Clock::now();
             for (int f = 0; f < warmup + frames; ++f) {
                 // Orbit about the view's centre line: a camera move every frame.
                 const double angle = still ? 0.0 : 0.25 * f;
                 const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
-                controller.SetFreeCameraMatrices(orbit * view, projection);
                 const auto t0 = Clock::now();
+                if (houdini) {  // Houdini's free camera: a prim it edits (and re-sends) each redraw
+                    camOp.Set(camXform * orbit.GetInverse());
+                    scene.SetTime(UsdTimeCode::EarliestTime());
+                } else {
+                    controller.SetFreeCameraMatrices(orbit * view, projection);
+                }
                 engine.Execute(index, &tasks);
                 const auto t1 = Clock::now();
                 std::map<std::string, double> frameMaps;
                 for (auto &[name, b] : buffers) {
                     const auto m0 = Clock::now();
-                    b->Map();
+                    const volatile uint8_t *data = static_cast<const uint8_t *>(b->Map());
+                    (void)data[0];
                     b->Unmap();
                     frameMaps[name] = Ms(m0, Clock::now());
                 }
+                const auto tMapped = Clock::now();
                 for (const auto mapped = Clock::now(); Ms(mapped, Clock::now()) < appMs;) {
                 }
                 const auto t2 = Clock::now();
                 if (f >= warmup) {
+                    rows.push_back({Ms(runStart, t0), Ms(t0, t1), Ms(t1, tMapped), Ms(t0, t2)});
                     executeMs += Ms(t0, t1);
                     total += Ms(t0, t2);
                     times.push_back(Ms(t0, t2));
@@ -439,10 +493,43 @@ int main(int argc, char **argv)
                     }
                 }
             }
+            if (const auto *c = houdini ? static_cast<const HdCamera *>(index->GetSprim(HdPrimTypeTokens->camera, camPath))
+                                        : nullptr) {
+                std::printf("camera %s, shutter %g to %g\n", camPath.GetText(), c->GetShutterOpen(), c->GetShutterClose());
+            }
             std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s, app %.1f ms\n", width, height, frames,
                         TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "", appMs);
             std::sort(times.begin(), times.end());
             const double median = times[times.size() / 2];
+            // Pacing: percentiles, hitches (over twice the median) and the
+            // latency from a camera edit to the maps that return its image
+            // (moving with eldr:overlapReadback: the next frame's).
+            auto pct = [&](double p) { return times[std::min(times.size() - 1, size_t(p * times.size()))]; };
+            int hitches = 0;
+            for (double t : times) {
+                hitches += t > 2.0 * median;
+            }
+            const bool late = !noOverlap && !still;
+            std::vector<double> latency;
+            for (size_t i = 0; i + 1 < rows.size(); ++i) {
+                latency.push_back(late ? rows[i + 1][0] + rows[i + 1][1] + rows[i + 1][2] - rows[i][0]
+                                       : rows[i][1] + rows[i][2]);
+            }
+            std::sort(latency.begin(), latency.end());
+            std::printf("  pacing: p50 %.2f p95 %.2f p99 %.2f max %.2f ms, %d hitches (>2x p50); latency camera->image "
+                        "p50 %.2f p95 %.2f ms%s\n", pct(0.5), pct(0.95), pct(0.99), times.back(), hitches,
+                        latency.empty() ? 0.0 : latency[latency.size() / 2],
+                        latency.empty() ? 0.0 : latency[std::min(latency.size() - 1, size_t(0.95 * latency.size()))],
+                        late ? " (one frame late)" : "");
+            if (!csvPath.empty()) {
+                if (FILE *csv = std::fopen(csvPath.c_str(), "w")) {
+                    std::fputs("frame,begin_ms,execute_ms,maps_ms,frame_ms\n", csv);
+                    for (size_t i = 0; i < rows.size(); ++i) {
+                        std::fprintf(csv, "%zu,%.3f,%.3f,%.3f,%.3f\n", i, rows[i][0], rows[i][1], rows[i][2], rows[i][3]);
+                    }
+                    std::fclose(csv);
+                }
+            }
             std::printf("  frame %.2f ms (%.1f fps), median %.2f: execute %.2f (Render %.2f), gpu %.2f", total / frames,
                         1000.0 * frames / total, median, executeMs / frames, renderMs / frames, gpuMs / frames);
             for (auto &[name, ms] : mapMs) {
@@ -450,7 +537,7 @@ int main(int argc, char **argv)
             }
             std::printf("\n  gpu passes:");
             for (auto &[name, ms] : passMs) {
-                if (ms / frames >= 0.1) {
+                if (ms / frames >= 0.02) {
                     std::printf(" %s %.2f", name.c_str(), ms / frames);
                 }
             }

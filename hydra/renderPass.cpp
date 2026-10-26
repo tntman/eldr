@@ -11,6 +11,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/base/work/loops.h"
 #include "pxr/imaging/cameraUtil/conformWindow.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/changeTracker.h"
@@ -24,6 +25,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -93,6 +98,50 @@ TfToken BoundAov(HdRenderPassAovBinding const &b)
     return source == TfToken("ray:primid") ? HdAovTokens->primId : source;
 }
 
+// HDVK_TIMING=2: a CSV row per render pass execute, for frame pacing in
+// an app (Houdini's viewport): HDVK_TIMING_CSV, else %TEMP%/eldr_timing_<unix time>.csv.
+// interval: since the last execute began; app: since it ended (the app's
+// sync, maps and drawing); fetch: lazy readbacks in the app's maps since.
+// ponytail: one file per process, passes interleave (one viewport is the case).
+struct FrameTiming {
+    using Clock = std::chrono::steady_clock;
+    static FrameTiming *Get()
+    {
+        static FrameTiming *timing = [] {
+            const char *level = std::getenv("HDVK_TIMING");
+            if (!level || std::atoi(level) < 2) {
+                return static_cast<FrameTiming *>(nullptr);
+            }
+            std::string path = TfGetenv("HDVK_TIMING_CSV");
+            if (path.empty()) {
+                const std::string temp = TfGetenv("TEMP", TfGetenv("TMPDIR", "."));
+                path = TfStringPrintf("%s/eldr_timing_%lld.csv", temp.c_str(), (long long)std::time(nullptr));
+            }
+            FILE *csv = std::fopen(path.c_str(), "w");
+            if (!csv) {
+                TF_WARN("Eldr: can't write the timing CSV %s", path.c_str());
+                return static_cast<FrameTiming *>(nullptr);
+            }
+            std::fprintf(stderr, "Eldr: frame timings to %s\n", path.c_str());
+            std::fputs("frame,t_ms,interval_ms,app_ms,commit_ms,setup_ms,collect_ms,wait_ms,render_ms,after_ms,execute_ms,"
+                       "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged\n",
+                       csv);
+            auto *t = new FrameTiming;
+            t->csv = csv;
+            return t;
+        }();
+        return timing;
+    }
+    static double Ms(Clock::time_point a, Clock::time_point b)
+    {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    }
+    FILE *csv = nullptr;
+    Clock::time_point start = Clock::now(), lastBegin = start, lastEnd = start;
+    std::atomic<int64_t> fetchUs{0};
+    int frame = 0;
+};
+
 } // namespace
 
 HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &collection,
@@ -118,6 +167,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if (!_renderer) {
         return;
     }
+    FrameTiming *const timing = FrameTiming::Get();
+    const FrameTiming::Clock::time_point tBegin = FrameTiming::Clock::now();
+    FrameTiming::Clock::time_point tCollect = tBegin, tRender = tBegin, tRendered = tBegin;
 
     // Only the pass's render tags (purposes) are drawn; no tags: all.
     uint32_t tagMask = renderTags.empty() ? ~0u : 0u;
@@ -360,6 +412,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.domeCameraVisible, &frame.showEnvironment},
                                 {t2.multiScatter, &frame.multiScatter},
                                 {t2.overlapReadback, &frame.overlapReadback},
+                                {t2.inPlaceReadback, &frame.inPlaceReadback},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
@@ -772,8 +825,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // the frame before (one behind; a still camera's frame is its own). Only
     // the plain readback, into the buffers last frame filled: they keep that
     // image until a deferred one is collected.
-    const std::array<uintptr_t, 6> readback = {uintptr_t(mapped[0]), uintptr_t(mapped[1]), uintptr_t(mapped[2]),
-                                               uintptr_t(mapped[3]), frame.width, frame.height};
+    // eldr:inPlaceReadback: colour, depth and the ids stay where the GPU
+    // copied them (two buffers in turn) and the app maps them there, no copy
+    // (a maximized viewport's four: 27 MB, ~5 ms). Not resampled or converted ones.
+    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty();
+    auto readBuffer = [&](int i) { return uintptr_t(mapped[i] ? buffers[i] : nullptr); };
+    const std::array<uintptr_t, 6> readback = {readBuffer(0), readBuffer(1), readBuffer(2), readBuffer(3), frame.width,
+                                               frame.height};
     const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
                                                  frame.depthToDistance[2], frame.depthToDistance[3]};
     std::array<float, 4> collectedDepth = depthConstants;
@@ -783,6 +841,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     bool collected = false;
     bool shared = false;
     try {
+        tCollect = FrameTiming::Clock::now();
         if (frame.deferReadback && (collected = _renderer->Collect(out, frame.width, frame.height))) {
             collectedDepth = _lastDepthConstants;
         }
@@ -791,7 +850,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastDeferred = frame.deferReadback;
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
+        tRender = FrameTiming::Clock::now();
         _renderer->Render(_scene, frame, out);
+        tRendered = FrameTiming::Clock::now();
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();
@@ -800,6 +861,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
     }
     vkDelegate->SetFrameShared(shared);
+    if (out.inPlace && (!frame.deferReadback || collected)) {
+        for (int i = 0; i < 4; ++i) {
+            if (mapped[i] && _renderer->HostOutput(i)) {
+                mapped[i] = _renderer->HostOutput(i);
+                buffers[i]->SetExternal(mapped[i]);
+            }
+        }
+    }
     if (huskLinear) {
         try {  // the linear image over the display one Render read
             vkr::Renderer::Targets linear;
@@ -884,16 +953,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // on the near and far planes it assumes for window depth.
     const auto depthAovOf = [clearDepth](std::array<float, 4> c) {
         return [c, clearDepth](float *d, size_t n) {
-            for (size_t p = 0; p < n; ++p) {
+            WorkParallelForN(n, [&](size_t begin, size_t end) {  // a maximized viewport's: ~1.4 M pixels
+                for (size_t p = begin; p < end; ++p) {
 #ifdef HDVK_HOUDINI
-                const float z = d[p] * 2.0f - 1.0f;
-                d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
-                (void)clearDepth;
+                    const float z = d[p] * 2.0f - 1.0f;
+                    d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
+                    (void)clearDepth;
 #else
-                d[p] = d[p] >= 1.0f ? clearDepth : d[p];
-                (void)c;
+                    d[p] = d[p] >= 1.0f ? clearDepth : d[p];
+                    (void)c;
 #endif
-            }
+                }
+            }, 1 << 16);
         };
     };
     const auto depthAov = depthAovOf(depthConstants);
@@ -919,7 +990,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             continue;
         }
         const size_t pixels = size_t(appWidth) * appHeight;
-        buffers[i]->SetFetch([renderer = _renderer, i, depthAov, pixels](void *data) {
+        buffers[i]->SetFetch([renderer = _renderer, i, depthAov, pixels, timing](void *data) {
+            const auto fetchStart = FrameTiming::Clock::now();
             vkr::Renderer::Targets t;
             t.color = i == 0 ? data : nullptr;
             t.depth = i == 1 ? static_cast<float *>(data) : nullptr;
@@ -932,6 +1004,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 }
             } catch (const std::exception &e) {
                 TF_RUNTIME_ERROR("HdVk readback failed: %s", e.what());
+            }
+            if (timing) {
+                timing->fetchUs += int64_t(1000.0 * FrameTiming::Ms(fetchStart, FrameTiming::Clock::now()));
             }
         });
     }
@@ -958,6 +1033,25 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             b->Unmap();
             static_cast<HdVkRenderBuffer *>(b)->TakeMapped();  // the pass's own map
         }
+    }
+    if (timing) {
+        const auto tEnd = FrameTiming::Clock::now();
+        using T = FrameTiming;
+        const vkr::Renderer::Stats &stats = _renderer->GetStats();
+        int readMask = 0;
+        for (int i = 0; i < 4; ++i) {
+            readMask |= buffers[i] && read.count(buffers[i]) ? 1 << i : 0;
+        }
+        std::fprintf(timing->csv, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%u,%u,%d\n",
+                     timing->frame++, T::Ms(timing->start, tBegin), T::Ms(timing->lastBegin, tBegin),
+                     T::Ms(timing->lastEnd, tBegin), vkDelegate->CommitMs(), T::Ms(tBegin, tCollect),
+                     T::Ms(tCollect, tRender), stats.waitMs, T::Ms(tRender, tRendered), T::Ms(tRendered, tEnd), T::Ms(tBegin, tEnd),
+                     timing->fetchUs.exchange(0) / 1000.0, stats.gpuMs, stats.cpuMs, int(moving),
+                     int(frame.deferReadback), int(collected), readMask, appWidth, appHeight,
+                     int(_renderer->IsConverged()));
+        std::fflush(timing->csv);
+        timing->lastBegin = tBegin;
+        timing->lastEnd = tEnd;
     }
 }
 

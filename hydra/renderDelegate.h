@@ -191,6 +191,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
     ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
+    ((inPlaceReadback, "eldr:inPlaceReadback")) \
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
@@ -293,6 +294,7 @@ public:
     // Cryptomatte manifests of the last frame with those AOVs (JSON: name
     // to hex id), reported in GetRenderStats()["cryptomatte"].
     void SetCryptomatteManifests(std::string object, std::string material);
+    double CommitMs() const { return _commitMs; }  // the last CommitResources
 
     // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
     void SetDrivers(HdDriverVector const &drivers) override;

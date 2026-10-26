@@ -158,6 +158,7 @@ public:
         // layer's, while the camera moves). Not with Targets::aovs.
         bool deferReadback = false;
         bool overlapReadback = true;  // eldr:overlapReadback: the Hydra layer may set deferReadback
+        bool inPlaceReadback = true;  // eldr:inPlaceReadback: the Hydra layer may set Targets::inPlace
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
@@ -465,6 +466,10 @@ public:
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
         uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
+        // Render and Collect leave colour, depth, the ids and velocity in
+        // the renderer's host memory (HostOutput) instead of copying them:
+        // their pointers only say which to read back. Not Read's.
+        bool inPlace = false;
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -494,6 +499,11 @@ public:
     // and after a Render without deferReadback. Meanwhile the app's own work
     // overlaps the GPU's.
     bool Collect(const Targets &out, uint32_t width, uint32_t height);
+    // Targets::inPlace: the last frame delivered (a Render without
+    // deferReadback, or Collect), output 0..4 (colour, depth, primId,
+    // instanceId, velocity) in host memory, null if not read back. Stays
+    // until the second Render after; the caller may change it (depth).
+    void *HostOutput(int output) const { return _delivered[output]; }
 
     // False while auto-exposure adapts or TAA is still accumulating a still
     // camera: keep rendering frames.
@@ -506,6 +516,7 @@ public:
     struct Stats {
         double cpuMs = 0;  // Render's wall time: recording, the GPU's work, readback
         double gpuMs = 0;  // the frame on the GPU; 0 without timestamps
+        double waitMs = 0;  // the last wait for a frame in flight (Render, Collect)
         // GPU milliseconds per pass, in the order they ran (see Render).
         std::vector<std::pair<const char *, double>> passMs;
         uint64_t triangles = 0;   // the camera drew, after culling
@@ -777,17 +788,25 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
-    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback)
+    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback: Read's)
     // Frame::deferReadback: the frame in flight (its fence not waited for;
     // Device::waitFrame waits before anything touches what it uses), and
-    // its outputs in _readback until Collect. Offsets per Render's output
+    // its outputs in _frameReadback until Collect. Offsets per Render's output
     // (colour, depth, primId, instanceId, velocity; kNoOutput: not read).
     void _WaitInFlight();  // with _frameMutex held
+    // Render's outputs, two in turn: the app reads the frame delivered last
+    // (Targets::inPlace) while the next one renders into the other.
+    // ponytail: one app at a time; render passes taking turns on one
+    // renderer would each need their own pair.
+    Buffer _frameReadback[2];
+    uint32_t _deliveredSlot = 0;
+    void *_delivered[5] = {};
+    void _Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height, const Targets &out);
     static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);
     std::atomic<bool> _inFlight{false}, _deferredOutputs{false};
     struct Deferred {
         VkDeviceSize offsets[5] = {kNoOutput, kNoOutput, kNoOutput, kNoOutput, kNoOutput};
-        VkDeviceSize bytes = 0;  // all of them: Read copies after
+        uint32_t slot = 0;  // in _frameReadback
         uint32_t width = 0, height = 0;
         bool postProcess = false;
         float adaptivePixelFraction = 0;

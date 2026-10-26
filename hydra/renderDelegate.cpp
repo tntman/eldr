@@ -411,6 +411,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(frame.multiScatter)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},
+        {"Read Back in Place (no copy)", t2.inPlaceReadback, VtValue(frame.inPlaceReadback)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
