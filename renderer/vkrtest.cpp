@@ -4046,12 +4046,18 @@ int main()
                    "without shadow steps the ball is lit evenly");
             frame.volume.shadowSteps = vkr::VolumePass::Settings().shadowSteps;
 
-            // Temperature 0.3 (normalized: 1500 K) glows red-orange.
+            // Temperature 0.3 (normalized: 1500 K) glows red-orange, with
+            // Settings::defaultFields (without it a volume without a material
+            // reads density only, as Karma).
             ball->fields["temperature"] = BallGrid(12.0f, 0.3f);
             scene.Commit();
+            const float cold = Render(renderer, scene, frame).At(36, 40, 0);
+            frame.volume.defaultFields = true;
             img = Render(renderer, scene, frame);
+            frame.volume.defaultFields = false;
             const float r = img.At(36, 40, 0), g = img.At(36, 40, 1), bl = img.At(36, 40, 2);
             Expect(r > 0.2f && r > 1.5f * g && g > bl - 0.5f, "a hot volume glows like a blackbody");
+            Expect(cold < 0.5f * r, "without defaultFields a volume without a material doesn't glow");
             std::printf("volume: T %.3f, lit %.3f / %.3f, hot %.3f %.3f %.3f\n", std::exp(-1.5f), near, far, r, g, bl);
 
             // A uniform dome lights the ball from above: its top (y = 0.27)

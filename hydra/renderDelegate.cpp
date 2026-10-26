@@ -197,7 +197,9 @@ const TfTokenVector &HdVkRenderDelegate::GetSupportedBprimTypes() const { return
 // outputs:surface by itself.
 TfTokenVector HdVkRenderDelegate::GetMaterialRenderContexts() const
 {
-    return {TfToken("mtlx"), TfToken("glslfx")};
+    // kma: Karma's context, for its kma_volume (HdVkReadVolumeShading);
+    // only where a material has no mtlx or glslfx output.
+    return {TfToken("mtlx"), TfToken("glslfx"), TfToken("kma")};
 }
 
 HdResourceRegistrySharedPtr HdVkRenderDelegate::GetResourceRegistry() const
@@ -404,6 +406,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(frame.localVolumeShadows)},
         {"Volume Mutual Shadows (volumes shadow each other)", t2.volumeMutualShadows,
          VtValue(frame.volume.mutualShadows)},
+        {"Volume Default Fields (Cd, temperature without a volume material)", t2.volumeDefaultFields,
+         VtValue(frame.volume.defaultFields)},
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},

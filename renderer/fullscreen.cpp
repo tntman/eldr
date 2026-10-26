@@ -12,7 +12,7 @@ const uint32_t kFullscreenVert[] =
 
 VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
                                     const uint32_t *fragCode, size_t fragBytes, VkFormat format,
-                                    bool additive, bool over, bool multiply, VkFormat depthFormat)
+                                    bool additive, bool over, bool multiply, VkFormat depthFormat, bool transmit)
 {
     const VkDevice device = dev.device;
     VkShaderModule vert =CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
@@ -51,6 +51,9 @@ VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
         attachment.blendEnable = VK_TRUE;
         attachment.srcColorBlendFactor = attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
         attachment.dstColorBlendFactor = attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        if (transmit) {
+            attachment.dstColorBlendFactor = VK_BLEND_FACTOR_SRC1_COLOR;
+        }
     } else if (multiply) {
         attachment.blendEnable = VK_TRUE;
         attachment.srcColorBlendFactor = attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_DST_COLOR;

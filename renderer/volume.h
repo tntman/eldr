@@ -35,6 +35,7 @@ struct VolumeShading {
     float anisotropy = std::numeric_limits<float>::quiet_NaN();
     float emission[3] = {0, 0, 0};  // radiance per unit length, per unit of density
     float emissionScale = 1.0f;     // times the emission field (radiance per unit length)
+    float emissionTint[3] = {1, 1, 1};  // times the emission field too
     // Blackbody emission from the temperature field: Kelvin per unit of the
     // field (0: guess: Kelvin above 100, else normalized as Houdini's pyro,
     // 1 = 5000 K), and the radiance per unit length of a luminance-1
@@ -46,6 +47,9 @@ struct VolumeShading {
     // The volume's fields (Volume::fields) by role; empty: none.
     std::string densityField = "density", temperatureField = "temperature", colorField = "Cd",
                 emissionField = "emission";
+    // Read from a volume material. Without one the roles other than density
+    // are only read with VolumePass::Settings::defaultFields.
+    bool material = false;
 };
 
 // A heterogeneous medium: the density field's extinction, the colour
@@ -77,10 +81,12 @@ struct GpuVolume {
     uint32_t types[4];          // their PNANOVDB_GRID_TYPE_*
     float toGrid[3][3][4];      // density index -> temperature, color, emission index (rows)
     float params[4];            // x: temperature to Kelvin, y: blackbody intensity, z: 1 = physical
-    float albedo[4];            // rgb: sigma_s / extinction; w: Henyey-Greenstein g
-    float medium[4];            // x: extinction (mean sigma_t) per unit of density field; y: 1 = albedo.w is
-                                // the material's g (else the setting); w: emission field scale
+    float scattering[4];        // rgb: sigma_s per unit of density field; w: Henyey-Greenstein g
+    float absorption[4];        // rgb: sigma_a per unit of density field
+    float medium[4];            // x: extinction (mean sigma_t) per unit of density field; y: 1 = scattering.w
+                                // is the material's g (else the setting); z: 1 = no volume material
     float emission[4];          // rgb: radiance per unit length per unit of density field
+    float fieldEmission[4];     // rgb: times the emission field (scale times tint)
 };
 static_assert(sizeof(GpuVolume) % 16 == 0, "std430 array stride of GpuVolume");
 
@@ -117,6 +123,10 @@ public:
         // Volumes shadow each other: the light towards each step of a
         // volume's march also crosses the other volumes (sun and local lights).
         bool mutualShadows = true;
+        // Volumes without a volume material read their temperature, Cd
+        // (colour) and emission fields with VolumeShading's defaults; off:
+        // only density, as Karma renders them.
+        bool defaultFields = false;
     };
 
     // Which part of each ray Record marches: all of it, the part behind

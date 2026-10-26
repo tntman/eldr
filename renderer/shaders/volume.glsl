@@ -14,9 +14,12 @@ struct Volume {
     uvec4 types;           // PNANOVDB_GRID_TYPE_*
     vec4 toGrid[9];        // density index -> temperature, color, emission index (3 rows each)
     vec4 params;           // x: temperature to Kelvin, y: blackbody intensity, z: 1 = times (K / 1500)^4
-    vec4 albedo;           // rgb: sigma_s / extinction; w: Henyey-Greenstein g
-    vec4 medium;           // x: extinction per unit of density, y: 1 = albedo.w is the g, w: emission field scale
+    vec4 scattering;       // rgb: sigma_s per unit of density; w: Henyey-Greenstein g
+    vec4 absorption;       // rgb: sigma_a per unit of density
+    vec4 medium;           // x: mean extinction per unit of density, y: 1 = scattering.w is the g,
+                           // z: 1 = no volume material
     vec4 emission;         // rgb: radiance per unit length per unit of density
+    vec4 fieldEmission;    // rgb: times the emission field
 };
 layout(std430, set = 0, binding = 65) readonly buffer Volumes { Volume volumes[]; };
 

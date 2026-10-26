@@ -8,11 +8,13 @@ namespace vkr {
 // `format`: no depth, dynamic viewport/scissor, optionally additive or
 // premultiplied over the target (`over`: src + (1 - src alpha) dst) or
 // multiplied with it (`multiply`: src dst). With a `depthFormat`, also a
-// depth attachment of it, written always (gl_FragDepth).
+// depth attachment of it, written always (gl_FragDepth). `transmit` (with
+// `over`): the destination's colour times the shader's second output
+// (location 0, index 1) instead of 1 - src alpha: coloured transmittance.
 VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
                                     const uint32_t *frag, size_t fragBytes, VkFormat format,
                                     bool additive = false, bool over = false, bool multiply = false,
-                                    VkFormat depthFormat = VK_FORMAT_UNDEFINED);
+                                    VkFormat depthFormat = VK_FORMAT_UNDEFINED, bool transmit = false);
 
 // One fullscreen triangle into `target` (in COLOR_ATTACHMENT_OPTIMAL).
 void DrawFullscreen(VkCommandBuffer cmd, VkPipeline pipeline, VkPipelineLayout layout,
