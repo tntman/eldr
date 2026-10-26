@@ -87,8 +87,11 @@ def expect(ok, what):
 
 
 def pixel(x, y):
-    out = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
-    return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
+    r = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60)
+    values = {l.split()[1]: float(l.split()[2]) for l in r.stdout.splitlines() if l.startswith("pixel ")}
+    # A failed read is an error, not a black pixel.
+    assert r.returncode == 0 and values, f"exrinfo {x} {y}: rc {r.returncode:#x} {r.stderr.strip()}"
+    return values
 
 
 # Traced refraction (on in final quality) is noisy per sample: the colour
