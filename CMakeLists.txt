@@ -222,7 +222,7 @@ add_dependencies(testPlugin hdVk)
 if(NOT HDVK_HOUDINI)
     # Frame times with Houdini's viewport AOV bindings, and its id check (docs/houdini.md).
     add_executable(viewportBench tests/viewportBench.cpp)
-    target_link_libraries(viewportBench PRIVATE hd hdx usdImaging usdGeom)
+    target_link_libraries(viewportBench PRIVATE cameraUtil hd hdx usdImaging usdGeom)
     add_dependencies(viewportBench hdVk)
 endif()
 
@@ -239,6 +239,10 @@ if(WIN32)
         add_test(NAME viewport_bindings COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
                  ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --check --ids)
         set_tests_properties(viewport_bindings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # Houdini's camera tools: depth under the cursor, a still camera's film.
+        add_test(NAME viewport_nav COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
+                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --nav)
+        set_tests_properties(viewport_nav PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
     add_test(NAME purpose COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_purpose.py)
     set_tests_properties(purpose PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

@@ -1,4 +1,5 @@
 #include "field.h"
+#include "renderDelegate.h"
 
 #include "gridReader.h"
 #include "scene.h"  // vkr::VolumeGrid
@@ -95,6 +96,7 @@ HdVkField::~HdVkField() = default;
 
 void HdVkField::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     if (*dirtyBits & DirtyParams) {
         const SdfPath &id = GetId();
         const SdfAssetPath asset = sceneDelegate->Get(id, HdFieldTokens->filePath).GetWithDefault(SdfAssetPath());

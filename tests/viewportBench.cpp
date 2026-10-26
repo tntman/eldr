@@ -13,9 +13,14 @@
 //   --ids              check primId/instanceId against the render index
 //   --check            instead of timing: which AOVs render and read back
 //                      when the app reads only some (needs normal bound)
+//   --nav              instead of timing: what Houdini's camera tools read
+//                      (depth vs the scene's /ground at y = 0) and a still
+//                      camera's convergence and stability
 #include "pxr/base/gf/frustum.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/imaging/cameraUtil/conformWindow.h"
+#include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/engine.h"
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hd/renderDelegate.h"
@@ -32,6 +37,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -47,11 +53,11 @@ int main(int argc, char **argv)
 {
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
-                  "[--share 0|1] [--still] [--ids] [--check]");
+                  "[--share 0|1] [--still] [--ids] [--check] [--nav]");
         return 2;
     }
     int width = 1280, height = 720, frames = 120, share = 0;
-    bool still = false, ids = false, check = false, mapAll = true;
+    bool still = false, ids = false, check = false, nav = false, mapAll = true;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -72,6 +78,8 @@ int main(int argc, char **argv)
             ids = true;
         } else if (a == "--check") {
             check = true;
+        } else if (a == "--nav") {
+            nav = true;
         }
     }
 
@@ -175,7 +183,140 @@ int main(int argc, char **argv)
             passes = frame(2);
             expect(passes.count("aovs"), "still: the extra AOVs render, read or not");
         }
-        if (!check) {
+        if (nav) {
+            // Houdini's camera tools: the pivot and pan scale come from the
+            // depth under the cursor (UsdRenderers.json "depthstyle": "opengl",
+            // window depth in [0, 1] under the projection Houdini passed).
+            HdRenderBuffer *color = controller.GetRenderOutput(HdAovTokens->color);
+            HdRenderBuffer *depth = controller.GetRenderOutput(HdAovTokens->depth);
+            HdRenderBuffer *primId = controller.GetRenderOutput(HdAovTokens->primId);
+            const SdfPath ground("/ground");
+            auto expect = [&](bool ok, const std::string &what) {
+                std::printf("%s: %s\n", ok ? "ok" : "FAIL", what.c_str());
+                failures += !ok;
+            };
+            auto render = [&](const GfMatrix4d &v) {
+                controller.SetFreeCameraMatrices(v, projection);
+                engine.Execute(index, &tasks);
+            };
+            // The ground's pixels (y = 0) back-projected through the app's matrices.
+            auto groundError = [&](const GfMatrix4d &v, const GfMatrix4d &proj) {
+                const auto *d = static_cast<const float *>(depth->Map());
+                const auto *p = static_cast<const int32_t *>(primId->Map());
+                const GfMatrix4d inv = (v * proj).GetInverse();
+                const GfVec3d eye = v.GetInverse().ExtractTranslation();
+                double worst = 0;
+                size_t n = 0;
+                for (int y = 0; y < height; y += 4) {
+                    for (int x = 0; x < width; x += 4) {
+                        const size_t i = size_t(y) * width + x;
+                        if (p[i] < 0 || index->GetRprimPathFromPrimId(p[i]) != ground) {
+                            continue;
+                        }
+                        // Buffers are bottom row first (GL).
+                        const GfVec3d ndc(2.0 * (x + 0.5) / width - 1.0, 2.0 * (y + 0.5) / height - 1.0, 2.0 * d[i] - 1.0);
+                        const GfVec3d world = inv.Transform(ndc);
+                        worst = std::max(worst, std::abs(world[1]) / (world - eye).GetLength());
+                        ++n;
+                    }
+                }
+                depth->Unmap();
+                primId->Unmap();
+                return n ? worst : 1e9;
+            };
+            auto readColor = [&](std::vector<GfHalf> *pixels) {
+                const auto *c = static_cast<const GfHalf *>(color->Map());
+                pixels->assign(c, c + size_t(width) * height * 4);
+                color->Unmap();
+            };
+            auto meanDiff = [](const std::vector<GfHalf> &a, const std::vector<GfHalf> &b) {
+                double s = 0;
+                for (size_t i = 0; i < a.size(); ++i) {
+                    s += std::abs(float(a[i]) - float(b[i]));
+                }
+                return s / double(a.size());
+            };
+            auto stat = [&](const char *key) {
+                const VtDictionary stats = delegate->GetRenderStats();
+                auto it = stats.find(key);
+                return it == stats.end() ? VtValue() : it->second;
+            };
+            const GfMatrix4d moved = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), 3.0)) * view;
+            render(view);
+            expect(groundError(view, projection) < 0.01,
+                   TfStringPrintf("depth read with the frame: the ground at y = 0 (error %.2g)",
+                                  groundError(view, projection)));
+            // Houdini maps the depth on a click only: frames with colour read, then depth.
+            std::vector<GfHalf> a, b;
+            for (int f = 0; f < 5; ++f) {
+                render(f % 2 ? view : moved);
+                readColor(&a);
+            }
+            expect(groundError(moved, projection) < 0.01,
+                   TfStringPrintf("depth mapped later is the last frame's (error %.2g)", groundError(moved, projection)));
+            // A still camera, as Houdini redraws: the film runs to convergence
+            // without starting over, and frames converge.
+            auto converge = [&](const std::function<void()> &frame, int *restarts) {
+                double previous = -1;
+                std::string stage;
+                int frames = 0;
+                for (*restarts = 0; frames < 400 && stage != "converged"; ++frames) {
+                    frame();
+                    const VtValue done = stat("percentDone");
+                    const double pct = done.IsHolding<double>() ? done.UncheckedGet<double>() : -1;
+                    // The film's percentage (after interactive TAA's 100) only grows.
+                    *restarts += stage != "interactive" && previous >= 0 && pct < previous;
+                    previous = pct;
+                    stage = stat("rendererStage").GetWithDefault<std::string>();
+                }
+                return frames;
+            };
+            render(view);
+            readColor(&a);
+            double first = -1, last = -1;
+            int restarts = 0;
+            int frames = converge([&] {
+                render(view);
+                readColor(&b);
+                last = meanDiff(a, b);
+                first = first < 0 ? last : first;
+                a.swap(b);
+            }, &restarts);
+            expect(frames < 400 && restarts == 0,
+                   TfStringPrintf("still camera: converged after %d frames, %d restarts", frames, restarts));
+            expect(last <= first * 0.1, TfStringPrintf("still camera: mean change between frames %.3g first, %.3g last",
+                                                       first, last));
+            expect(groundError(view, projection) < 0.01,
+                   TfStringPrintf("converged film: depth error %.2g", groundError(view, projection)));
+            // Houdini's free camera is a scene prim (/__HoudiniFreeCamera__,
+            // its FreeCamera.usda: shutter -0.25 to 0.25) it sends again,
+            // unchanged, on each redraw: a dirty camera.
+            const SdfPath cam(argv[2]);
+            UsdGeomCamera usdCam(stage->GetPrimAtPath(cam));
+            usdCam.GetShutterOpenAttr().Set(-0.25);
+            usdCam.GetShutterCloseAttr().Set(0.25);
+            for (const bool touch : {false, true}) {
+                controller.SetCameraPath(SdfPath());
+                render(moved);
+                controller.SetCameraPath(cam);
+                frames = converge([&] {
+                    if (touch) {
+                        index->GetChangeTracker().MarkSprimDirty(cam, HdChangeTracker::AllDirty);
+                    }
+                    engine.Execute(index, &tasks);
+                }, &restarts);
+                expect(frames < 400 && restarts == 0,
+                       TfStringPrintf("scene camera%s: converged after %d frames, %d restarts",
+                                      touch ? " dirtied each frame" : "", frames, restarts));
+                const auto *sprim = static_cast<const HdCamera *>(index->GetSprim(HdPrimTypeTokens->camera, cam));
+                const GfMatrix4d camView = sprim->GetTransform().GetInverse();
+                const GfMatrix4d camProj = CameraUtilConformedWindow(sprim->ComputeProjectionMatrix(), CameraUtilFit,
+                                                                     double(width) / height);
+                expect(groundError(camView, camProj) < 0.01,
+                       TfStringPrintf("its depth after convergence: error %.2g", groundError(camView, camProj)));
+            }
+        }
+        if (!check && !nav) {
             double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
             std::map<std::string, double> mapMs, passMs;
             std::vector<double> times;  // per frame: their median resists other GPU users

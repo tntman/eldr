@@ -366,6 +366,7 @@ template <typename Base>
 void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                                  HdDirtyBits *dirtyBits, TfToken const &)
 {
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = this->GetId();
     vkr::Mesh &m = *_mesh;
     m.primId = this->GetPrimId();

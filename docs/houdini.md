@@ -118,6 +118,7 @@ Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0
 | Topic | Behaviour |
 |---|---|
 | Readback | Houdini gives an OpenGL Hgi but composites with Vulkan, so shared GL textures show nothing: Eldr reads frames back. Houdini binds colour (Float16Vec4), depth, normal, primvars:st, primId, instanceId. A buffer returns only if Houdini mapped it since the last frame; while the camera moves, unread extra AOVs are skipped. `HDVK_DEBUG_AOVS=1` prints the bindings. |
+| Still viewport | Houdini's free camera is a scene prim (`/__HoudiniFreeCamera__`) that may sync again unchanged; only real camera, lens, scene or setting changes start the film over, so a still view converges and stops changing. `HDVK_DEBUG_AOVS=1` prints every 60 frames how many frames moved the camera or changed the scene, and the near and far planes. |
 | Selection outline | `UsdRenderers.json` sets `"needsselection": true`; Houdini draws the outline itself |
 | Ids | primId is the render index's prim id, instanceId the instance index, as Houdini's picking expects |
 | Frame times | 1280x720, moving camera. Kitchen_set: colour, depth, ids read 23.7 ms; colour and depth 20.8 ms; all six 32.1 ms. step4 with ids: 12.3 ms. usdview (GPU sharing): about 15 ms (Kitchen_set), 11 ms (step4). |
