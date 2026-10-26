@@ -1,7 +1,8 @@
 """Holdouts through Hydra: gprims with primvars:karma:object:holdoutmode
 (Karma's) or in the active
 UsdRenderPass's matte collection render black with zero alpha over a red
-wall; eldr:holdouts off draws them as usual.
+wall; eldr:holdouts off draws them as usual. Karma's render visibility
+(primvars:karma:object:rendervisibility) hides gprims from the camera.
 Run: usdenv.cmd python tests\\test_holdout.py"""
 import sys
 
@@ -53,6 +54,11 @@ karma = quad("/karma", 0.5, 0.5, 1.5, 1.5, 0, green)
 UsdGeom.PrimvarsAPI(karma).CreatePrimvar("karma:object:holdoutmode", Sdf.ValueTypeNames.Int).Set(1)
 quad("/inPass", -1.5, -1.5, -0.5, -0.5, 0, green)
 quad("/plain", 0.5, -1.5, 1.5, -0.5, 0, green)
+for path, y0, expression in (("/phantom", 0.9, "-primary"), ("/unrenderable", -1.5, ""),
+                             ("/primaryOnly", -0.6, "primary|shadow")):
+    visibility = quad(path, -0.3, y0, 0.3, y0 + 0.3, 0, green)
+    UsdGeom.PrimvarsAPI(visibility).CreatePrimvar("karma:object:rendervisibility", Sdf.ValueTypeNames.String).Set(
+        expression)
 renderPass = UsdRender.Pass.Define(stage, "/passes/matte")
 Usd.CollectionAPI.Apply(renderPass.GetPrim(), "matte").CreateIncludesRel().AddTarget("/inPass")
 
@@ -106,6 +112,9 @@ expect(rgb(image, 0, 0)[0] > 0.9, "the wall is red")
 expect(black(rgb(image, -1, 1)), "primvars:karma:object:holdoutmode 2: a holdout")
 expect(black(rgb(image, 1, 1)), "primvars:karma:object:holdoutmode 1: a holdout")
 expect(rgb(image, 1, -1)[1] > 0.9 and rgb(image, -1, -1)[1] > 0.9, "the others as usual")
+expect(rgb(image, 0, 1.05)[0] > 0.9, "rendervisibility -primary: the camera sees the wall through it")
+expect(rgb(image, 0, -1.35)[0] > 0.9, "rendervisibility \"\": unrenderable")
+expect(rgb(image, 0, -0.45)[1] > 0.9, "rendervisibility primary|shadow: seen")
 engine.SetActiveRenderPassPrimPath(Sdf.Path("/passes/matte"))
 image = render()
 expect(black(rgb(image, -1, -1)) and rgb(image, 1, -1)[1] > 0.9, "the active render pass's matte collection")

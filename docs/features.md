@@ -237,7 +237,7 @@ Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surfa
 | Feature | Support |
 |---|---|
 | Meshes | Implicit surfaces converted to meshes, GeomSubsets, PointInstancer and native instancing (one indirect draw per prototype), render tags and purposes |
-| Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level; creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
+| Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level or a mesh's own (`primvars:eldr:refineLevel`); creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
 | Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset. Height maps read at the mip matching vertex spacing. |
 | Displacement graphs (`eldr:displacementGraphs`) | A shading graph runs per vertex, also for ray-tracing BLASes (`eldr:rtDisplacement`). Graphs reading world position, normal or instance primvars give the 256 largest instances a BLAS each (rebuilt when they or their primvars change); others share the first instance's. |
 | LOD (`eldr:lod`, `eldr:lodBias`) | Meshes of 1000+ triangles get up to 3 coarser levels (quadric simplification weighing normals, uvs, colours, joint weights); culling picks the coarsest level under about 1 px of error, with hysteresis. Crowd 54.5M to 13.6M triangles, 68 to 28-34 ms; Kitchen at Very High 34.8M to 6.4M, 30 to 10.5 ms. `eldr:lodFade` crossfades over 8 frames. |
@@ -342,7 +342,13 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | `bool primvars:eldr:sprites` | Points | Overrides `eldr:pointSprites` per prim |
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | material surface shader | Toon bands per unit of light (0 = none), band edge width |
 | `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (read as `coat_color`); constant or connected |
+| `int primvars:eldr:refineLevel` | subdivision mesh | Its own refine level instead of the host's (usdview Complexity, Houdini Level of Detail); still at most `eldr:maxRefineLevel` |
 | `int primvars:karma:object:holdoutmode = 1` | gprim | Holdout: black, zero alpha, keeps depth, ids, shadows. Mode 2 acts as matte. |
+| `string primvars:karma:object:rendervisibility` | mesh, curves, points | Karma's ray visibility: `*`, `-primary` (phantom: unseen, still shadows and reflects), `-shadow`, `primary\|shadow`, `""` (unrenderable). Diffuse, reflect and refract are one class in Eldr (ray-traced reflections, GI, refraction); screen-space effects see what the camera sees. |
+| `bool primvars:karma:object:mblur = 0` | gprim | No motion blur of its own (transform, deformation); camera motion still blurs it |
+| `int primvars:karma:object:curve_style`, `point_style` | BasisCurves, Points | Karma's Render Curves As (0, 2 ribbons; 1 tubes; 3 the render setting) and Render Points As (0, 2 discs; 1 spheres). Oriented ribbons without normals and oriented discs face the camera. `eldr:ribbons`, `eldr:sprites` win. |
+| `float primvars:karma:object:width_scale` | BasisCurves, Points | Multiplies the widths |
+| `int primvars:karma:object:dicingdepthmax` | subdivision mesh | Caps the refine level (-1: no cap) |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
 | `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |

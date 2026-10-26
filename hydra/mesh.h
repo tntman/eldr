@@ -3,8 +3,11 @@
 #include "pxr/pxr.h"
 #include "pxr/base/gf/matrix4d.h"
 #include "pxr/imaging/hd/mesh.h"
+#include "pxr/imaging/hd/sceneDelegate.h"
 
 #include <memory>
+#include <string>
+#include <type_traits>
 
 namespace vkr {
 class Scene;
@@ -20,6 +23,37 @@ class HdVkSubdivision;
 // UsdRenderPass's collection:matte) or Karma's
 // karma:object:holdoutmode (1 matte; 2, background, is taken as matte).
 bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id);
+
+// A gprim's primvar as one T (bool, int, float or std::string; the first
+// of an array, a token as a string, numbers cast), else `fallback`.
+template <typename T>
+T HdVkPrimvar(HdSceneDelegate *sceneDelegate, SdfPath const &id, TfToken const &name, T fallback)
+{
+    const VtValue v = sceneDelegate->Get(id, name);
+    if (v.IsHolding<VtArray<T>>()) {
+        const VtArray<T> &a = v.UncheckedGet<VtArray<T>>();
+        return a.empty() ? fallback : a[0];
+    }
+    if constexpr (std::is_same_v<T, std::string>) {
+        if (v.IsHolding<TfToken>()) {
+            return v.UncheckedGet<TfToken>().GetString();
+        }
+    }
+    const VtValue cast = VtValue::Cast<T>(v);
+    return cast.IsHolding<T>() ? cast.UncheckedGet<T>() : fallback;
+}
+
+// The rays that see a gprim (vkr::Mesh::Rays) by Karma's render visibility,
+// primvars:karma:object:rendervisibility: a traceset expression such as
+// "*", "primary|shadow", "-primary", "-diffuse&-reflect&-refract" or ""
+// (unrenderable). Primary is the camera; diffuse, reflect and refract are
+// Eldr's secondary rays together (off only when all three are). Volume and
+// sss are ignored.
+uint32_t HdVkRays(HdSceneDelegate *sceneDelegate, SdfPath const &id);
+
+// Karma's per-object motion blur switch, primvars:karma:object:mblur: off,
+// the gprim keeps no motion of its own (transform or deformation).
+bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 
 // Sync() only copies scene data into its vkr::Mesh; no Vulkan here.
 class HdVkMesh final : public HdMesh

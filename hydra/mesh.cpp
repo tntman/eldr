@@ -8,6 +8,7 @@
 
 #include "pxr/base/gf/matrix4f.h"
 #include "pxr/base/gf/vec2f.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/meshUtil.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
@@ -28,6 +29,8 @@ TF_DEFINE_PRIVATE_TOKENS(
     (st)
     ((eldrMatte, "eldr:matte"))
     ((karmaHoldout, "karma:object:holdoutmode"))
+    ((karmaVisibility, "karma:object:rendervisibility"))
+    ((karmaMotionBlur, "karma:object:mblur"))
     ((planarReflection, "eldr:planarReflection"))
     ((reflectionProbe, "eldr:reflectionProbe")));
 
@@ -69,6 +72,47 @@ bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
         }
     }
     return false;
+}
+
+static uint32_t ParseRays(std::string const &expression)
+{
+    // Karma's ray categories (BRAY): primary, shadow, then the three that
+    // are Eldr's secondary rays.
+    constexpr uint32_t kPrimary = 1, kShadow = 2, kSecondary = 4 | 8 | 16, kAll = 31;
+    auto category = [](std::string const &name) -> uint32_t {
+        return name == "primary" ? kPrimary : name == "shadow" ? kShadow : name == "diffuse" ? 4
+             : name == "reflect" ? 8 : name == "refract" ? 16 : name == "*" ? kAll : 0;
+    };
+    uint32_t seen = 0, hidden = 0;
+    bool listed = false;  // any category named without '-': only those
+    for (const std::string &word : TfStringTokenize(expression, "&|() ")) {
+        if (word[0] == '-' || word[0] == '!') {
+            hidden |= category(word.substr(1));
+        } else {
+            seen |= category(word);
+            listed = true;
+        }
+    }
+    if (!listed && hidden == 0) {
+        return 0;  // "": unrenderable
+    }
+    const uint32_t rays = (listed ? seen : kAll) & ~hidden;
+    return ((rays & kPrimary) ? vkr::Mesh::kCameraRays : 0) | ((rays & kShadow) ? vkr::Mesh::kShadowRays : 0) |
+           ((rays & kSecondary) ? vkr::Mesh::kSecondaryRays : 0);
+}
+
+uint32_t HdVkRays(HdSceneDelegate *sceneDelegate, SdfPath const &id)
+{
+    const VtValue v = sceneDelegate->Get(id, _tokens->karmaVisibility);
+    if (!v.IsHolding<std::string>() && !v.IsHolding<TfToken>()) {
+        return vkr::Mesh::kAllRays;
+    }
+    return ParseRays(HdVkPrimvar<std::string>(sceneDelegate, id, _tokens->karmaVisibility, "*"));
+}
+
+bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id)
+{
+    return HdVkPrimvar<bool>(sceneDelegate, id, _tokens->karmaMotionBlur, true);
 }
 
 namespace {
@@ -208,9 +252,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         }
     }
     // Subdivision surfaces: refined to the display style's level (usdview's
-    // Complexity) when flattened. The render delegate re-dirties the
-    // display style when the subdivision settings change.
-    if (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id)) {
+    // Complexity) or the mesh's own primvar when flattened. The render
+    // delegate re-dirties the display style when the subdivision settings
+    // change.
+    if (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id) || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         const int level = _RefineLevel(sceneDelegate);
         geometryDirty |= level != _refineLevel && _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
         _refineLevel = level;
@@ -394,6 +439,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     }
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         m.holdout = HdVkHoldout(sceneDelegate, id);
+        m.rays = HdVkRays(sceneDelegate, id);
     }
 
     // Sprims sync before rprims, so the material already exists here.
@@ -539,6 +585,7 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         d.primId = m.primId;
         d.visible = m.visible;
         d.holdout = m.holdout;
+        d.rays = m.rays;
         d.tag = m.tag;
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
@@ -593,6 +640,7 @@ VtVec3fArray HdVkMesh::_ShutterVelocities(HdSceneDelegate *sceneDelegate) const
     auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     float open, close;
     if (_Skinned() || !vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->deformationBlur, true) ||
+        !HdVkMotionBlur(sceneDelegate, GetId()) ||
         !vk->SampledMotionShutter(&open, &close)) {
         return {};
     }

@@ -28,7 +28,7 @@ struct RayTracingData {
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
 };
 // TLAS instance masks (shaders/gi.glsl).
-constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2;
+constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2, kRtMaskShadow = 4, kRtMaskCamera = 8;
 
 // Hardware ray tracing (Device::rayTracing): a BLAS per rigid opaque or
 // cutout mesh, a TLAS over the instance pool, and the passes tracing them.

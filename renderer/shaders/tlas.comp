@@ -24,9 +24,15 @@ const uint kRtSlotTranslucent = 4u;  // rt.glsl
 // Mask (high byte of indexMask) and VkGeometryInstanceFlagsKHR (high byte
 // of sbtFlags): TRIANGLE_FACING_CULL_DISABLE, and FORCE_NO_OPAQUE (cutouts
 // and translucent meshes: any-hit shaders run) or FORCE_OPAQUE.
-uint Mask(uint flags)
+// ponytail: translucent meshes keep theirs whatever rays see them
+// (rt_shadow.rahit skips those shadow rays don't see).
+uint Mask(uint flags, uint rays)
 {
-    return (flags & kRtSlotTranslucent) != 0u ? kRtMaskTranslucent : 0xFFu;
+    if ((flags & kRtSlotTranslucent) != 0u) {
+        return kRtMaskTranslucent;
+    }
+    return ((rays & kRaysCamera) != 0u ? kRtMaskCamera : 0u) | ((rays & kRaysShadow) != 0u ? kRtMaskShadow : 0u) |
+           ((rays & kRaysSecondary) != 0u ? 0xFFu & ~(kRtMaskCamera | kRtMaskShadow) : 0u);
 }
 
 uint InstanceFlags(uint flags)
@@ -72,7 +78,7 @@ void main()
         t.rows = vec4[3](vec4(1.0, 0.0, 0.0, 0.0), vec4(0.0, 1.0, 0.0, 0.0), vec4(0.0, 0.0, 1.0, 0.0));
         if (k < rt.skinned.y && rtSkinned[k].blas != uvec2(0u)) {
             uint slot = rtSkinned[k].slot;
-            t.indexMask = slot | (Mask(rtSlots[slot].flags) << 24);
+            t.indexMask = slot | (Mask(rtSlots[slot].flags, draws[slot].visible) << 24);
             t.sbtFlags = InstanceFlags(rtSlots[slot].flags) << 24;
             t.blas = rtSkinned[k].blas;
         }
@@ -84,7 +90,7 @@ void main()
     if (i < instances.length() && inst.draw != kFreeSlot && draws[inst.draw].visible != 0u &&
         rtSlots[inst.draw].blas != uvec2(0u)) {
         RtSlot s = rtSlots[inst.draw];
-        t.indexMask = inst.draw | (Mask(s.flags) << 24);
+        t.indexMask = inst.draw | (Mask(s.flags, draws[inst.draw].visible) << 24);
         t.sbtFlags = InstanceFlags(s.flags) << 24;
         t.blas = i < rtInstanceBlas.length() && rtInstanceBlas[i] != uvec2(0u) ? rtInstanceBlas[i] : s.blas;
     }

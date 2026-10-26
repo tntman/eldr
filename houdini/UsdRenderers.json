@@ -4,6 +4,7 @@
         "menulabel": "Eldr",
         "menupriority": 30,
         "depthstyle": "linear",
+        "complexitymultiplier": 1.3,
         "needsselection": true,
         "statsdatapaths": {
             "percentDone": "$.percentDone",

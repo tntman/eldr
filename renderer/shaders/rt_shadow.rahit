@@ -20,6 +20,9 @@ layout(location = 1) rayPayloadInEXT vec4 shadowRay;
 void main()
 {
     uint slot = gl_InstanceCustomIndexEXT;
+    if ((draws[slot].visible & kRaysShadow) == 0u) {  // a translucent mesh shadows don't see (tlas.comp)
+        ignoreIntersectionEXT;
+    }
     uint material = draws[slot].material;
     bool translucent = (rtSlots[slot].flags & kRtSlotTranslucent) != 0u;
     if (material == kNoMaterial) {

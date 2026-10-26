@@ -44,7 +44,7 @@ void main()
     vec4 nearPoint = frame.invViewProj * vec4(ndc, -1.0, 1.0), farPoint = frame.invViewProj * vec4(ndc, 1.0, 1.0);
     vec3 origin = nearPoint.xyz / nearPoint.w;
     vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
-    Trace(origin, dir, 1.0 / frame.viewport.y);
+    TraceMask(origin, dir, 1.0 / frame.viewport.y, kRtMaskCamera);
     bool raster = texelFetch(sceneDepth, pixel, 0).r < 1.0;
     vec3 surface = PrepassPoint(pixel);
     float rasterT = distance(origin, surface);

@@ -375,7 +375,18 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
                       HdChangeTracker::DirtyWidths | HdChangeTracker::DirtyNormals |
                       HdChangeTracker::DirtyPrimvar)) {
         const VtVec3fArray points = sceneDelegate->Get(id, HdTokens->points).GetWithDefault(VtVec3fArray());
-        const Primvar<float> widths(sceneDelegate, id, HdTokens->widths);
+        Primvar<float> widths(sceneDelegate, id, HdTokens->widths);
+        // Karma's Width Scale.
+        static const TfToken widthScale("karma:object:width_scale");
+        if (const float scale = HdVkPrimvar<float>(sceneDelegate, id, widthScale, 1.0f); scale != 1.0f) {
+            if (widths.values.empty()) {
+                widths.values = {1.0f};
+                widths.interp = HdInterpolationConstant;
+            }
+            for (float &w : widths.values) {
+                w *= scale;
+            }
+        }
         const Primvar<GfVec3f> colors(sceneDelegate, id, HdTokens->displayColor);
         const GfVec3f color = colors.interp == HdInterpolationConstant ? colors.At(0, GfVec3f(0.5f)) : GfVec3f(0.5f);
         std::copy(color.data(), color.data() + 3, m.color);
@@ -389,17 +400,28 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
         HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
         const auto &t2 = *HdVkRenderSettingsTokens2;
+        // Karma's Render Curves As (flat ribbons, rounded curves, oriented
+        // ribbons, USD default) and Render Points As (discs, spheres,
+        // oriented discs); eldr:ribbons and eldr:sprites override them.
+        // ponytail: oriented ribbons without normals, and oriented discs,
+        // face the camera.
+        static const TfToken curveStyle("karma:object:curve_style"), pointStyle("karma:object:point_style");
         if constexpr (curves) {
             const Primvar<GfVec3f> normals(sceneDelegate, id, HdTokens->normals);
+            const int style = HdVkPrimvar<int>(sceneDelegate, id, curveStyle, 3);
+            const bool ribbons = style == 0 || style == 2 ? true
+                                 : style == 1 ? false
+                                              : delegate->GetRenderSetting<bool>(t2.curveRibbons, kHdVkCurveRibbons);
             // Curves with normals are ribbons already, oriented by them.
-            const bool facing = normals.values.empty() &&
-                                BoolPrimvar(sceneDelegate, id, "eldr:ribbons",
-                                            delegate->GetRenderSetting<bool>(t2.curveRibbons, kHdVkCurveRibbons));
+            const bool facing = normals.values.empty() && BoolPrimvar(sceneDelegate, id, "eldr:ribbons", ribbons);
             m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
         } else {
-            const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites",
-                                            delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites));
+            const int style = HdVkPrimvar<int>(sceneDelegate, id, pointStyle, -1);
+            const bool discs = style == 0 || style == 2 ? true
+                               : style == 1 ? false
+                                            : delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites);
+            const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites", discs);
             m.facing = facing ? vkr::Mesh::kFacingDisc : vkr::Mesh::kNotFacing;
             Spheres(points, widths, colors, color, facing, out);
         }
@@ -420,6 +442,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
     }
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         m.holdout = HdVkHoldout(sceneDelegate, id);
+        m.rays = HdVkRays(sceneDelegate, id);
     }
     if (*dirtyBits & HdChangeTracker::DirtyMaterialId) {
         this->SetMaterialId(sceneDelegate->GetMaterialId(id));  // Cryptomatte's material ids

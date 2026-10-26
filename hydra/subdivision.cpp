@@ -411,7 +411,9 @@ void HdVkSplitIndexed(vkr::Mesh const &m, std::vector<size_t> const &tris, vkr::
     }
 }
 
-// The display style's refine level (usdview's Complexity) within the
+// The display style's refine level (usdview's Complexity, Houdini's
+// Level of Detail), or the mesh's own primvars:eldr:refineLevel, at most
+// Karma's primvars:karma:object:dicingdepthmax (-1: no limit), within the
 // render settings' limit; 0 draws the cage.
 int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
 {
@@ -420,8 +422,14 @@ int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
     if (!delegate->GetRenderSetting<bool>(t.subdivision, kHdVkSubdivision)) {
         return 0;
     }
+    static const TfToken own("eldr:refineLevel"), depthMax("karma:object:dicingdepthmax");
+    int level = HdVkPrimvar<int>(sceneDelegate, GetId(), own, sceneDelegate->GetDisplayStyle(GetId()).refineLevel);
+    const int karmaMax = HdVkPrimvar<int>(sceneDelegate, GetId(), depthMax, -1);
+    if (karmaMax >= 0) {
+        level = std::min(level, karmaMax);
+    }
     const int limit = std::clamp(delegate->GetRenderSetting<int>(t.maxRefineLevel, kHdVkMaxRefineLevel), 0, 8);
-    return std::clamp(sceneDelegate->GetDisplayStyle(GetId()).refineLevel, 0, limit);
+    return std::clamp(level, 0, limit);
 }
 
 // _Flatten for a subdivision surface: the cage refined to _refineLevel, as

@@ -44,7 +44,16 @@ PRIMVARS = [
      "BasisCurves draw as camera-facing ribbons instead of tubes, whatever the render setting says."),
     ("primvars:eldr:sprites", "Points as Discs", "bool", False,
      "Points draw as camera-facing discs instead of spheres, whatever the render setting says."),
+    ("primvars:eldr:refineLevel", "Subdivision Level", "int", 2,
+     "How often a subdivision surface (subdivisionScheme not none) is refined, instead of the viewport's "
+     "Level of Detail or husk's complexity. At most the Subdivision Max Level render setting."),
 ]
+
+# Karma's per-object controls Eldr honours: set them on this node's Karma
+# tab (Houdini drops a second parm of the same name, docs/houdini.md).
+KARMA_TAB = ("Eldr also reads, from the Karma tab:",
+             "Render Visibility, Holdout Mode, Enable Motion Blur,",
+             "Render Curves As, Render Points As, Width Scale, Dicing Maximum Depth")
 
 
 def groups(settings_py):
@@ -219,6 +228,14 @@ def main(out, settings_py):
     text = HEADER
     for p in PRIMVARS:
         text += entry(p[0], p[1], p[2], p[3], p[4], "None")
+    for i, line in enumerate(KARMA_TAB):
+        text += f'''    parm {{
+        name    "eldr_karma_tab{i}"
+        label   ""
+        type    label
+        default {{ {q(line)} }}
+    }}
+'''
     write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_Geometry.ds", text + "}\n")
     stats = write_renderers(out, settings_py)
     print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {len(PRIMVARS)} primvars, {stats} stats -> {out}")

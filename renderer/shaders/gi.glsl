@@ -24,8 +24,11 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
-// every ray, translucent ones only by shadow rays that tint.
-const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u;
+// every ray, translucent ones only by shadow rays that tint (and
+// refraction). By the rays that see a mesh (DrawInfo::visible): shadow
+// rays look for kRtMaskShadow, the camera's primary rays for kRtMaskCamera,
+// all other rays for kRtMaskSurfaces.
+const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u, kRtMaskShadow = 4u, kRtMaskCamera = 8u;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
 // of irradiance / pi (rgb; a: 1 while the probe sees mostly front faces)

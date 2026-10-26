@@ -1,4 +1,5 @@
 #include "instancer.h"
+#include "mesh.h"
 #include "renderDelegate.h"
 #include "scene.h"
 
@@ -295,6 +296,11 @@ void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath con
     m.prevTransforms = std::move(m.transforms);  // motion vectors
     m.transforms = std::move(transforms);
     m.transformsDirty = true;
+    if (!HdVkMotionBlur(delegate, id)) {  // Karma's per-object motion blur off: no motion of its own
+        m.prevTransforms = m.transforms;
+        m.shutterMotion = true;
+        return;
+    }
     float open, close;
     auto *vk = static_cast<HdVkRenderDelegate *>(delegate->GetRenderIndex().GetRenderDelegate());
     if (!vk->SampledMotionShutter(&open, &close)) {
