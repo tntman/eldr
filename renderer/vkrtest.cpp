@@ -3774,7 +3774,7 @@ int main()
                    "fog: the sun's shadow volumes stay dark");
 
             // Volumes shadow the fog from the sun (through the sun's tint
-            // map, VolumePass::Settings::mutualShadows): a flat dense cloud
+            // map, VolumePass::Settings::shadows, as surfaces): a flat dense cloud
             // at y 1.5 over x < 0 instead of the roof. Fresh renderers: no
             // fog history.
             roof->visible = false;
@@ -3783,9 +3783,9 @@ int main()
             cloud->transforms = {16, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0, 16, 0, -6, 1.5f, -2, 1};
             scene.Commit();
             const Image clouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
-            frame.volume.mutualShadows = false;
+            frame.volume.shadows = false;
             const Image unclouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
-            frame.volume.mutualShadows = true;
+            frame.volume.shadows = true;
             cloud->visible = false;
             scene.Commit();
             const Image clear = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
@@ -3796,7 +3796,75 @@ int main()
                        std::abs(clouded.At(52, 32, 0) - unclouded.At(52, 32, 0)) < 0.02f * unclouded.At(52, 32, 0),
                    "fog: volumes shadow it from the sun");
             Expect(std::abs(unclouded.At(12, 32, 0) - clear.At(12, 32, 0)) < 0.02f * clear.At(12, 32, 0),
-                   "fog: mutual volume shadows off, as without the volume");
+                   "fog: volume shadows off, as without the volume");
+
+            // Red glass (transmission colour 1, 0.2, 0.2) as the roof, no
+            // volumes: the fog under it is lit red through the sun's tint
+            // map whenever translucent shadows are on.
+            auto redGlass = std::make_shared<vkr::Material>();
+            redGlass->transmission = 1;
+            redGlass->transmissionColor[1] = redGlass->transmissionColor[2] = 0.2f;
+            roof->material = redGlass;
+            roof->visible = true;
+            scene.Commit();
+            const Image redFog = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.translucentShadows = false;
+            const Image plainFog = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.translucentShadows = true;
+            roof->material = backdrop->material;
+            std::printf("fog under red glass %.3f %.3f, translucent shadows off %.3f %.3f\n", redFog.At(12, 32, 0),
+                        redFog.At(12, 32, 1), plainFog.At(12, 32, 0), plainFog.At(12, 32, 1));
+            Expect(redFog.At(12, 32, 0) > 0.1f && redFog.At(12, 32, 1) < 0.4f * redFog.At(12, 32, 0) &&
+                       plainFog.At(12, 32, 1) >= 0.9f * plainFog.At(12, 32, 0),
+                   "fog: glass between it and the sun tints it, without volumes too");
+            {
+                // The same cloud under a sphere light above (y 3): its atlas
+                // tiles' tint (localVolumeShadows) darkens the fog under it.
+                vkr::Scene lamp(&device);
+                AddEmitter(lamp, -10, -10, 10, 10, -4, 0.0f);
+                AddSphereLight(lamp, 0, 3, -2, 0.1f, 2000.0f)->castShadows = true;
+                vkr::Volume *puff = lamp.AddVolume();
+                puff->fields["density"] = cloud->fields["density"];
+                puff->transforms = cloud->transforms;
+                lamp.Commit();
+                const Image dark = Render(*std::make_unique<vkr::Renderer>(device), lamp, frame);
+                frame.localVolumeShadows = false;
+                const Image lampLit = Render(*std::make_unique<vkr::Renderer>(device), lamp, frame);
+                frame.localVolumeShadows = true;
+                std::printf("fog under a volume from a sphere light %.3f / %.3f (off), beside it %.3f / %.3f\n",
+                            dark.At(12, 32, 0), lampLit.At(12, 32, 0), dark.At(52, 32, 0), lampLit.At(52, 32, 0));
+                Expect(lampLit.At(12, 32, 0) > 0.02f && dark.At(12, 32, 0) < 0.6f * lampLit.At(12, 32, 0) &&
+                           std::abs(dark.At(52, 32, 0) - lampLit.At(52, 32, 0)) < 0.05f * lampLit.At(52, 32, 0),
+                       "fog: volumes shadow it from local lights");
+            }
+            {
+                // Fog inside a volume: a pancake (radius 6 in x and y, 0.75
+                // in z, density 0.25) across the view at z -2 under a sun
+                // from +y: the light crosses 3 optical depths of it from top
+                // to bottom, so the fog inside it near the middle of the view
+                // gets part of that, above its mean depth (y 0) as below.
+                // With one depth per texel the fog above y 0 was unshadowed.
+                vkr::Scene pan(&device);
+                vkr::Mesh *back = AddEmitter(pan, -10, -10, 10, 10, -4, 0.0f);
+                std::fill(back->material->specular, back->material->specular + 3, 0.0f);
+                vkr::Light *top = AddLight(pan, 0, 1, 0);
+                std::fill(top->irradiance, top->irradiance + 3, 4.0f * 3.14159265f);
+                top->castShadows = true;
+                vkr::Volume *pancake = pan.AddVolume();
+                pancake->fields["density"] = BallGrid(12.0f, 0.25f);
+                pancake->transforms = {16, 0, 0, 0, 0, 16, 0, 0, 0, 0, 2, 0, 0, 0, -2, 1};
+                pan.Commit();
+                const Image inside = Render(*std::make_unique<vkr::Renderer>(device), pan, frame);
+                frame.volume.shadows = false;
+                const Image unshadowed = Render(*std::make_unique<vkr::Renderer>(device), pan, frame);
+                frame.volume.shadows = true;
+                const float above = inside.At(32, 44, 0) / unshadowed.At(32, 44, 0);
+                const float below = inside.At(32, 20, 0) / unshadowed.At(32, 20, 0);
+                std::printf("fog inside a volume: above its mean %.3f, below %.3f of unshadowed (%.3f)\n", above, below,
+                            unshadowed.At(32, 44, 0));
+                Expect(unshadowed.At(32, 44, 0) > 0.1f && above < 0.9f && below < 0.9f,
+                       "fog inside a volume is shadowed by the part of it nearer the light");
+            }
 
             // Height fog: thinner upwards (y), so less light scatters at the
             // top of the view than at the bottom.
@@ -4019,7 +4087,7 @@ int main()
                 return x * x + y * y + z * z <= 144.0f;
             };
             const float px = (40.5f / 32.0f - 1.0f), py = (32.5f / 32.0f - 1.0f);  // the pixel's world x, y
-            double sumT = 0.0;
+            double sumT = 0.0, sumHalf = 0.0;  // the dome's: half the optical depth (volume.frag)
             int samples = 0;
             for (float z = -0.5f; z < 0.5f; z += 1.0f / 256.0f) {
                 if (!inBall(int(std::floor(px * 32 + 16)), int(std::floor(py * 32 + 16)), int(std::floor(z * 32 + 16)))) {
@@ -4031,6 +4099,7 @@ int main()
                     voxels += inBall(i, j, k) && (float(i) - 15.5f) * 3 / 32 + 2 > px ? 1 : 0;
                 }
                 sumT += std::exp(-0.5 * voxels * 3.0 / 32.0);
+                sumHalf += std::exp(-0.25 * voxels * 3.0 / 32.0);
                 ++samples;
             }
             const float expected = float(sumT / std::max(samples, 1));
@@ -4067,6 +4136,28 @@ int main()
             const float aloneOff = Render(renderer, lit, frame).At(40, 32, 0);
             frame.volume.mutualShadows = true;
             Expect(aloneOff == alone, "mutual shadows leave a lone volume alone");
+            {
+                // The dome's light comes down from its pole (+y) through the
+                // big ball above at y 2: the small ball's top (y 0.27), as the
+                // sun's case turned by 90 degrees, at half the optical depth.
+                vkr::Scene above(&device);
+                above.AddVolume()->fields["density"] = ball->fields["density"];
+                vkr::Volume *upper = above.AddVolume();
+                upper->fields["density"] = BallGrid(12.0f, 0.5f);
+                upper->transforms = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1};
+                above.AddDome();
+                above.Commit();
+                const Image both = Render(renderer, above, frame);
+                frame.volume.mutualShadows = false;
+                const Image apart = Render(renderer, above, frame);
+                frame.volume.mutualShadows = true;
+                const float domeExpected = float(sumHalf / std::max(samples, 1));
+                const float ratio = both.At(32, 40, 0) / apart.At(32, 40, 0);
+                std::printf("mutual volume shadows (dome): top %.4f / %.4f = %.3f (expected %.3f)\n", both.At(32, 40, 0),
+                            apart.At(32, 40, 0), ratio, domeExpected);
+                Expect(apart.At(32, 40, 0) > 0.02f && std::abs(ratio - domeExpected) < 0.03f,
+                       "a volume dims the dome's light on another below it");
+            }
 
             // The material (VolumeShading): absorption 1 at half the density
             // halves the optical depth and scatters nothing; red-only

@@ -41,7 +41,7 @@ Read it with these limits in mind:
 | Ray-traced shadows | Yes | No | Yes | Final quality: one ray per light and film sample, the sun plus 15 lights, through glass and volumes (`eldr:finalShadows`). |
 | Coloured shadows through glass | Yes | Partial | Yes | With shadow maps and ray-traced shadows alike. |
 | Volumes casting shadows | Yes | Yes | Yes | Eldr: sun and local lights. |
-| Volumes shadowing each other | Yes | Yes | Partial | Eldr: sun and local lights (`eldr:volumeMutualShadows`), not the dome's light. EEVEE's volumes share one froxel grid. |
+| Volumes shadowing each other | Yes | Yes | Partial | Eldr: sun, local lights and the dome's light from its pole (`eldr:volumeMutualShadows`). EEVEE's volumes share one froxel grid. |
 | Sun extracted from an HDRI dome | Yes | Yes | No | |
 
 ## Global illumination and reflections

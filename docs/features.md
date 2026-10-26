@@ -447,11 +447,13 @@ a material.
 
 Interactions: volumes shadow surfaces from the sun through the translucent
 tint maps (`volumeShadows`) and from the local lights' atlas tiles
-(`localVolumeShadows`); volumes shadow each other from the sun and the local
-lights (`volumeMutualShadows`): the light towards each step also marches the
-other volumes' boxes (smoke between the sun and a fire darkens the fire's
-smoke; a lone volume pays nothing), and with it the froxel fog is shadowed by
-the volumes from the sun through the sun's tint map; volumes behind glass are dimmed and refracted
+(`localVolumeShadows`); volumes shadow each other from the sun, the local
+lights and the dome (`volumeMutualShadows`): the light towards each step also
+marches the other volumes' boxes (smoke between the sun and a fire darkens the
+fire's smoke; a lone volume pays nothing). The froxel fog reads the sun's tint
+map and the local lights' atlas tint as surfaces do, so volumes shadow it and glass tints it whenever those
+shadows are on (fog inside a volume by the part of it nearer the light: each
+texel keeps the volumes' optical-depth range); volumes behind glass are dimmed and refracted
 (`volumeUnderTransparency`); a half-resolution march
 (`volumeResolution` 2) cuts cost by about 3x.
 

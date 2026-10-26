@@ -61,7 +61,6 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // z: 1 = a time sample (motion vectors from the shutter's capture),
                          // w: its capture holds joints (+1) and blend shape weights (+2)
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl)
-    uvec4 media;         // x 1: fog lit through the sun's tint map (volumes; fog_inject.comp)
 } frame;
 
 // Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic

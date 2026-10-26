@@ -31,9 +31,9 @@ vec3 TraceShadow(vec3 origin, vec3 dir, float tMax)
     vec3 through = shadowRay.rgb * shadowRay.a;
     if (rt.shadowInfo.y > 0u && shadowRay.a > 0.0) {
         // ponytail: a sun's ray marches 1e4 units (the volumes' boxes clip it).
-        float weighted;
+        float weighted, weighted2;
         through *= exp(-VolumeOpticalDepth(origin, dir * min(tMax, 1e4), rt.shadowInfo.y, rt.shadowVolume.x,
-                                           rt.shadowVolume.y, weighted));
+                                           rt.shadowVolume.y, weighted, weighted2));
     }
     return through;
 }
