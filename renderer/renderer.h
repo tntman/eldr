@@ -336,7 +336,7 @@ public:
         // adaptiveThreshold is 0 (0: off). And the film is converged once
         // this fraction of the pixels has stopped (the rest of the noisy
         // ones would only run it to filmSamples).
-        float adaptiveFinalThreshold = 0.01f;
+        float adaptiveFinalThreshold = 0.0f;  // off: final frames take every film sample (opt in, e.g. 0.01)
         float adaptivePixelFraction = 0.999f;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.

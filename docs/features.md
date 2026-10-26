@@ -103,7 +103,7 @@ What the film enables (each has a switch, all on by default):
 | Motion blur at shutter times | `eldr:motionBlurTimeSamples` | |
 | Fog without history | `eldr:fogFilmJitter` | |
 | GI preconvergence | `eldr:giPreconverge` | Film waits for fresh probes |
-| Adaptive sampling | `eldr:adaptiveThreshold` (0), `eldr:adaptiveFinalThreshold` (0.01, final quality) | Converged once `eldr:adaptivePixelFraction` (0.999) of pixels stopped. Not with motion blur time samples (they run to `eldr:filmSamples`). |
+| Adaptive sampling | `eldr:adaptiveThreshold` (0), `eldr:adaptiveFinalThreshold` (0 = off; opt in for final quality) | Converged once `eldr:adaptivePixelFraction` (0.999) of pixels stopped. Not with motion blur time samples (they run to `eldr:filmSamples`). |
 
 - Stochastic effects use per-effect Sobol dimensions with blue-noise rotation (`eldr:sampleDimensions`). RMSE against a 1024-sample reference, 64 samples: sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004, Kitchen_set 0.0068 to 0.0004; 0.2-0.5 s.
 - Ids, depth and surface AOVs (normal, st, P, camera depth) are the sample nearest the pixel centre, not averages.
