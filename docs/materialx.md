@@ -2,22 +2,28 @@
 
 What Eldr compiles of real MaterialX, measured on a corpus: the MaterialX TestSuite and Examples that ship with USD, and Houdini 22's `basic_materials` / `quick_materials`. `tests/mtlx_corpus.py` renders each material on a sphere with Eldr and Karma CPU (husk), optionally Storm (MaterialX's own GLSL), and lists the nodes Eldr can't compile.
 
-Run: `usdenv.cmd python tests\mtlx_corpus.py --out <dir> [--storm] [--only stdlib_math,...] [--skip Light_Bulb]`. It writes `report.json`, the node table below on stdout, and `sheet_<group>.png` (Eldr | Karma per sphere).
+Run: `usdenv.cmd python tests\mtlx_corpus.py --out <dir> [--storm] [--only stdlib_math,...] [--skip Light_Bulb] [--refs <earlier out>]` (`--refs`: render Eldr only, compare with that run's Karma and Storm images). It writes `report.json`, the node table below on stdout, and `sheet_<group>.png` (Eldr | Karma per sphere).
 
 TestSuite files mostly hold bare nodegraphs. The harness wraps each unused output as standard_surface emission (unlit, so pixels are the graph's value) and BSDF/EDF outputs through `surface`. Matrix, string and displacement-only outputs are skipped. Storm referees the unlit graphs only; under the harness's lights it renders lit surfaces black.
 
-## Result (2026-10-26)
+## Result (2026-10-27)
 
-957 materials with a surface. **558 compile whole**; 399 lose at least one input to its constant, or render the default grey without a warning when the surface is unknown.
+957 materials with a surface. **747 compile whole** (558 on 2026-10-26, before the plan below); the rest bypass at least one node (its pass-through input or default stands in; the render stats count them) or have a surface Eldr doesn't read (a warning). Against Karma the median dE of all 957 went from 3.9 to 1.2 (225 better by more than 1, 49 worse), against Storm from 21.3 to 15.3.
 
-| Group | Materials | Whole |
-|---|---|---|
-| Examples: standard_surface, OpenPBR, UsdPreviewSurface, hair | 74 | 72 |
-| Examples: glTF PBR, Disney principled | 11 | 0 |
-| Houdini basic + quick materials | 121 | 23 |
-| TestSuite stdlib | 633 | 441 |
-| TestSuite pbrlib (BSDF graphs, lama) | 110 | 20 |
-| TestSuite nprlib, locale, libraries | 8 | 2 |
+| Group | Materials | Whole (10-26) | Whole |
+|---|---|---|---|
+| Examples: standard_surface, OpenPBR, UsdPreviewSurface, hair | 74 | 72 | 72 |
+| Examples: glTF PBR, Disney principled | 11 | 0 | 0 |
+| Houdini basic + quick materials | 121 | 23 | 82 |
+| TestSuite stdlib | 633 | 441 | 569 |
+| TestSuite pbrlib (BSDF graphs, lama) | 110 | 20 | 20 |
+| TestSuite nprlib, locale, libraries | 8 | 2 | 4 |
+
+Houdini's remaining 39 only lack Karma's own VEX nodes (`kma_rampconst`, `kma_color_hextiling`, `kma_voronoinoise3d`: no MaterialX nodedef), which are bypassed or keep the input's constant. What still blocks most of the rest: pbrlib BSDF graphs and other surfaces (glTF PBR, Disney, `surface_unlit`), compositing nodes, `hextiledimage`, `flake2d/3d`, matrix-valued graphs (`transformmatrix` with a connected matrix, `determinant`).
+
+Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `safepower_vector2` (the vector2 conversion bug below), `transformmatrix` with a connected matrix (bypassed). Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
+
+The 10-26 results:
 
 Lit surfaces that compile whole, against Karma (CIEDE2000 of the sphere's mean): UsdPreviewSurface median 0.5, standard_surface 1.7 (32 of 56 under 2), OpenPBR without the light bulb: 5 of 9 under 1.4. The worst are car paint (coat, 13), subsurface (ketchup 9, jade 11), velvet/fuzz (5), thin film (19) and Houdini's absorbing glass and liquids (Eldr untinted, 30-60).
 
@@ -88,5 +94,5 @@ Eldr matches Storm here.
 | fallbackSignal | Done. Render stats `materialFallbackInputs` (inputs with a bypassed or dropped node, plus 1 per unknown surface) and `materialFallbackNodes` ("material: node (id)", first 12), shown under Materials in usdview's Eldr > Render Statistics and Houdini's viewport stats (gen_ui reads the same table). Unknown surface types warn once. |
 | nodegraphInliner | Done. A node with a nodegraph implementation (HdMtlx's libraries, Houdini's `$HFS/houdini/materialx/libraries/houdini`, a document's own nodedef) is expanded into Hydra nodes inside the compiler, recursively; interface inputs take the node's connections, values, nodedef defaults or defaultgeomprops; filename defaults are resolved (tokens filled in). Nodes whose nodegraph needs a missing primitive (sign, rotate3d, heighttonormal, ...) are bypassed until it exists. Houdini basic materials now only miss heighttonormal, sign, rotate3d and Karma's kma_rampconst. |
 | registers | Done. The compiler drops ops no output reads (bypassed partial compiles, unused nodegraph outputs) and shares equal constants; registers were already reused from a value's last reader. Of the corpus' 842 programs 5 still needed more than 8 registers (Houdini's QuickSurfaceMaterial 14, two stdlib_procedural and two color_management graphs 12), so the interpreter has 16: at 1920x1080, full screen, the shading pass is unchanged (Ceramic 9.5-10.0 ms at 8, 9.2-9.6 at 16; CarPaintMetallic, 205 ops with noise, 47-48 vs 44 ms; graphs off: 6.1 and 5.9 ms). Constants: at most 114 per program after sharing, of 240 reachable. |
-| bump + heighttonormal | Done, in program.glsl (no mesh.frag change): heighttonormal is MaterialX's genglsl formula on screen derivatives of the height and uv (1/16 Sobel parity); bump is its nodegraph (heighttonormal into normalmap), so it lands on the normal like a normal map. Per vertex (displacement graphs) and at ray hits (rt_refraction) it is flat. All 95 Houdini materials with bump now compile it, but their bump scales are tiny in uv units (-0.00025 to -0.004): Eldr and Storm (same formula) show almost no relief, Karma reads the height in scene units and shows it. Mean dE vs Karma unchanged (median 3.0). Design question: follow Karma's unit for Houdini's materials? |
+| bump + heighttonormal | Done, in program.glsl (no mesh.frag change). Materials Hydra hands over from Karma's render context (Houdini's) read bump heights in scene units, as Karma: height times scale along the normal, its surface gradient in the uv frame. Others follow MaterialX: heighttonormal is MaterialX's genglsl formula on screen derivatives of the height and uv (1/16 Sobel parity); bump is its nodegraph (heighttonormal into normalmap), so it lands on the normal like a normal map. Per vertex (displacement graphs) and at ray hits (rt_refraction) it is flat. All 95 Houdini materials with bump now compile it, but their bump scales are tiny in uv units (-0.00025 to -0.004): Eldr and Storm (same formula) show almost no relief, Karma reads the height in scene units and shows it. Mean dE vs Karma unchanged (median 3.0) in uv units. |
 | missingOps | Done, with genglsl's formulas: fract, round, sign, tan, asin, acos, atan2, magnitude, crossproduct in the main interpreter; rotate2d/3d, splitlr/splittb (aastep), transformmatrix (constant matrix33/44, v * M, vector2M3 and vector3M4 as points), transformpoint/vector/normal (object/model and world), tangent/bitangent (uv frame from derivatives; per vertex any perpendicular), viewdirection, time/frame (the scene globals' current frame and time codes per second; 0 at the default time), artistic_ior in the procedural pipelines (no cost to other programs). switch picks its input at compile time when `which` is constant, else a chain of ifgreatereq; and/or/not/xor on 0/1 are min/max/1-x/|a-b|; geomcolor is displayColor. Karma's `dot` notes ray:direction and ray:hitN (kma_camerafalloff) read the view direction and world normal. |

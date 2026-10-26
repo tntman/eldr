@@ -440,6 +440,19 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             // parity with a Sobel filter. Flat without derivatives.
             r = vec4(0.5, 0.5, 1.0, 0.0);
 #ifndef PROGRAM_VERTEX
+            if (imm0 == 1u) {
+                // Karma's bump: a.x b.x is a height in scene units along the
+                // normal; its surface gradient (Mikkelsen 2010) in the uv
+                // frame, which mesh.frag's CotangentFrame maps back.
+                // ponytail: that frame isn't orthonormal on skewed uvs.
+                vec3 n = Geometry(true, 1u), dpx = dFdx(inWorldPos), dpy = dFdy(inWorldPos);
+                vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
+                float det = dot(dpx, r1), hx = dFdx(a.x * b.x), hy = dFdy(a.x * b.x);
+                vec3 g = abs(det) > 1e-30 ? (hx * r1 + hy * r2) / det : vec3(0.0);
+                r = vec4(normalize(vec3(-dot(g, ProgramTangent(false)), -dot(g, ProgramTangent(true)), 1.0)) * 0.5 + 0.5,
+                         0.0);
+                break;
+            }
             vec2 dh = vec2(dFdx(a.x), dFdy(a.x)) * b.x / 16.0;
             vec3 n = cross(vec3(dFdx(x.x), dFdx(x.y), dh.x), vec3(dFdy(x.x), dFdy(x.y), dh.y));
             n = dot(n, n) < 1.4210855e-14 ? vec3(0.0, 0.0, 1.0) : n.z < 0.0 ? -n : n;

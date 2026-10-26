@@ -18,6 +18,8 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/imaging/hd/materialSchema.h"
+#include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hdMtlx/hdMtlx.h"
@@ -847,11 +849,14 @@ class GraphCompiler
 public:
     using P = vkr::MaterialProgram;
 
-    GraphCompiler(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, P *program, TfToken *uvPrimvar)
+    // karma: a Karma material (Houdini's): bump heights in scene units.
+    GraphCompiler(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, P *program, TfToken *uvPrimvar,
+                  bool karma = false)
         : _net(net)
         , _textures(textures)
         , _p(*program)
         , _uvPrimvar(uvPrimvar)
+        , _karma(karma)
     {
     }
 
@@ -1436,6 +1441,15 @@ private:
         if (k.name == "convert" || k.name == "dot") {
             return in("in");
         }
+        if (k.name == "bump" && _karma) {
+            // Karma's bump: height times scale in scene units along the
+            // normal (heighttonormal's imm0 1), not MaterialX's uv units.
+            const std::optional<Value> h = in("height"), s = in("scale"), uv = _Uv(n, _tokens->texcoord, depth);
+            if (!h || !s || !uv) {
+                return std::nullopt;
+            }
+            return _Emit(P::kNormalMap, {_Emit(P::kHeightToNormal, {*h, *s, *uv}, 1), _Const(GfVec4f(1.0f))});
+        }
         if (k.name == "magnitude") {
             const std::optional<Value> v = in("in");
             return v ? std::optional<Value>(_Emit(P::kMagnitude, {*v}, 0, Components(k.type))) : std::nullopt;
@@ -1572,7 +1586,9 @@ private:
             if (name.IsEmpty()) {  // no primvar named: its default (an empty geomprop reads nothing)
                 return in(k.name == "geompropvalue" ? "default" : "fallback");
             }
-            if (name == _tokens->displayColor) {
+            // MaterialX reads a missing primvar as its default, also
+            // displayColor (Houdini's quick material; Karma does).
+            if (name == _tokens->displayColor && k.name != "geompropvalue") {
                 return _Emit(P::kDisplayColor, {});
             }
             const std::optional<Value> fallback = in(k.name == "geompropvalue" ? "default" : "fallback");
@@ -1712,6 +1728,7 @@ private:
     HdVkTextureCache *_textures;
     P &_p;
     TfToken *_uvPrimvar;
+    bool _karma;
     std::vector<Ins> _ops;
     std::map<std::pair<SdfPath, TfToken>, Value> _memo;
     // Memoized values with a bypassed node upstream (they count again where reused).
@@ -1897,7 +1914,7 @@ struct Fallbacks {
 };
 
 void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m, TfToken *uvPrimvar,
-                 Fallbacks *fallbacks)
+                 Fallbacks *fallbacks, bool karma)
 {
     const auto terminal = net.terminals.find(HdMaterialTerminalTokens->surface);
     if (terminal == net.terminals.end()) {
@@ -1926,7 +1943,7 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     // One input: its constant (authored, else the default) times the weight,
     // or a texture whose scale and bias carry the weight, or else a program
     // computing it.
-    GraphCompiler graph(net, textures, &m->program, uvPrimvar);
+    GraphCompiler graph(net, textures, &m->program, uvPrimvar, karma);
     auto input = [&](TfToken const &name, TfToken const &weightName, float weightDefault, float valueDefault,
                      float *constant, int size, vkr::TextureRef *ref, vkr::MaterialProgram::Input target) {
         if (name.IsEmpty()) {
@@ -2229,6 +2246,29 @@ std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string
     return tiles;
 }
 
+namespace {
+
+// Whether Hydra hands this material over from Karma's render context (the
+// first of HdVkRenderDelegate's mtlx, glslfx, kma it has): a Houdini
+// material, whose bump heights are in scene units.
+// ponytail: Houdini materials written to the mtlx context read as MaterialX.
+bool KarmaMaterial(HdSceneDelegate *delegate, SdfPath const &id)
+{
+    const HdSceneIndexBaseRefPtr si = delegate->GetRenderIndex().GetTerminalSceneIndex();
+    if (!si) {
+        return false;
+    }
+    const TfTokenVector contexts = HdMaterialSchema::GetFromParent(si->GetPrim(id).dataSource).GetRenderContexts();
+    for (const char *c : {"mtlx", "glslfx", "kma"}) {
+        if (std::find(contexts.begin(), contexts.end(), TfToken(c)) != contexts.end()) {
+            return std::string(c) == "kma";
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 void HdVkMaterialFallbacks::Set(SdfPath const &material, int inputs, std::vector<std::string> nodes)
 {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -2290,7 +2330,7 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         const VtValue resource = sceneDelegate->GetMaterialResource(GetId());
         if (resource.IsHolding<HdMaterialNetworkMap>()) {
             const HdMaterialNetwork2 net = HdConvertToHdMaterialNetwork2(resource.UncheckedGet<HdMaterialNetworkMap>());
-            ReadSurface(net, _textures, &m, &_uvPrimvar, &fallbacks);
+            ReadSurface(net, _textures, &m, &_uvPrimvar, &fallbacks, KarmaMaterial(sceneDelegate, GetId()));
             ReadDisplacement(net, _textures, &m, &_uvPrimvar, &fallbacks);
 #ifdef HDVK_VOLUMES
             HdVkReadVolumeShading(net, &volume);

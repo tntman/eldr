@@ -120,7 +120,7 @@ struct MaterialProgram {
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
         // MaterialX heighttonormal: height a.x, scale b.x, texcoord c, from
         // screen derivatives (fragment only; per vertex and at ray hits
-        // flat, (0.5, 0.5, 1)).
+        // flat, (0.5, 0.5, 1)). imm0 1: a.x b.x in scene units (Karma's bump).
         kHeightToNormal,
         // MaterialX math, componentwise on a: fract, round, sign, tan, asin,
         // acos; atan2(a = iny, b = inx); |a| of imm1 components; a x b.
