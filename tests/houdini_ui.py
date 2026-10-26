@@ -25,6 +25,8 @@ def author(node, attr, value):
 rs = stage.createNode("rendersettings")
 n = len(tab(rs).parmTemplates())
 assert n >= 8, n  # the groups
+last = tab(rs).parmTemplates()[-1]
+assert last.label() == "Performance and debug", last.label()
 author(rs, "eldr:gi", 1)
 author(rs, "eldr:filmSamples", 7)
 author(rs, "eldr:bloomIntensity", 0.5)
@@ -63,5 +65,17 @@ group.setToDialogScript(open(ds[0]).read())
 parms = [t for folder in group.entries() for t in folder.parmTemplates()]
 assert len(parms) > 100 and all(t.tags().get("uiscope") == "viewport" for t in parms), len(parms)
 assert hou.text.decodeParm(parms[0].name()).startswith("eldr:"), parms[0].name()
+# Every setting once, every parm helped, important folders open and the rest folded.
+names = [hou.text.decodeParm(t.name()) for t in parms]
+assert len(names) == len(set(names)), "a setting appears twice"
+assert all(t.help().strip() for t in parms), [t.name() for t in parms if not t.help().strip()]
+folders = tab(rs).parmTemplates()  # the Render Settings LOP tab (the viewport's are plain tabs)
+assert [f.label() for f in folders if f.tags().get("group_default") == "1"] == ["Final render", "Lighting and GI", "Image"], \
+    [(f.label(), f.tags()) for f in folders]
+assert folders[-1].label() == "Performance and debug"
+for t in tab(rs).parmTemplates():  # the Render Settings LOP tab
+    if t.type() == hou.parmTemplateType.Folder:
+        assert all(p.help().strip() for p in t.parmTemplates() if "_control" not in p.name()), t.label()
+assert all(t.help().strip() for t in tab(rg).parmTemplates() if "_control" not in t.name()), "primvar help"
 print("houdini_ui OK")
 sys.exit(0)

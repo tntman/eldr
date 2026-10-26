@@ -212,9 +212,11 @@ file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/plugInfo.json INPUT plugInfo.json)
 # usdview's HdVk menu (render statistics, attribute editor), in
 # <that dir>/usdview: usdenv.cmd adds it to the plugin and Python paths.
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/plugInfo.json INPUT usdview/plugInfo.json)
-foreach(py __init__.py attributes.py settings.py)
+foreach(py __init__.py attributes.py settings.py tooltips.py)
     file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/${py} INPUT usdview/hdvkUsdview/${py})
 endforeach()
+# The settings' tooltips are its "What it does" column (tooltips.py).
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/settings.md INPUT docs/settings.md)
 
 add_executable(testPlugin tests/testPlugin.cpp)
 target_link_libraries(testPlugin PRIVATE hd)
