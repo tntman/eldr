@@ -936,6 +936,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.skinned[0] = gpu.instanceCapacity;
     d.skinned[1] = uint32_t(_skinnedOrder.size());
     d.refraction[0] = std::clamp(work.refractionBounces, 1u, 16u);
+    d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
     if (!work.gi) {
         return;
     }

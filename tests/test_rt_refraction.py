@@ -8,14 +8,18 @@ orthographic camera:
   refracted angle (0.329 units); with its ior from a material graph (2,
   where the constant would be 1.5) by 0.440;
 - glass seen through glass takes its transmission colour from its graph
-  (red, where the constant would be white).
+  (red, where the constant would be white);
+- a sheet of glass rippled by a sine height map bends the edge behind it
+  into a wiggle (eldr:rtRefractionDisplacement); flat, it stays straight.
 Needs a GPU with ray tracing.
 Run: usdenv.cmd python tests\\test_rt_refraction.py"""
 import math
+import os
 import sys
+import tempfile
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+from PySide6.QtGui import QColor, QImage, QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 from PySide6.QtWidgets import QApplication
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdShade
@@ -75,11 +79,13 @@ def stage_with_camera():
     return stage, camera.GetCamera(Usd.TimeCode.Default()).frustum, glass
 
 
-def render(stage, frustum, rt):
+def render(stage, frustum, rt, **settings):
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
     engine.SetRendererSetting("eldr:postProcess", False)
     engine.SetRendererSetting("eldr:rtRefraction", 2 if rt else 0)
+    for name, value in settings.items():
+        engine.SetRendererSetting(name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()
@@ -228,6 +234,74 @@ quad(stage, "/card", -4, -4, 4, 4, -3, white)
 c = pixel(render(stage, frustum, True), 0.1, 0.1)
 print("through both panes:", [round(x, 3) for x in c])
 expect(c[0] > 0.3 and c[1] < 0.1 * c[0] and c[2] < 0.1 * c[0], "the second pane tints by its graph's colour")
+
+# Displaced glass (eldr:rtRefractionDisplacement): a sheet of glass at z = 0
+# rippled by a height map h = 0.05 (1 + sin(2 pi (x + y))) in front of the
+# white/black edge. The ripple tilts the surface by up to 0.31 in x, which
+# moves the edge by up to about 0.3 units after 3 units: the edge wiggles
+# along y. Without displacement, or with the setting off (the displaced
+# BLAS but its rest normals), the flat sheet leaves it straight.
+textures = tempfile.mkdtemp()
+ripple = QImage(256, 256, QImage.Format_Grayscale8)
+for py in range(256):
+    for px in range(256):
+        u, v = (px + 0.5) / 256, 1 - (py + 0.5) / 256  # image rows run down, v up
+        ripple.setPixel(px, py, QColor.fromRgbF(*[0.5 + 0.5 * math.sin(2 * math.pi * 4 * (u + v))] * 3).rgb())
+ripple.save(os.path.join(textures, "ripple.png"))
+stage, frustum, _ = stage_with_camera()
+rippled = UsdShade.Material.Define(stage, "/mtl/rippled")
+pbr = UsdShade.Shader.Define(stage, "/mtl/rippled/pbr")
+pbr.CreateIdAttr("UsdPreviewSurface")
+for name, value in {"opacity": 0.0, "ior": 1.5, "roughness": 0.0}.items():
+    pbr.CreateInput(name, F).Set(value)
+pbr.CreateInput("diffuseColor", C).Set((0, 0, 0))
+height = UsdShade.Shader.Define(stage, "/mtl/rippled/height")
+height.CreateIdAttr("UsdUVTexture")
+height.CreateInput("file", Sdf.ValueTypeNames.Asset).Set(os.path.join(textures, "ripple.png"))
+height.CreateInput("sourceColorSpace", Sdf.ValueTypeNames.Token).Set("raw")
+height.CreateInput("scale", Sdf.ValueTypeNames.Float4).Set((0.1, 0.1, 0.1, 1))
+st = UsdShade.Shader.Define(stage, "/mtl/rippled/st")
+st.CreateIdAttr("UsdPrimvarReader_float2")
+st.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("st")
+height.CreateInput("st", Sdf.ValueTypeNames.Float2).ConnectToSource(st.CreateOutput("result", Sdf.ValueTypeNames.Float2))
+pbr.CreateInput("displacement", F).ConnectToSource(height.CreateOutput("r", F))
+rippled.CreateSurfaceOutput().ConnectToSource(pbr.CreateOutput("surface", Sdf.ValueTypeNames.Token))
+rippled.CreateDisplacementOutput().ConnectToSource(pbr.CreateOutput("displacement", Sdf.ValueTypeNames.Token))
+cells = 128
+points, uvs, indices = [], [], []
+for j in range(cells + 1):
+    for i in range(cells + 1):
+        points.append((4 * i / cells - 2, 4 * j / cells - 2, 0))
+        uvs.append((i / cells, j / cells))
+for j in range(cells):
+    for i in range(cells):
+        a = j * (cells + 1) + i
+        indices += [a, a + 1, a + cells + 2, a + cells + 1]
+sheet = mesh(stage, "/sheet", points, [4] * cells * cells, indices, rippled, [(0, 0, 1)] * len(points))
+UsdGeom.PrimvarsAPI(sheet).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray,
+                                         UsdGeom.Tokens.vertex).Set(uvs)
+quad(stage, "/white", -4, -4, 0, 4, -3, material(stage, "/mtl/white", {"diffuseColor": (C, (0, 0, 0)),
+                                                                        "emissiveColor": (C, (1, 1, 1))}))
+quad(stage, "/black", 0, -4, 4, 4, -3, material(stage, "/mtl/black", {"diffuseColor": (C, (0, 0, 0))}))
+
+
+def wiggle(**settings):
+    """The spread (standard deviation) of the edge's x over the rows in y in [-1, 1]."""
+    image = render(stage, frustum, True, **settings)
+    xs = []
+    for py in range(SIZE // 4, 3 * SIZE // 4):
+        y = 2 - (py + 0.5) / SIZE * 4
+        row = [pixel(image, px / SIZE * 4 - 2, y)[1] for px in range(SIZE)]
+        crossing = next((px for px in range(SIZE // 8, 7 * SIZE // 8) if row[px] < 0.5 * max(row)), None)
+        xs.append(crossing / SIZE * 4 - 2 if crossing is not None else 0.0)
+    mean = sum(xs) / len(xs)
+    return math.sqrt(sum((x - mean) ** 2 for x in xs) / len(xs))
+
+
+bent, flat, rest = wiggle(), wiggle(**{"eldr:displacement": False}), wiggle(**{"eldr:rtRefractionDisplacement": False})
+print(f"edge spread through rippled glass: displaced {bent:.3f}, no displacement {flat:.3f}, rest normals {rest:.3f}")
+expect(bent > 0.08, "displaced glass bends the traced refraction (the edge wiggles)")
+expect(flat < 0.02 and rest < 0.02, "flat glass leaves the edge straight")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

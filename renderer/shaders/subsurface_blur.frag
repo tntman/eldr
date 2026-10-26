@@ -18,7 +18,7 @@ layout(set = 0, binding = 3) uniform sampler2D sceneDepth;
 layout(push_constant) uniform BlurParams {
     mat4 invViewProj;
     vec4 params;  // direction (pixels), taps, pass
-    vec4 splits;  // x: 1 moves the light in the light splits too
+    vec4 splits;  // x: 1 moves the light in the light splits too, yz: direct, indirect intensity
 } pc;
 
 layout(set = 0, binding = 4, rgba16f) uniform image2DArray lightSplits;  // 0: direct, 1: indirect diffuse
@@ -73,7 +73,9 @@ void main()
         vec4 direct = imageLoad(lightSplits, ivec3(q, 0)), indirect = imageLoad(lightSplits, ivec3(q, 1));
         float total = dot(direct.rgb + indirect.rgb, vec3(1.0));
         float share = total > 1e-6 ? clamp(dot(direct.rgb, vec3(1.0)) / total, 0.0, 1.0) : 0.0;
-        vec3 moved = result - center.rgb;
+        // The colour carries the light path intensities, the splits don't.
+        float scale = share * pc.splits.y + (1.0 - share) * pc.splits.z;
+        vec3 moved = scale > 0.0 ? (result - center.rgb) / scale : vec3(0.0);
         imageStore(lightSplits, ivec3(q, 0), vec4(direct.rgb + share * moved, direct.a));
         imageStore(lightSplits, ivec3(q, 1), vec4(indirect.rgb + (1.0 - share) * moved, indirect.a));
     }

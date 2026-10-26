@@ -17,7 +17,7 @@ constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // Renderer::k
 struct BlurParams {  // mirror of the push block in subsurface_blur.frag
     float invViewProj[16];
     float params[4];  // direction (pixels), taps, pass (0: horizontal, 1: vertical into the colour)
-    float splits[4];  // x: 1 moves the same light in the light splits (binding 4)
+    float splits[4];  // x: 1 moves the same light in the light splits (binding 4), yz: light path intensities
 };
 
 VkImageSubresourceRange Color()
@@ -137,7 +137,7 @@ void Subsurface::BeginLighting(VkCommandBuffer cmd)
 }
 
 void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
-                      VkImageView splits, bool moveSplits)
+                      VkImageView splits, bool moveSplits, float direct, float indirect)
 {
     // The splits may have been recreated since the sets were made.
     const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
@@ -161,6 +161,8 @@ void Subsurface::Blur(VkCommandBuffer cmd, VkImageView color, const float invVie
     std::copy(invViewProj, invViewProj + 16, params.invViewProj);
     params.params[2] = float(std::clamp(samples, 1u, 64u));
     params.splits[0] = moveSplits ? 1.0f : 0.0f;
+    params.splits[1] = direct;
+    params.splits[2] = indirect;
 
     ImageBarrier(cmd, _blurred.image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

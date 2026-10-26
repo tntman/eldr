@@ -306,6 +306,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Refraction Layers (copies, 1-16)", t.refractionLayers, VtValue(int(frame.refractionLayers))},
         {"Ray-Traced Refraction (0 off, 1 final quality, 2 always)", t2.rtRefraction, VtValue(int(frame.rtRefraction))},
         {"Ray-Traced Refraction Interfaces (1-16)", t2.rtRefractionBounces, VtValue(int(frame.rtRefractionBounces))},
+        {"Ray-Traced Refraction Sees Displacement", t2.rtRefractionDisplacement, VtValue(frame.rtRefractionDisplacement)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},

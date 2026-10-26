@@ -756,7 +756,7 @@ void Renderer::_CreateDescriptors()
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
-        {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
+        {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT | kRt},
         {40, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {41, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         // The cascades' nearest depths (soft sun shadows): read minimum
@@ -2619,7 +2619,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
                                  sizeof(VkDrawIndexedIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
-    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits);
+    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits,
+                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f));
 }
 
 bool Renderer::IsConverged() const
@@ -3014,6 +3015,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
                     (frame.rtRefraction >= 2 || (frame.rtRefraction == 1 && film && _filmFinal));
     rt.refractionBounces = frame.rtRefractionBounces;
+    rt.refractionDisplacement = frame.rtRefractionDisplacement;
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
