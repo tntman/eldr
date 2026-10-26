@@ -21,7 +21,7 @@ cmake --build build-h22 --target hdVk
 
 ## Install
 
-The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `build-h22/houdini` to `HOUDINI_PATH` (its `UsdRenderers.json` lists the renderer as "Eldr" in Solaris) and the build directory to `PXR_PLUGINPATH_NAME`.
+The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `build-h22/houdini` to `HOUDINI_PATH` (its `UsdRenderers.json` lists the renderer as "Eldr" in Solaris) and the build directory to `PXR_PLUGINPATH_NAME`, and Houdini's `$HFS/bin/usd_plugins/hdx/resources/textures` to `PXR_AR_DEFAULT_SEARCH_PATH`, as `usdenv.cmd` does for USD's: the test scenes' `@StinsonBeach.hdr@` domes resolve in Solaris and husk, for Karma too. Without it the dome falls back to white and its reflections and lighting with it (`tests/houdini_dome.py` checks this headless).
 
 1. Copy `eldr.json` to `Documents/houdini22.0/packages/`, or set `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`.
 2. Pick Eldr in the Solaris viewport's renderer menu or on a Render Settings LOP.
@@ -102,6 +102,8 @@ husk -R HdVkRendererPlugin -c /cam --res 256 256 -o out.png tests\scenes\volume.
 
 Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0.99); lights.usda walls (1.00-1.05); albedo (0.500 vs 0.487); direct diffuse and glossy splits.
 
+step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto exposure off): floor strip 0.665/0.687/0.730 vs Karma 0.653/0.651/0.749, the chrome ball's sky reflection 0.018/0.034/0.073 vs 0.017/0.033/0.072, gold ball centre 0.43 vs 0.50 red (-13%), pillar -13%.
+
 | What | Karma | Eldr |
 |---|---|---|
 | Rect-light texture orientation | File's top row at +Y, left edge at +X | Same |
@@ -137,6 +139,7 @@ Display transforms are separate. Eldr's colour AOV in the viewport is ACES tonem
 | Diagnostics | `HDVK_DEBUG_AOVS=1` also prints every non-`eldr:` setting the host sets (`houdini:viewport`, `renderCameraPath`, husk's `rasterRenderProducts`) |
 | Depth, navigation, guides | Houdini's tumble pivot, pan speed and its own light and camera guides (drawn over the image, depth-tested) read the depth AOV. As Karma's it is linear (`depthstyle` `linear`): distance along the view axis, 0 where nothing was hit, whatever near and far planes Houdini assumes. The depth buffer always clears to the far plane: husk binds depth with clear value 0, which used to leave the frame empty. husk's `depth` var matches Karma's within 2% on step4. `viewportBench --nav` (ctest `viewport_nav`) checks the standalone build's window depth back-projects onto the scene, also when mapped frames later and after the film converged. |
 | Still viewport | Houdini's free camera is a scene prim (`/__HoudiniFreeCamera__`) that may sync again unchanged; only real camera, lens, scene or setting changes start the film over, so a still view converges and stops changing. `HDVK_DEBUG_AOVS=1` prints every 60 frames how many frames moved the camera or changed the scene, and the near and far planes. |
+| Colour | Linear scene colour, the same values as the EXR's linear beauty (`eldr:productLinear`, on): no tonemap, bloom or auto exposure of Eldr's own (auto exposure only if the settings prim authors `eldr:autoExposure`; `eldr:exposureCompensation` applies). The display transform is Houdini's, from its own settings and environment (OCIO config, view, gamma, LUT), as for Karma; Houdini 22's default view is Un-tone-mapped (sRGB). Eldr never reads `$OCIO`. `eldr:productLinear` off brings back Eldr's ACES and auto exposure, under Houdini's view. Before, Houdini's view applied over Eldr's ACES and auto exposure: ACES alone took step4's floor from 0.67 linear to 0.48, and auto exposure darkened it further under a bright (white fallback) dome. |
 | Selection outline | `UsdRenderers.json` sets `"needsselection": true`; Houdini draws the outline itself |
 | Ids | primId is the render index's prim id, instanceId the instance index, as Houdini's picking expects |
 | Frame times | 1280x720, moving camera. Kitchen_set: colour, depth, ids read 23.7 ms; colour and depth 20.8 ms; all six 32.1 ms. step4 with ids: 12.3 ms. usdview (GPU sharing): about 15 ms (Kitchen_set), 11 ms (step4). |
