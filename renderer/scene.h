@@ -794,6 +794,7 @@ public:
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        bool volumeFactors = false;  // a drawn volume reads factor tables (VolumePass::Record)
         uint64_t volumeVersion = 0;  // unique per commit that held volumes (the local lights' cached atlas)
         float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
@@ -909,6 +910,7 @@ private:
     std::vector<std::unique_ptr<Volume>> _volumes;
     Buffer _volumeTable, _volumeGrids;
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> _poolGrids;
+    std::vector<float> _poolLuts;  // the volume factors' tables after the grids (_CommitVolumes)
 
     Gpu _gpu;
     Buffer _displacements;  // Gpu::displacements

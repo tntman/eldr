@@ -3891,7 +3891,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (volumesUnder) {
         _RenderTranslucentDepth(gpu, jitteredViewProj);
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            VolumePass::kBehind);
+                            VolumePass::kBehind, gpu.volumeFactors);
         pass("volumes");
     }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
@@ -3934,7 +3934,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // between two layers of glass go behind both.
     if (frame.volumes &&
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll)) {
+                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll, gpu.volumeFactors)) {
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     // Light shapes: the local lights seen by the camera, in front of the opaque depth.

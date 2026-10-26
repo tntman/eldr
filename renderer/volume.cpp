@@ -156,9 +156,15 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
     const VkDevice d = _dev.device;
-    _pipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
-                                         false, true, false, VK_FORMAT_UNDEFINED, true);
-    _halfPipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
+    for (uint32_t factors = 0; factors < 2; ++factors) {
+        const VkSpecializationMapEntry entry{0, 0, sizeof(uint32_t)};  // kFactors
+        const VkSpecializationInfo spec{1, &entry, sizeof(factors), &factors};
+        _pipeline[factors] = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag),
+                                                      Renderer::kColorFormat, false, true, false, VK_FORMAT_UNDEFINED,
+                                                      true, &spec);
+        _halfPipeline[factors] = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat,
+                                                          false, false, false, VK_FORMAT_UNDEFINED, false, &spec);
+    }
     _upsamplePipeline = CreateFullscreenPipeline(_dev, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
     _shapePipeline = CreateFullscreenPipeline(_dev, _layout, kShapesFrag, sizeof(kShapesFrag), Renderer::kColorFormat,
@@ -171,7 +177,8 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
 VolumePass::~VolumePass()
 {
     vkDeviceWaitIdle(_dev.device);
-    for (VkPipeline p : {_pipeline, _halfPipeline, _upsamplePipeline, _shadowPipeline, _shapePipeline}) {
+    for (VkPipeline p : {_pipeline[0], _pipeline[1], _halfPipeline[0], _halfPipeline[1], _upsamplePipeline,
+                         _shadowPipeline, _shapePipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -207,7 +214,7 @@ VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
 }
 
 bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                        uint32_t width, uint32_t height, const Settings &s, Part part)
+                        uint32_t width, uint32_t height, const Settings &s, Part part, bool factors)
 {
     if (volumeCount == 0) {
         return false;
@@ -226,8 +233,8 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     p.part = part;
     p.scale = s.resolution >= 2 && _half.image ? 2 : 1;
     if (p.scale == 1) {
-        DrawFullscreen(cmd, _pipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT, &p,
-                       sizeof(p));
+        DrawFullscreen(cmd, _pipeline[factors], _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       &p, sizeof(p));
         return true;
     }
     // Half resolution: every pixel of the target is written (zero where
@@ -236,7 +243,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     ImageBarrier(cmd, _half.image, range, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    DrawFullscreen(cmd, _halfPipeline, _layout, set, _half.view, _halfWidth, _halfHeight, false,
+    DrawFullscreen(cmd, _halfPipeline[factors], _layout, set, _half.view, _halfWidth, _halfHeight, false,
                    VK_SHADER_STAGE_FRAGMENT_BIT, &p, sizeof(p));
     ImageBarrier(cmd, _half.image, range, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -303,6 +310,10 @@ void Scene::_CommitVolumes()
         const Volume *volume;
         VolumeShading shading;
         std::shared_ptr<VolumeGrid> grids[4];
+        uint32_t roles = 0;       // GpuVolume::factorMasks[3]
+        uint32_t slots[3] = {4, 4, 4};  // each factor's grid; 4: none
+        uint32_t lutOffsets[4];         // GpuVolume's, from the first table (the extinction's: floats)
+        float lutLow[4] = {}, lutScale[4] = {};
     };
     std::vector<Drawn> drawn;
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> used;
@@ -328,6 +339,26 @@ void Scene::_CommitVolumes()
         if (Nano(d.grids[0].get()).type != PNANOVDB_GRID_TYPE_FLOAT) {
             continue;
         }
+        for (int k = 1; k < 4; ++k) {
+            d.roles |= d.grids[k] ? 1u << (k - 1) : 0u;
+        }
+        // Each factor's field: the density's or a role's grid, else a free
+        // role slot (its role stays off). Missing: the factor of 0.
+        // ponytail: with all slots taken a factor reads 0; slots per factor if that bites.
+        for (size_t k = 0; k < d.shading.factors.size() && k < VolumeShading::kMaxFactors; ++k) {
+            const std::shared_ptr<VolumeGrid> g = field(d.shading.factors[k].field);
+            uint32_t slot = 0;
+            while (g && slot < 4 && d.grids[slot] != g) {
+                ++slot;
+            }
+            for (uint32_t free = 1; g && slot == 4 && free < 4; ++free) {
+                if (!d.grids[free]) {
+                    d.grids[free] = g;
+                    slot = free;
+                }
+            }
+            d.slots[k] = g ? slot : 4;
+        }
         for (const auto &g : d.grids) {
             if (Nano(g.get()).type != 0 &&
                 std::none_of(used.begin(), used.end(), [&](const auto &u) { return u.first == g; })) {
@@ -336,6 +367,61 @@ void Scene::_CommitVolumes()
         }
         drawn.push_back(std::move(d));
     }
+    // The factors' tables (after the grids in the pool): kVolumeLut values
+    // over the field's range (0 included, as empty space reads 0), linear
+    // in between. With factors of the density's grid in scattering or
+    // absorption (or neither per unit of density), a table of the mean
+    // extinction over the density's range too: the shadow marches step it.
+    std::vector<float> luts;
+    for (Drawn &d : drawn) {
+        const VolumeShading &s = d.shading;
+        auto range = [&](uint32_t slot, float *low, float *scale) {
+            const Nano n(slot < 4 ? d.grids[slot].get() : nullptr);
+            float lo = 0.0f, hi = 0.0f;
+            if (n.type == PNANOVDB_GRID_TYPE_FLOAT) {
+                lo = std::min(lo, pnanovdb_read_float(n.buf, pnanovdb_root_get_min_address(n.type, n.buf, n.root)));
+                hi = std::max(hi, pnanovdb_read_float(n.buf, pnanovdb_root_get_max_address(n.type, n.buf, n.root)));
+            }
+            *low = lo;
+            *scale = hi > lo ? float(kVolumeLut - 1) / (hi - lo) : 0.0f;  // 0: one value, f(0)
+        };
+        auto at = [&](float low, float scale, uint32_t i) { return scale > 0 ? low + float(i) / scale : low; };
+        std::fill(d.lutOffsets, d.lutOffsets + 4, kNone);
+        for (size_t k = 0; k < s.factors.size() && k < VolumeShading::kMaxFactors; ++k) {
+            range(d.slots[k], &d.lutLow[k], &d.lutScale[k]);
+            d.lutOffsets[k] = uint32_t(luts.size());
+            for (uint32_t i = 0; i < kVolumeLut; ++i) {
+                const std::array<float, 3> v = s.factors[k].value(at(d.lutLow[k], d.lutScale[k], i));
+                luts.insert(luts.end(), {v[0], v[1], v[2], 0.0f});
+            }
+        }
+        auto ofDensity = [&](uint32_t mask) {
+            bool any = !(mask & VolumeShading::kDensity);
+            for (size_t k = 0; k < s.factors.size() && k < VolumeShading::kMaxFactors; ++k) {
+                any = any || ((mask >> k & 1) && d.slots[k] == 0);
+            }
+            return any;
+        };
+        if (ofDensity(s.scatteringFactors) || ofDensity(s.absorptionFactors)) {
+            range(0, &d.lutLow[3], &d.lutScale[3]);
+            d.lutOffsets[3] = uint32_t(luts.size());
+            for (uint32_t i = 0; i < kVolumeLut; ++i) {
+                const float rho = at(d.lutLow[3], d.lutScale[3], i);
+                float extinction = 0.0f;
+                for (int c = 0; c < 3; ++c) {
+                    for (const auto &[mask, sigma] : {std::pair{s.scatteringFactors, s.scattering[c]},
+                                                       std::pair{s.absorptionFactors, s.absorption[c]}}) {
+                        float v = std::max(sigma, 0.0f) * s.densityScale * (mask & VolumeShading::kDensity ? rho : 1.0f);
+                        for (size_t k = 0; k < s.factors.size() && k < VolumeShading::kMaxFactors; ++k) {
+                            v *= (mask >> k & 1) && d.slots[k] == 0 ? s.factors[k].value(rho)[c] : 1.0f;
+                        }
+                        extinction += std::max(v, 0.0f) / 3.0f;
+                    }
+                }
+                luts.push_back(extinction);
+            }
+        }
+    }
     // Byte offsets in the pool, 32-byte aligned as NanoVDB grids are.
     std::vector<uint32_t> offsets;
     VkDeviceSize bytes = 0;
@@ -343,7 +429,9 @@ void Scene::_CommitVolumes()
         offsets.push_back(uint32_t(bytes));
         bytes += (u.first->words.size() * 4 + 31) & ~VkDeviceSize(31);
     }
-    bool changed = used != _poolGrids || !_volumeGrids.buffer;
+    const uint32_t lutBase = uint32_t(bytes / 4);
+    bool changed = used != _poolGrids || luts != _poolLuts || !_volumeGrids.buffer;
+    bytes += luts.size() * 4;
     if (changed) {
         _Flush();
         _device->Destroy(_volumeGrids);
@@ -353,8 +441,12 @@ void Scene::_CommitVolumes()
             const std::vector<uint32_t> &w = used[i].first->words;
             _copies.push_back({_volumeGrids.buffer, offsets[i], _Stage(w.data(), w.size() * 4), w.size() * 4});
         }
+        if (!luts.empty()) {
+            _copies.push_back({_volumeGrids.buffer, lutBase * 4ull, _Stage(luts.data(), luts.size() * 4), luts.size() * 4});
+        }
         _Flush();
         _poolGrids = std::move(used);
+        _poolLuts = std::move(luts);
     }
     auto offsetOf = [&](const std::shared_ptr<VolumeGrid> &g) {
         for (size_t i = 0; i < _poolGrids.size(); ++i) {
@@ -393,6 +485,17 @@ void Scene::_CommitVolumes()
             g.grids[1 + k] = usable ? offsetOf(d.grids[1 + k]) : kNone;
             g.types[1 + k] = other.type;
             Store(toOther * indexToObject, g.toGrid[k]);
+            g.factorMasks[3] |= usable ? d.roles & (1u << k) : 0u;
+        }
+        g.factorMasks[0] = d.shading.scatteringFactors;
+        g.factorMasks[1] = d.shading.absorptionFactors;
+        g.factorMasks[2] = d.shading.emissionFactors;
+        for (int k = 0; k < 4; ++k) {
+            g.lutOffsets[k] = d.lutOffsets[k] == kNone ? kNone : lutBase + d.lutOffsets[k];
+            // A factor whose grid isn't usable reads 0 (slot 4).
+            g.lutSlots[k] = k < 3 && d.slots[k] < 4 && (d.slots[k] == 0 || g.grids[d.slots[k]] != kNone) ? d.slots[k] : 4;
+            g.lutLow[k] = d.lutLow[k];
+            g.lutScale[k] = g.lutSlots[k] == 4 && k < 3 ? 0.0f : d.lutScale[k];
         }
         // The material's coefficients per channel (the march's
         // transmittance is coloured); the shadow maps and traced shadows
@@ -469,6 +572,11 @@ void Scene::_CommitVolumes()
     _gpu.volumes = _volumeTable.buffer;
     _gpu.volumeGrids = _volumeGrids.buffer;
     _gpu.volumeCount = uint32_t(table.size());
+    _gpu.volumeFactors = std::any_of(table.begin(), table.end(), [](const GpuVolume &g) {
+        return ((g.factorMasks[0] | g.factorMasks[1] | g.factorMasks[2]) & 7u) != 0 ||
+               g.factorMasks[0] != VolumeShading::kDensity || g.factorMasks[1] != VolumeShading::kDensity ||
+               g.factorMasks[2] != VolumeShading::kDensity;
+    });
 }
 
 } // namespace vkr

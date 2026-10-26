@@ -2,6 +2,8 @@
 
 #include "device.h"
 
+#include <array>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -50,6 +52,18 @@ struct VolumeShading {
     // Read from a volume material. Without one the roles other than density
     // are only read with VolumePass::Settings::defaultFields.
     bool material = false;
+    // Functions of one float field each (a material's remaps and ramps),
+    // baked into lookup tables over the field's value range; the masks say
+    // which multiply scattering, absorption and emission (bit k: factors[k];
+    // kDensity: the density field itself, as the coefficients above are per
+    // unit of it). See Scene::_CommitVolumes.
+    struct Factor {
+        std::string field;
+        std::function<std::array<float, 3>(float)> value;
+    };
+    static constexpr uint32_t kMaxFactors = 3, kDensity = 8;
+    std::vector<Factor> factors;
+    uint32_t scatteringFactors = kDensity, absorptionFactors = kDensity, emissionFactors = kDensity;
 };
 
 // A heterogeneous medium: the density field's extinction, the colour
@@ -87,7 +101,14 @@ struct GpuVolume {
                                 // is the material's g (else the setting); z: 1 = no volume material
     float emission[4];          // rgb: radiance per unit length per unit of density field
     float fieldEmission[4];     // rgb: times the emission field (scale times tint)
+    uint32_t factorMasks[4];    // VolumeShading's masks (scattering, absorption, emission); w: roles read
+                                // (1 temperature as blackbody, 2 colour tint, 4 emission field)
+    uint32_t lutOffsets[4];     // factors' tables in the grid pool (32-bit words; kNone: none); w: the extinction's (floats)
+    uint32_t lutSlots[4];       // the grid (0..3, as grids) each factor reads
+    float lutLow[4];            // table i = (value - low) * scale, 0..kVolumeLut - 1
+    float lutScale[4];
 };
+constexpr uint32_t kVolumeLut = 1024;  // entries (vec4) per factor table
 static_assert(sizeof(GpuVolume) % 16 == 0, "std430 array stride of GpuVolume");
 
 // Raymarches the scene's volumes over the shaded image: after the opaque
@@ -149,8 +170,10 @@ public:
     // `set` must hold the scene's depth (binding 63) in
     // DEPTH_READ_ONLY_OPTIMAL and, at half resolution, Half() (66). Returns
     // false (records nothing) without volumes.
+    // `factors`: a volume reads factor tables (VolumeShading::factors, or a
+    // coefficient not per unit of density); without, a leaner shader runs.
     bool Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, VkImageView color,
-                uint32_t width, uint32_t height, const Settings &settings, Part part = kAll);
+                uint32_t width, uint32_t height, const Settings &settings, Part part = kAll, bool factors = true);
 
     // Inside rendering into one layer of Transparency's sun tint map (just
     // cleared, `mapSize` texels square, viewport set) for frame cascade
@@ -175,8 +198,10 @@ public:
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
-    VkPipeline _pipeline = VK_NULL_HANDLE;   // full resolution, blended over the image
-    VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
+    // Full resolution, blended over the image, and half resolution; [1]:
+    // with factor tables (volume.frag's kFactors).
+    VkPipeline _pipeline[2] = {}, _halfPipeline[2] = {};
+    VkPipeline _upsamplePipeline = VK_NULL_HANDLE;
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map
     VkPipeline _shapePipeline = VK_NULL_HANDLE;   // light_shapes.frag over the image
     Image _half;

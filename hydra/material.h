@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/imaging/hd/material.h"
 
@@ -32,6 +33,10 @@ private:
     std::mutex _mutex;
     std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
 };
+
+// An unconnected input of `node`: authored (colours converted to linear
+// Rec.709), else its node definition's default, else 0; scalars splat.
+GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input);
 
 // Reads a UsdPreviewSurface, MaterialX standard_surface or OpenPBR network
 // into a vkr::Material. The vkr::Material

@@ -862,24 +862,7 @@ private:
     // else the node definition's default, else zero.
     GfVec4f _Parameter(HdMaterialNode2 const &node, TfToken const &input) const
     {
-        GfVec4f v(0.0f);
-        const auto it = node.parameters.find(input);
-        if (it != node.parameters.end() && ToVec4(it->second, &v)) {
-            const TfToken colorSpace = ParameterColorSpace(node.parameters, input);
-            if (NeedsConversion(colorSpace)) {
-                const GfVec3f rgb = GfColor(GfColor(GfVec3f(v[0], v[1], v[2]), GfColorSpace(colorSpace)),
-                                            GfColorSpace(GfColorSpaceNames->LinearRec709))
-                                        .GetRGB();
-                v = GfVec4f(rgb[0], rgb[1], rgb[2], v[3]);
-            }
-            return v;
-        }
-        if (SdrShaderNodeConstPtr def = SdrRegistry::GetInstance().GetShaderNodeByIdentifier(node.nodeTypeId)) {
-            if (SdrShaderPropertyConstPtr p = def->GetShaderInput(input)) {
-                ToVec4(p->GetDefaultValue(), &v);
-            }
-        }
-        return v;
+        return HdVkParameter(node, input);
     }
 
     bool _Connected(HdMaterialNode2 const &node, TfToken const &input) const
@@ -1699,6 +1682,28 @@ std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string
         }
     }
     return tiles;
+}
+
+GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input)
+{
+    GfVec4f v(0.0f);
+    const auto it = node.parameters.find(input);
+    if (it != node.parameters.end() && ToVec4(it->second, &v)) {
+        const TfToken colorSpace = ParameterColorSpace(node.parameters, input);
+        if (NeedsConversion(colorSpace)) {
+            const GfVec3f rgb = GfColor(GfColor(GfVec3f(v[0], v[1], v[2]), GfColorSpace(colorSpace)),
+                                        GfColorSpace(GfColorSpaceNames->LinearRec709))
+                                    .GetRGB();
+            v = GfVec4f(rgb[0], rgb[1], rgb[2], v[3]);
+        }
+        return v;
+    }
+    if (SdrShaderNodeConstPtr def = SdrRegistry::GetInstance().GetShaderNodeByIdentifier(node.nodeTypeId)) {
+        if (SdrShaderPropertyConstPtr p = def->GetShaderInput(input)) {
+            ToVec4(p->GetDefaultValue(), &v);
+        }
+    }
+    return v;
 }
 
 HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)

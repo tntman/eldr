@@ -67,6 +67,9 @@ layout(location = 0, index = 0) out vec4 outColor;
 layout(location = 0, index = 1) out vec4 outTransmittance;
 
 const uint kMaxVolumes = 8u;     // per pixel, the nearest
+// Volumes read factor tables (VolumePass::Record's `factors`); without, the
+// march keeps the registers they'd take.
+layout(constant_id = 0) const bool kFactors = true;
 const float kOpaque = 0.01;      // transmittance at which a ray stops
 
 // Where on the frame this invocation's ray goes, in full resolution pixels
@@ -218,10 +221,12 @@ float Density(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 xi)
     return max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
 }
 
-// Optical depth from density index p towards a distant light (index-space
-// direction dl per world unit) to the edge of the box, in `steps` steps.
-float ShadowMarch(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo, vec3 hi, float noise, uint steps,
-                  float extinction)
+// The density (without a table) or the extinction table's value
+// (ExtinctionTable) integrated from density index p towards a distant
+// light (index-space direction dl per world unit) to the edge of the box,
+// in `steps` steps.
+float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo,
+                  vec3 hi, float noise, uint steps)
 {
     float far = Slabs(p, dl, lo, hi).y;
     if (!(far > 0.0) || steps == 0u) {
@@ -230,9 +235,10 @@ float ShadowMarch(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo, v
     float dt = far / float(steps), tau = 0.0;
     for (uint k = 0u; k < steps; ++k) {
         ivec3 ijk = ivec3(floor(p + dl * ((float(k) + noise) * dt) + 0.5));
-        tau += max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
+        float rho = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
+        tau += table == kNone ? rho : ExtinctionTable(table, low, scale, rho);
     }
-    return tau * dt * extinction;
+    return tau * dt;
 }
 
 // Optical depth of the volumes other than `self` along x + dir * s, s in
@@ -259,7 +265,9 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
             continue;
         }
         float ds = (span.y - span.x) / float(params.shadowSteps);
-        float scale = ds * length(dir) * volumes[j].medium.x * params.density;
+        uint table = kFactors ? volumes[j].lutOffsets.w : kNone;
+        float low = volumes[j].lutLow.w, tableScale = volumes[j].lutScale.w;
+        float scale = ds * length(dir) * params.density * (table == kNone ? volumes[j].medium.x : 1.0);
         vec3 safe = SafeDir(di);
         pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
         float k = 0.0;
@@ -276,11 +284,37 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
                 k = max(k + 1.0, ceil((min(min(exits.x, exits.y), exits.z) - span.x) / ds - noise));
                 continue;
             }
-            tau += max(v, 0.0) * scale;
+            tau += (table == kNone ? max(v, 0.0) : ExtinctionTable(table, low, tableScale, max(v, 0.0))) * scale;
             k += 1.0;
         }
     }
     return tau;
+}
+
+// Volume i's factor k at density index p (rho: the density there): its
+// table at its field's value (nearest voxel; 0 without the field).
+vec3 Factor(uint i, uint k, vec3 p, float rho, uvec4 types, inout pnanovdb_readaccessor_t temperature,
+            inout pnanovdb_readaccessor_t color, inout pnanovdb_readaccessor_t emission)
+{
+    uint slot = volumes[i].lutSlots[k];
+    float v = rho;
+    if (slot != 0u) {
+        uint r = (min(slot, 3u) - 1u) * 3u;
+        ivec3 q = ivec3(floor(Row3(volumes[i].toGrid[r], volumes[i].toGrid[r + 1u], volumes[i].toGrid[r + 2u], p, 1.0)
+                              + 0.5));
+        v = slot == 1u ? ReadRgb(types.y, temperature, q).x
+          : slot == 2u ? ReadRgb(types.z, color, q).x
+          : slot == 3u ? ReadRgb(types.w, emission, q).x : 0.0;
+    }
+    return Lut(volumes[i].lutOffsets[k], volumes[i].lutLow[k], volumes[i].lutScale[k], v);
+}
+
+// The density (bit 3 of mask m) times the factors (bit k: fk) it names.
+vec3 Scale(uint m, float rho, vec3 f0, vec3 f1, vec3 f2)
+{
+    return max(((m & 8u) != 0u ? rho : 1.0) * ((m & 1u) != 0u ? f0 : vec3(1.0)) * ((m & 2u) != 0u ? f1 : vec3(1.0)) *
+                   ((m & 4u) != 0u ? f2 : vec3(1.0)),
+               0.0);
 }
 
 // Marches volume i over [t0, t1] of the world ray, adding to radiance and
@@ -291,9 +325,14 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
     vec3 lo = volumes[i].indexMin.xyz, hi = volumes[i].indexMax.xyz;
     uvec4 grids = volumes[i].grids, types = volumes[i].types;
+    uvec4 masks = volumes[i].factorMasks;
     if (volumes[i].medium.z > 0.0 && params.defaultFields == 0u) {
-        grids.yzw = uvec3(kNone);  // no volume material: density only (VolumePass::Settings::defaultFields)
+        masks.w = 0u;  // no volume material: density only (VolumePass::Settings::defaultFields)
     }
+    uint factors = (masks.x | masks.y | masks.z) & 7u;
+    const bool plain = !kFactors || (factors == 0u && all(equal(masks.xyz, uvec3(8u))));  // per unit of density
+    uint table = kFactors ? volumes[i].lutOffsets.w : kNone;
+    float tableLow = volumes[i].lutLow.w, tableScale = volumes[i].lutScale.w;
     vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
     vec3 safe = SafeDir(di);
     // The material (or the defaults): scattering and absorption per unit of
@@ -335,20 +374,31 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
         // The other volumes' shadow steps start at a different fraction each
         // step (golden ratio), so they average over the march, not per frame.
         float shadowNoise = fract(noise + 0.6180340 * float(stepsLeft));
+        // The factors (the material's ramps and remaps of a field each),
+        // then which multiply what: the density itself (bit 3) or factor k.
+        vec3 scaleS = vec3(rho), scaleA = vec3(rho), scaleE = vec3(rho);
+        if (!plain) {
+            vec3 f0 = (factors & 1u) != 0u ? Factor(i, 0u, p, rho, types, temperature, color, emission) : vec3(1.0);
+            vec3 f1 = (factors & 2u) != 0u ? Factor(i, 1u, p, rho, types, temperature, color, emission) : vec3(1.0);
+            vec3 f2 = (factors & 4u) != 0u ? Factor(i, 2u, p, rho, types, temperature, color, emission) : vec3(1.0);
+            scaleS = Scale(masks.x, rho, f0, f1, f2);
+            scaleA = Scale(masks.y, rho, f0, f1, f2);
+            scaleE = Scale(masks.z, rho, f0, f1, f2);
+        }
         // The colour field scales the scattering (MaterialX: a colour
         // geompropvalue times it), so it colours what shows through too.
-        vec3 sigmaS = rho * scattering;
-        if (grids.z != kNone) {
+        vec3 sigmaS = scaleS * scattering;
+        if ((masks.w & 2u) != 0u) {
             vec3 q = Row3(volumes[i].toGrid[3], volumes[i].toGrid[4], volumes[i].toGrid[5], p, 1.0);
             sigmaS *= clamp(ReadRgb(types.z, color, ivec3(floor(q + 0.5))), 0.0, 1.0);
         }
-        vec3 sigma = rho * absorption + sigmaS;
-        // Towards the lights: the density's optical depth times this
-        // point's extinction per unit of density.
-        vec3 extinction = sigma / max(rho, 1e-20);
+        vec3 sigma = scaleA * absorption + sigmaS;
+        // Towards the lights: the optical depth of the density (or of the
+        // extinction table) times this point's extinction per unit of it.
+        vec3 extinction = sigma / max(table == kNone ? rho : ExtinctionTable(table, tableLow, tableScale, rho), 1e-20);
         vec3 x = origin + t * dir;
         vec3 emitted = vec3(0.0);
-        if (grids.y != kNone) {
+        if ((masks.w & 1u) != 0u) {
             vec3 q = Row3(volumes[i].toGrid[0], volumes[i].toGrid[1], volumes[i].toGrid[2], p, 1.0);
             float kelvin = ReadFloat(types.y, temperature, ivec3(floor(q + 0.5))) * volumes[i].params.x;
             // Physical: brighter as T^4. MaterialX's blackbody is luminance 1
@@ -358,18 +408,18 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                                                        : smoothstep(500.0, 900.0, kelvin);
             emitted += Blackbody(kelvin) * volumes[i].params.y * physical;
         }
-        if (grids.w != kNone) {
+        if ((masks.w & 4u) != 0u) {
             vec3 q = Row3(volumes[i].toGrid[6], volumes[i].toGrid[7], volumes[i].toGrid[8], p, 1.0);
             emitted += max(ReadRgb(types.w, emission, ivec3(floor(q + 0.5))), 0.0) * volumes[i].fieldEmission.rgb;
         }
-        emitted += volumes[i].emission.rgb * rho;
+        emitted += volumes[i].emission.rgb * scaleE;
         radiance += transmittance * emitted * params.emission * dt;
         if (Max3(sigma) > 0.0) {
             vec3 albedo = mix(vec3(0.0), sigmaS / max(sigma, 1e-20), greaterThan(sigma, vec3(0.0)));
             vec3 light = vec3(0.0);
             if (frame.envRadiance.w > 0.0) {
-                vec3 depth = extinction * ShadowMarch(shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
-                                                      (params.shadowSteps + 1u) / 2u, 1.0);
+                vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
+                                                      (params.shadowSteps + 1u) / 2u);
                 if (mutual) {
                     depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
@@ -378,8 +428,8 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
                 vec3 l = sun.position.xyz;
-                vec3 depth = extinction * ShadowMarch(shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
-                                                      params.shadowSteps, 1.0);
+                vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
+                                                      params.shadowSteps);
                 // Octave i: light, optical depth and anisotropy times 1/2^i.
                 vec3 scattered = vec3(0.0);
                 for (float a = 1.0; a > 0.2; a *= 0.5) {

@@ -4212,6 +4212,16 @@ int main()
             Expect(std::abs(Render(renderer, absorbing, frame).At(32, 32, 2) - std::exp(-1.5f)) < 0.03f,
                    "the density setting multiplies the material's");
             frame.volume.density = 1.0f;
+            // A factor (a material's ramp or remap of a field, baked into a
+            // table) that is the density itself renders as the density: its
+            // table and the extinction's are exact for it, lights included.
+            shading->factors = {{"density", [](float v) { return std::array<float, 3>{v, v, v}; }}};
+            shading->absorptionFactors = 1;
+            absorbing.Commit();
+            Expect(std::abs(Render(renderer, absorbing, frame).At(32, 32, 2) - std::exp(-0.75f)) < 0.03f,
+                   "a volume factor (table) of the density");
+            shading->factors.clear();
+            shading->absorptionFactors = vkr::VolumeShading::kDensity;
             const float red[3] = {1, 0, 0}, rest[3] = {0, 1, 1};
             std::copy(red, red + 3, shading->scattering);
             std::copy(rest, rest + 3, shading->absorption);
