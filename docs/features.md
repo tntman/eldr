@@ -194,8 +194,8 @@ light's power: by Steiner's formula, `area / (pi a^2) + perimeter / (4 a)
 1.2-4x too bright (worst at grazing angles and for tubes); the diffuse
 light is unchanged.
 
-Floor reflections at roughness 0.15 (direct glossy, `tests/scenes/lights.usda`
-plus a 4 degree sun and a tube) were measured against a brute-force GGX
+Floor reflections at roughness 0.15 (direct glossy; `tests/scenes/lights.usda`
+and, for a 4 degree sun and a tube, `light_reflections.usda`) were measured against a brute-force GGX
 integral, and Karma 22 (64 spp, colour limit off) against the same. The cells
 give the peak / the highlight's total, relative to the integral.
 
