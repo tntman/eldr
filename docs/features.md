@@ -452,7 +452,8 @@ lights and the dome (`volumeMutualShadows`): the light towards each step also
 marches the other volumes' boxes (smoke between the sun and a fire darkens the
 fire's smoke; a lone volume pays nothing). The froxel fog reads the sun's tint
 map and the local lights' atlas tint as surfaces do, so volumes shadow it and glass tints it whenever those
-shadows are on; volumes behind glass are dimmed and refracted
+shadows are on (fog inside a volume by the part of it nearer the light: each
+texel keeps the volumes' optical-depth range); volumes behind glass are dimmed and refracted
 (`volumeUnderTransparency`); a half-resolution march
 (`volumeResolution` 2) cuts cost by about 3x.
 

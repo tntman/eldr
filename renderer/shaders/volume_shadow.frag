@@ -9,6 +9,10 @@
 // part 1: the same for a local light's atlas tile (cascade = its index in
 // ShadowTiles, originX/Y and mapSize = the tile's rectangle in the tint
 // atlas): perspective rays from the near to the far plane, the depth projected.
+// Alpha holds the optical depth's spread around that depth, the half width
+// w of a uniform medium's range with the same variance (sqrt(3) sigma), as
+// 1 - w^(1/4) in window depth (translucent casters multiply it by 1; cleared
+// 1: none): the fog ramps through it (fog_inject.comp).
 // ponytail: one depth per texel, so surfaces inside a volume are either
 // shadowed by all of it or by none; nearest reads; the grid's tree isn't
 // used to skip empty tiles (VolumeOpticalDepth).
@@ -51,16 +55,20 @@ void main()
                float(params.mapSize) * 2.0 - 1.0;
     vec4 a = inv * vec4(ndc, -1.0, 1.0), b = inv * vec4(ndc, 1.0, 1.0);
     vec3 origin = a.xyz / a.w, dir = b.xyz / b.w - origin;
-    float weighted;  // the optical depth times s
-    float tau = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, weighted);
+    float weighted, weighted2;  // the optical depth times s, s^2
+    float tau = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, weighted, weighted2);
     if (tau < 1e-3) {
         discard;
     }
-    outTint = vec4(vec3(exp(-tau)), 1.0);
     float mean = weighted / tau;
+    float spread = sqrt(3.0 * max(weighted2 / tau - mean * mean, 0.0));
     if (tile) {
-        vec4 clip = viewProj * vec4(origin + dir * mean, 1.0);
-        mean = clip.z / clip.w * 0.5 + 0.5;
+        vec4 n = viewProj * vec4(origin + dir * max(mean - spread, 0.0), 1.0);
+        vec4 f = viewProj * vec4(origin + dir * min(mean + spread, 1.0), 1.0);
+        vec4 m = viewProj * vec4(origin + dir * mean, 1.0);
+        spread = 0.25 * (f.z / f.w - n.z / n.w);  // window depth is half of NDC
+        mean = m.z / m.w * 0.5 + 0.5;
     }
+    outTint = vec4(vec3(exp(-tau)), 1.0 - sqrt(sqrt(max(spread, 0.0))));
     gl_FragDepth = mean;
 }

@@ -61,6 +61,22 @@ float SunShadow(vec3 p, float viewDepth)
 
 const uint kFeatureTranslucentShadows = 8192u;  // as transparency.glsl's
 
+// What a tint texel (colour c, depth d) lets through to window depth ref:
+// all of it behind the volumes' optical-depth range d +- w (alpha 1 -
+// w^(1/4), volume_shadow.frag; 0 width for translucent casters), a linear
+// share of its optical depth inside it, so fog inside a volume is shadowed
+// by the part of it nearer the light.
+// ponytail: one range per texel: with glass nearer the light in the same
+// texel, the range centres on the glass.
+vec3 TintThrough(vec4 c, float d, float ref)
+{
+    float w = 1.0 - c.a;
+    w *= w;
+    w *= w;
+    float f = w > 0.0 ? clamp((ref - d + w) / (2.0 * w), 0.0, 1.0) : (ref > d ? 1.0 : 0.0);
+    return pow(max(c.rgb, vec3(1e-4)), vec3(f));
+}
+
 // The sun's tint map at p (kFeatureTranslucentShadows: whenever volumes or
 // translucent casters draw into it, as surfaces read it): one nearest tap.
 vec3 SunTint(vec3 p, float viewDepth)
@@ -76,7 +92,7 @@ vec3 SunTint(vec3 p, float viewDepth)
     vec3 ndc = clip.xyz / clip.w;
     ivec2 size = textureSize(sunTint, 0).xy;
     ivec3 q = ivec3(clamp(ivec2((ndc.xy * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), c);
-    return ndc.z * 0.5 + 0.5 > texelFetch(sunTintDepth, q, 0).r ? texelFetch(sunTint, q, 0).rgb : vec3(1.0);
+    return TintThrough(texelFetch(sunTint, q, 0), texelFetch(sunTintDepth, q, 0).r, ndc.z * 0.5 + 0.5);
 }
 
 // A local light's shadow at p, its atlas tile's depth times its tint
@@ -106,7 +122,7 @@ vec3 LocalShadow(uint index, Light light, vec3 p)
     if (Feature(kFeatureTranslucentShadows)) {
         ivec2 size = textureSize(atlasTint, 0);
         ivec2 q = clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1);
-        shadow *= ref > texelFetch(atlasTintDepth, q, 0).r ? texelFetch(atlasTint, q, 0).rgb : vec3(1.0);
+        shadow *= TintThrough(texelFetch(atlasTint, q, 0), texelFetch(atlasTintDepth, q, 0).r, ref);
     }
     return shadow;
 }

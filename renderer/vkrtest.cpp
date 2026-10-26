@@ -3837,6 +3837,34 @@ int main()
                            std::abs(dark.At(52, 32, 0) - lampLit.At(52, 32, 0)) < 0.05f * lampLit.At(52, 32, 0),
                        "fog: volumes shadow it from local lights");
             }
+            {
+                // Fog inside a volume: a pancake (radius 6 in x and y, 0.75
+                // in z, density 0.25) across the view at z -2 under a sun
+                // from +y: the light crosses 3 optical depths of it from top
+                // to bottom, so the fog inside it near the middle of the view
+                // gets part of that, above its mean depth (y 0) as below.
+                // With one depth per texel the fog above y 0 was unshadowed.
+                vkr::Scene pan(&device);
+                vkr::Mesh *back = AddEmitter(pan, -10, -10, 10, 10, -4, 0.0f);
+                std::fill(back->material->specular, back->material->specular + 3, 0.0f);
+                vkr::Light *top = AddLight(pan, 0, 1, 0);
+                std::fill(top->irradiance, top->irradiance + 3, 4.0f * 3.14159265f);
+                top->castShadows = true;
+                vkr::Volume *pancake = pan.AddVolume();
+                pancake->fields["density"] = BallGrid(12.0f, 0.25f);
+                pancake->transforms = {16, 0, 0, 0, 0, 16, 0, 0, 0, 0, 2, 0, 0, 0, -2, 1};
+                pan.Commit();
+                const Image inside = Render(*std::make_unique<vkr::Renderer>(device), pan, frame);
+                frame.volume.shadows = false;
+                const Image unshadowed = Render(*std::make_unique<vkr::Renderer>(device), pan, frame);
+                frame.volume.shadows = true;
+                const float above = inside.At(32, 44, 0) / unshadowed.At(32, 44, 0);
+                const float below = inside.At(32, 20, 0) / unshadowed.At(32, 20, 0);
+                std::printf("fog inside a volume: above its mean %.3f, below %.3f of unshadowed (%.3f)\n", above, below,
+                            unshadowed.At(32, 44, 0));
+                Expect(unshadowed.At(32, 44, 0) > 0.1f && above < 0.9f && below < 0.9f,
+                       "fog inside a volume is shadowed by the part of it nearer the light");
+            }
 
             // Height fog: thinner upwards (y), so less light scatters at the
             // top of the view than at the bottom.

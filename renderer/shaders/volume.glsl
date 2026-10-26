@@ -62,14 +62,16 @@ const float kShadowOpaque = 6.9;  // optical depth of 1e-3 transmittance: nothin
 
 // Optical depth of the first `count` volumes along origin + dir * s, s in
 // [0, 1] (volume_shadow.frag's texels, traced shadow rays), stepping
-// 2 x stepSize density voxels (VolumeParams); `weighted`: its integral
-// times s. Segments outside a volume's box are skipped and the march stops
+// 2 x stepSize density voxels (VolumeParams); `weighted`, `weighted2`: its
+// integral times s and times s^2. Segments outside a volume's box are skipped and the march stops
 // at kShadowOpaque, but empty tiles inside it are still stepped.
-float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, out float weighted)
+float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, out float weighted,
+                         out float weighted2)
 {
     float len = length(dir);
     float tau = 0.0;
     weighted = 0.0;
+    weighted2 = 0.0;
     for (uint i = 0u; i < count && tau < kShadowOpaque; ++i) {
         vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
         vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
@@ -87,6 +89,7 @@ float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, floa
             float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0) * sigma;
             tau += d;
             weighted += d * s;
+            weighted2 += d * s * s;
         }
     }
     return tau;
