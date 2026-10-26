@@ -92,7 +92,7 @@ Three ways to turn jittered samples into a pixel.
 |---|---|---|
 | Interactive TAA | Camera or scene moves | Halton 2,3 jitter; Catmull-Rom history with YCoCg clipping and motion vectors. Effects loop over `eldr:interactiveSamples` (8) noise samples. `eldr:renderScale` < 1 upscales. |
 | Film | Still for 3 frames; first frame of a fresh history (usdrecord) | fp32 weighted average through a Gaussian filter (`eldr:filmFilterRadius`, 1.5 px) until `eldr:filmSamples` (64): then converged (`IsConverged`, `percentDone`). Any camera, scene or setting change restarts it. `eldr:taaSamples` only sets the jitter cycle. |
-| Final quality | `eldr:finalQuality`, or `enableInteractive = false` (husk, hdPrman convention) | The film restarts from scratch after every change, never from the TAA image. |
+| Final quality | `eldr:finalQuality`, `enableInteractive = false` (hdPrman convention), husk, or the renderer's first frame (usdrecord; not in Houdini's viewport) | The film restarts from scratch after every change, never from the TAA image. A later fresh history (resize, camera switch) starts an ordinary film. |
 
 What the film enables (each has a switch, all on by default):
 
@@ -313,7 +313,7 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 - **Size** (`eldr:productResolution`): the frame renders at the first raster product's `resolution`, `pixelAspectRatio` (by `aspectRatioConformPolicy`) and `dataWindowNDC` when that differs from the app's buffers. No authored `resolution` means 2048x1080 (as husk and Karma). The EXR display window is the resolution, the data window the rendered part. The app's buffers (colour, depth, ids, AOVs, husk's float primid and Cryptomatte) get a nearest resample.
 - **Colour** (`eldr:productLinear`, on): the beauty is linear and untonemapped, exposed by the frame's exposure, no bloom. For exactly-as-rendered values set `eldr:autoExposure` off and `eldr:exposureCompensation` 0. Off: exposed, bloomed, tonemapped (ACES default).
 
-**husk.** husk binds vars by its own channel names ("C", "depth") and carries `sourceName`/`sourceType`; Eldr resolves the AOV from that, so the table above holds under husk, which writes the EXR (Float32Vec4 colour renders as half and widens). A settings prim with `husk:` attributes makes the frame offline: final quality, no auto exposure (unless `eldr:autoExposure` is authored), linear beauty. Any `eldr:<setting>` attribute on the active UsdRenderSettings prim is that render setting, applied when its value changes.
+**husk.** husk binds vars by its own channel names ("C", "depth") and carries `sourceName`/`sourceType`; Eldr resolves the AOV from that, so the table above holds under husk, which writes the EXR (Float32Vec4 colour renders as half and widens). husk (which hands Eldr its products as the `rasterRenderProducts` setting) makes the frame offline, whatever the settings prim holds: final quality, no auto exposure (unless `eldr:autoExposure` is authored), linear beauty. Any `eldr:<setting>` attribute on the active UsdRenderSettings prim is that render setting, applied when its value changes.
 
 ## Performance
 

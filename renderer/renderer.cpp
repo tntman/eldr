@@ -2813,7 +2813,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool changed = !fresh && (cameraMoved || gpu.moved || filmKey != _filmKey);
     _filmKey = filmKey;
     _stillFrames = changed ? 0 : _stillFrames + 1;
-    _freshRun = fresh || (_freshRun && !changed);
+    // Final without finalQuality: only a run from the renderer's very first frame.
+    _freshRun = (fresh && !_hasLastFrame && frame.firstFrameFinal) || (_freshRun && !changed);
     if (fresh || changed) {
         _accumStart = std::chrono::steady_clock::now();
         _accumDone = false;
@@ -2835,9 +2836,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                               : changed || _filmSamples == 0 ? (frame.finalQuality || _freshRun ? 1 : 2)
                                                                : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
-    // A run is final if it started so (filmMode 1); one that started from
-    // the TAA image (2) stays interactive.
-    _filmFinal = film && (filmMode == 1 || (filmMode == 0 && _filmFinal));
+    // A run is final if it started so: finalQuality, or the first frame's
+    // fresh run. One that started from the TAA image (2), or from a later
+    // fresh history (filmMode 1 without either), stays interactive.
+    _filmFinal = film && (filmMode != 0 ? (frame.finalQuality || _freshRun) : _filmFinal);
     _filmRuns += filmMode != 0 ? 1 : 0;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA

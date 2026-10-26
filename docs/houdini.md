@@ -93,7 +93,7 @@ husk -R HdVkRendererPlugin -c /cam --res 256 256 -o out.png tests\scenes\volume.
 | Cryptomatte | Layers `<name>00`, `01`, `02` (6 ranks, soft edges from the film) with manifest metadata, as Karma. Always three layers whatever `cryptomatterank`. |
 | `ray:primid` | Float: 0 off objects, Hydra primId + 1 on objects (no coverage). usdview and usdrecord keep Int32 for picking. |
 | Product size | When the product's framing differs from husk's buffers (`husk --res`), Eldr renders at the product's framing and resamples (nearest) into all buffers |
-| Beauty | With a husk settings prim (`husk:*`): final-quality film, linear unexposed beauty (`eldr:productLinear`), auto exposure off unless `eldr:autoExposure` is authored |
+| Beauty | Under husk (it sets `rasterRenderProducts`), whatever the settings prim: final-quality film, linear unexposed beauty (`eldr:productLinear`), auto exposure off unless `eldr:autoExposure` is authored |
 | `eldr:` attributes | On the UsdRenderSettings prim they are render settings (`custom int eldr:filmSamples = 7`); they also work with `usdrecord --renderSettingsPrimPath` |
 | Sequences | `husk -f 1 -n 3` with `$F4` in the product name works; husk waits for each frame to converge. Motion blur over the camera shutter is smooth (`eldr:motionBlurResidual`). |
 | Lens distortion | A Karma Physical Lens in `karma:camera:lensshader` (or bound lens material): `opencv_k1..k6`, `p1`, `p2` are read; fence posts land within 0.002 of Karma. The EXR beauty is warped too. |
@@ -118,6 +118,8 @@ Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0
 | Topic | Behaviour |
 |---|---|
 | Readback | Houdini gives an OpenGL Hgi but composites with Vulkan, so shared GL textures show nothing: Eldr reads frames back. Houdini binds colour (Float16Vec4), depth, normal, primvars:st, primId, instanceId. A buffer returns only if Houdini mapped it since the last frame; while the camera moves, unread extra AOVs are skipped. `HDVK_DEBUG_AOVS=1` prints the bindings. |
+| Render Settings LOP | Looking through one changes only what its Eldr tab sets. Houdini sets `houdini:viewport`: the frame stays interactive (no husk mode, the film never starts "final", even after a camera switch) and the products' resolution doesn't apply. A missing camera (the default `/cameras/camera1`) keeps the viewport's camera. `tests/houdini_render_settings.py` checks this headless. |
+| Diagnostics | `HDVK_DEBUG_AOVS=1` also prints every non-`eldr:` setting the host sets (`houdini:viewport`, `renderCameraPath`, husk's `rasterRenderProducts`) |
 | Selection outline | `UsdRenderers.json` sets `"needsselection": true`; Houdini draws the outline itself |
 | Ids | primId is the render index's prim id, instanceId the instance index, as Houdini's picking expects |
 | Frame times | 1280x720, moving camera. Kitchen_set: colour, depth, ids read 23.7 ms; colour and depth 20.8 ms; all six 32.1 ms. step4 with ids: 12.3 ms. usdview (GPU sharing): about 15 ms (Kitchen_set), 11 ms (step4). |

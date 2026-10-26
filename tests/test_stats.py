@@ -87,6 +87,19 @@ for _ in range(100):
         break
 print("stages after a move:", sorted(stages))
 expect("accumulating" in stages, "a film after a camera move is accumulating")
+# A camera jump that also resizes (a fresh history, as a Solaris camera switch)
+# stays interactive: only the renderer's first frame starts a final film.
+for viewport in (SIZE, SIZE // 2):
+    engine.SetRenderViewport(Gf.Vec4d(0, 0, viewport, viewport))
+    jump = frustum.ComputeViewMatrix() * Gf.Matrix4d().SetTranslate(Gf.Vec3d(-1.0, 0.5, 0))
+    engine.SetCameraState(jump if viewport != SIZE else frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
+    jumped = set()
+    for _ in range(4):
+        engine.Render(stage.GetPseudoRoot(), params)
+        jumped.add(engine.GetRenderStats().get("rendererStage"))
+    expect("final" not in jumped and (viewport == SIZE or "accumulating" in jumped),
+           "a camera jump at %d px is not final: %s" % (viewport, sorted(jumped)))
+engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 rows = dict(hdvkUsdview.Rows(stats))
 expect(rows.get("Triangles drawn") == "12" and rows.get("Triangles in scene") == "24" and "Shading" in rows,
        "the usdview window's rows")
