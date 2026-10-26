@@ -542,7 +542,7 @@ quantises the lit intensity relative to the albedo into flat bands with
   tracing's BLASes (`rtDisplacement`). A graph reading what differs between
   a mesh's instances (world-space position or normal, instance primvars)
   gives the 256 instances largest on screen a displaced BLAS each, rebuilt
-  when they move; the rest share the mesh's (displaced as its first
+  when they move or their instance primvars change; the rest share the mesh's (displaced as its first
   instance).
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also

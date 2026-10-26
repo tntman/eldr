@@ -1,4 +1,4 @@
-﻿#include "scene.h"
+#include "scene.h"
 
 #include "vkmath.h"
 #include "lod.h"
@@ -337,11 +337,21 @@ std::vector<Scene::DisplacedInstance> Scene::LargestDisplacedInstances(const flo
                 d2 += w * w;
             }
             const float scale2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
-            uint64_t key = 1469598103934665603ull;  // FNV-1a over the transform's bits
-            for (int k = 0; k < 16; ++k) {
-                uint32_t bits;
-                std::memcpy(&bits, &x[k], sizeof(bits));
-                key = (key ^ bits) * 1099511628211ull;
+            // FNV-1a over the bits of its transform and its instance-rate
+            // primvars' values (what a per-instance graph reads).
+            uint64_t key = 1469598103934665603ull;
+            auto hash = [&](const float *v, size_t n) {
+                for (size_t k = 0; k < n; ++k) {
+                    uint32_t bits;
+                    std::memcpy(&bits, &v[k], sizeof(bits));
+                    key = (key ^ bits) * 1099511628211ull;
+                }
+            };
+            hash(x, 16);
+            for (const Primvar &pv : m.primvars) {
+                if (pv.rate == Primvar::Rate::Instance && pv.values.size() >= size_t(i + 1) * pv.components) {
+                    hash(&pv.values[size_t(i) * pv.components], pv.components);
+                }
             }
             found.push_back({r2 * scale2 / std::max(d2, 1e-12f), {m._instanceBase + i, uint32_t(m._slot), key}});
         }

@@ -235,5 +235,71 @@ print(f"world-space graph, two instances: traced shadows against the shadow maps
 expect(far[0] > 0.01 and far[1] > 0.01, "the rest surface's traced shadows differ from the maps")
 expect(max(near) < 0.5 * min(far), f"each instance's traced shadows follow its own ridges ({near})")
 
+# An instance primvar the graph reads, 0.03 sin(40 x_object + phase): when
+# the second instance's phase changes (nothing else does), its BLAS is
+# rebuilt, so in the same engine its traced shadows follow its new ridges.
+def phase_scene():
+    stage = world_scene()
+    for path in ("position", "x", "scaled", "sin"):
+        stage.RemovePrim("/mtl/graph/" + path)
+    disp = UsdShade.Shader(stage.GetPrimAtPath("/mtl/disp"))
+    position = UsdShade.Shader.Define(stage, "/mtl/graph/position")
+    position.CreateIdAttr("ND_position_vector3")
+    position.CreateInput("space", Sdf.ValueTypeNames.String).Set("object")
+    x = UsdShade.Shader.Define(stage, "/mtl/graph/x")
+    x.CreateIdAttr("ND_extract_vector3")
+    x.CreateInput("in", Sdf.ValueTypeNames.Float3).ConnectToSource(position.ConnectableAPI(), "out")
+    x.CreateInput("index", Sdf.ValueTypeNames.Int).Set(0)
+    scaled = UsdShade.Shader.Define(stage, "/mtl/graph/scaled")
+    scaled.CreateIdAttr("ND_multiply_float")
+    scaled.CreateInput("in1", Sdf.ValueTypeNames.Float).ConnectToSource(x.ConnectableAPI(), "out")
+    scaled.CreateInput("in2", Sdf.ValueTypeNames.Float).Set(20.0)  # x_object spans twice x_world
+    phase = UsdShade.Shader.Define(stage, "/mtl/graph/phase")
+    phase.CreateIdAttr("ND_geompropvalue_float")
+    phase.CreateInput("geomprop", Sdf.ValueTypeNames.String).Set("phase")
+    shifted = UsdShade.Shader.Define(stage, "/mtl/graph/shifted")
+    shifted.CreateIdAttr("ND_add_float")
+    shifted.CreateInput("in1", Sdf.ValueTypeNames.Float).ConnectToSource(scaled.ConnectableAPI(), "out")
+    shifted.CreateInput("in2", Sdf.ValueTypeNames.Float).ConnectToSource(phase.ConnectableAPI(), "out")
+    wave = UsdShade.Shader.Define(stage, "/mtl/graph/sin")
+    wave.CreateIdAttr("ND_sin_float")
+    wave.CreateInput("in", Sdf.ValueTypeNames.Float).ConnectToSource(shifted.ConnectableAPI(), "out")
+    disp.CreateInput("displacement", Sdf.ValueTypeNames.Float).ConnectToSource(wave.ConnectableAPI(), "out")
+    instancer = UsdGeom.PointInstancer(stage.GetPrimAtPath("/pair"))
+    UsdGeom.PrimvarsAPI(instancer).CreatePrimvar("phase", Sdf.ValueTypeNames.FloatArray,
+                                                 UsdGeom.Tokens.varying).Set(Vt.FloatArray([0.0, 0.0]))
+    return stage
+
+
+def engine_render(engine, stage, **settings):
+    for name, value in settings.items():
+        engine.SetRendererSetting("eldr:" + name, value)
+    for _ in range(3):
+        engine.Render(stage.GetPseudoRoot(), UsdImagingGL.RenderParams())
+    return fbo.toImage()
+
+
+shifting = phase_scene()
+engine = UsdImagingGL.Engine()
+assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+for name, value in dict(taa=False, autoExposure=False, ambientOcclusion=False, ssr=False).items():
+    engine.SetRendererSetting("eldr:" + name, value)
+engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
+frustum = Gf.Frustum()
+frustum.SetPerspective(40, 1.0, 0.1, 100)
+frustum.Transform(Gf.Matrix4d().SetLookAt(Gf.Vec3d(0, 1.2, 1.6), Gf.Vec3d(0, 0, 0), Gf.Vec3d(0, 1, 0)).GetInverse())
+engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
+before = engine_render(engine, shifting, rtShadows=True)
+phaseVar = UsdGeom.PrimvarsAPI(shifting.GetPrimAtPath("/pair")).GetPrimvar("phase")
+phaseVar.Set(Vt.FloatArray([0.0, 2.0]))  # the second instance's ridges move
+traced = engine_render(engine, shifting, rtShadows=True)
+maps = engine_render(engine, shifting, rtShadows=False)
+del engine
+near, moved = halves(traced, maps), halves(before, traced)
+print(f"instance primvar edit: traced shadows against the shadow maps left {near[0]:.4f} right {near[1]:.4f}; "
+      f"changed by the edit left {moved[0]:.4f} right {moved[1]:.4f}")
+expect(moved[1] > 0.02 and moved[0] < 0.005, "the edit moves the second instance's ridges only")
+expect(near[1] < 2 * near[0] + 0.005, f"its traced shadows follow the edited primvar ({near})")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
