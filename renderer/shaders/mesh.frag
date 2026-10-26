@@ -1112,7 +1112,8 @@ void main()
     PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
     SubsurfaceLayers();
     vec3 FssEss = (f0 * ab.x + ab.y) * tint;
-    vec3 energyCompensation = (1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0)) * tint;
+    bool multiScatter = (frame.features.x & kFeatureMultiScatter) != 0u;  // always compiled, not a specialization bit
+    vec3 energyCompensation = (multiScatter ? 1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0) : vec3(1.0)) * tint;
 
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
@@ -1257,7 +1258,7 @@ void main()
         domeKept *= 1.0 - imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;  // as RtReflection
     }
     specular = RtReflection(specular, inWorldPos, n, perceptual);
-    float Ems = 1.0 - Ess;
+    float Ems = multiScatter ? 1.0 - Ess : 0.0;  // off: no multiple-scattering term
     vec3 Favg = f0 + (1.0 - f0) / 21.0;
     vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
     vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);

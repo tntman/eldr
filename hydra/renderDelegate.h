@@ -188,6 +188,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeMutualShadows, "eldr:volumeMutualShadows")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
+    ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \

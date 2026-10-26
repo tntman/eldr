@@ -144,6 +144,9 @@ public:
         // The local lights' shapes (sphere, rect, disk, cylinder) show to the camera as emitters of their
         // radiance, unless the light is hidden from the camera (Light::cameraVisible).
         bool lightShapesVisible = false;
+        // GGX multiple-scattering energy compensation (Fdez-Aguera, Filament). Off: single-scattering GGX
+        // as Karma's UsdPreviewSurface, darker when rough.
+        bool multiScatter = true;
         float view[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         const uint32_t *cryptomatte = nullptr;
         uint32_t cryptomatteIds = 0;

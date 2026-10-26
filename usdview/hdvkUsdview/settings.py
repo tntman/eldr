@@ -35,7 +35,7 @@ GROUPS = [
      "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount"),
     ("Advanced: Materials", False,
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands "
+     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
      "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
     ("Advanced: Transparency", False,
      "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "

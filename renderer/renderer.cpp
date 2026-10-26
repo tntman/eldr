@@ -153,6 +153,8 @@ constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe 
 constexpr uint32_t kFeatureSunRegion = 1u << 24;
 // Mesh.vert's time sample code (FrameData::deform.z).
 constexpr uint32_t kFeatureTimeSample = 1u << 25;
+// frame.glsl: GGX multiple-scattering compensation.
+constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -2813,6 +2815,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
     fd.features[0] |= fd.styles[1] > 0 ? kFeatureToon : 0;
     fd.features[0] |= gpu.sunRegion ? kFeatureSunRegion : 0;
+    fd.features[0] |= frame.multiScatter ? kFeatureMultiScatter : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     if (frame.displacement && gpu.displaced) {

@@ -224,7 +224,7 @@ Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surfa
 
 | Topic | Support |
 |---|---|
-| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Charlie), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation |
+| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Charlie), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation (`eldr:multiScatter`; Karma's UsdPreviewSurface is single-scatter, turn it off to match) |
 | Texturable inputs | base colour, roughness, metallic, emission, opacity, normal, displacement; with `eldr:texturedLobes` / `eldr:texturedTransmission`: specularColor, coat (colour, roughness), sheen, anisotropy, thin film, ior, transmission (colour, depth, thin walled), subsurface (colour, radius, scale) |
 | Texture reads | UsdUVTexture, MaterialX `image` / `tiledimage`, UDIM, wrap modes, uv transforms, several uv sets |
 | Material programs (`eldr:materialGraphs`) | Graphs compiled whole into per-pixel programs: math, mix, overlay, clamp, remap, conditionals, HSV, extract/combine, `image`, `tiledimage`, `place2d`, `texcoord`, `geompropvalue`, ramps, `normalmap`, UsdUVTexture, UsdTransform2d, primvar readers, Houdini ramps `hinvlinear` and `huniformramp`. With `eldr:proceduralTextures`: MaterialX noise (noise2d/3d, fractal2d/3d, cellnoise, worleynoise, position, normal), matching Storm. An uncompilable graph keeps the input's constant (one warning per node type). |
