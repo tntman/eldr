@@ -815,7 +815,7 @@ public:
     std::vector<SkinnedInstance> LargestSkinned(const float eye[3], uint32_t count) const;
     // Instances of meshes displaced per instance (Mesh::_displacePerInstance),
     // the `count` largest on screen as LargestSkinned, with a key that
-    // changes with their transform.
+    // changes with their transform and instance-rate primvars.
     struct DisplacedInstance {
         uint32_t instance, slot;  // instance slot, mesh slot
         uint64_t key;             // of its transform
