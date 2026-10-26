@@ -79,8 +79,10 @@ public:
         bool moving = false;
         // Displaced meshes' BLASes from their displaced vertices
         // (rt_displace.comp; Scene::Gpu::SlotGeometry::displaced) at this
-        // displacement scale; 0: from their rest vertices.
+        // displacement scale; 0: from their rest vertices. Graphs displace
+        // with displacementGraphs (Frame::displacementGraphs).
         float displacement = 0.0f;
+        bool displacementGraphs = true;
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -111,6 +113,7 @@ private:
         uint32_t block = 0, offset = 0, units = 0;  // in _blocks, kUnit bytes each
         VkDeviceAddress address = 0;
         float displacement = 0.0f;  // the Work::displacement it was built with (displaced meshes)
+        bool graphs = true;         // and Work::displacementGraphs
     };
     // A displaced BLAS Record builds: from the slot's rest vertices displaced
     // into _displacedVertices at firstVertex.

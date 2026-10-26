@@ -98,10 +98,18 @@ VARIANTS = {"default": ["eldr:rtRefraction=0"], "gi": ["eldr:gi=true", "eldr:rtR
             "rtRefraction": ["eldr:rtRefraction=2"]}
 # Light path intensity: the beauty is the direct splits times the direct
 # intensity plus the indirect ones times the indirect intensity, refracted
-# and subsurface-transmitted light included.
+# and subsurface-transmitted light included. The splits themselves stay
+# the unscaled light, so at the spheres' centres they match the run
+# without intensities (BASE): the light glass refracts (screen space too)
+# is scaled once, as indirect, not again by the intensities of what lies
+# behind it.
+# ponytail: centres only; SSR's reflections at the rims reflect the
+# previous frame's colour, which carries the intensities.
 INTENSITIES = ["eldr:directIntensity=1.6", "eldr:indirectIntensity=0.5"]
 VARIANTS.update({"intensity": ["eldr:rtRefraction=0"] + INTENSITIES,
                  "intensityRt": ["eldr:rtRefraction=2"] + INTENSITIES})
+BASE = {"intensity": "default", "intensityRt": "rtRefraction"}
+pixels = {}  # (variant, sphere, 0, 0): the EXR's channels at its centre
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
     scale = {"directdiffuse": 1.6, "directglossy": 1.6, "indirectdiffuse": 0.5, "indirectglossy": 0.5,
@@ -122,11 +130,24 @@ for variant, settings in VARIANTS.items():
                 worst = residual if abs(residual) > abs(worst) else worst
         print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
+        pixels[variant, name, 0, 0] = pixel(centre[0], centre[1])
         if name == "transmission":  # what it refracts (traced or not) is indirect glossy
             p = pixel(centre[0], centre[1])
             share = scale["indirectglossy"] * p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
             expect(share > 0.6, f"{variant} transmission: refracted light in indirect glossy ({share:.2f})")
         expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
+        if variant in BASE:
+            moved, where = 0.0, ""
+            for dx, dy in [(0, 0)]:
+                p, q = pixels[variant, name, dx, dy], pixels[BASE[variant], name, dx, dy]
+                brightness = max(max(q.get(c, 0) for c in "RGB"), 1e-3)
+                for v in SPLITS:
+                    for c in "RGB":
+                        d = (p.get(f"{v}.{c}", 0) - q.get(f"{v}.{c}", 0)) / brightness
+                        if abs(d) > abs(moved):
+                            moved, where = d, f"{v}.{c} at {dx}, {dy}"
+            print(f"{variant:10s} {name:12s} splits against {BASE[variant]}: {moved:+.3f} ({where})")
+            expect(abs(moved) <= TOLERANCE, f"{variant} {name}: the intensities leave the splits unscaled ({moved:+.3f})")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

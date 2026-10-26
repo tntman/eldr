@@ -154,7 +154,8 @@ void main()
     // Displaced along the rest normal before anything moves it, the same in
     // every pass (displace.glsl).
     bool facing = kDisplacement && d.facing != 0u;
-    vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d, slot, model, inVertexColor.rgb),
+    vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d, slot, model, inVertexColor.rgb,
+                                                          uint(gl_VertexIndex), inUv),
          prevPosition = position;
     // Moving points: at the time sample's time; motion vectors from where
     // they were a frame before (t = 0), as for rigid motion.

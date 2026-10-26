@@ -403,8 +403,8 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   other refracting fragments at the pixel stay screen space. Displaced glass
   (`rtRefractionDisplacement`, with `rtDisplacement`) bends the rays by its
   displaced triangles and its height map's bump, as the shading pass bumps
-  its fragments, so rippled water or hammered glass distorts what is behind
-  it; displacement graphs stay at their rest surface there.
+  its fragments (a displacement graph's by its displaced facets), so rippled
+  water or hammered glass distorts what is behind it.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
@@ -536,7 +536,9 @@ quantises the lit intensity relative to the albedo into flat bands with
   by the largest offset. Height maps are read at the mip whose texels are as
   far apart as the mesh's vertices, so a map finer than the mesh doesn't
   alias. With `displacementGraphs`, a displacement driven by a shading graph
-  (math, noise, several textures) runs that graph per vertex.
+  (math, noise, several textures) runs that graph per vertex, also for ray
+  tracing's BLASes (`rtDisplacement`; one BLAS per mesh, so a graph reading
+  per-instance inputs displaces every instance as the mesh's first).
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also
   weighs normals, uvs and colours, and joint weights for skinned meshes);
@@ -672,9 +674,11 @@ lights test scene. They accumulate like the colour: over TAA frames, or the film
 **Light path intensity** (`directIntensity`, `indirectIntensity`, both 1; Blender 5.1)
 multiplies the same direct and indirect light in the final pixel, not in the light transport
 (GI still bounces unscaled light) nor in the AOVs, so the beauty is the splits times their
-intensities. Refracted light is indirect glossy (traced, or the screen-space copy of what is
-behind, whose own light the intensities already scaled), the sun's light through thin subsurface
-parts direct diffuse. Fog and toon shading stay unscaled. At 1 the shaders compile without it.
+intensities. Refracted light is indirect glossy and scaled once: traced, or from the
+screen-space copy of what is behind, which takes the intensities out again by its light splits
+(stored for it). The sun's light through thin subsurface parts is direct diffuse. Fog and toon
+shading stay unscaled. SSR still reflects the previous frame, which carries the intensities, so
+its reflections are scaled twice. At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes

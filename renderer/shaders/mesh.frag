@@ -1042,10 +1042,13 @@ void main()
         ng = -ng;
     }
     vec3 n = dot(inNormal, inNormal) > 1e-12 ? normalize(inNormal) : ng;
-    if (dot(n, ng) < 0.0) {
+    // Bumped in the authored orientation (displacement moves along it, so
+    // a back face's heights run the other way), then turned to the viewer.
+    bool backface = dot(n, ng) < 0.0;
+    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
+    if (backface) {
         n = -n;
     }
-    n = DisplacedNormal(n, inSlot, inWorldPos, inUv);
     if (hasNormalMap && (frame.features.x & kFeatureNormalMaps) != 0u) {
         n = normalize(CotangentFrame(n, inWorldPos, inUv) * tangentNormal);
     }
@@ -1262,7 +1265,7 @@ void main()
     alpha = TransmissionEnd(color, n, v, perceptual);
     if (LightPathScaled()) {
         // What it refracts is indirect glossy (screen space: the copied
-        // colour behind, already scaled, is scaled once more).
+        // colour behind has the intensities taken out, background_unscale.comp).
         color += (frame.lightPath.y - 1.0) * gRefractedLight;
     }
     // Cutouts: last, so every derivative above saw the whole quad; and
@@ -1282,8 +1285,11 @@ void main()
     color = any(isnan(color)) || any(isinf(color)) ? vec3(0.0) : min(color, vec3(60000.0));
     outColor = vec4(color, alpha);
     // ponytail: opaque surfaces only (the translucent pass would overwrite
-    // what is behind); a pixel's last surface at equal depth wins.
-    if (LightSplits() && frame.aovs.x != 0u && kShadingPass == 0u && alpha >= 1.0) {
+    // what is behind); a pixel's last surface at equal depth wins. Opaque
+    // includes refracting glass, its back faces too (pass 3): refraction's
+    // later copies take the intensities out of them by these splits, and
+    // the front faces drawn after replace them.
+    if (LightSplits() && frame.aovs.x != 0u && (kShadingPass == 0u || kShadingPass == 3u) && alpha >= 1.0) {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, 1.0));
         imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));

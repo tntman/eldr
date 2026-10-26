@@ -720,11 +720,11 @@ void Renderer::_CreateDescriptors()
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         // Also displacement programs (displace.glsl) and traced refraction's
         // hits (rt_refraction.rgen).
-        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt},
+        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         // Deformation blur: point velocities (Scene::Gpu::velocities).
         {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
@@ -2350,8 +2350,14 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
     vkCmdPipelineBarrier2(_cmd, &dep);
 
     const bool refraction = data->features[0] & kFeatureRefraction;
+    // With light path intensities the copy takes them out again (from the
+    // light splits), so glass scales what it refracts once.
+    const VkImageView unscale = data->lightPath[2] != 0.0f ? _aovs.SplitsView() : VK_NULL_HANDLE;
+    auto background = [&]() {
+        _transparency.RecordBackground(_cmd, _color.image, unscale, data->lightPath[0], data->lightPath[1]);
+    };
     if (refraction) {
-        _transparency.RecordBackground(_cmd, _color.image);
+        background();
     }
     // Renders into _color (and the ids), or with `oit` into the
     // Transparency targets; the depth stays the opaque one's.
@@ -2418,7 +2424,7 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
                 return;
             }
             vkCmdEndRendering(_cmd);
-            _transparency.RecordBackground(_cmd, _color.image);
+            background();
             begin(false);
             bound = VK_NULL_HANDLE;
             drawn = false;
@@ -3046,6 +3052,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
+    rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on
@@ -3280,14 +3287,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.reflections[2] = frame.probeNormalize && (fd.features[0] & (kFeatureGi | kFeatureSsgi)) ? 1u : 0u;
     fd.reflections[2] |= frame.fogGiAmbient && (fd.features[0] & kFeatureGi) ? 2u : 0u;  // kFogGiAmbient
     fd.reflections[2] |= frame.lightTextures ? 4u : 0u;  // kLightTextures
-    // Light splits (aov.h): stored by shading pipelines compiled with them.
-    const bool splits = frame.extraAovs && Aovs::NeedsSplits(out.aovs);
-    _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
-    fd.aovs[0] = splits ? 1u : 0u;
-    fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
     // Light path intensity: the splits' code (compiled with the splits' key
     // bit) scales the final pixel's direct and indirect light.
     const bool lightPath = frame.directIntensity != 1.0f || frame.indirectIntensity != 1.0f;
+    // Light splits (aov.h): stored by shading pipelines compiled with them,
+    // for the AOVs or for refraction's copy to take the intensities out of.
+    const bool splits = (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || (lightPath && refraction);
+    _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    fd.aovs[0] = splits ? 1u : 0u;
+    fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
     fd.lightPath[1] = std::max(frame.indirectIntensity, 0.0f);
     fd.lightPath[2] = lightPath ? 1.0f : 0.0f;
