@@ -41,6 +41,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t part;   // VolumePass::Part
     uint32_t cascade, mapSize;  // RecordShadow's
     uint32_t originX, originY;
+    uint32_t mutual;  // Settings::mutualShadows
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -53,6 +54,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.emission = std::max(s.emission, 0.0f);
     p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
     p.count = count;
+    p.mutual = s.mutualShadows;
     return p;
 }
 

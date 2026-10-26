@@ -114,6 +114,9 @@ public:
         // Shadows: the sun's light through the volumes onto surfaces
         // (RecordShadow into Transparency's sun tint map).
         bool shadows = true;
+        // Volumes shadow each other: the light towards each step of a
+        // volume's march also crosses the other volumes (sun and local lights).
+        bool mutualShadows = true;
     };
 
     // Which part of each ray Record marches: all of it, the part behind

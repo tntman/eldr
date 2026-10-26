@@ -21,6 +21,10 @@
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 layout(set = 0, binding = 47, rgba16f) uniform image3D fogImages[3];  // this frame's, last frame's, integrated
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
+// The sun's tint map (Transparency, volume_shadow.frag): what volumes (and
+// translucent casters) let through, receivers behind the stored depth.
+layout(set = 0, binding = 43) uniform sampler2DArray sunTint;
+layout(set = 0, binding = 44) uniform sampler2DArray sunTintDepth;
 // Local lights' shadow atlas, as in mesh.frag.
 const float kSpotShadowCone = 1.3962634;
 struct ShadowTile {
@@ -50,6 +54,24 @@ float SunShadow(vec3 p, float viewDepth)
     }
     vec4 clip = frame.cascadeViewProj[c] * vec4(p, 1.0);
     return texture(shadowMap, vec4(clip.xy / clip.w * 0.5 + 0.5, float(c), clip.z / clip.w * 0.5 + 0.5));
+}
+
+// The sun's tint map at p (frame.media.x): one nearest tap.
+// ponytail: the sun only; local lights' atlas tint isn't read.
+vec3 SunTint(vec3 p, float viewDepth)
+{
+    int c = 0;
+    while (c < 4 && viewDepth > frame.cascadeSplits[c]) {
+        ++c;
+    }
+    if (c == 4) {
+        return vec3(1.0);
+    }
+    vec4 clip = frame.cascadeViewProj[c] * vec4(p, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    ivec2 size = textureSize(sunTint, 0).xy;
+    ivec3 q = ivec3(clamp(ivec2((ndc.xy * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), c);
+    return ndc.z * 0.5 + 0.5 > texelFetch(sunTintDepth, q, 0).r ? texelFetch(sunTint, q, 0).rgb : vec3(1.0);
 }
 
 float LocalShadow(uint index, Light light, vec3 p)
@@ -158,7 +180,10 @@ void main()
     vec3 light = vec3(0.0);
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light sun = lights[i];
-        float shadow = i == frame.counts.y ? SunShadow(p, depth) : 1.0;
+        vec3 shadow = vec3(i == frame.counts.y ? SunShadow(p, depth) : 1.0);
+        if (i == frame.counts.y && frame.media.x != 0u) {
+            shadow *= SunTint(p, depth);
+        }
         light += sun.color.rgb * (sun.halfHeight.w * Phase(dot(-sun.position.xyz, toCamera)) * shadow);
     }
     if (frame.localLights.x > 0u && (frame.features.x & kFeatureClusters) != 0u) {

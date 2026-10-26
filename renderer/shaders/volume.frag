@@ -17,11 +17,12 @@
 // directional single scattering (Wrenninge 2015). Each pixel starts at a
 // different fraction of a step every frame, which TAA averages. Steps skip
 // tiles (and the background) of zero density.
+// Volumes shadow each other (params.mutual): the light towards each step
+// also marches the other volumes' boxes on its way (OthersDepth).
 // ponytail: volumes are composited one after another along the ray (in
-// entry order, not interleaved where they overlap) and don't shadow each
-// other (surfaces only from the sun: volume_shadow.frag); local lights get one atlas tap per step, the
+// entry order, not interleaved where they overlap); local lights get one atlas tap per step, the
 // dome's light only comes down from above (half its optical depth, as
-// light also arrives from the sides).
+// light also arrives from the sides) and through the volume's own density only.
 
 #include "frame.glsl"
 #include "lights.glsl"
@@ -54,6 +55,8 @@ layout(push_constant) uniform Params {
     uint count;         // volumes[]
     uint scale;         // 1: every pixel; 2: half resolution, each pixel a 2 x 2 block
     uint part;          // VolumePass::Part: 0 all, 1 behind the nearest translucent surface, 2 in front
+    uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
+    uint mutual;        // 1: volumes shadow each other
 } params;
 
 layout(location = 0) out vec4 outColor;  // premultiplied: radiance, 1 - transmittance
@@ -222,6 +225,39 @@ float ShadowMarch(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo, v
     return tau * dt * extinction;
 }
 
+// Optical depth of the volumes other than `self` along x + dir * s, s in
+// [0, 1]: shadowSteps steps across each box crossed, offset by noise. The
+// self march (ShadowMarch) covers the volume's own density, so it is left
+// out here. No tint maps: they hold all volumes' transmittance together,
+// the lit volume's own included, with one depth per texel, so they can't
+// tell another volume in front from this one.
+// ponytail: fixed steps per box, empty tiles not skipped; cost grows with
+// the volumes crossed.
+float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
+{
+    float tau = 0.0;
+    for (uint j = 0u; j < params.count && tau < kShadowOpaque; ++j) {
+        if (j == self) {
+            continue;
+        }
+        vec4 w0 = volumes[j].worldToIndex[0], w1 = volumes[j].worldToIndex[1], w2 = volumes[j].worldToIndex[2];
+        vec3 oi = Row3(w0, w1, w2, x, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
+        vec2 span = Slabs(oi, di, volumes[j].indexMin.xyz, volumes[j].indexMax.xyz);
+        span = vec2(max(span.x, 0.0), min(span.y, 1.0));
+        if (!(span.x < span.y)) {
+            continue;
+        }
+        float ds = (span.y - span.x) / float(params.shadowSteps), sum = 0.0;
+        pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
+        for (uint k = 0u; k < params.shadowSteps; ++k) {
+            vec3 p = oi + di * (span.x + (float(k) + noise) * ds);
+            sum += max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(p + 0.5))), 0.0);
+        }
+        tau += sum * ds * length(dir) * volumes[j].medium.x * params.density;
+    }
+    return tau;
+}
+
 // Marches volume i over [t0, t1] of the world ray, adding to radiance and
 // attenuating transmittance; steps come out of stepsLeft.
 void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 up, inout uint stepsLeft,
@@ -246,6 +282,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     pnanovdb_readaccessor_t temperature = Accessor(grids.y != kNone ? grids.y : grids.x);
     pnanovdb_readaccessor_t color = Accessor(grids.z != kNone ? grids.z : grids.x);
     pnanovdb_readaccessor_t emission = Accessor(grids.w != kNone ? grids.w : grids.x);
+    const bool mutual = params.mutual != 0u && params.count > 1u && params.shadowSteps > 0u;
     float t = t0 + noise * dt;
     while (t < t1 && stepsLeft > 0u && transmittance > kOpaque) {
         --stepsLeft;
@@ -309,6 +346,10 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 if (k == frame.counts.y) {
                     scattered *= SunShadow(x, l);
                 }
+                if (mutual) {
+                    // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
+                    scattered *= exp(-OthersDepth(i, x, l * 1e4, noise));
+                }
                 light += sun.color.rgb * sun.halfHeight.w * scattered;
             }
             if (frame.localLights.x > 0u) {
@@ -320,12 +361,16 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                         uint index = clusterLights[base + 1u + k];
                         vec3 e = LocalIrradiance(index, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
+                        e = mutual && any(greaterThan(e, vec3(0.0)))
+                                ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, noise)) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 } else {
                     for (uint k = frame.counts.x; k < frame.counts.x + frame.localLights.x; ++k) {
                         vec3 e = LocalIrradiance(k, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
+                        e = mutual && any(greaterThan(e, vec3(0.0)))
+                                ? e * exp(-OthersDepth(i, x, lights[k].position.xyz - x, noise)) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 }
