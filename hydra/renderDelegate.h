@@ -9,6 +9,7 @@
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -307,8 +308,16 @@ public:
     void NoteCameraShutter(SdfPath const &camera, float open, float close);
     void SetActiveCamera(SdfPath const &camera);
     bool SampledMotionShutter(float *open, float *close);
+    // What the film starts over on besides the camera and the settings:
+    // every sync of geometry, instancers, materials, volumes and fields
+    // (lights through the renderer's lighting hash). Not cameras: an app may
+    // sync its camera prim again unchanged (Houdini's free camera is a
+    // prim); the view is in the frame's matrices, the pass hashes the lens.
+    static void NoteSceneEdit(HdSceneDelegate *sceneDelegate);
+    uint64_t SceneEdits() const { return _sceneEdits; }
 
 private:
+    std::atomic<uint64_t> _sceneEdits{0};  // rprims sync in parallel
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
     // release GPU resources before the device goes away.

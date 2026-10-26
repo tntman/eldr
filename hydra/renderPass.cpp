@@ -23,6 +23,7 @@
 #include "pxr/imaging/hd/types.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -129,6 +130,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
 
     vkr::Renderer::Frame frame;
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
+    // The depth AOV where nothing was hit (husk binds 0). Only the readback's:
+    // the depth buffer itself clears to the far plane.
+    float clearDepth = 1.0f;
     // Extra AOVs (vkr::Aovs) by their Hydra names (HdVkExtraAovs).
     // ponytail: one buffer per kind; of two names for the same (normal and
     // ray:hitN) bound at once, the last one gets it.
@@ -153,7 +157,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         } else if (aovName == HdAovTokens->depth) {
             depth = b.renderBuffer;
             if (b.clearValue.IsHolding<float>()) {
-                frame.clearDepth = b.clearValue.UncheckedGet<float>();
+                clearDepth = b.clearValue.UncheckedGet<float>();
             }
         } else if (aovName == HdAovTokens->primId) {
             primId = b.renderBuffer;
@@ -535,8 +539,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if (offline && !_appliedSettings.count(t.autoExposure)) {
         frame.post.autoExposure = false;
     }
-    // Any edit to the scene or the settings starts the film over.
-    frame.sceneVersion = (uint64_t(GetRenderIndex()->GetChangeTracker().GetSceneStateVersion()) << 32) |
+    // Any edit to the scene or the settings starts the film over; the
+    // camera's only when its lens changed (below).
+    frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // Either may change the light table: commit once.
@@ -554,6 +559,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             frame.focusDistance = camera->GetFocusDistance();
             // The aperture the conformed projection shows (2 f / P[0][0]).
             frame.sensorWidth = float(2.0 * frame.focalLength / projection[0][0]);
+        }
+    }
+    {
+        const vkr::LensDistortion::Params &d = frame.distortion;
+        const float lens[] = {frame.shutter, frame.shutterOpen, frame.fStop, frame.focusDistance, frame.focalLength,
+                              d.k1, d.k2, d.k3, d.k4, d.k5, d.k6, d.p1, d.p2, d.center[0], d.center[1], d.anaSq,
+                              d.asym[0], d.asym[1], d.scale, float(d.fisheye)};
+        for (const float v : lens) {
+            uint32_t bits;
+            std::memcpy(&bits, &v, sizeof(bits));
+            frame.sceneVersion = (frame.sceneVersion ^ bits) * 1099511628211ull;
         }
     }
     const GfMatrix4d invProjection = projection.GetInverse();
@@ -631,6 +647,24 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // and rendered from the next frame on; still frames render them all.
     const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
     std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    // HDVK_DEBUG_AOVS: every 60 frames, what started the film over (a still
+    // camera should show none) and the near and far planes the depth AOV
+    // (window depth) is under.
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
+        static uint64_t lastScene = 0;
+        static int frames = 0, moved = 0, edited = 0;
+        moved += moving;
+        edited += frame.sceneVersion != lastScene;
+        lastScene = frame.sceneVersion;
+        if (++frames % 60 == 0) {
+            const double n = projection[3][2] / (projection[2][2] - 1.0), f = projection[3][2] / (projection[2][2] + 1.0);
+            std::fprintf(stderr, "Eldr last 60 frames: camera moved %d, scene or settings changed %d; near %g far %g, "
+                         "%ux%u, final %d, product framing %d, depth cleared to %g\n", moved, edited, n, f, frame.width,
+                         frame.height, int(frame.finalQuality), int(productSized), clearDepth);
+            std::fflush(stderr);
+            moved = edited = 0;
+        }
+    }
     for (HdRenderBuffer *&b : extra) {
         b = b && moving && !frame.finalQuality && !productSized && !read.count(b) ? nullptr : b;
     }
@@ -803,6 +837,28 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
+    // The depth AOV: window depth, the binding's clear value where nothing
+    // was hit. Houdini: linear like Karma's (Pz: distance along the view
+    // axis, 0 where nothing was hit; UsdRenderers.json "depthstyle":
+    // "linear"), so its pivot, pan speed and guide compositing don't depend
+    // on the near and far planes it assumes for window depth.
+    const auto depthAov = [c = std::array<float, 4>{frame.depthToDistance[0], frame.depthToDistance[1],
+                                                    frame.depthToDistance[2], frame.depthToDistance[3]},
+                           clearDepth](float *d, size_t n) {
+        for (size_t p = 0; p < n; ++p) {
+#ifdef HDVK_HOUDINI
+            const float z = d[p] * 2.0f - 1.0f;
+            d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
+            (void)clearDepth;
+#else
+            d[p] = d[p] >= 1.0f ? clearDepth : d[p];
+            (void)c;
+#endif
+        }
+    };
+    if (mapped[1]) {
+        depthAov(static_cast<float *>(mapped[1]), size_t(appWidth) * appHeight);
+    }
     try {
         _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
     } catch (const std::exception &e) {
@@ -820,7 +876,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             buffers[i]->SetFetch(nullptr);
             continue;
         }
-        buffers[i]->SetFetch([renderer = _renderer, i](void *data) {
+        const size_t pixels = size_t(appWidth) * appHeight;
+        buffers[i]->SetFetch([renderer = _renderer, i, depthAov, pixels](void *data) {
             vkr::Renderer::Targets t;
             t.color = i == 0 ? data : nullptr;
             t.depth = i == 1 ? static_cast<float *>(data) : nullptr;
@@ -828,6 +885,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             t.instanceId = i == 3 ? static_cast<int32_t *>(data) : nullptr;
             try {
                 renderer->Read(t);
+                if (t.depth) {
+                    depthAov(t.depth, pixels);
+                }
             } catch (const std::exception &e) {
                 TF_RUNTIME_ERROR("HdVk readback failed: %s", e.what());
             }

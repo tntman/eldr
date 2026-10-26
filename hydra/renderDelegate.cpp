@@ -554,6 +554,11 @@ void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim)
     delete bprim;
 }
 
+void HdVkRenderDelegate::NoteSceneEdit(HdSceneDelegate *sceneDelegate)
+{
+    ++static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate())->_sceneEdits;
+}
+
 const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
 {
     for (const HdRenderSettings *settings : _renderSettings) {

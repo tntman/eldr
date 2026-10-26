@@ -210,6 +210,7 @@ void HdVkVolume::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *rende
 
 void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits, TfToken const &)
 {
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     vkr::Volume &v = *_volume;
     // Fields sync before rprims (bprims first), so their grids are there.

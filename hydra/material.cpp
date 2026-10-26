@@ -1,4 +1,5 @@
 #include "material.h"
+#include "renderDelegate.h"
 
 #include "instancer.h"
 #include "scene.h"
@@ -1711,6 +1712,7 @@ HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
 void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                         HdDirtyBits *dirtyBits)
 {
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults
         vkr::VolumeShading volume;

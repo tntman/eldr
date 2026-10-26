@@ -106,6 +106,7 @@ HdVkInstancer::HdVkInstancer(HdSceneDelegate *delegate, SdfPath const &id)
 
 void HdVkInstancer::Sync(HdSceneDelegate *delegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
+    HdVkRenderDelegate::NoteSceneEdit(delegate);
     const SdfPath &id = GetId();
     if (*dirtyBits & HdChangeTracker::DirtyVisibility) {
         _visible = delegate->GetVisible(id);

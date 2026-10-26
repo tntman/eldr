@@ -189,6 +189,7 @@ void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderP
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     vkr::Mesh &m = *_mesh;
     bool geometryDirty = false;

@@ -3,7 +3,7 @@
         "valid": true,
         "menulabel": "Eldr",
         "menupriority": 30,
-        "depthstyle": "opengl",
+        "depthstyle": "linear",
         "needsselection": true,
         "statsdatapaths": {
             "percentDone": "$.percentDone",
