@@ -84,18 +84,22 @@ public:
         return _texture ? VtValue(_texture) : VtValue();
     }
 #ifdef HDVK_HOUDINI
-    // Cryptomatte for husk (UT_HUSDExtraAOVResource.h): the layer
-    // <name>00 holds (id, coverage, id, coverage) per pixel, rank 0 and 1,
-    // the plane returned here (the frame's size, same row order as the AOV
-    // itself); `metadata` is the spec's cryptomatte/<key>/... entries.
-    // ponytail: only layer 00, one sample per pixel (see vkr::Aovs); husk
-    // takes the ranks the delegate offers, not the var's cryptomatterank.
+    // Cryptomatte for husk (UT_HUSDExtraAOVResource.h): the layers
+    // <name>00..02 hold (id, coverage, id, coverage) per pixel, ranks 0-5,
+    // in the three planes returned here one after the other (the buffer's
+    // size, same row order as the AOV itself); `metadata` is the spec's
+    // cryptomatte/<key>/... entries.
+    // ponytail: husk takes the ranks the delegate offers, not the var's
+    // cryptomatterank.
     float *SetCrypto(const std::string &name, std::map<std::string, std::string> metadata)
     {
-        _cryptoPlane.assign(size_t(_width) * _height * 4, 0.0f);
+        _cryptoPlane.assign(size_t(_width) * _height * 12, 0.0f);
         _crypto = std::make_shared<UT_HUSDExtraAOVResource>(
-            [this](int) -> void * { return _cryptoPlane.data(); }, [](int) {});
-        _crypto->addPlane(name + "00", HdFormatFloat32Vec4);
+            [this](int plane) -> void * { return _cryptoPlane.data() + size_t(plane) * _width * _height * 4; },
+            [](int) {});
+        for (const char *layer : {"00", "01", "02"}) {
+            _crypto->addPlane(name + layer, HdFormatFloat32Vec4);
+        }
         _crypto->setMetadata(metadata);
         return _cryptoPlane.data();
     }
