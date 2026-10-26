@@ -535,13 +535,22 @@ HdBprim *HdVkRenderDelegate::CreateBprim(TfToken const &typeId, SdfPath const &b
         return _renderSettings.back();
     }
 #ifdef HDVK_VOLUMES
+    // A field made again at a path keeps the grid volumes may still hold.
+    auto grid = [&] {
+        std::weak_ptr<vkr::VolumeGrid> &known = _fieldGrids[bprimId];
+        std::shared_ptr<vkr::VolumeGrid> g = bprimId.IsEmpty() ? nullptr : known.lock();
+        if (!g) {
+            known = g = std::make_shared<vkr::VolumeGrid>();
+        }
+        return g;
+    };
     if (typeId == _openvdbAsset) {
-        return new HdVkField(bprimId);
+        return new HdVkField(bprimId, grid());
     }
 #endif
 #ifdef HDVK_HOUDINI
     if (typeId == _houdiniFieldAsset) {
-        return new HdVkField(bprimId, true);
+        return new HdVkField(bprimId, grid(), true);
     }
 #endif
     return nullptr;

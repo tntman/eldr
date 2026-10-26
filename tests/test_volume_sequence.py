@@ -93,6 +93,26 @@ print("GPU memory after each pass: %s, host memory: %s" % (gpu, host))
 expect(gpu[1] <= gpu[0] and host[1] <= host[0] * 1.05 + (1 << 20),
        "memory doesn't grow from one pass to the next: GPU %s, host %s" % (gpu, host))
 
+# Houdini's Play: each frame the volume LOP cooks again, its layer holding
+# filePath sampled at that frame only. UsdImaging's legacy delegate (run
+# with USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX=0) makes the field anew on
+# that change; the volume must still see the new grid.
+filePath.Clear()
+cook = Sdf.Layer.CreateAnonymous()
+stage.GetRootLayer().subLayerPaths.append(cook.identifier)
+grids = []
+for t in range(FRAMES):
+    cook.Clear()
+    spec = Sdf.CreatePrimInLayer(cook, "/smoke/density")
+    spec.specifier = Sdf.SpecifierDef
+    spec.typeName = "OpenVDBAsset"
+    attr = Sdf.AttributeSpec(spec, "filePath", Sdf.ValueTypeNames.Asset)
+    cook.SetTimeSample(attr.path, t, Sdf.AssetPath(paths[t]))
+    params.frame = Usd.TimeCode(t)
+    engine.Render(stage.GetPseudoRoot(), params)
+    grids.append(engine.GetRenderStats().get("volumeMemory", 0))
+expect(all(a < b for a, b in zip(grids, grids[1:])), "recooked each frame: each frame's own grid: %s" % grids)
+
 del engine  # before the GL context goes
 shutil.rmtree(tmp, ignore_errors=True)
 if failures:

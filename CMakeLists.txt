@@ -312,6 +312,11 @@ if(WIN32)
             add_test(NAME volume_sequence COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py
                      $<TARGET_FILE:make_volume>)
             set_tests_properties(volume_sequence PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+            # Through UsdImaging's legacy delegate, as Houdini's viewport.
+            add_test(NAME volume_sequence_legacy COMMAND ${usdenv} python
+                     ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py $<TARGET_FILE:make_volume>)
+            set_tests_properties(volume_sequence_legacy PROPERTIES ENVIRONMENT
+                "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX=0;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX_DEPRECATION_WARNING=0")
         endif()
         add_test(NAME traced_media COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_traced_media.py)
         set_tests_properties(traced_media PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

@@ -20,6 +20,7 @@ namespace vkr {
 class Device;
 class Renderer;
 class Scene;
+struct VolumeGrid;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -321,6 +322,9 @@ public:
 
 private:
     std::atomic<uint64_t> _sceneEdits{0};  // rprims sync in parallel
+    // Fields' grids by path (CreateBprim). ponytail: entries of removed
+    // fields stay (an expired pointer each).
+    std::unordered_map<SdfPath, std::weak_ptr<vkr::VolumeGrid>, SdfPath::Hash> _fieldGrids;
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
     // release GPU resources before the device goes away.
