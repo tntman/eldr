@@ -6,6 +6,9 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <random>
@@ -550,6 +553,14 @@ Renderer::Renderer(Device &device)
 
 Renderer::~Renderer()
 {
+    const auto t0 = std::chrono::steady_clock::now();
+    auto lap = [&, last = t0](const char *what) mutable {
+        const auto now = std::chrono::steady_clock::now();
+        if (std::getenv("HDVK_TIMING")) {
+            std::fprintf(stderr, "  ~Renderer: %s %.3f s\n", what, std::chrono::duration<double>(now - last).count());
+        }
+        last = now;
+    };
     {
         std::lock_guard<std::mutex> lock(_prewarmMutex);
         _prewarmStop = true;
@@ -558,7 +569,9 @@ Renderer::~Renderer()
     if (_prewarmThread.joinable()) {
         _prewarmThread.join();
     }
+    lap("prewarm join");
     _MergePrewarmCache();
+    lap("merge+save");
     for (const Prewarmed &p : _prewarmed) {
         for (VkPipeline pipeline : p.pipelines) {
             vkDestroyPipeline(_dev.device, pipeline, nullptr);
@@ -566,6 +579,7 @@ Renderer::~Renderer()
     }
     vkDestroyPipelineCache(_dev.device, _prewarmCache, nullptr);
     vkDeviceWaitIdle(_dev.device);
+    lap("wait idle");
     _rt.reset();
     _volumePass.reset();
     for (VkImageView v : _shadowLayers) {
@@ -604,6 +618,7 @@ Renderer::~Renderer()
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
+    lap("images+buffers");
     for (uint32_t v = 0; v < kShadingSets * kVariants; ++v) {
         vkDestroyPipeline(_dev.device, _pipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _translucentPipeline[v], nullptr);
@@ -611,6 +626,7 @@ Renderer::~Renderer()
         vkDestroyPipeline(_dev.device, _refractBackPipeline[v], nullptr);
         vkDestroyPipeline(_dev.device, _subsurfacePipeline[v], nullptr);
     }
+    lap("pipelines");
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroyDescriptorPool(_dev.device, _descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(_dev.device, _setLayout, nullptr);
@@ -623,6 +639,7 @@ Renderer::~Renderer()
     vkDestroyFence(_dev.device, _fence, nullptr);
     vkDestroyQueryPool(_dev.device, _timestamps, nullptr);
     vkDestroyCommandPool(_dev.device, _pool, nullptr);
+    lap("rest");
 }
 
 void Renderer::_CreateDescriptors()
@@ -1334,7 +1351,19 @@ void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
         }
     }
     if (!_prewarmThread.joinable() && !_prewarmQueue.empty()) {
+        // Seeded with what the device's cache holds (the disk's), so a set
+        // compiled on an earlier run is not compiled again.
+        std::vector<char> seed;
+        size_t seedSize = 0;
+        if (_dev.pipelineCache && vkGetPipelineCacheData(_dev.device, _dev.pipelineCache, &seedSize, nullptr) == VK_SUCCESS) {
+            seed.resize(seedSize);
+            if (vkGetPipelineCacheData(_dev.device, _dev.pipelineCache, &seedSize, seed.data()) != VK_SUCCESS) {
+                seedSize = 0;
+            }
+        }
         VkPipelineCacheCreateInfo ci{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
+        ci.initialDataSize = seedSize;
+        ci.pInitialData = seedSize ? seed.data() : nullptr;
         Check(vkCreatePipelineCache(_dev.device, &ci, nullptr, &_prewarmCache), "vkCreatePipelineCache");
         _prewarmThread = std::thread(&Renderer::_PrewarmWorker, this);
     }
@@ -1397,6 +1426,19 @@ void Renderer::_MergePrewarmCache()
     if (vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) == VK_SUCCESS && save) {
         _dev.SavePipelineCache();
     }
+}
+
+void Renderer::StopPrewarm()
+{
+    {
+        std::lock_guard<std::mutex> lock(_prewarmMutex);
+        _prewarmStop = true;
+    }
+    _prewarmChanged.notify_all();
+    // What the worker finished so far goes to disk now: the next device in this
+    // process loads the file before this destructor has run.
+    _MergePrewarmCache();
+    _dev.SavePipelineCache();
 }
 
 void Renderer::WaitForPrewarm()
