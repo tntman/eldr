@@ -104,6 +104,9 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         std::copy(color.data(), color.data() + 3, _dome->radiance);
         _dome->texture = texture();
         _dome->visible = visible;
+        // Karma's "Render Light Geometry" hides the dome from the camera only.
+        // Karma's schema default is off; Eldr shows it unless authored false.
+        _dome->cameraVisible = param(TfToken("inputs:karma:light:renderlightgeo"), true);
         *dirtyBits = Clean;
         return;
     }

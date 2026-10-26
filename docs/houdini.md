@@ -108,7 +108,7 @@ step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto e
 |---|---|---|
 | Rect-light texture orientation | File's top row at +Y, left edge at +X | Same |
 | `primvars:displayColor` | Read as sRGB (0.5 = 0.214 linear) | Linear, as USD defines; a 0.5 floor is 0.43 as bright in Karma |
-| Dome in the camera | Not drawn by default | Drawn (`domeLightCameraVisibility`, Hydra's setting) |
+| Dome in the camera | Hidden unless `renderlightgeo` is 1 (schema default 0) | Drawn unless `inputs:karma:light:renderlightgeo` is authored 0 on the dome, `eldr:domeCameraVisible` is off or Hydra's `domeLightCameraVisibility` is false; lighting and reflections keep the dome |
 | Small-light highlights on rough floors | Colour limit 20 clips by 10%; with it off, within 4% of a GGX integral | Within 5% of Karma |
 | `ray:primid` | Id with coverage | Id + 1, no coverage |
 | Cryptomatte | `<name>00..02` + manifest | Same layout |

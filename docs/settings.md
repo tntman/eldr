@@ -96,6 +96,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, 63 lights per cluster. Off loops all lights per pixel. | |
 | Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation). | |
 | Light Shapes Visible<br>`eldr:lightShapesVisible` | off | Draws sphere, rect, disk and cylinder shapes to the camera. `bool inputs:karma:light:renderlightgeo = 0` hides one light. No point or line lights, shaping or textures. Needs `eldr:localLights`. | One pass, 0.12 ms |
+| Dome in the Camera (background)<br>`eldr:domeCameraVisible` | on | Draws the dome's texture behind the scene. Off: the clear colour (with its alpha) shows; lighting and reflections still use the dome. `bool inputs:karma:light:renderlightgeo = 0` hides one dome; Hydra's `domeLightCameraVisibility` also applies. | |
 | Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small bright constant emitters also become rect or sphere lights with shadows (max 32). Others light via GI only. | |
 | Emissive Light Threshold<br>`eldr:emissiveLightThreshold` | float 4 | Brightest-channel radiance above which an emitter becomes a light. | |
 | Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | Luminance counting as sun. Lower if the sun is missed. | |
