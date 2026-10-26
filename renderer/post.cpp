@@ -106,7 +106,7 @@ PostProcess::PostProcess(Device &device)
                     VK_SHADER_STAGE_COMPUTE_BIT, m, "main"};
         ci.layout = _layout;
         VkPipeline p = VK_NULL_HANDLE;
-        const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &p);
+        const VkResult r = vkCreateComputePipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &p);
         vkDestroyShaderModule(d, m, nullptr);
         Check(r, "vkCreateComputePipelines");
         return p;

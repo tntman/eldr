@@ -67,7 +67,7 @@ Lens::Lens(Device &device)
     ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, m,
                 "main"};
     ci.layout = _layout;
-    const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_tilesPipeline);
+    const VkResult r = vkCreateComputePipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &_tilesPipeline);
     vkDestroyShaderModule(d, m, nullptr);
     Check(r, "vkCreateComputePipelines");
     _dof = CreateFullscreenPipeline(_dev, _layout, kDofFrag, sizeof(kDofFrag), kFormat);

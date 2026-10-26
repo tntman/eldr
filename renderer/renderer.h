@@ -159,6 +159,12 @@ public:
         bool deferReadback = false;
         bool overlapReadback = true;  // eldr:overlapReadback: the Hydra layer may set deferReadback
         bool inPlaceReadback = true;  // eldr:inPlaceReadback: the Hydra layer may set Targets::inPlace
+        // A shading set's pipelines compile when the scene first draws with
+        // them (eldr:lazyPipelines), not its 120 variants and passes at once.
+        bool lazyPipelines = true;
+        // The Hydra layer renders extra AOVs the app didn't read last frame
+        // only once the film converged (eldr:lazyExtraAovs), not every frame.
+        bool lazyExtraAovs = true;
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
@@ -527,6 +533,9 @@ public:
         uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
         bool film = false;        // the film is accumulating (else interactive TAA)
+        // The camera moved this frame: TAA's taaSamples is then its history
+        // weight (1 / 10 of the new frame), not samples towards taaTarget.
+        bool moving = false;
         bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
         double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double exposure = 1;      // the tonemap's multiplier of scene radiance
@@ -566,9 +575,12 @@ private:
     struct ShadingTargets {
         VkPipeline *opaque, *translucent, *oit, *subsurface, *refractBack;
     };
+    // `wanted`: with `shading`, only these variants (bits) of its passes
+    // (opaque, translucent, refractBack, OIT, subsurface); else all.
     void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
-                          VkPipelineCache cache = VK_NULL_HANDLE);
-    uint32_t _ShadingSet(uint32_t features);
+                          VkPipelineCache cache = VK_NULL_HANDLE, const uint64_t *wanted = nullptr);
+    uint32_t _ShadingSet(uint32_t features, bool lazy);
+    void _EnsureShading(const Scene::Gpu &gpu, uint32_t set);
     ShadingTargets _SetTargets(uint32_t set)
     {
         const uint32_t base = set * kVariants;

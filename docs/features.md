@@ -221,7 +221,7 @@ Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSp
 | MaterialX standard_surface | base, specular (`specular_color`), roughness, metalness, coat, sheen, thin film, anisotropy, transmission, subsurface, emission, opacity, normal maps, displacement |
 | OpenPBR Surface | The same lobes under OpenPBR names (`fuzz_*`, `coat_*`, `thin_film_*`, `geometry_opacity`, `transmission_*`, `subsurface_*`) |
 
-Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`).
+Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`). Other surfaces (glTF PBR, Disney, pbrlib BSDF graphs, `surface_unlit`) render the default grey; docs/materialx.md has the measured node coverage.
 
 | Topic | Support |
 |---|---|

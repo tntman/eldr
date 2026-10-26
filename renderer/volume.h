@@ -198,6 +198,7 @@ public:
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
+    void _EnsurePipelines();
     // Full resolution, blended over the image, and half resolution; [1]:
     // with factor tables (volume.frag's kFactors).
     VkPipeline _pipeline[2] = {}, _halfPipeline[2] = {};
