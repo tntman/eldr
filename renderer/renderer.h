@@ -310,6 +310,11 @@ public:
         // Final quality (offline renders): the film starts over at the
         // first sample after any change instead of from the TAA image.
         bool finalQuality = false;
+        // The renderer's first frame starts a final film (usdrecord sets
+        // neither finalQuality nor enableInteractive); false in an interactive
+        // app that says so (Houdini's viewport). Later fresh histories (resize,
+        // camera switch) start an interactive film either way.
+        bool firstFrameFinal = true;
         // Changes whenever the app's scene or settings changed (the Hydra
         // layer: change tracker and settings versions): the film starts over.
         uint64_t sceneVersion = 0;

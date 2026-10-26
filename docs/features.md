@@ -92,7 +92,7 @@ Three ways to turn jittered samples into a pixel.
 |---|---|---|
 | Interactive TAA | Camera or scene moves | Halton 2,3 jitter; Catmull-Rom history with YCoCg clipping and motion vectors. Effects loop over `eldr:interactiveSamples` (8) noise samples. `eldr:renderScale` < 1 upscales. |
 | Film | Still for 3 frames; first frame of a fresh history (usdrecord) | fp32 weighted average through a Gaussian filter (`eldr:filmFilterRadius`, 1.5 px) until `eldr:filmSamples` (64): then converged (`IsConverged`, `percentDone`). Any camera, scene or setting change restarts it. `eldr:taaSamples` only sets the jitter cycle. |
-| Final quality | `eldr:finalQuality`, or `enableInteractive = false` (husk, hdPrman convention) | The film restarts from scratch after every change, never from the TAA image. |
+| Final quality | `eldr:finalQuality`, `enableInteractive = false` (hdPrman convention), husk, or the renderer's first frame (usdrecord; not in Houdini's viewport) | The film restarts from scratch after every change, never from the TAA image. A later fresh history (resize, camera switch) starts an ordinary film. |
 
 What the film enables (each has a switch, all on by default):
 

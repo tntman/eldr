@@ -527,6 +527,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Final quality: asked for, or an offline renderer's convention (husk,
     // hdPrman: enableInteractive false). usdrecord sets neither, but its
     // first frame has no history, so its film starts with the first sample.
+    frame.firstFrameFinal = !houdiniViewport;
     const bool offline = batch || !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
     frame.finalQuality = frame.finalQuality || offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
