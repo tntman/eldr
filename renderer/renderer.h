@@ -100,6 +100,12 @@ public:
         // by 1/sqrt(filmSamples), to fill the gaps between lens samples
         // (EEVEE's).
         bool dofResidualBlur = true;
+        // Residual motion blur (eldr:motionBlurResidual): with time samples
+        // each film sample is spread along its motion vectors over its
+        // stratum of the shutter (1 / filmSamples of it), so the copies of
+        // a moving object between time samples blend into a smooth blur
+        // (EEVEE's vector blur between steps).
+        bool motionBlurResidual = true;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):
@@ -479,6 +485,9 @@ public:
         uint32_t sample = 0;      // the sample dimensions' sample (0: no TAA)
         uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
+        bool film = false;        // the film is accumulating (else interactive TAA)
+        bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
+        double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
@@ -496,7 +505,9 @@ public:
     uint32_t Width() const { return _outWidth; }
     uint32_t Height() const { return _outHeight; }
     // Copies the last frame's outputs (as Render's, extra AOVs aside) to
-    // host memory, for consumers that ask after Render.
+    // host memory, for consumers that ask after Render. Safe from another
+    // thread than Render's (Houdini maps buffers on its own): it waits for
+    // a running Render and then reads that frame.
     void Read(const Targets &out);
     // The last frame's colour target: raw HDR, premultiplied (with
     // Frame::postProcess off), in TRANSFER_SRC_OPTIMAL. Planar reflections
@@ -566,6 +577,9 @@ private:
     // Film: samples in it (0: TAA resolves), frames the camera and the
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
+    std::chrono::steady_clock::time_point _accumStart = std::chrono::steady_clock::now();
+    double _accumSeconds = 0;  // Stats::accumSeconds
+    bool _accumDone = false;
     bool _filmAdaptive = false;
     bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
     bool _freshRun = false;
@@ -650,10 +664,11 @@ private:
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
     Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    uint64_t _lodScene = 0;                   // the scene _lodInstances belongs to
     VkBuffer _lodInstances = VK_NULL_HANDLE;  // the instance pool _lodState is about
     uint32_t _lodFadeLeft = 0, _lodDrawCount = 0;  // frames crossfades may still run; commands when counted
     float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
-    uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
+    uint32_t _lodFrame = 1;       // frames with levels of detail (cull.comp's lodState); not 0: a cleared state would count as drawn last frame
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
@@ -726,6 +741,7 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
+    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback)
     VkImage _linearColor = VK_NULL_HANDLE;  // Frame::linearColor's image, else null
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
     std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout

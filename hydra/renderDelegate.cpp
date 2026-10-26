@@ -338,6 +338,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
          VtValue(frame.motionBlurTimeSamples)},
+        {"Residual Motion Blur between Time Samples (shutter/samples)", t2.motionBlurResidual,
+         VtValue(frame.motionBlurResidual)},
         {"Sampled Motion (shutter samples: first frames blur too)", t2.sampledMotion, VtValue(true)},
         {"Deformation Blur (point caches through the shutter)", t2.deformationBlur, VtValue(frame.deformationBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
@@ -552,8 +554,33 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     const bool converged = _renderer->IsConverged();
     stats["numCompletedSamples"] = size_t(frame.taaSamples);
     stats["taaTarget"] = size_t(frame.taaTarget);
-    stats["percentDone"] = converged ? 100.0 : 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
-    stats["rendererStage"] = std::string(converged ? "converged" : "accumulating");
+    // Houdini's viewport shows "<rendererStage> <percentDone>%" and the two
+    // annotations (houdini/UsdRenderers.json maps them). The percentage is
+    // the film's: samples over target, or with adaptive sampling the share of
+    // pixels that stopped, whichever is further. Interactive TAA settles in a
+    // blink after every camera move: counting it up would flicker, so it
+    // reads "interactive 100%".
+    const double total = std::max(1.0, double(frame.renderWidth) * double(frame.renderHeight));
+    const double samplesDone = 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
+    const double pixelsDone = frame.filmActivePixels ? 100.0 * (1.0 - frame.filmActivePixels / total) : 0.0;
+    stats["percentDone"] = converged || !frame.film ? 100.0 : std::min(100.0, std::max(samplesDone, pixelsDone));
+    stats["rendererStage"] = std::string(converged                ? "converged"
+                                        : frame.film && frame.filmFinal ? "final"
+                                        : frame.film                    ? "accumulating"
+                                                                        : "interactive");
+    stats["totalClockTime"] = frame.accumSeconds;  // time to converge once converged
+    stats["pixelsConvergedPercent"] = converged ? 100.0 : pixelsDone;
+    {
+        char text[160];
+        std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? (frame.filmFinal ? "final" : "film") : "TAA",
+                      frame.taaSamples,
+                      frame.taaTarget,
+                      frame.filmActivePixels ? (", " + std::to_string(int(pixelsDone)) + "% of pixels done").c_str() : "");
+        stats["renderProgressAnnotation"] = std::string(text);
+        std::snprintf(text, sizeof text, "GPU %.1f ms, %llu triangles, %u draws, %.2f GB", frame.gpuMs,
+                      (unsigned long long)frame.triangles, frame.drawCalls, memory.deviceLocal / 1073741824.0);
+        stats["renderStatsAnnotation"] = std::string(text);
+    }
     stats["frameSharing"] = std::string(_frameShared ? "OpenGL" : "readback");
     if (!_cryptomatteObject.empty()) {
         VtDictionary manifests;

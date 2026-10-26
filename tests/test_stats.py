@@ -36,6 +36,10 @@ assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
+# A fresh film runs in final quality: "final", until it converges.
+engine.Render(stage.GetPseudoRoot(), params)
+first = engine.GetRenderStats()
+expect_first = (first.get("rendererStage"), first.get("renderProgressAnnotation", ""))
 for _ in range(200):  # until the film converges
     engine.Render(stage.GetPseudoRoot(), params)
     if engine.IsConverged():
@@ -52,15 +56,48 @@ def expect(ok, what):
 
 
 expect(stats.get("rendererName") == "Eldr", "rendererName")
+expect(expect_first[0] == "final" and expect_first[1].startswith("final 1/"), "a fresh film is final: %s" % (expect_first,))
 expect(stats.get("trianglesTotal") == 24 and stats.get("trianglesDrawn") == 12, "triangles drawn after culling")
 expect(stats.get("instancesTotal") == 2 and stats.get("instancesDrawn") == 1, "instances drawn after culling")
 expect(stats.get("gpuTimeMs", 0) > 0 and "shading" in stats.get("gpuPassMs", {}), "GPU time per pass")
+expect(set(stats["gpuPassMs"]) <= {k for k, _ in hdvkUsdview.PASSES},
+       "every pass that ran is in PASSES: %s" % (set(stats["gpuPassMs"]) - {k for k, _ in hdvkUsdview.PASSES}))
 expect(abs(sum(stats["gpuPassMs"].values()) - stats["gpuTimeMs"]) < 1e-3, "passes add up to the frame")
 expect(stats.get("numCompletedSamples") == stats.get("taaTarget") == 64, "film samples")
 expect(stats.get("percentDone") == 100.0 and stats.get("rendererStage") == "converged", "converged")
 expect(stats.get("gpuMemoryUsed", 0) > stats.get("primvar", 0) > 0, "graphics memory")
+# Houdini's viewport text (houdini/UsdRenderers.json maps these).
+expect(stats.get("renderProgressAnnotation", "").startswith("final 64/64") and "triangles" in stats.get("renderStatsAnnotation", ""),
+       "annotations")
+expect(stats.get("totalClockTime", 0) > 0 and stats.get("pixelsConvergedPercent") == 100.0, "time to converge")
+# Interactive TAA is not counted up: it reads "interactive 100%".
+engine.SetRendererSetting("eldr:filmAccumulation", False)
+moved = frustum.ComputeViewMatrix() * Gf.Matrix4d().SetTranslate(Gf.Vec3d(0.3, 0, 0))
+engine.SetCameraState(moved, frustum.ComputeProjectionMatrix())
+engine.Render(stage.GetPseudoRoot(), params)
+tmp = engine.GetRenderStats()
+expect(tmp.get("rendererStage") == "interactive" and tmp.get("percentDone") == 100.0, "interactive TAA stage")
+engine.SetRendererSetting("eldr:filmAccumulation", True)
+# The film that follows a camera move starts from the interactive image: "accumulating", not "final".
+stages = set()
+for _ in range(100):
+    engine.Render(stage.GetPseudoRoot(), params)
+    stages.add(engine.GetRenderStats().get("rendererStage"))
+    if engine.IsConverged():
+        break
+print("stages after a move:", sorted(stages))
+expect("accumulating" in stages, "a film after a camera move is accumulating")
 rows = dict(hdvkUsdview.Rows(stats))
-expect(rows.get("Triangles") == "12 of 24" and "Shading" in rows, "the usdview window's rows")
+expect(rows.get("Triangles drawn") == "12" and rows.get("Triangles in scene") == "24" and "Shading" in rows,
+       "the usdview window's rows")
+# Every stat in the window's table is reported (they become Houdini's viewstats).
+for heading, entries in hdvkUsdview.STATS:
+    if entries == "PASSES":
+        entries = [(label, "gpuPassMs." + key, "ms") for key, label in hdvkUsdview.PASSES]
+    for label, key, unit in entries:
+        # (passes that did not run, and the card's budget without VK_EXT_memory_budget, are absent)
+        expect(key.startswith("gpuPassMs.") or key.startswith("vram") or hdvkUsdview.Lookup(stats, key) is not None,
+               "%s (%s) is reported" % (label, key))
 
 # Ray-traced shadows (where the GPU has ray tracing pipelines) add their pass
 # and acceleration structures; switched off, both are gone again.

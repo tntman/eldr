@@ -17,6 +17,9 @@ const uint32_t kDofFrag[] =
 const uint32_t kMotionBlurFrag[] =
 #include "motion_blur.frag.inc"
 ;
+const uint32_t kMotionResidualFrag[] =
+#include "motion_residual.frag.inc"
+;
 
 constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr uint32_t kTile = 32;  // pixels per tile side, as in lens.glsl
@@ -69,6 +72,7 @@ Lens::Lens(Device &device)
     Check(r, "vkCreateComputePipelines");
     _dof = CreateFullscreenPipeline(_dev, _layout, kDofFrag, sizeof(kDofFrag), kFormat);
     _blur = CreateFullscreenPipeline(_dev, _layout, kMotionBlurFrag, sizeof(kMotionBlurFrag), kFormat);
+    _residual = CreateFullscreenPipeline(_dev, _layout, kMotionResidualFrag, sizeof(kMotionResidualFrag), kFormat);
 }
 
 Lens::~Lens()
@@ -76,7 +80,7 @@ Lens::~Lens()
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
     _Destroy();
-    for (VkPipeline p : {_tilesPipeline, _dof, _blur}) {
+    for (VkPipeline p : {_tilesPipeline, _dof, _blur, _residual}) {
         vkDestroyPipeline(d, p, nullptr);
     }
     vkDestroyPipelineLayout(d, _layout, nullptr);
@@ -177,6 +181,16 @@ void Lens::RecordTiles(VkCommandBuffer cmd, Params params)
 
 void Lens::RecordDepthOfField(VkCommandBuffer cmd, Params params)
 {
+    _RecordOnColor(cmd, params, _dof);
+}
+
+void Lens::RecordResidualMotionBlur(VkCommandBuffer cmd, Params params)
+{
+    _RecordOnColor(cmd, params, _residual);
+}
+
+void Lens::_RecordOnColor(VkCommandBuffer cmd, Params params, VkPipeline pipeline)
+{
     _Fill(&params);
     // The pass reads a copy of the colour and writes the colour itself.
     ImageBarrier(cmd, _color, Color(),
@@ -197,7 +211,7 @@ void Lens::RecordDepthOfField(VkCommandBuffer cmd, Params params)
     ImageBarrier(cmd, _color, Color(), VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    DrawFullscreen(cmd, _dof, _layout, _dofSet, _colorView, _width, _height, false, kStages, &params,
+    DrawFullscreen(cmd, pipeline, _layout, _dofSet, _colorView, _width, _height, false, kStages, &params,
                    sizeof(params));
 }
 

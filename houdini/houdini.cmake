@@ -32,8 +32,6 @@ set(pxr_DIR ${HOUDINI_ROOT})  # used by CMakeLists.txt for the test environment
 # from $HOUDINI_USER_PREF_DIR/packages (docs/houdini.md). Its path is the
 # build dir's houdini/ (UsdRenderers.json, so Solaris lists "Eldr") and
 # PXR_PLUGINPATH_NAME finds plugInfo.json beside the dll.
-file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/UsdRenderers.json
-     INPUT ${CMAKE_CURRENT_LIST_DIR}/UsdRenderers.json)
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/eldr.json CONTENT
 "{
     \"path\": \"$<TARGET_FILE_DIR:hdVk>/houdini\",
@@ -42,3 +40,22 @@ file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/eldr.json CONTENT
     ]
 }
 ")
+
+# Eldr's Solaris UI (Render Settings / Render Geometry Settings tabs, viewport
+# options): dialog scripts generated from the renderer's own setting
+# descriptors by hython, into <build>/houdini/soho/parameters. hython runs with
+# its own empty preferences and packages, so nothing installed loads beside it.
+set(hdvk_ui_dir ${CMAKE_BINARY_DIR}/houdini_ui)
+file(MAKE_DIRECTORY ${hdvk_ui_dir}/pref/houdini__HVER__ ${hdvk_ui_dir}/packages)
+add_custom_target(eldrHoudiniUi ALL
+    COMMAND ${CMAKE_COMMAND} -E env
+        HOUDINI_USER_PREF_DIR=${hdvk_ui_dir}/pref/houdini__HVER__
+        HOUDINI_PACKAGE_DIR=${hdvk_ui_dir}/packages
+        PXR_PLUGINPATH_NAME=$<TARGET_FILE_DIR:hdVk>
+        ${HOUDINI_ROOT}/bin/hython.exe ${CMAKE_CURRENT_LIST_DIR}/gen_ui.py
+        $<TARGET_FILE_DIR:hdVk>/houdini ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/settings.py
+    DEPENDS ${CMAKE_CURRENT_LIST_DIR}/gen_ui.py ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/settings.py
+            ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/__init__.py ${CMAKE_CURRENT_LIST_DIR}/UsdRenderers.json
+    COMMENT "Generating Eldr's Solaris UI"
+    VERBATIM)
+add_dependencies(eldrHoudiniUi hdVk)

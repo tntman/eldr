@@ -2127,6 +2127,10 @@ void Scene::Commit(bool keepMotion)
     _gpu.vertices = _vertices.buffer;
     _gpu.indices = _indices.buffer;
     _gpu.instances = _instances.buffer;
+    static std::atomic<uint64_t> sceneIds{0};
+    if (_gpu.sceneId == 0) {
+        _gpu.sceneId = ++sceneIds;
+    }
     _gpu.visible = _visible.buffer;
     _gpu.draws = _draws.buffer;
     _gpu.commandTemplate = _commandTemplate.buffer;

@@ -4,18 +4,16 @@
         "menulabel": "Eldr",
         "menupriority": 30,
         "depthstyle": "opengl",
+        "needsselection": true,
         "statsdatapaths": {
             "percentDone": "$.percentDone",
-            "peakMemory": "$.peakMemory",
-            "renderStage": "$.rendererStage",
-            "gpuTime": "$.gpuTimeMs",
-            "triangles": "$.trianglesDrawn",
-            "instances": "$.instancesDrawn",
-            "drawCalls": "$.drawCalls",
-            "gpuMemory": "$.gpuMemoryUsed",
-            "textureMemory": "$.textureMemory",
-            "taaSamples": "$.numCompletedSamples"
+            "rendererStage": "$.rendererStage",
+            "renderProgressAnnotation": "$.renderProgressAnnotation",
+            "renderStatsAnnotation": "$.renderStatsAnnotation",
+            "totalClockTime": "$.totalClockTime",
+            "totalMemory": "$.totalMemory",
+            "peakMemory": "$.peakMemory"
         },
-        "viewstats": ["gpuTime", "triangles", "instances", "drawCalls", "gpuMemory", "textureMemory", "taaSamples"]
+        "viewstats": []
     }
 }

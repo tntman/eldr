@@ -84,6 +84,74 @@ copy `eldr.json` to `Documents/houdini22.0/packages/`, or set
 `HOUDINI_PACKAGE_DIR=<build-h22>\houdini`. Then pick Eldr in the Solaris
 viewport's renderer menu or on a Render Settings LOP.
 
+## Solaris UI (Eldr tabs)
+
+Solaris builds a renderer's tab on the Render Settings LOP from
+`<HOUDINI_PATH>/soho/parameters/<RendererPlugin>_Global.ds`, on the Render
+Geometry Settings LOP from `..._Geometry.ds` (`loputils.addRendererParmFolders`,
+run when the node is created or "Rebuild Renderer-Specific Parameters" is
+picked), and the viewport's Display Options from `..._Viewport.ds`
+(`uiscope viewport`). For Eldr that is `HdVkRendererPlugin_*.ds`.
+
+`houdini/gen_ui.py` writes the three files into `build-h22/houdini/soho/parameters`
+(CMake target `eldrHoudiniUi`, part of the Houdini build, run with hython) from
+the renderer's own `GetRendererSettingsList()`, grouped as usdview's settings
+window (`GROUPS` in `usdview/hdvkUsdview/settings.py`). The Render Settings tab
+authors every `eldr:*` setting (each with Karma's Do Nothing / Set or Create /
+Block menu); the Geometry tab the per-prim primvars (`primvars:eldr:reflectionProbe`,
+`planarReflection`, `hair`, `ribbons`, `sprites`). `hython tests\houdini_ui.py`
+creates both LOPs, sets parameters and checks the authored attributes and the
+viewport file. Houdini does not list a delegate's `GetRenderSettingDescriptors`
+by itself: without `HdVkRendererPlugin_Viewport.ds` the viewport's Display
+Options had no Eldr settings (the Embree sample in
+`$HFS/houdini/soho/parameters` shows the mechanism). Nodes
+made before Eldr was installed need "Rebuild Renderer-Specific Parameters".
+
+## Render statistics in Solaris
+
+Houdini reads `GetRenderStats()` (a dictionary, JSON-converted, plus
+`__delegate`) and maps it through `houdini/UsdRenderers.json`'s
+`statsdatapaths` (jsonpath into the stats) to its standard names. The viewport
+text and the Render Statistics pane (`renderstats`, QML templates in
+`$HFS/qt/qml/houdini/renderstats`) read these:
+
+| Name | Type | Shown as |
+|---|---|---|
+| `rendererStage` | string | the word before the percentage in the viewport ("Accumulating 24%") and in the pane |
+| `percentDone` | number, 0-100 | the percentage; the pane's progress bar and ETA |
+| `totalClockTime` | seconds | the pane's Elapsed (ETA = elapsed / fraction) |
+| `totalMemory`, `peakMemory` | bytes | the pane's Memory and Peak Memory |
+| `renderProgressAnnotation`, `renderStatsAnnotation` | string | free text lines (Karma uses them for its progress and stats lines) |
+| `viewstats` entries | any | the labels listed in `viewstats` ("Frame: GPU time (ms)", ...) |
+
+Everything usdview's Eldr > Render Statistics window lists is in `viewstats`
+and `statsdatapaths` too, with the same order and grouping, as
+"<group>: <label> (<unit>)" ("GPU passes: Shading (ms)", "Drawn (after
+culling): Triangles drawn", "Memory: textures (bytes)"; bytes are raw, Houdini
+does not format them). `houdini/gen_ui.py` writes them into
+`<build>/houdini/UsdRenderers.json` at build time from `STATS` and `PASSES` in
+`usdview/hdvkUsdview/__init__.py`, the table that window is drawn from, so a
+new pass or stat added there appears in both. `houdini/UsdRenderers.json` is
+only the template with the fixed names above. `hython tests/houdini_stats.py
+<build-h22>` renders a frame and resolves them through `findStats`. A pass
+that did not run in the frame is not in `gpuPassMs`, so its row stays blank
+(as does the card's budget without `VK_EXT_memory_budget`); the test checks
+that every pass that did run has a row.
+
+Eldr reports: `rendererStage` `final` (the film runs in final quality:
+`eldr:finalQuality`, or a fresh film such as husk's and usdrecord's),
+`accumulating` (the film, started from the interactive image), `interactive`
+(TAA), `converged`; `percentDone` as the film's samples over target (with adaptive
+sampling the share of pixels that stopped, whichever is further), 100 while
+interactive (TAA settles in a blink after each camera move, counting it up
+would flicker) and when converged; `totalClockTime` as the wall time since the
+image last changed, frozen at convergence (the time to converge);
+`renderProgressAnnotation` "final 24/64 samples, 12% of pixels done" ("film ..." while accumulating, "TAA ..." while interactive);
+`renderStatsAnnotation` "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". No
+Python API reads a delegate's stats; Houdini polls them itself.
+`hython` with an offscreen GL context confirms the stats dictionary and the
+`statsdatapaths` (through `renderstats.widgets.findStats`).
+
 ## Volumes, tested
 
 - `hython tests\houdini_render.py` of `tests\scenes\volume.usda`
@@ -122,6 +190,32 @@ another checkout's Eldr beside yours.
   `ray:hitPz`, `ray:hitN`. The layer layout of the EXR is the same as
   Karma's (husk's): `C` RGBA, `<var>.R/G/B`, `depth.z`, `N.x/y/z`,
   `P.x/y/z`, `primid.id`, so one comp template works for both.
+- **Cryptomatte.** husk asks the render buffer for `GetResource()`: a
+  `HdAovSettingsMap` whose `extra_aov_resource` is a
+  `UT_HUSDExtraAOVResource` (Houdini's `UT_HUSDExtraAOVResource.h`, no
+  other Houdini dependency) listing extra planes and `cryptomatte/...`
+  metadata; Karma's delegate does the same. Eldr's buffer for a
+  Karma Cryptomatte var (`sourceName __name` / `__materialname`) returns it
+  (houdini build only): the plane `<husk name>00` (Float32Vec4: id,
+  coverage, id, coverage) and, per var, `cryptomatte/<key>/name|hash|
+  conversion|manifest`. husk puts the planes in the EXR as parts and the
+  metadata in the first part's header, as for Karma, which also keeps the
+  var's own RGB part. `hython tests\houdini_cryptomatte.py <build-h22>`
+  (hython; not in ctest) renders step4 through a Karma Render Settings LOP
+  with both Cryptomatte vars, and checks with OpenImageIO that the layers
+  exist, the manifests parse, and every id drawn is in its manifest.
+  Limits: one layer (ranks 0 and 1) whatever the var's
+  `cryptomatterank`, and edges don't blend (see Aovs in renderer/aov.h);
+  the render stats' `cryptomatte` entry also lands in the header as a
+  plain `cryptomatte` attribute, which readers ignore.
+- **`ray:primid`.** A Karma Prim ID var has `dataType int`, so husk makes
+  an Int32 buffer, then writes the EXR channel (`husk:format float`) from
+  the int's bits as a float (id 1 reads 1.4e-45, so 0). For a husk-bound id var (the
+  binding carries `driver:parameters:aov:husk:name`) the pass reallocates
+  the buffer as Float32 and fills it with the id + 1 (0 off objects).
+  usdview and usdrecord bind `primId` without husk's settings and keep
+  Int32, which picking needs. With `eldr:productResolution` at a size other
+  than husk's buffer, the ids stay Int32.
 - **The beauty is linear, unexposed.** When the settings prim is husk's
   (`husk:*` attributes), Eldr renders the film in final quality, gives husk
   the linear beauty (`eldr:productLinear`) and leaves auto exposure off
@@ -132,8 +226,17 @@ another checkout's Eldr beside yours.
   default). They apply when the prim's value changes, so they also work with
   `usdrecord --renderSettingsPrimPath`.
 - **Several frames** (`husk -f 1 -n 3`, `$F4` in the product name) and motion
-  blur over the camera shutter work. Karma's blur is smooth; Eldr's is made
-  of discrete time samples (visible steps across a fast move).
+  blur over the camera shutter work. husk renders until Eldr reports the
+  frame converged, so the film reaches `eldr:filmSamples`. Eldr's time
+  samples used to show as steps across a fast move (a cube moving 120 px
+  at 256x64, 64 samples: copies 1.9 px apart, and the blur's faint ends
+  cut off by adaptive sampling). With the residual blur between time
+  samples (`eldr:motionBlurResidual`) and non-adaptive time-sampled films
+  the blur is smooth: against a 1024-sample render the row's RMS error
+  went from 0.0071 to 0.0027 (plateau 0.145), and normalised to its
+  plateau it follows Karma's (256 spp) within 0.04 on average, as the
+  1024-sample render does (0.037). Karma's blur is noise per pixel
+  sample instead.
 - **Lens distortion.** Solaris authors a Karma Physical Lens as a compiled
   string in `karma:camera:lensshader` ("opdef:/Vop/kma_physicallens?VflCode
   ... opencv_k1 0.12 ..."); Eldr reads opencv_k1..k6, p1, p2 from it (and
@@ -152,20 +255,54 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 
 | What | Karma | Eldr | Action |
 |---|---|---|---|
-| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | st (0,0) at +X +Y with the image's bottom row at t = 0, as UsdUVTexture reads images | None: UsdLux's text gives the corner, not the image flip. Left as is; flagged for the user. |
+| Rect-light texture orientation | the file's top row at t = 0, so its light is Eldr's flipped vertically. Seen along the light's axis with +X right and +Y up (corner-marked texture, light 0.25 above a floor), the image corners land at TL/TR/BL/BR as: Karma TR/TL/BR/BL, Eldr BR/BL/TR/TL | Matches since the change below: the image's top row at +Y, left edge at +X (before: the bottom row at +Y) | Changed to Karma's orientation at the user's request (`renderer/shaders/mesh.frag`; vkrtest and test_lighting check it). |
 | `primvars:displayColor` | read as sRGB (0.5 becomes 0.214 linear) | linear, as USD defines colour attributes | None, USD followed. A floor of displayColor 0.5 is 0.43 as bright in Karma. |
 | Dome in the camera | not drawn by default | drawn (`domeLightCameraVisibility`, true) | None; Hydra's own setting. |
 | Glossy highlights of small lights on a rough 0.15 floor | Karma's default colour limit (`karma:global:colorlimit` 20) clips the bulb's highlight by 10%; with it off, Karma matches a brute-force GGX integral within 4% | were 1.6-2.3x brighter in total (lights.usda reflections) | Fixed: the energy-conserving representative point (features.md, Lighting); now within 5% of Karma. |
-| `ray:primid` | float id/coverage | Hydra int primId; husk writes it as a float reinterpretation, so it reads 0 | Open: use Cryptomatte-like ids from Karma, not comparable. |
-| Cryptomatte vars | rank layers `<name>00..` and manifest metadata (written by Karma) | a plain `<name>` RGB layer, no manifest | Open: Eldr's writer needs OpenImageIO; use the standalone build (usdrecord) for Cryptomatte. |
+| `ray:primid` | float id/coverage | float: 0 on the background, Hydra's primId + 1 on objects (no coverage) | Not comparable (Karma's blends ids with coverage); both are 0 only off objects. |
+| Cryptomatte vars | rank layers `<name>00..02` and manifest metadata | `<name>00` (rank 0 and 1, one sample per pixel, so hard edges) and the same manifest metadata: husk's `UT_HUSDExtraAOVResource` (see above) | Matches in layout; one layer, not three. |
 | Volumes | rendered | rendered (OpenVDB files and SOP volumes, see above) | Matches. |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s | |
 
+## Solaris viewport
+
+- **Readback.** Houdini hands delegates an OpenGL Hgi but composites with
+  Vulkan (Houdini VK), so a shared GL texture shows nothing there: this
+  build reads frames back. Houdini binds colour (Float16Vec4), depth,
+  normal, primvars:st, primId and instanceId at the viewport's size.
+  A buffer comes back with the frame only if Houdini mapped it since the
+  last frame; the rest are read when mapped. While the camera moves, the
+  extra AOVs (normal, primvars:st) are rendered only if Houdini read them
+  last frame (it does when the viewport shows that AOV); still frames
+  render them all. `HDVK_DEBUG_AOVS=1` prints the bindings and, every 60
+  frames, how often Houdini mapped each one.
+- **Selection outline.** Houdini draws it for Hydra delegates only when
+  `UsdRenderers.json` says `"needsselection": true` (HUSD_RendererInfo's
+  `needsNativeSelectionPass`: Houdini's own GL draws the selected prims as
+  an overlay; Karma's json sets it too). Eldr's json sets it. Without it
+  there was no outline although the ids were right, so Houdini evidently
+  doesn't outline from a delegate's id AOVs (it binds no elementId, which
+  Hydra's own HdxColorizeSelectionTask would read).
+- **Ids.** primId is the render index's prim id
+  (`HdRenderIndex::GetRprimPathFromPrimId`) and instanceId the instance
+  index, as Houdini's render keys (picking) expect:
+  `viewportBench <scene> <camera> --still --ids` checks every id on screen
+  against the render index (step4 and Kitchen_set_instanced: all resolve).
+- **Frame times** with Houdini's bindings: `viewportBench` (normal build,
+  `tests/viewportBench.cpp`) sets up the same render outputs through
+  HdxTaskController with `eldr:shareFrame` off, orbits the camera and maps
+  the buffers after each frame (`--map` picks which). Run it with
+  `usdenv.cmd`; other GPU users show up in the mean, so compare medians.
+  1280x720, moving camera, best median of 4 alternated runs, before and
+  after the readback changes. Kitchen_set: colour, depth and ids read
+  30.3 -> 23.7 ms, colour and depth read 34.9 -> 20.8 ms, all six read
+  34.0 -> 32.1 ms (unchanged by design). step4 with the ids read:
+  26.4 -> 12.3 ms. usdview's path (GPU sharing) on the same orbit: about
+  15 ms (Kitchen_set) and 11 ms (step4).
+
 ## Not checked
 
-- Interactive Solaris use beyond a first render: camera moves, picking,
-  Render Settings LOP options. The viewport (Houdini VK) does show Eldr's
-  image: Houdini hands delegates an OpenGL Hgi but composites with Vulkan, so
-  this build reads frames back instead of sharing GL textures.
+- Interactive Solaris use in the GUI after the readback and selection
+  changes: navigation speed, the outline, Render Settings LOP options.
 - The Python ctest suite uses `usdenv.cmd` (USD 26.08) and doesn't apply to
   this build.

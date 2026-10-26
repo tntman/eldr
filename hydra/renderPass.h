@@ -35,6 +35,7 @@ private:
     vkr::Renderer *_renderer;
     HdVkRenderProducts _products;  // UsdRender products (EXR files)
     std::map<TfToken, VtValue> _appliedSettings;  // eldr:* values taken from the settings prim
+    float _lastViewProj[16] = {};  // the last frame's camera: moving or still
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
