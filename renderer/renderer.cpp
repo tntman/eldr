@@ -3665,7 +3665,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     depthAtt.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
     depthAtt.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     depthAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depthAtt.clearValue.depthStencil.depth = frame.clearDepth;
+    depthAtt.clearValue.depthStencil.depth = 1.0f;  // far: an app's AOV clear value applies to the readback
     VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
     ri.renderArea = {{0, 0}, {_width, _height}};
     ri.layerCount = 1;
@@ -4146,7 +4146,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const bool post = frame.postProcess;
         _distortion.Record(_cmd, frame.distortion, _width, _height, post ? _post.Output() : _color.image,
                            post ? _post.OutputView() : _color.view, _depth.image, _depth.view, _primId.image,
-                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, frame.clearDepth,
+                           _primId.view, _instanceId.image, _instanceId.view, frame.clearColor, 1.0f,
                            post && frame.linearColor ? _post.LinearOutput() : VK_NULL_HANDLE,
                            post && frame.linearColor ? _post.LinearOutputView() : VK_NULL_HANDLE);
         pass("lensDistortion");

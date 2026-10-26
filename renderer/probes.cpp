@@ -85,7 +85,6 @@ Renderer::Frame Nested(const Renderer::Frame &frame, uint32_t width, uint32_t he
     f.skinning = false;
     f.showEnvironment = true;  // reflections see the dome even where the camera doesn't
     std::fill(f.clearColor, f.clearColor + 4, 0.0f);
-    f.clearDepth = 1.0f;
     return f;
 }
 

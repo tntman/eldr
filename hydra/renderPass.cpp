@@ -23,6 +23,7 @@
 #include "pxr/imaging/hd/types.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -129,6 +130,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
 
     vkr::Renderer::Frame frame;
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
+    // The depth AOV where nothing was hit (husk binds 0). Only the readback's:
+    // the depth buffer itself clears to the far plane.
+    float clearDepth = 1.0f;
     // Extra AOVs (vkr::Aovs) by their Hydra names (HdVkExtraAovs).
     // ponytail: one buffer per kind; of two names for the same (normal and
     // ray:hitN) bound at once, the last one gets it.
@@ -153,7 +157,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         } else if (aovName == HdAovTokens->depth) {
             depth = b.renderBuffer;
             if (b.clearValue.IsHolding<float>()) {
-                frame.clearDepth = b.clearValue.UncheckedGet<float>();
+                clearDepth = b.clearValue.UncheckedGet<float>();
             }
         } else if (aovName == HdAovTokens->primId) {
             primId = b.renderBuffer;
@@ -634,8 +638,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         if (++frames % 60 == 0) {
             const double n = projection[3][2] / (projection[2][2] - 1.0), f = projection[3][2] / (projection[2][2] + 1.0);
             std::fprintf(stderr, "Eldr last 60 frames: camera moved %d, scene or settings changed %d; near %g far %g, "
-                         "%ux%u, final %d, product framing %d\n", moved, edited, n, f, frame.width, frame.height,
-                         int(frame.finalQuality), int(productSized));
+                         "%ux%u, final %d, product framing %d, depth cleared to %g\n", moved, edited, n, f, frame.width,
+                         frame.height, int(frame.finalQuality), int(productSized), clearDepth);
             std::fflush(stderr);
             moved = edited = 0;
         }
@@ -812,6 +816,28 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
+    // The depth AOV: window depth, the binding's clear value where nothing
+    // was hit. Houdini: linear like Karma's (Pz: distance along the view
+    // axis, 0 where nothing was hit; UsdRenderers.json "depthstyle":
+    // "linear"), so its pivot, pan speed and guide compositing don't depend
+    // on the near and far planes it assumes for window depth.
+    const auto depthAov = [c = std::array<float, 4>{frame.depthToDistance[0], frame.depthToDistance[1],
+                                                    frame.depthToDistance[2], frame.depthToDistance[3]},
+                           clearDepth](float *d, size_t n) {
+        for (size_t p = 0; p < n; ++p) {
+#ifdef HDVK_HOUDINI
+            const float z = d[p] * 2.0f - 1.0f;
+            d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
+            (void)clearDepth;
+#else
+            d[p] = d[p] >= 1.0f ? clearDepth : d[p];
+            (void)c;
+#endif
+        }
+    };
+    if (mapped[1]) {
+        depthAov(static_cast<float *>(mapped[1]), size_t(appWidth) * appHeight);
+    }
     try {
         _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
     } catch (const std::exception &e) {
@@ -829,7 +855,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             buffers[i]->SetFetch(nullptr);
             continue;
         }
-        buffers[i]->SetFetch([renderer = _renderer, i](void *data) {
+        const size_t pixels = size_t(appWidth) * appHeight;
+        buffers[i]->SetFetch([renderer = _renderer, i, depthAov, pixels](void *data) {
             vkr::Renderer::Targets t;
             t.color = i == 0 ? data : nullptr;
             t.depth = i == 1 ? static_cast<float *>(data) : nullptr;
@@ -837,6 +864,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             t.instanceId = i == 3 ? static_cast<int32_t *>(data) : nullptr;
             try {
                 renderer->Read(t);
+                if (t.depth) {
+                    depthAov(t.depth, pixels);
+                }
             } catch (const std::exception &e) {
                 TF_RUNTIME_ERROR("HdVk readback failed: %s", e.what());
             }

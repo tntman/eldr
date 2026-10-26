@@ -246,6 +246,21 @@ int main(int argc, char **argv)
             expect(groundError(view, projection) < 0.01,
                    TfStringPrintf("depth read with the frame: the ground at y = 0 (error %.2g)",
                                   groundError(view, projection)));
+            // husk (and maybe Houdini's viewport) binds depth with clear value
+            // 0: still drawn, 0 where nothing was hit (the sky's top row).
+            HdAovDescriptor desc = controller.GetRenderOutputSettings(HdAovTokens->depth);
+            desc.clearValue = VtValue(0.0f);
+            controller.SetRenderOutputSettings(HdAovTokens->depth, desc);
+            render(view);
+            const auto *cleared = static_cast<const float *>(depth->Map());
+            const auto sky = std::count(cleared, cleared + size_t(width) * height, 0.0f),
+                       unhit = std::count(cleared, cleared + size_t(width) * height, 1.0f);
+            depth->Unmap();
+            expect(groundError(view, projection) < 0.01 && sky > 0 && unhit == 0,
+                   TfStringPrintf("depth cleared to 0: ground error %.2g, %d sky pixels 0, %d at 1",
+                                  groundError(view, projection), int(sky), int(unhit)));
+            desc.clearValue = VtValue(1.0f);
+            controller.SetRenderOutputSettings(HdAovTokens->depth, desc);
             // Houdini maps the depth on a click only: frames with colour read, then depth.
             std::vector<GfHalf> a, b;
             for (int f = 0; f < 5; ++f) {

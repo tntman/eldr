@@ -36,7 +36,6 @@ public:
         float invViewProj[16];
         float cameraPos[3];       // world space
         float clearColor[4] = {0, 0, 0, 0};
-        float clearDepth = 1.0f;
         bool showEnvironment = true;  // draw the dome texture as background
         bool postProcess = true;      // false: color is the raw linear HDR scene
         bool taa = true;              // with postProcess: jittered + temporally resolved
