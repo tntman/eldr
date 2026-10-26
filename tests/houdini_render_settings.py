@@ -52,17 +52,31 @@ CameraUtil.ConformWindow(camera, CameraUtil.Fit, W / H)
 frustum = camera.frustum
 
 
-def render(look_through):
+def render(look_through, host=None, recreate=False):
     """The viewport: a free camera, then looking through the settings prim
     (active, its missing camera). Returns the image and the stages seen."""
-    engine = UsdImagingGL.Engine()
-    assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available"
-    engine.SetRendererSetting("houdini:viewport", True)
+    host = {"houdini:viewport": True} if host is None else host
+
+    def make():
+        engine = UsdImagingGL.Engine()
+        assert engine.SetRendererPlugin("HdVkRendererPlugin"), "Eldr not available"
+        for k, v in host.items():
+            engine.SetRendererSetting(k, v)
+        return engine
+
+    engine = make()
     engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
     params = UsdImagingGL.RenderParams()
     stages = set()
     for i in range(80):
+        if recreate and i == 40:  # Houdini recreates the delegate mid-session
+            del engine
+            engine = make()
+            engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
+            engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
+            engine.SetActiveRenderSettingsPrimPath(settings.GetPath())
+            engine.SetCameraPath(Sdf.Path("/cameras/camera1"))
         if look_through and i == 2:
             engine.SetActiveRenderSettingsPrimPath(settings.GetPath())
             engine.SetCameraPath(Sdf.Path("/cameras/camera1"))
@@ -81,6 +95,12 @@ mean = diff / (3 * (W // 4) * (H // 4))
 print("mean difference %.2f (8-bit), stages %s / %s" % (mean, sorted(plainStages), sorted(lookedStages)))
 expect(mean < 2.0, "the same image with and without the settings prim (mean difference %.2f)" % mean)
 expect("final" not in plainStages | lookedStages, "the viewport's film is never final")
+
+# What Solaris sends looking through a Render Settings LOP: no houdini:viewport.
+husk = {"houdini:renderer": "husk", "houdini:use_render_settings_prim": True, "houdini:interactive": "normal"}
+huskLooked, huskStages = render(True, husk, recreate=True)
+print("husk-renderer viewport stages", sorted(huskStages))
+expect("final" not in huskStages, "no final film with houdini:renderer = husk and no houdini:viewport")
 if failures:
     sys.exit(1)
 print("OK")
