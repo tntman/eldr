@@ -101,6 +101,7 @@ bool LightSplits()
     return (kCompiledFeatures & kCompiledLightSplits) != 0u && (frame.aovs.x != 0u || frame.lightPath.z != 0.0);
 }
 vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
+float fogTransmittance = 1.0;  // of the fog in front of the surface (main, below)
 
 #include "brdf.glsl"
 #include "transparency.glsl"
@@ -980,7 +981,8 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                       textureLod(previousSplits, vec3(prevUv, 2.0), 0.0).rgb;
         vec3 indirect = textureLod(previousSplits, vec3(prevUv, 1.0), 0.0).rgb +
                         textureLod(previousSplits, vec3(prevUv, 3.0), 0.0).rgb;
-        hit.rgb += (1.0 - frame.lightPath.x) * direct + (1.0 - frame.lightPath.y) * indirect;
+        float fogged = textureLod(previousSplits, vec3(prevUv, 0.0), 0.0).a;  // its fog's transmittance
+        hit.rgb += fogged * ((1.0 - frame.lightPath.x) * direct + (1.0 - frame.lightPath.y) * indirect);
     }
     hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
     // Met from behind (the ray went behind an object): the light of
@@ -1291,6 +1293,7 @@ void main()
     if (kShadingPass != 2u) {
         vec4 fog = Fog(gl_FragCoord.xy, dot(inWorldPos - frame.cameraPos.xyz, frame.cameraForward.xyz));
         color = color * fog.a + fog.rgb * alpha;
+        fogTransmittance = fog.a;
     }
     // NaN/Inf here (screen-space or probe input gone bad) would enter the
     // TAA, SSGI and exposure histories and spread from there; and above
@@ -1304,7 +1307,9 @@ void main()
     // the front faces drawn after replace them.
     if (LightSplits() && frame.aovs.x != 0u && (kShadingPass == 0u || kShadingPass == 3u) && alpha >= 1.0) {
         ivec2 pixel = ivec2(gl_FragCoord.xy);
-        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, 1.0));
+        // a: the fog's transmittance in front of it (the splits are
+        // unfogged; what is copied or reflected of the colour is fogged).
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, fogTransmittance));
         imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
         imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse + splitDomeGlossy, 1.0));
         imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy + gRefractedLight, 1.0));

@@ -107,7 +107,12 @@ INTENSITIES = ["eldr:directIntensity=1.6", "eldr:indirectIntensity=0.5"]
 VARIANTS.update({"intensity": ["eldr:rtRefraction=0"] + INTENSITIES,
                  "intensityRt": ["eldr:rtRefraction=2"] + INTENSITIES,
                  "intensityDenoise": VARIANTS["ssrDenoise"] + INTENSITIES})
-BASE = {"intensity": "default", "intensityRt": "rtRefraction", "intensityDenoise": "ssrDenoise"}
+# Through fog (its light isn't in the splits, so only the splits compare):
+# what refraction copies and SSR reflects is fogged, its splits aren't.
+FOG = ["eldr:rtRefraction=0", "eldr:fog=true", "eldr:fogDensity=0.05"]
+VARIANTS.update({"fog": FOG, "intensityFog": FOG + INTENSITIES})
+BASE = {"intensity": "default", "intensityRt": "rtRefraction", "intensityDenoise": "ssrDenoise",
+        "intensityFog": "fog"}
 pixels = {}  # (variant, sphere, dx, dy): the EXR's channels there
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
@@ -130,11 +135,13 @@ for variant, settings in VARIANTS.items():
         print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
         pixels[variant, name, 0, 0] = pixel(centre[0], centre[1])
-        if name == "transmission":  # what it refracts (traced or not) is indirect glossy
+        fogged = FOG[1] in settings
+        if name == "transmission" and not fogged:  # what it refracts (traced or not) is indirect glossy
             p = pixel(centre[0], centre[1])
             share = scale["indirectglossy"] * p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
             expect(share > 0.6, f"{variant} transmission: refracted light in indirect glossy ({share:.2f})")
-        expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
+        expect(fogged or abs(worst) <= TOLERANCE,
+               f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
         if variant in BASE:
             moved, where = 0.0, ""
             for dx, dy in [(0, 0)] + POINTS:

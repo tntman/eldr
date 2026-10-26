@@ -679,7 +679,9 @@ screen-space copy of what is behind, which takes the intensities out again by it
 (stored for it). The sun's light through thin subsurface parts is direct diffuse. Fog and toon
 shading stay unscaled. SSR's reflections of the previous frame are scaled once too: last frame's
 splits (kept for it) take the intensities out at the hit (at the hit's pixel, not over a
-rough ray's mip footprint). At 1 the shaders compile without it.
+rough ray's mip footprint). Both go through the fog in front of what they copy or reflect.
+Translucent surfaces that blend (not refract) keep no splits, so a refraction layer copied
+over them takes out the intensities of the surface behind only. At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes
