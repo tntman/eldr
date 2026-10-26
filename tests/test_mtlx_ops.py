@@ -31,10 +31,22 @@ def out_float(src):
 
 # (label, nodes (the last one "out", color3), expected rgb at uv (0.5, 0.5))
 CASES = [
-    # A node Eldr can't compile is bypassed: blur's pass-through is its `in`.
-    ("bypass blur -> in",
+    # A node Eldr can't compile is bypassed: hextiledimage's pass-through is its `default`.
+    ("bypass hextiledimage -> default",
      f("c", "constant", {"value": ("color3", "0.2, 0.4, 0.6")}, "color3") +
-     f("out", "blur", {"in": ("color3", "@c")}, "color3"), (0.2, 0.4, 0.6)),
+     f("out", "hextiledimage", {"default": ("color3", "@c")}, "color3"), (0.2, 0.4, 0.6)),
+    # Nodegraph-implemented nodes are expanded: blur's is a constant of `in`.
+    ("nodegraph blur",
+     f("c", "constant", {"value": ("color3", "0.3, 0.2, 0.1")}, "color3") +
+     f("out", "blur", {"in": ("color3", "@c")}, "color3"), (0.3, 0.2, 0.1)),
+    # contrast: (in - pivot) amount + pivot, pivot from its nodedef (0.5).
+    ("nodegraph contrast", f("k", "contrast", {"in": ("float", "0.75"), "amount": ("float", "1.5")}) + out_float("k"),
+     (0.875,) * 3),
+    # ramp4 at uv (0.5, 0.5), texcoord from its defaultgeomprop UV0: the corners' mean.
+    ("nodegraph ramp4 (UV0)",
+     f("out", "ramp4", {"valuetl": ("color3", "1, 0, 0"), "valuetr": ("color3", "0, 1, 0"),
+                        "valuebl": ("color3", "0, 0, 1"), "valuebr": ("color3", "1, 1, 1")}, "color3"),
+     (0.5, 0.5, 0.5)),
     # geompropvalue without a geomprop reads its default.
     ("geompropvalue without a name",
      f("out", "geompropvalue", {"default": ("color3", "0.3, 0.5, 0.7")}, "color3"), (0.3, 0.5, 0.7)),
@@ -129,7 +141,7 @@ for i, (label, _, rgb) in enumerate(cases):
 
 # The render stats count the bypassed blur and name it (usdview's Eldr > Render Statistics, Houdini's viewstats).
 stats = engine.GetRenderStats()
-if not only and not (stats.get("materialFallbackInputs") == 1 and "ND_blur_color3" in stats.get("materialFallbackNodes", "")):
+if not only and not (stats.get("materialFallbackInputs") == 1 and "ND_hextiledimage_color3" in stats.get("materialFallbackNodes", "")):
     failures.append("stats")
     print("FAIL: fallback stats", stats.get("materialFallbackInputs"), stats.get("materialFallbackNodes"))
 

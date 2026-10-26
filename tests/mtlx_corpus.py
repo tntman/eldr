@@ -51,13 +51,34 @@ def eldr_name(node_id):
     return s.split("_", 1)[0]
 
 
-def eldr_supports(node_id):
-    return node_id in SURFACES or eldr_name(node_id) in GRAPH
+def eldr_supports(node_id, graphs=None):
+    """Eldr compiles it natively, or expands its nodegraph (graphs: nodedef -> inner node
+    categories, library_defs) into nodes it compiles."""
+    if node_id in SURFACES or eldr_name(node_id) in GRAPH:
+        return True
+    return graphs is not None and _category_ok(None, graphs, node_id, set())
+
+
+def _category_ok(category, graphs, node_id=None, seen=None):
+    """A category (or one nodedef) compiles: natively, or through a nodegraph of compiling nodes."""
+    if category in GRAPH:
+        return True
+    ids = [node_id] if node_id else graphs["by_category"].get(category, [])
+    for i in ids:
+        if i in seen:
+            continue
+        seen.add(i)
+        inner = graphs["inner"].get(i)
+        if inner is not None and all(_category_ok(c, graphs, None, seen) for c in inner):
+            return True
+    return False
 
 
 # --- MaterialX libraries: nodedef -> node category, and which are nodegraph-implemented ----
 def library_defs():
-    defs, graphs = {}, set()
+    """defs: nodedef -> category; graphs: nodedef -> its nodegraph's node categories (Eldr's
+    _Expand), and category -> nodedefs."""
+    defs, graphs = {}, {"inner": {}, "by_category": defaultdict(list)}
     roots = [os.path.join(USD, "libraries"), os.path.join(HFS, "houdini", "materialx", "libraries")]
     for root in roots:
         for path in glob.glob(os.path.join(root, "**", "*.mtlx"), recursive=True):
@@ -67,9 +88,12 @@ def library_defs():
                 continue
             for e in doc:
                 if e.tag == "nodedef":
+                    if e.get("name") not in defs:
+                        graphs["by_category"][unns(e.get("node", ""))].append(e.get("name"))
                     defs.setdefault(e.get("name"), unns(e.get("node", "")))
                 elif e.tag == "nodegraph" and e.get("nodedef"):
-                    graphs.add(e.get("nodedef"))
+                    graphs["inner"].setdefault(e.get("nodedef"), {unns(n.tag) for n in e
+                                                                  if n.tag not in ("output", "input")})
     return defs, graphs
 
 
@@ -332,7 +356,8 @@ def search_path():
 
 
 def run_eldr(folder, group, scene_path, cols):
-    env = dict(os.environ, PXR_AR_DEFAULT_SEARCH_PATH=search_path())
+    # HFS: Eldr reads Houdini's MaterialX library (hmtlx*, kma_* nodegraphs) from it.
+    env = dict(os.environ, PXR_AR_DEFAULT_SEARCH_PATH=search_path(), HFS=HFS)
     r = subprocess.run([sys.executable, os.path.join(HERE, "exr_record.py"), eldr_layer(folder, group, scene_path, cols),
                         "/Render/settings", "/World/cam", "eldr:tonemapper=none", "eldr:autoExposure=false",
                         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true"],
@@ -468,7 +493,7 @@ def sheet(path, e_img, k_img, labels, cols):
 # --- main ---------------------------------------------------------------------------------
 def selftest():
     assert eldr_name("ND_multiply_color3FA") == "multiply" and eldr_supports("ND_multiply_color3FA")
-    assert eldr_supports("UsdPrimvarReader_float2") and not eldr_supports("ND_ramp4_color3")
+    assert eldr_supports("UsdPrimvarReader_float2") and not eldr_supports("ND_hextiledimage_color3")
     assert eldr_supports("ND_separate3_color3") and not eldr_supports("ND_gltf_pbr_surfaceshader")
     import tempfile
     d = tempfile.mkdtemp()
@@ -523,7 +548,7 @@ def main():
         for ref_root, rel, has_surface, ids in found:
             label = labels.get(rel.split("/")[-1], rel.split("/")[-1])
             rec = dict(group=group, file=name, material=label, surface=has_surface,
-                       nodes=sorted(set(ids)), unsupported=sorted({i for i in ids if not eldr_supports(i)}))
+                       nodes=sorted(set(ids)), unsupported=sorted({i for i in ids if not eldr_supports(i, ng_impl)}))
             records.append(rec)
             if has_surface and label not in skip:
                 groups[group].append((layer, ref_root, rel, rec))
@@ -567,7 +592,8 @@ def main():
             print("%-28s %3d materials  eldr rc %s karma rc %s  warned %s" % (group, len(cells), rc, krc, warned),
                   flush=True)
     with open(os.path.join(out, "report.json"), "w") as f:
-        json.dump(dict(records=records, notes=notes, renders=renders, defs=defs, ng_impl=sorted(ng_impl)), f, indent=1)
+        json.dump(dict(records=records, notes=notes, renders=renders, defs=defs, ng_impl=sorted(ng_impl["inner"])), f,
+                  indent=1)
     print(summary(records, notes, defs, ng_impl))
     return 0
 
@@ -591,9 +617,9 @@ def summary(records, notes, defs, ng_impl):
     lines = ["| node | materials using | Eldr | materials blocked | blocked by it alone | nodegraph-implemented |",
              "|---|---|---|---|---|---|"]
     for c, n in sorted(mats.items(), key=lambda kv: (-uses[kv[0]], -kv[1])):
-        ok = all(eldr_supports(i) for i in ids_of[c])
-        part = not ok and any(eldr_supports(i) for i in ids_of[c])
-        ng = any(i in ng_impl for i in ids_of[c])
+        ok = all(eldr_supports(i, ng_impl) for i in ids_of[c])
+        part = not ok and any(eldr_supports(i, ng_impl) for i in ids_of[c])
+        ng = any(i in ng_impl["inner"] for i in ids_of[c])
         lines.append("| %s | %d | %s | %d | %d | %s |" % (c, n, "yes" if ok else "partly" if part else "no", uses[c],
                                                        alone[c], "yes" if ng else ""))
     full = sum(1 for r in records if r["surface"] and not r["unsupported"])

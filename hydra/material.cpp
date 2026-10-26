@@ -82,6 +82,26 @@ mx::NodeDefPtr MxNodeDef(TfToken const &id)
     return cache[id] = def;
 }
 
+// A nodegraph node's nodedef: its document's, else the libraries' by
+// category and types (a document's own nodegraphs may not import them).
+mx::NodeDefPtr MxNodeDefOf(mx::NodePtr const &node)
+{
+    if (mx::NodeDefPtr def = node->getNodeDef()) {
+        return def;
+    }
+    for (const mx::NodeDefPtr &def : MxLibraries()->getMatchingNodeDefs(node->getCategory())) {
+        bool match = def->getType() == node->getType();
+        for (const mx::InputPtr &in : node->getInputs()) {
+            const mx::InputPtr d = def->getActiveInput(in->getName());
+            match = match && d && d->getType() == in->getType();
+        }
+        if (match) {
+            return def;
+        }
+    }
+    return nullptr;
+}
+
 // A MaterialX value as Hydra holds it (GfVec*f, float, int, bool, string).
 VtValue MxValue(mx::ValuePtr const &v)
 {
@@ -458,13 +478,22 @@ bool Read(std::map<TfToken, VtValue> const &params, TfToken const &name, T *out)
     return true;
 }
 
+// A file input's path, resolved: Hydra's, else the resolver's (nodedef
+// defaults inside expanded nodegraphs are plain strings), else as written.
 std::string AssetPath(VtValue const &v)
 {
+    std::string path = v.IsHolding<std::string>() ? v.UncheckedGet<std::string>() : std::string();
     if (v.IsHolding<SdfAssetPath>()) {
         const SdfAssetPath &p = v.UncheckedGet<SdfAssetPath>();
-        return p.GetResolvedPath().empty() ? p.GetAssetPath() : p.GetResolvedPath();
+        if (!p.GetResolvedPath().empty()) {
+            return p.GetResolvedPath();
+        }
+        path = p.GetAssetPath();
     }
-    return v.IsHolding<std::string>() ? v.UncheckedGet<std::string>() : std::string();
+    const ArResolvedPath resolved = path.empty() || path.find('<') != std::string::npos
+                                        ? ArResolvedPath()
+                                        : ArGetResolver().Resolve(path);
+    return resolved.empty() ? path : resolved.GetPathString();
 }
 
 // Where a surface shader keeps what HdVk reads (empty: not there), and the
@@ -861,8 +890,7 @@ public:
             *_uvPrimvar = uv;
             return false;
         }
-        _Emit(P::kOutput, {*v}, target);
-        return true;
+        _Emit(P::kOutput, {*v}, target);        return true;
     }
 
     // Material inputs compiled so far.
@@ -999,20 +1027,131 @@ private:
         if (c == node.inputConnections.end() || c->second.empty()) {
             return _Parameter(node, input)[0];
         }
-        const auto up = _net.nodes.find(c->second[0].upstreamNode);
-        if (up == _net.nodes.end() || Kind(up->second.nodeTypeId).name != "constant") {
+        const HdMaterialNode2 *up = _Find(c->second[0].upstreamNode);
+        if (!up || Kind(up->nodeTypeId).name != "constant") {
             return std::nullopt;
         }
-        return _Parameter(up->second, TfToken("value"))[0];
+        return _Parameter(*up, TfToken("value"))[0];
     }
 
+    // A node of the network or of an expanded nodegraph (_Expand).
+    HdMaterialNode2 const *_Find(SdfPath const &path) const
+    {
+        const auto it = _net.nodes.find(path);
+        if (it != _net.nodes.end()) {
+            return &it->second;
+        }
+        const auto e = _extra.find(path);
+        return e == _extra.end() ? nullptr : &e->second;
+    }
+
+    // Unconnected and unauthored: its nodedef's defaultgeomprop (UV0,
+    // Nworld, Pobject, ...) if it has one, else its default value.
     std::optional<Value> _Input(HdMaterialNode2 const &node, TfToken const &input, int depth)
     {
         const auto c = node.inputConnections.find(input);
         if (c != node.inputConnections.end() && !c->second.empty()) {
             return _Node(c->second[0].upstreamNode, c->second[0].upstreamOutputName, depth + 1);
         }
+        if (!node.parameters.count(input)) {
+            if (const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId)) {
+                const mx::InputPtr i = def->getActiveInput(input.GetString());
+                if (i && i->hasDefaultGeomPropString()) {
+                    return _Node(_GeomProp(i->getDefaultGeomPropString()), TfToken("out"), depth + 1);
+                }
+            }
+        }
         return _Const(_Parameter(node, input));
+    }
+
+    // A node reading MaterialX geomprop `name` (stdlib's geomprops), made
+    // once; unknown ones read 0.
+    SdfPath _GeomProp(std::string const &name)
+    {
+        const SdfPath path = SdfPath("/__eldr_geomprop").AppendChild(TfToken(TfMakeValidIdentifier(name)));
+        if (_extra.count(path)) {
+            return path;
+        }
+        HdMaterialNode2 &n = _extra[path];
+        const char space = name.size() < 2 ? 'w' : name[1];  // Nworld, Pobject, ...
+        n.parameters[TfToken("space")] = VtValue(std::string(space == 'o' ? "object" : "world"));
+        if (name.rfind("UV", 0) == 0) {
+            n.nodeTypeId = TfToken("ND_texcoord_vector2");
+            n.parameters[_tokens->index] = VtValue(std::atoi(name.c_str() + 2));
+        } else {
+            static const std::map<char, const char *> kinds = {{'N', "ND_normal_vector3"}, {'P', "ND_position_vector3"},
+                                                               {'T', "ND_tangent_vector3"}, {'B', "ND_bitangent_vector3"}};
+            const auto k = kinds.find(name.empty() ? ' ' : name[0]);
+            n.nodeTypeId = TfToken(k == kinds.end() ? "ND_constant_float" : k->second);
+        }
+        return path;
+    }
+
+    // A node with a nodegraph implementation (MaterialX's *_ng.mtlx, Houdini's
+    // library, a document's own nodedefs) as the nodegraph's nodes, made
+    // once as Hydra nodes under its path: interface inputs take the node's
+    // connections, values or its nodedef's defaults (geomprops included).
+    std::optional<Value> _Expand(HdMaterialNode2 const &n, SdfPath const &path, TfToken const &output, int depth)
+    {
+        const mx::NodeDefPtr def = MxNodeDef(n.nodeTypeId);
+        const mx::InterfaceElementPtr impl = def ? def->getImplementation() : nullptr;
+        const mx::NodeGraphPtr graph = impl ? impl->asA<mx::NodeGraph>() : nullptr;
+        if (!graph) {
+            return std::nullopt;
+        }
+        auto inner = [&](std::string const &name) { return path.AppendChild(TfToken(TfMakeValidIdentifier(name))); };
+        if (_expanded.insert(path).second) {
+            for (const mx::NodePtr &node : graph->getNodes()) {
+                const mx::NodeDefPtr nodeDef = MxNodeDefOf(node);
+                HdMaterialNode2 &h = _extra[inner(node->getName())];
+                h.nodeTypeId = TfToken(nodeDef ? nodeDef->getName() : node->getCategory());
+                for (const mx::InputPtr &in : node->getInputs()) {
+                    const TfToken name(in->getName());
+                    if (in->hasNodeName()) {
+                        const std::string out = in->getOutputString();
+                        h.inputConnections[name] = {{inner(in->getNodeName()), TfToken(out.empty() ? "out" : out)}};
+                    } else if (in->hasInterfaceName()) {
+                        const TfToken outer(in->getInterfaceName());
+                        const auto c = n.inputConnections.find(outer);
+                        const auto value = n.parameters.find(outer);
+                        const mx::InputPtr d = def->getActiveInput(outer.GetString());
+                        if (c != n.inputConnections.end() && !c->second.empty()) {
+                            h.inputConnections[name] = c->second;
+                        } else if (value != n.parameters.end()) {
+                            h.parameters[name] = value->second;
+                            const TfToken cs(SdfPath::JoinIdentifier(TfToken("colorSpace"), outer));
+                            if (n.parameters.count(cs)) {
+                                h.parameters[TfToken(SdfPath::JoinIdentifier(TfToken("colorSpace"), name))] =
+                                    n.parameters.at(cs);
+                            }
+                        } else if (d && d->hasDefaultGeomPropString()) {
+                            h.inputConnections[name] = {{_GeomProp(d->getDefaultGeomPropString()), TfToken("out")}};
+                        } else if (d && d->getValue()) {
+                            h.parameters[name] = MxValue(d->getValue());
+                        }
+                    } else if (in->getValue()) {  // file names with their [tokens] filled in
+                        h.parameters[name] = in->getType() == "filename" ? VtValue(in->getResolvedValueString())
+                                                                         : MxValue(in->getValue());
+                    }
+                }
+            }
+        }
+        mx::OutputPtr out = output.IsEmpty() ? nullptr : graph->getOutput(output.GetString());
+        if (!out) {
+            const std::vector<mx::OutputPtr> outs = graph->getOutputs();
+            if (outs.empty()) {
+                return std::nullopt;
+            }
+            out = outs[0];
+        }
+        if (out->hasInterfaceName()) {
+            return _Input(n, TfToken(out->getInterfaceName()), depth);
+        }
+        if (!out->hasNodeName()) {
+            return std::nullopt;
+        }
+        const std::string o = out->getOutputString();
+        return _Node(inner(out->getNodeName()), TfToken(o.empty() ? "out" : o), depth + 1);
     }
 
     // Texture coordinates: a connected input, else "st".
@@ -1052,16 +1191,19 @@ private:
             _fallbackEvents += _tainted.count(key);
             return memo->second;
         }
-        const auto it = _net.nodes.find(path);
-        if (depth > 64 || it == _net.nodes.end()) {
+        const HdMaterialNode2 *found = _Find(path);
+        if (depth > 256 || !found) {
             return std::nullopt;
         }
-        const HdMaterialNode2 &node = it->second;
+        const HdMaterialNode2 &node = *found;
         const size_t events = _fallbackEvents, hard = _hardFailures;
         std::optional<Value> v = _Compile(node, Kind(node.nodeTypeId), output, depth);
+        // Failed itself, or an input of it failed with nothing to stand in.
+        const bool own = _hardFailures == hard;
         if (!v) {
-            // Failed itself, or an input of it failed with nothing to stand in.
-            const bool own = _hardFailures == hard;
+            v = _Expand(node, path, output, depth);
+        }
+        if (!v) {
             const std::string &id = node.nodeTypeId.GetString();
             if (_failed.empty()) {
                 _failed = id;
@@ -1175,7 +1317,7 @@ private:
             return _Emit(it->second.first, std::move(args));
         }
         if (k.name == "constant") {
-            return _Const(_Parameter(n, TfToken("value")));
+            return in("value");  // connected inside expanded nodegraphs (blur's)
         }
         if (k.name == "convert" || k.name == "dot") {
             return in("in");
@@ -1373,6 +1515,9 @@ private:
     std::map<std::pair<SdfPath, TfToken>, Value> _memo;
     // Memoized values with a bypassed node upstream (they count again where reused).
     std::set<std::pair<SdfPath, TfToken>> _tainted;
+    // Nodes of expanded nodegraphs and geomprop readers, and the expanded nodes.
+    std::map<SdfPath, HdMaterialNode2> _extra;
+    std::set<SdfPath> _expanded;
     size_t _fallbackEvents = 0, _hardFailures = 0;
     std::string _failed;
 };
