@@ -281,6 +281,32 @@ vec3 RectFormFactor(vec3 toLight, vec3 hw, vec3 hh)
     return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
 }
 
+// Lambert's form factor of the rect toLight +- hw +- hh clipped to the
+// horizon of n: exact (irradiance / (pi L)), where the sphere approximation
+// of the clipped form factor ((f^2 + F.n) / (f + 1)) was up to 4% bright on
+// a rect above the horizon (Karma integrates it exactly).
+float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
+{
+    vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
+    vec3 poly[5];
+    int count = 0;
+    for (int i = 0; i < 4; ++i) {
+        vec3 a = corners[i], b = corners[(i + 1) % 4];
+        float da = dot(a, n), db = dot(b, n);
+        if (da > 0.0) {
+            poly[count++] = a;
+        }
+        if ((da > 0.0) != (db > 0.0)) {
+            poly[count++] = a + (b - a) * (da / (da - db));
+        }
+    }
+    float sum = 0.0;
+    for (int i = 0; i < count; ++i) {
+        sum += dot(EdgeFormFactor(poly[i], poly[(i + 1) % count]), n);
+    }
+    return abs(sum) / (2.0 * PI);
+}
+
 // Form factor vector of the side of a cylinder (axis toLight +- axis,
 // radius r) facing the shading point: the three facets of the half hexagon
 // prism inscribed in it there, whose sum is the form factor of their
@@ -525,9 +551,10 @@ float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float
 // Sphere, rect, disk or cylinder light (UsdLux semantics as in hdEmbree:
 // cone and focus shaping around the emission axis; rects and disks emit
 // from their -Z side, cylinders from their sides). Diffuse: Frostbite's
-// horizon-clipped sphere/disk illuminance; for rects (and cylinders' rect
-// silhouettes) the exact polygon form factor vector with Heitz's horizon
-// approximation. Specular: LightRegion's representative point.
+// horizon-clipped sphere/disk illuminance; for rects the exact form factor
+// of the polygon clipped to the horizon; for cylinders' rect silhouettes
+// the form factor vector with Heitz's horizon approximation. Specular:
+// LightRegion's representative point.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
                 float NoV, vec3 energyCompensation)
 {
@@ -582,9 +609,8 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         bool rect = uint(light.position.w) == kLightRect;
         if (rect) {
             vec3 formFactor = RectFormFactor(toLight, hw, hh);
-            float f = length(formFactor);
-            diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
-            specularE = PI * f;
+            diffuseE = PI * RectFormFactorClipped(toLight, hw, hh, n);
+            specularE = PI * length(formFactor);
         } else {
             float r2 = length(cross(hw, hh));  // radius^2 of the equal-area circle
             float cosLight = clamp(dot(light.axis.xyz, -toLight / d), 0.0, 1.0);
