@@ -1,0 +1,46 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# White furnace for eldr:multiScatter (tests/test_furnace.py): a rough white
+# metal sphere (F0 = 1, roughness 0.8) under a uniform white dome of intensity
+# 1. Energy conserving, it reads 1; single scattering loses what the rough
+# lobe's extra bounces would return.
+
+def Camera "cam"
+{
+    float focalLength = 50
+    double3 xformOp:translate = (0, 0, 10)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DomeLight "dome"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:intensity = 1
+}
+
+def Sphere "ball" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/metal>
+}
+
+def Scope "mtl"
+{
+    def Material "metal"
+    {
+        token outputs:surface.connect = </mtl/metal/shader.outputs:surface>
+        def Shader "shader"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 1, 1)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+}

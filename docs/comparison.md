@@ -64,6 +64,7 @@
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | MaterialX, OpenPBR, standard_surface | Yes | No | Partial | Blender uses its own node system; Unreal imports MaterialX into Substrate. |
+| GGX multiple-scattering energy compensation | Yes | Yes | Yes | Eldr: `eldr:multiScatter` (on). Karma's UsdPreviewSurface is single-scatter; turn it off to match. |
 | Textured lobe inputs (coat, film, transmission, SSS) | Yes | Yes | Yes | |
 | Subsurface scattering | Yes | Yes | Yes | |
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |

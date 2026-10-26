@@ -98,6 +98,8 @@ const uint kFeatureSoftSun = 65536u, kFeatureFog = 131072u, kFeatureProbe = 2621
 const uint kFeatureSunRegion = 16777216u;
 // A motion blur time sample (mesh.vert's shutter reads, frame.deform.z).
 const uint kFeatureTimeSample = 33554432u;
+// GGX multiple-scattering energy compensation (Frame::multiScatter).
+const uint kFeatureMultiScatter = 67108864u;
 
 // The optional frame.features.x bits whose code a pipeline has: the
 // shading pipelines are specialized with the ones their frame uses
