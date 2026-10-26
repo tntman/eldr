@@ -4253,6 +4253,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _stats.accumSeconds = _accumSeconds;
     _stats.film = film;
+    _stats.filmFinal = film && _filmFinal;
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
 }
 

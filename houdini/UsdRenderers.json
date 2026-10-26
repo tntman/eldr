@@ -12,16 +12,8 @@
             "renderStatsAnnotation": "$.renderStatsAnnotation",
             "totalClockTime": "$.totalClockTime",
             "totalMemory": "$.totalMemory",
-            "peakMemory": "$.peakMemory",
-            "GPU Time (ms)": "$.gpuTimeMs",
-            "Triangles": "$.trianglesDrawn",
-            "Instances": "$.instancesDrawn",
-            "Draw Calls": "$.drawCalls",
-            "GPU Memory": "$.gpuMemoryUsed",
-            "Texture Memory": "$.textureMemory",
-            "Samples": "$.numCompletedSamples",
-            "Pixels Converged (%)": "$.pixelsConvergedPercent"
+            "peakMemory": "$.peakMemory"
         },
-        "viewstats": ["GPU Time (ms)", "Triangles", "Instances", "Draw Calls", "GPU Memory", "Texture Memory", "Samples", "Pixels Converged (%)"]
+        "viewstats": []
     }
 }

@@ -480,6 +480,7 @@ public:
         uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
         bool film = false;        // the film is accumulating (else interactive TAA)
+        bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
         double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)

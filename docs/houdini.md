@@ -122,15 +122,31 @@ text and the Render Statistics pane (`renderstats`, QML templates in
 | `totalClockTime` | seconds | the pane's Elapsed (ETA = elapsed / fraction) |
 | `totalMemory`, `peakMemory` | bytes | the pane's Memory and Peak Memory |
 | `renderProgressAnnotation`, `renderStatsAnnotation` | string | free text lines (Karma uses them for its progress and stats lines) |
-| `viewstats` entries | any | the labels listed in `viewstats` ("GPU Time (ms)", "Triangles", ...) |
+| `viewstats` entries | any | the labels listed in `viewstats` ("Frame: GPU time (ms)", ...) |
 
-Eldr reports: `rendererStage` `accumulating` (film), `interactive` (TAA),
-`converged`; `percentDone` as the film's samples over target (with adaptive
+Everything usdview's Eldr > Render Statistics window lists is in `viewstats`
+and `statsdatapaths` too, with the same order and grouping, as
+"<group>: <label> (<unit>)" ("GPU passes: Shading (ms)", "Drawn (after
+culling): Triangles drawn", "Memory: textures (bytes)"; bytes are raw, Houdini
+does not format them). `houdini/gen_ui.py` writes them into
+`<build>/houdini/UsdRenderers.json` at build time from `STATS` and `PASSES` in
+`usdview/hdvkUsdview/__init__.py`, the table that window is drawn from, so a
+new pass or stat added there appears in both. `houdini/UsdRenderers.json` is
+only the template with the fixed names above. `hython tests/houdini_stats.py
+<build-h22>` renders a frame and resolves them through `findStats`. A pass
+that did not run in the frame is not in `gpuPassMs`, so its row stays blank
+(as does the card's budget without `VK_EXT_memory_budget`); the test checks
+that every pass that did run has a row.
+
+Eldr reports: `rendererStage` `final` (the film runs in final quality:
+`eldr:finalQuality`, or a fresh film such as husk's and usdrecord's),
+`accumulating` (the film, started from the interactive image), `interactive`
+(TAA), `converged`; `percentDone` as the film's samples over target (with adaptive
 sampling the share of pixels that stopped, whichever is further), 100 while
 interactive (TAA settles in a blink after each camera move, counting it up
 would flicker) and when converged; `totalClockTime` as the wall time since the
 image last changed, frozen at convergence (the time to converge);
-`renderProgressAnnotation` "film 24/64 samples, 12% of pixels done";
+`renderProgressAnnotation` "final 24/64 samples, 12% of pixels done" ("film ..." while accumulating, "TAA ..." while interactive);
 `renderStatsAnnotation` "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". No
 Python API reads a delegate's stats; Houdini polls them itself.
 `hython` with an offscreen GL context confirms the stats dictionary and the

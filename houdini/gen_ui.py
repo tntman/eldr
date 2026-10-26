@@ -16,6 +16,7 @@ Attribute parms are named hou.text.encodeParm(<attribute>), each with a
 The groups are usdview's settings window's (GROUPS in settings.py).
 """
 import ast
+import json
 import os
 import re
 import sys
@@ -49,6 +50,38 @@ def groups(settings_py):
         if isinstance(node, ast.Assign) and node.targets[0].id == "GROUPS":
             return ast.literal_eval(node.value)
     raise SystemExit("no GROUPS in " + settings_py)
+
+
+def literal(py, name):
+    """A module-level literal of a Python file, read without importing it (Qt)."""
+    for node in ast.parse(open(py, encoding="utf-8").read()).body:
+        if isinstance(node, ast.Assign) and node.targets[0].id == name:
+            return ast.literal_eval(node.value)
+    raise SystemExit("no %s in %s" % (name, py))
+
+
+SUFFIX = {"ms": " (ms)", "B": " (bytes)", "%": " (%)", "s": " (s)", "EV": " (EV)"}
+
+
+def write_renderers(out, settings_py):
+    """UsdRenderers.json: the template's fixed stats plus every row of usdview's
+    Render Statistics window (STATS, PASSES in hdvkUsdview/__init__.py), in its
+    order, as 'Group: label' entries in viewstats and statsdatapaths."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    view = os.path.join(os.path.dirname(settings_py), "__init__.py")
+    doc = json.load(open(os.path.join(here, "UsdRenderers.json"), encoding="utf-8"))
+    info = doc[RENDERER]
+    paths, names = info.setdefault("statsdatapaths", {}), info.setdefault("viewstats", [])
+    passes = literal(view, "PASSES")
+    for heading, entries in literal(view, "STATS"):
+        if entries == "PASSES":
+            entries = [(label, "gpuPassMs." + key, "ms") for key, label in passes]
+        for label, key, unit in entries:
+            name = "%s: %s%s" % (heading, label.strip(), SUFFIX.get(unit, ""))
+            paths[name] = "$." + ".".join(key.split("."))
+            names.append(name)
+    write(f"{out}/UsdRenderers.json", json.dumps(doc, indent=4) + "\n")
+    return len(names)
 
 
 def q(text):
@@ -170,7 +203,8 @@ def main(out, settings_py):
     for p in PRIMVARS:
         text += entry(p[0], p[1], p[2], p[3], p[4], "None")
     write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_Geometry.ds", text + "}\n")
-    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {len(PRIMVARS)} primvars -> {out}")
+    stats = write_renderers(out, settings_py)
+    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {len(PRIMVARS)} primvars, {stats} stats -> {out}")
 
 
 if __name__ == "__main__":

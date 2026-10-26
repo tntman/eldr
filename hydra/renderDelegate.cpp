@@ -562,12 +562,16 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     const double samplesDone = 100.0 * frame.taaSamples / std::max(frame.taaTarget, 1u);
     const double pixelsDone = frame.filmActivePixels ? 100.0 * (1.0 - frame.filmActivePixels / total) : 0.0;
     stats["percentDone"] = converged || !frame.film ? 100.0 : std::min(100.0, std::max(samplesDone, pixelsDone));
-    stats["rendererStage"] = std::string(converged ? "converged" : frame.film ? "accumulating" : "interactive");
+    stats["rendererStage"] = std::string(converged                ? "converged"
+                                        : frame.film && frame.filmFinal ? "final"
+                                        : frame.film                    ? "accumulating"
+                                                                        : "interactive");
     stats["totalClockTime"] = frame.accumSeconds;  // time to converge once converged
     stats["pixelsConvergedPercent"] = converged ? 100.0 : pixelsDone;
     {
         char text[160];
-        std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? "film" : "TAA", frame.taaSamples,
+        std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? (frame.filmFinal ? "final" : "film") : "TAA",
+                      frame.taaSamples,
                       frame.taaTarget,
                       frame.filmActivePixels ? (", " + std::to_string(int(pixelsDone)) + "% of pixels done").c_str() : "");
         stats["renderProgressAnnotation"] = std::string(text);
