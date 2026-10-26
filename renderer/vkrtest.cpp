@@ -4019,7 +4019,7 @@ int main()
                 return x * x + y * y + z * z <= 144.0f;
             };
             const float px = (40.5f / 32.0f - 1.0f), py = (32.5f / 32.0f - 1.0f);  // the pixel's world x, y
-            double sumT = 0.0;
+            double sumT = 0.0, sumHalf = 0.0;  // the dome's: half the optical depth (volume.frag)
             int samples = 0;
             for (float z = -0.5f; z < 0.5f; z += 1.0f / 256.0f) {
                 if (!inBall(int(std::floor(px * 32 + 16)), int(std::floor(py * 32 + 16)), int(std::floor(z * 32 + 16)))) {
@@ -4031,6 +4031,7 @@ int main()
                     voxels += inBall(i, j, k) && (float(i) - 15.5f) * 3 / 32 + 2 > px ? 1 : 0;
                 }
                 sumT += std::exp(-0.5 * voxels * 3.0 / 32.0);
+                sumHalf += std::exp(-0.25 * voxels * 3.0 / 32.0);
                 ++samples;
             }
             const float expected = float(sumT / std::max(samples, 1));
@@ -4067,6 +4068,28 @@ int main()
             const float aloneOff = Render(renderer, lit, frame).At(40, 32, 0);
             frame.volume.mutualShadows = true;
             Expect(aloneOff == alone, "mutual shadows leave a lone volume alone");
+            {
+                // The dome's light comes down from its pole (+y) through the
+                // big ball above at y 2: the small ball's top (y 0.27), as the
+                // sun's case turned by 90 degrees, at half the optical depth.
+                vkr::Scene above(&device);
+                above.AddVolume()->fields["density"] = ball->fields["density"];
+                vkr::Volume *upper = above.AddVolume();
+                upper->fields["density"] = BallGrid(12.0f, 0.5f);
+                upper->transforms = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1};
+                above.AddDome();
+                above.Commit();
+                const Image both = Render(renderer, above, frame);
+                frame.volume.mutualShadows = false;
+                const Image apart = Render(renderer, above, frame);
+                frame.volume.mutualShadows = true;
+                const float domeExpected = float(sumHalf / std::max(samples, 1));
+                const float ratio = both.At(32, 40, 0) / apart.At(32, 40, 0);
+                std::printf("mutual volume shadows (dome): top %.4f / %.4f = %.3f (expected %.3f)\n", both.At(32, 40, 0),
+                            apart.At(32, 40, 0), ratio, domeExpected);
+                Expect(apart.At(32, 40, 0) > 0.02f && std::abs(ratio - domeExpected) < 0.03f,
+                       "a volume dims the dome's light on another below it");
+            }
 
             // The material (VolumeShading): absorption 1 at half the density
             // halves the optical depth and scatters nothing; red-only

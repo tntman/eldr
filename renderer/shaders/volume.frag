@@ -22,7 +22,7 @@
 // ponytail: volumes are composited one after another along the ray (in
 // entry order, not interleaved where they overlap); local lights get one atlas tap per step, the
 // dome's light only comes down from above (half its optical depth, as
-// light also arrives from the sides) and through the volume's own density only.
+// light also arrives from the sides), through the other volumes too.
 
 #include "frame.glsl"
 #include "lights.glsl"
@@ -346,6 +346,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             if (frame.envRadiance.w > 0.0) {
                 float depth = ShadowMarch(shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
                                           (params.shadowSteps + 1u) / 2u, extinction);
+                if (mutual) {
+                    depth += OthersDepth(i, x, up * 1e4, noise);  // the other volumes above, as its own
+                }
                 light = dome * exp(-0.5 * depth);
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
