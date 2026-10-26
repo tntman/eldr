@@ -606,6 +606,7 @@ public:
         VkBuffer vertices = VK_NULL_HANDLE;
         VkBuffer indices = VK_NULL_HANDLE;
         VkBuffer instances = VK_NULL_HANDLE;   // Instance[instanceCapacity]
+        uint64_t sceneId = 0;                  // unique per Scene: a destroyed scene's buffer handle can come back
         // kVisibleLists lists of instance indices, see kVisibleLists. Draws
         // index list L at L * instanceCapacity + firstInstance.
         VkBuffer visible = VK_NULL_HANDLE;

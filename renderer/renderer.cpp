@@ -3323,9 +3323,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdCopyBuffer(_cmd, gpu.commandTemplate, _commands.buffer, 1 + cascades, resets);
         // Levels of detail of another scene's (or pool's) instances mean
         // nothing here: no last level, nothing to fade from.
-        if (gpu.instances != _lodInstances) {
+        // (A destroyed scene's buffer handle can come back for a new one: the scene counts too.)
+        if (gpu.instances != _lodInstances || gpu.sceneId != _lodScene) {
             vkCmdFillBuffer(_cmd, _lodState.buffer, 0, VK_WHOLE_SIZE, 0);
             _lodInstances = gpu.instances;
+            _lodScene = gpu.sceneId;
         }
         if (prevJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};

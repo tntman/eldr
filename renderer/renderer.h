@@ -657,10 +657,11 @@ private:
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;
     Buffer _lodState;  // the camera's level of detail per instance slot (cull.comp)
+    uint64_t _lodScene = 0;                   // the scene _lodInstances belongs to
     VkBuffer _lodInstances = VK_NULL_HANDLE;  // the instance pool _lodState is about
     uint32_t _lodFadeLeft = 0, _lodDrawCount = 0;  // frames crossfades may still run; commands when counted
     float _lodViewProj[16] = {};  // the camera the atlas last drew levels of detail for
-    uint32_t _lodFrame = 0;       // frames with levels of detail (cull.comp's lodState)
+    uint32_t _lodFrame = 1;       // frames with levels of detail (cull.comp's lodState); not 0: a cleared state would count as drawn last frame
     VkBuffer _prevJointsSource = VK_NULL_HANDLE;
     uint32_t _lastDrawCount = 0;
     VkCommandPool _pool = VK_NULL_HANDLE;
