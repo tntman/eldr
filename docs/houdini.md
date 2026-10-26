@@ -124,7 +124,8 @@ Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0
 | Still viewport | Houdini's free camera is a scene prim (`/__HoudiniFreeCamera__`) that may sync again unchanged; only real camera, lens, scene or setting changes start the film over, so a still view converges and stops changing. `HDVK_DEBUG_AOVS=1` prints every 60 frames how many frames moved the camera or changed the scene, and the near and far planes. |
 | Selection outline | `UsdRenderers.json` sets `"needsselection": true`; Houdini draws the outline itself |
 | Ids | primId is the render index's prim id, instanceId the instance index, as Houdini's picking expects |
-| Frame times | 1280x720, moving camera. Kitchen_set: colour, depth, ids read 23.7 ms; colour and depth 20.8 ms; all six 32.1 ms. step4 with ids: 12.3 ms. usdview (GPU sharing): about 15 ms (Kitchen_set), 11 ms (step4). |
+| Frame times | 1280x720, moving camera. Kitchen_set: colour, depth, ids read 23.7 ms; colour and depth 20.8 ms; all six 32.1 ms. step4 with ids: 12.3 ms. usdview (GPU sharing): about 15 ms (Kitchen_set), 11 ms (step4). step4 at 1866x737 (`viewportBench --app-ms 11`, 11 ms standing in for Houdini's own work, which matches the 47 fps seen in the viewport): colour and depth read 20.1 ms a frame, of which Eldr 9.1 (GPU 3.7 render plus 2.7 copying to the CPU, waited for, 1.3 memcpy, 1 Hydra); with ids 25.8. With `eldr:overlapReadback` (a moving camera's frame finishes on the GPU while Houdini draws the one before) 13.6 and 14.4 ms. |
+| Overlapped readback | While the camera moves, Eldr returns as soon as a frame is submitted and hands it over at the next one (`eldr:overlapReadback`): Houdini shows the frame before, a still camera's frame is its own. Only for colour, depth and ids read back into the same buffers as last frame; extra AOVs, products and husk read at once. `viewportBench --overlap` (ctest `viewport_overlap`) checks the frames arrive unchanged. |
 
 ## Not checked
 

@@ -10,12 +10,17 @@
 //   --map a,b,...      buffers mapped after each frame (default: all bound)
 //   --share 0|1        eldr:shareFrame (default 0: read back, as in Houdini)
 //   --still            don't move the camera
+//   --no-overlap       eldr:overlapReadback off (each frame waits for its own)
+//   --app-ms N         the app's own work after each frame's maps (busy, N ms:
+//                      Houdini's viewport uploads, composites and draws)
 //   --ids              check primId/instanceId against the render index
 //   --check            instead of timing: which AOVs render and read back
 //                      when the app reads only some (needs normal bound)
 //   --nav              instead of timing: what Houdini's camera tools read
 //                      (depth vs the scene's /ground at y = 0) and a still
 //                      camera's convergence and stability
+//   --overlap          instead of timing: eldr:overlapReadback's frames
+//                      (colour, depth) against read back at once
 #include "pxr/base/gf/frustum.h"
 #include "pxr/base/gf/rotation.h"
 #include "pxr/base/tf/stringUtils.h"
@@ -53,11 +58,12 @@ int main(int argc, char **argv)
 {
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
-                  "[--share 0|1] [--still] [--ids] [--check] [--nav]");
+                  "[--share 0|1] [--still] [--ids] [--check] [--nav] [--overlap] [--no-overlap] [--app-ms N]");
         return 2;
     }
     int width = 1280, height = 720, frames = 120, share = 0;
-    bool still = false, ids = false, check = false, nav = false, mapAll = true;
+    double appMs = 0;
+    bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -72,6 +78,8 @@ int main(int argc, char **argv)
             mapped = TfStringSplit(next, ","), mapAll = false, ++i;
         } else if (a == "--share") {
             share = std::atoi(next), ++i;
+        } else if (a == "--app-ms") {
+            appMs = std::atof(next), ++i;
         } else if (a == "--still") {
             still = true;
         } else if (a == "--ids") {
@@ -80,6 +88,10 @@ int main(int argc, char **argv)
             check = true;
         } else if (a == "--nav") {
             nav = true;
+        } else if (a == "--overlap") {
+            overlap = true;
+        } else if (a == "--no-overlap") {
+            noOverlap = true;
         }
     }
 
@@ -96,6 +108,7 @@ int main(int argc, char **argv)
         return 1;
     }
     delegate->SetRenderSetting(TfToken("eldr:shareFrame"), VtValue(share != 0));
+    delegate->SetRenderSetting(TfToken("eldr:overlapReadback"), VtValue(!noOverlap));
     HdRenderIndex *index = HdRenderIndex::New(delegate, {});
     int result = 0;
     {
@@ -331,7 +344,59 @@ int main(int argc, char **argv)
                        TfStringPrintf("its depth after convergence: error %.2g", groundError(camView, camProj)));
             }
         }
-        if (!check && !nav) {
+        if (overlap) {
+            // eldr:overlapReadback: a moving camera's frames arrive one frame
+            // late but unchanged, a still camera's at once. TAA off: each
+            // frame's image is its camera's alone, whatever came before.
+            HdRenderBuffer *color = controller.GetRenderOutput(HdAovTokens->color);
+            HdRenderBuffer *depth = controller.GetRenderOutput(HdAovTokens->depth);
+            delegate->SetRenderSetting(TfToken("eldr:taa"), VtValue(false));
+            using Image = std::pair<std::vector<GfHalf>, std::vector<float>>;
+            auto run = [&](bool on) {
+                delegate->SetRenderSetting(TfToken("eldr:overlapReadback"), VtValue(on));
+                std::vector<Image> images;
+                for (int f = 0; f <= 6; ++f) {  // moving, then still at the last angle
+                    controller.SetFreeCameraMatrices(
+                        GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), 3.0 * std::min(f, 5))) * view, projection);
+                    engine.Execute(index, &tasks);
+                    const auto *c = static_cast<const GfHalf *>(color->Map());
+                    const auto *d = static_cast<const float *>(depth->Map());
+                    images.push_back({{c, c + size_t(width) * height * 4}, {d, d + size_t(width) * height}});
+                    color->Unmap();
+                    depth->Unmap();
+                }
+                return images;
+            };
+            const std::vector<Image> sync = run(false), overlapped = run(true);
+            auto colourDiff = [](const Image &a, const Image &b) {
+                double c = 0;
+                for (size_t i = 0; i < a.first.size(); ++i) {
+                    c += std::abs(float(a.first[i]) - float(b.first[i]));
+                }
+                return c / double(a.first.size());
+            };
+            auto expect = [&](bool ok, const std::string &what) {
+                std::printf("%s: %s\n", ok ? "ok" : "FAIL", what.c_str());
+                failures += !ok;
+            };
+            // 0..5 move: each shows the frame before (0 the first run's
+            // last, already in the buffers); 6 is still and its own. The
+            // same camera's depth is exact; colour differs by its frame's
+            // noise and history (AO, shadows, exposure after the jump to
+            // frame 0), less than between cameras.
+            auto shows = [&](const Image &got, const Image &want, const Image &other, const std::string &what) {
+                const double same = colourDiff(got, want), apart = colourDiff(got, other);
+                expect(got.second == want.second && same < 0.5 * apart,
+                       TfStringPrintf("%s: depth %s, colour off by %.2g (%.2g from another camera's)", what.c_str(),
+                                      got.second == want.second ? "exact" : "differs", same, apart));
+            };
+            shows(overlapped[0], sync[6], sync[0], "the first deferred frame keeps the image before");
+            for (int f = 1; f <= 5; ++f) {
+                shows(overlapped[f], sync[f - 1], sync[f], TfStringPrintf("moving frame %d shows frame %d", f, f - 1));
+            }
+            shows(overlapped[6], sync[6], sync[4], "a still camera's frame is its own");
+        }
+        if (!check && !nav && !overlap) {
             double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
             std::map<std::string, double> mapMs, passMs;
             std::vector<double> times;  // per frame: their median resists other GPU users
@@ -350,6 +415,8 @@ int main(int argc, char **argv)
                     b->Map();
                     b->Unmap();
                     frameMaps[name] = Ms(m0, Clock::now());
+                }
+                for (const auto mapped = Clock::now(); Ms(mapped, Clock::now()) < appMs;) {
                 }
                 const auto t2 = Clock::now();
                 if (f >= warmup) {
@@ -372,8 +439,8 @@ int main(int argc, char **argv)
                     }
                 }
             }
-            std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s\n", width, height, frames,
-                        TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "");
+            std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s, app %.1f ms\n", width, height, frames,
+                        TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "", appMs);
             std::sort(times.begin(), times.end());
             const double median = times[times.size() / 2];
             std::printf("  frame %.2f ms (%.1f fps), median %.2f: execute %.2f (Render %.2f), gpu %.2f", total / frames,

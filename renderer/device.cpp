@@ -353,6 +353,7 @@ void Device::Reserve(Buffer &b, VkDeviceSize bytes, VkBufferUsageFlags usage,
 
 void Device::Submit(const std::function<void(VkCommandBuffer)> &record)
 {
+    WaitFrame();
     VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
     ai.commandPool = _submitPool;
     ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -471,6 +472,9 @@ Device::MemoryStats Device::Memory() const
 
 void Device::Destroy(Image &img)
 {
+    if (img.image) {
+        WaitFrame();
+    }
     vkDestroyImageView(device, img.view, nullptr);
     vkDestroyImage(device, img.image, nullptr);
     Free(img.memory);
@@ -480,6 +484,7 @@ void Device::Destroy(Image &img)
 void Device::Destroy(Buffer &b)
 {
     if (b.buffer) {
+        WaitFrame();
         vkDestroyBuffer(device, b.buffer, nullptr);
     }
     Free(b.memory);

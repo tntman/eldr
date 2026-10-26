@@ -89,6 +89,17 @@ public:
     // Records one command buffer with `record`, submits it and waits.
     void Submit(const std::function<void(VkCommandBuffer)> &record);
 
+    // Waits for a frame the renderer left in flight (Frame::deferReadback),
+    // if any: Submit, Destroy, Scene::Commit and Texture call it before
+    // touching or freeing what that frame may use. Set by the Renderer.
+    void WaitFrame() const
+    {
+        if (waitFrame) {
+            waitFrame();
+        }
+    }
+    std::function<void()> waitFrame;
+
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;

@@ -150,6 +150,11 @@ public:
         // GPU sharing (the Hydra layer's HdVkGLInterop, interop.h): colour
         // and depth go to the app's OpenGL on the GPU instead of Targets.
         bool shareFrame = true;
+        // Render returns once the frame is submitted, without its outputs:
+        // the next Collect delivers them (eldr:overlapReadback; the Hydra
+        // layer's, while the camera moves). Not with Targets::aovs.
+        bool deferReadback = false;
+        bool overlapReadback = true;  // eldr:overlapReadback: the Hydra layer may set deferReadback
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
@@ -480,6 +485,12 @@ public:
 
     // Draws `scene` and blocks until the requested outputs are in `out`.
     void Render(const Scene &scene, const Frame &frame, const Targets &out);
+    // The outputs of the last Render with Frame::deferReadback, waiting for
+    // it if needed, into `out`: true if that frame was width x height and
+    // read back every output `out` asks for. Once only: false after that,
+    // and after a Render without deferReadback. Meanwhile the app's own work
+    // overlaps the GPU's.
+    bool Collect(const Targets &out, uint32_t width, uint32_t height);
 
     // False while auto-exposure adapts or TAA is still accumulating a still
     // camera: keep rendering frames.
@@ -764,6 +775,20 @@ private:
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback)
+    // Frame::deferReadback: the frame in flight (its fence not waited for;
+    // Device::waitFrame waits before anything touches what it uses), and
+    // its outputs in _readback until Collect. Offsets per Render's output
+    // (colour, depth, primId, instanceId, velocity; kNoOutput: not read).
+    void _WaitInFlight();  // with _frameMutex held
+    static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);
+    std::atomic<bool> _inFlight{false}, _deferredOutputs{false};
+    struct Deferred {
+        VkDeviceSize offsets[5] = {kNoOutput, kNoOutput, kNoOutput, kNoOutput, kNoOutput};
+        VkDeviceSize bytes = 0;  // all of them: Read copies after
+        uint32_t width = 0, height = 0;
+        bool postProcess = false;
+        float adaptivePixelFraction = 0;
+    } _deferred;
     VkImage _linearColor = VK_NULL_HANDLE;  // Frame::linearColor's image, else null
     std::unique_ptr<RayTracing> _rt;  // null without Device::rayTracing
     std::unique_ptr<VolumePass> _volumePass;  // needs _setLayout

@@ -245,6 +245,7 @@ void Scene::_RemoveSlot(std::vector<std::unique_ptr<T>> &items, T *item)
 Texture::~Texture()
 {
     if (_device) {
+        _device->WaitFrame();
         vkDestroyImageView(_device->device, _view, nullptr);
         vkDestroyImage(_device->device, _image, nullptr);
         _device->Free(_memory);
@@ -1443,6 +1444,7 @@ void Scene::Commit(bool keepMotion)
     if (!_device) {
         return;
     }
+    _device->WaitFrame();  // the pools are host memory the frame in flight reads
     // First commit: create the pools so every descriptor has a buffer.
     if (!_vertices.buffer) {
         _EnsureCapacity(_vertices, _vertexAlloc, 0, sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);

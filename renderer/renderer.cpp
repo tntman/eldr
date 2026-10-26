@@ -507,6 +507,12 @@ Renderer::Renderer(Device &device)
 
     VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
     Check(vkCreateFence(_dev.device, &fci, nullptr, &_fence), "vkCreateFence");
+    _dev.waitFrame = [this] {
+        if (_inFlight) {  // false inside Render, which holds the lock
+            std::lock_guard<std::mutex> lock(_frameMutex);
+            _WaitInFlight();
+        }
+    };
 
     uint32_t families = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(_dev.physical, &families, nullptr);
@@ -578,6 +584,7 @@ Renderer::~Renderer()
         }
     }
     vkDestroyPipelineCache(_dev.device, _prewarmCache, nullptr);
+    _dev.waitFrame = nullptr;
     vkDeviceWaitIdle(_dev.device);
     lap("wait idle");
     _rt.reset();
@@ -2687,7 +2694,7 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
 
 bool Renderer::IsConverged() const
 {
-    return (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged()) &&
+    return !_deferredOutputs && (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged()) &&
            !(_reflections && _reflections->ProbePending()) && _lodFadeLeft == 0;
 }
 
@@ -2701,11 +2708,14 @@ uint32_t Renderer::VisibleInstances() const
     return total;
 }
 
-// ponytail: synchronous, one frame in flight. The Hydra layer's GPU sharing
-// (interop.h) skips the readback; frames in flight would come next.
+// ponytail: one frame in flight, waited for here unless Frame::deferReadback
+// leaves it to Collect (the app's work overlaps the GPU's, one frame
+// behind). The Hydra layer's GPU sharing (interop.h) skips the readback.
 void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &out)
 {
     std::lock_guard<std::mutex> lock(_frameMutex);
+    _WaitInFlight();
+    _deferredOutputs = false;  // not collected: dropped
     // The app's camera, or this film sample's through a point of the lens
     // (Frame::dofJitter, set once the film's state is known below); the
     // film's and TAA's motion tests compare the app's.
@@ -4242,12 +4252,23 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         {outImages[2]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
         {outImages[3]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.velocity, 0},
     };
+    const bool defer = frame.deferReadback && std::none_of(out.aovs, out.aovs + Aovs::kCount, [](float *a) { return a; });
+    if (defer) {  // room for Read's outputs after these until Collect
+        _dev.Reserve(_readback, VkDeviceSize(_outWidth) * _outHeight * (8 + 4 + 4 + 4 + 4 + 8 + 24),
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    }
+    _deferred = {};
+    _deferred.width = _outWidth;
+    _deferred.height = _outHeight;
+    _deferred.postProcess = frame.postProcess;
+    _deferred.adaptivePixelFraction = frame.adaptivePixelFraction;
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {
         if (!o.dst) {
             continue;
         }
         o.offset = offset;
+        _deferred.offsets[&o - outputs] = offset;
         VkBufferImageCopy copy{};
         copy.bufferOffset = offset;
         copy.imageSubresource = {o.aspect, 0, 0, 1};
@@ -4309,18 +4330,43 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     si.commandBufferInfoCount = 1;
     si.pCommandBufferInfos = &cbi;
     Check(vkQueueSubmit2(_dev.queue, 1, &si, _fence), "vkQueueSubmit2");
-    Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
-    Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
+    _inFlight = true;
+    _deferred.bytes = offset;
 
-    const auto *src = static_cast<const uint8_t *>(_readback.mapped);
-    for (const Output &o : outputs) {
-        if (o.dst) {
-            std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _outWidth * _outHeight);
+    _stats.drawCalls = 0;
+    for (size_t i = 0; draw && i + 1 < gpu.drawChunks.size(); ++i) {
+        _stats.drawCalls += (gpu.chunkKind[i] & (Scene::Gpu::kWide - 1)) != Scene::Gpu::kTranslucent;
+    }
+    _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
+    _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
+    _stats.film = film;
+    _stats.filmFinal = film && _filmFinal;
+    if (defer) {
+        _deferredOutputs = true;
+    } else {
+        _WaitInFlight();
+        const auto *src = static_cast<const uint8_t *>(_readback.mapped);
+        for (const Output &o : outputs) {
+            if (o.dst) {
+                std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _outWidth * _outHeight);
+            }
+        }
+        if (frame.extraAovs) {
+            _aovs.Read(out.aovs);
         }
     }
-    if (frame.extraAovs) {
-        _aovs.Read(out.aovs);
+    _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+}
+
+// The frame in flight done: what Render's stats and convergence take from the GPU.
+void Renderer::_WaitInFlight()
+{
+    if (!_inFlight) {
+        return;
     }
+    Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+    Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
+    _inFlight = false;
 
     // What the camera drew: the culled commands' instances and triangles.
     const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
@@ -4330,13 +4376,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _stats.instances += commands[i].instanceCount;
         _stats.triangles += uint64_t(commands[i].instanceCount) * (commands[i].indexCount / 3);
     }
-    _stats.drawCalls = 0;
-    for (size_t i = 0; draw && i + 1 < gpu.drawChunks.size(); ++i) {
-        _stats.drawCalls += (gpu.chunkKind[i] & (Scene::Gpu::kWide - 1)) != Scene::Gpu::kTranslucent;
-    }
-    _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
-    _stats.exposure = frame.postProcess ? _post.Exposure() : 1.0;
-    _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
+    _stats.exposure = _deferred.postProcess ? _post.Exposure() : 1.0;
     _stats.passMs.clear();
     _stats.gpuMs = 0;
     if (_timestamps && !_passes.empty()) {
@@ -4360,8 +4400,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Adaptive film: converged once no pixel took a sample (every pixel
     // takes the minimum first).
     _stats.filmActivePixels = _filmAdaptive ? _taa.ActivePixels() : 0;
-    if (_filmAdaptive && _stats.filmActivePixels <= (1.0f - std::clamp(frame.adaptivePixelFraction, 0.0f, 1.0f)) *
-                                                        float(_width) * float(_height)) {
+    if (_filmAdaptive &&
+        _stats.filmActivePixels <= (1.0f - std::clamp(_deferred.adaptivePixelFraction, 0.0f, 1.0f)) *
+                                        float(_width) * float(_height)) {
         _taaConverged = true;
     }
     // Time to converge: counts from the last change, stops at convergence.
@@ -4370,15 +4411,36 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _accumDone = IsConverged();
     }
     _stats.accumSeconds = _accumSeconds;
-    _stats.film = film;
-    _stats.filmFinal = film && _filmFinal;
-    _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+}
+
+bool Renderer::Collect(const Targets &out, uint32_t width, uint32_t height)
+{
+    std::lock_guard<std::mutex> lock(_frameMutex);
+    _WaitInFlight();
+    if (!_deferredOutputs.exchange(false) || width != _deferred.width || height != _deferred.height) {
+        return false;
+    }
+    void *const dsts[5] = {out.color, out.depth, out.primId, out.instanceId, out.velocity};
+    constexpr VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
+    for (int i = 0; i < 5; ++i) {
+        if (dsts[i] && _deferred.offsets[i] == kNoOutput) {
+            return false;
+        }
+    }
+    const auto *src = static_cast<const uint8_t *>(_readback.mapped);
+    for (int i = 0; i < 5; ++i) {
+        if (dsts[i]) {
+            std::memcpy(dsts[i], src + _deferred.offsets[i], bytesPerPixel[i] * width * height);
+        }
+    }
+    return true;
 }
 
 // As Render's readback, from the images it left in TRANSFER_SRC_OPTIMAL.
 void Renderer::Read(const Targets &out)
 {
     std::lock_guard<std::mutex> lock(_frameMutex);
+    _WaitInFlight();
     if (!_frameColor) {
         return;
     }
@@ -4393,7 +4455,7 @@ void Renderer::Read(const Targets &out)
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
-    VkDeviceSize offsets[6] = {}, offset = 0;
+    VkDeviceSize offsets[6] = {}, offset = _deferredOutputs ? _deferred.bytes : 0;  // Collect's stay
     for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             offsets[i] = offset;
