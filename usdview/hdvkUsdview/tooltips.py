@@ -1,0 +1,38 @@
+"""Tooltips of Eldr's render settings: the "What it does" column of
+docs/settings.md, markdown stripped. Used by usdview's settings window and by
+houdini/gen_ui.py (loaded by path, so no Qt or pxr imports here), so the docs
+and both UIs share one text. tests/test_docs.py limits their length."""
+import os
+import re
+
+MAX = 260  # characters; longer rows get shortened in the docs
+MARKS = {"[film]": "(film only)", "[interactive]": "(interactive only)",
+         "[RT]": "(needs ray tracing)", "[prepass]": "(needs depth prepass)"}
+
+
+def Find(here=None):
+    """settings.md next to this file (a build copy), else the source tree's."""
+    here = here or os.path.dirname(os.path.abspath(__file__))
+    for p in (os.path.join(here, "settings.md"), os.path.join(here, "..", "..", "docs", "settings.md")):
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def Plain(text):
+    for k, v in MARKS.items():
+        text = text.replace(k, v)
+    return re.sub(r"\s+", " ", text.replace("`", "").replace("**", "").replace("<br>", " ")).strip()
+
+
+def Tooltips(path=None):
+    """{"eldr:key": "plain text"}; {} when the docs are not found."""
+    path = path or Find()
+    out = {}
+    if path:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"\| [^|]*<br>`(eldr:\w+)` \| (.*?) \| (.*?) \|", line)
+                if m:
+                    out[m.group(1)] = Plain(m.group(3))
+    return out

@@ -4,46 +4,66 @@ dialog lists them in one column that runs off the screen."""
 
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 
-# Groups in the order the window shows them; settings not listed (new ones)
-# land in "Other".
+from .tooltips import Tooltips
+
+# (title, open, keys) in the order the window shows them: the settings people
+# change most first and open, the rarely touched ones folded, diagnostics last.
+# Every key appears once; settings not listed (new ones) land in "Other".
+# docs/settings.md follows this order (tests/test_docs.py checks).
 GROUPS = [
-    ("Performance and geometry",
-     "depthPrepass frustumCulling cullPixels lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons "
-     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect cryptomatteSoft directIntensity indirectIntensity renderProducts productResolution productLinear pipelineCache "
-     "pipelinePrewarm"),
-    ("Lighting",
-     "imageBasedLighting localLights clusteredLights lightTextures lightShapesVisible emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "
-     "aoRadius aoSlices gi giProbes giRaysPerProbe giHysteresis giPreconverge ssgi ssgiSteps ssgiRadius ssgiResolution ssgiTileOrder "
-     "ssgiThickness ssgiBitmask ssgiBitmaskThickness screenBackface screenBackfaceScale directClamp indirectClamp"),
-    ("Shadows",
-     "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows softSunShadows "
-     "softShadowSamples translucentShadows translucentShadowDivisor rtShadows rtShadowSamples rtSkinnedInstances "
-     "rtDisplacement shadowJitter finalShadows rtTranslucentShadows"),
-    ("Reflections",
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflections rtReflectionSamples reflectionProbe probeResolution probePosition authoredProbes "
-     "probeNormalize planarReflections planarScale planarCount"),
-    ("Materials",
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands texturedLobes "
-     "materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Transparency", "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts refractionBackFaces multiRefraction refractionLayers rtRefraction rtRefractionBounces rtRefractionDisplacement holdoutAlpha"),
-    ("Fog and volumes",
-     "fog fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize fogZUp fogFilmJitter "
-     "volumes volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission volumeAnisotropy "
-     "volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows volumeMutualShadows"),
-    ("Camera and image",
-     "taa taaSamples renderScale filmAccumulation filmSamples filmFilterRadius finalQuality sampleDimensions interactiveSamples adaptiveThreshold adaptiveFinalThreshold adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion depthOfField dofJitter dofResidualBlur motionBlur motionBlurTimeSamples motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess "
-     "autoExposure exposureCompensation bloomIntensity tonemapper"),
+    ("Final render", True,
+     "finalQuality filmSamples adaptiveFinalThreshold finalShadows rtRefraction motionBlur "
+     "motionBlurTimeSamples depthOfField"),
+    ("Lighting and GI", True,
+     "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
+    ("Image", True,
+     "autoExposure exposureCompensation tonemapper bloomIntensity productLinear"),
+    ("Advanced: Geometry and products", False,
+     "lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons pointSprites "
+     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
+     "indirectIntensity renderProducts productResolution"),
+    ("Advanced: Lighting", False,
+     "localLights clusteredLights lightTextures lightShapesVisible emissiveLights emissiveLightThreshold "
+     "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge ssgiSteps "
+     "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
+     "screenBackface screenBackfaceScale directClamp indirectClamp"),
+    ("Advanced: Shadows", False,
+     "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
+     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
+     "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
+    ("Advanced: Reflections", False,
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples reflectionProbe probeResolution "
+     "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount"),
+    ("Advanced: Materials", False,
+     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular hairShading toon toonBands "
+     "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
+    ("Advanced: Transparency", False,
+     "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "
+     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement "
+     "holdoutAlpha"),
+    ("Advanced: Fog and volumes", False,
+     "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
+     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
+     "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
+     "volumeMutualShadows"),
+    ("Advanced: Camera and film", False,
+     "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
+     "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "
+     "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
+    ("Performance and debug", False,
+     "depthPrepass frustumCulling cullPixels shareFrame pipelineCache pipelinePrewarm extraAovs "
+     "renderScale interactiveSamples"),
 ]
 
 
 def Groups(settings):
-    """[(group, [setting...])] of the renderer's setting descriptors (key,
+    """[(group, [setting...], open)] of the renderer's setting descriptors (key,
     name, type, defValue), in GROUPS' order, then "Other"."""
     where = {}
-    for i, (_, keys) in enumerate(GROUPS):
+    for i, (_, _, keys) in enumerate(GROUPS):
         for k in keys.split():
             where["eldr:" + k] = i
-    out = [(title, []) for title, _ in GROUPS] + [("Other", [])]
+    out = [(title, [], isOpen) for title, isOpen, _ in GROUPS] + [("Other", [], False)]
     for s in settings:
         out[where.get(str(s.key), len(GROUPS))][1].append(s)
     return [g for g in out if g[1]]
@@ -61,7 +81,8 @@ class _SettingsWindow(QtWidgets.QWidget):
         self.resize(680, 760)
         self._api = usdviewApi
         self._engine = engine  # tests pass one; usdview's comes from its view
-        self._rows = []        # (setting, label, editor, row widget)
+        self._rows = []        # (setting, label, editor, group box)
+        self._tips = Tooltips()
         self._filter = QtWidgets.QLineEdit()
         self._filter.setPlaceholderText("Filter")
         self._filter.textChanged.connect(self._Filter)
@@ -95,21 +116,35 @@ class _SettingsWindow(QtWidgets.QWidget):
         self._rows = []
         if not settings:
             column.addWidget(QtWidgets.QLabel("Eldr is not the viewport's renderer."))
-        for title, group in Groups(settings):
+        for title, group, isOpen in Groups(settings):
             box = QtWidgets.QGroupBox(title)
-            form = QtWidgets.QFormLayout(box)
+            box.setCheckable(True)  # the check box folds the group
+            body = QtWidgets.QWidget()
+            QtWidgets.QVBoxLayout(box).addWidget(body)
+            form = QtWidgets.QFormLayout(body)
+            box._body = body
             for s in group:
                 label = QtWidgets.QLabel(s.name)
                 label.setWordWrap(True)
                 label.setMinimumWidth(300)  # names stay on one or two lines
                 editor = self._Editor(s, engine)
+                tip = self._tips.get(str(s.key), "")
+                label.setToolTip(tip)
+                editor.setToolTip(tip)
                 form.addRow(label, editor)
                 self._rows.append((s, label, editor, box))
+            box.toggled.connect(lambda _, box=box: self._Fold(box))
+            box.setChecked(isOpen)
+            self._Fold(box)
             column.addWidget(box)
         column.addStretch()
         self._area.setWidget(page)
         self._Mark()
         self._Filter()
+
+    def _Fold(self, box):
+        # A filter shows matching rows even in folded groups.
+        box._body.setVisible(box.isChecked() or bool(self._filter.text()))
 
     def _Value(self, s, engine):
         v = engine.GetRendererSetting(s.key)
@@ -164,6 +199,7 @@ class _SettingsWindow(QtWidgets.QWidget):
                 shown.add(box)
         for _, _, _, box in self._rows:
             box.setVisible(box in shown)
+            self._Fold(box)
 
     def _ResetAll(self):
         engine = self._Engine()
