@@ -56,7 +56,7 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
     vec3 exitP = inWorldPos + dir * distance;
     vec4 clip = frame.viewProj * vec4(exitP, 1.0);
     vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;
-    vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
+    vec3 v = ViewDirection(inWorldPos);
     vec3 side = normalize(cross(v, abs(v.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec4 clipSide = frame.viewProj * vec4(exitP + side * spread, 1.0);
     float pixels = clip.w > 0.0 && clipSide.w > 0.0
@@ -119,6 +119,12 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     // Schlick's cosine is the one on the thinner medium's side.
     float cosine = inside ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
     float F = total ? 1.0 : f0 + (1.0 - f0) * pow(1.0 - cosine, 5.0);
+    // The coat (and OpenPBR's fuzz) lie over the transmission as over the
+    // rest of the base: their colour and what they reflect (brdf.glsl).
+    vec3 over = vec3(1.0);
+#ifdef LAYERS
+    over = layers.under;
+#endif
     float through = gRefracted * (1.0 - F);
     if (!Feature(kFeatureRefraction)) {
         return 1.0 - gStraight - through;  // no background: seen straight through, untinted
@@ -130,7 +136,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         }
         float camera = length(inWorldPos - frame.cameraPos.xyz);
         if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
-            vec3 transmitted = through * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
+            vec3 transmitted = through * over * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;
             gRefractedLight += transmitted * traced.rgb;  // indirect glossy (light splits)
             return 1.0 - gStraight - (traced.a < 0.0 ? dot(transmitted, vec3(1.0 / 3.0)) : 0.0);
@@ -153,7 +159,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float lost = 0.0;  // coverage the app's background takes back
     if (!total) {
         vec4 background = RefractedBackground(r, thickness, spread);
-        vec3 transmitted = through * tint;
+        vec3 transmitted = through * over * tint;
         color += transmitted * background.rgb;
         gRefractedLight += transmitted * background.rgb;
         lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
@@ -161,7 +167,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     if (inside) {
         // The inside's reflection, all of it past the critical angle.
         vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
-        vec3 reflected = gRefracted * F * tint;
+        vec3 reflected = gRefracted * F * over * tint;
         color += reflected * mirrored.rgb;
         gRefractedLight += reflected * mirrored.rgb;
         lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);

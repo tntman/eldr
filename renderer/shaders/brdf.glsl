@@ -306,6 +306,7 @@ struct Layers {
     float sheenRoughness;
     float sheenAlbedo;     // directional albedo towards the viewer
     bool fuzz;             // OpenPBR's fuzz (Zeltner's LTC sheen, over the coat), else Imageworks' sheen
+    vec3 under;            // what the layers above (coat, fuzz) let through to the base: its transmission too
     float anisotropy;      // 0: isotropic base specular
     bool openPbrAnisotropy;  // OpenPBR's roughness mapping, else standard_surface's
     vec3 tangent;          // the stretch direction, with the bitangent across it
@@ -459,8 +460,8 @@ void CoatRoughening(inout float roughness)
 // diffuse colour and emission as they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, 0.0, false, vec3(0.0), vec3(0.0),
-                    0.0, 0.0, BaseToonAlbedo(), false, diffuseColor);
+    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, false, vec3(0.0),
+                    vec3(0.0), 0.0, 0.0, BaseToonAlbedo(), false, diffuseColor);
     // Hair (curves, whose uvs run along each curve, unless their
     // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
     // curve, highlights stretched around it, also without a material.
@@ -518,6 +519,7 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
             under *= mix(vec3(1.0), (1.0 - K) / (1.0 - Ebase * K), layers.coat * m.surface.z);
         }
         diffuseColor *= under;
+        layers.under *= under;
         base.metalW *= under;
         base.dielW *= under;
         layers.sheen *= under;
@@ -535,6 +537,7 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
         layers.sheenAlbedo = ZeltnerAlbedo(NoV, layers.sheenRoughness);
         float through = 1.0 - m.sheen.x * layers.sheenAlbedo;
         diffuseColor *= through;
+        layers.under *= through;
         base.metalW *= through;
         base.dielW *= through;
         layers.coat *= through;

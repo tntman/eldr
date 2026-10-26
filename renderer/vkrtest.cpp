@@ -3189,7 +3189,7 @@ int main()
                         if (p[0] < x0 + 0.02 || p[0] > x1 - 0.02) {
                             continue;  // the quad's edge pixels
                         }
-                        double v[3] = {-p[0], -p[1], -2 - p[2]}, w[3] = {c[0] - p[0], c[1] - p[1], c[2] - p[2]};
+                        double v[3] = {0, 0, -1}, w[3] = {c[0] - p[0], c[1] - p[1], c[2] - p[2]};  // orthographic: v along the axis
                         const double vl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                         const double dist = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
                         for (int k = 0; k < 3; ++k) {

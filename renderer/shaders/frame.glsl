@@ -64,6 +64,15 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl)
 } frame;
 
+// Unit direction from p towards the viewer: the camera's position, or for
+// an orthographic camera (no perspective row in viewProj) against its
+// viewing axis (NDC depth's direction in the world).
+vec3 ViewDirection(vec3 p)
+{
+    bool ortho = abs(frame.viewProj[0][3]) + abs(frame.viewProj[1][3]) + abs(frame.viewProj[2][3]) < 1e-9;
+    return ortho ? -normalize((frame.invViewProj * vec4(0.0, 0.0, 1.0, 0.0)).xyz) : normalize(frame.cameraPos.xyz - p);
+}
+
 // Sample dimensions (Renderer's, after EEVEE's Sampling): every stochastic
 // effect turns a 64 x 64 blue noise by a low-discrepancy value of its own
 // per sample (Cranley-Patterson rotation), each dimension reading the noise

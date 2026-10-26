@@ -822,7 +822,7 @@ vec3 DepthNormal(vec2 ndc, vec3 p)
         t[i] = dot(a, a) < dot(b, b) ? a : b;
     }
     vec3 n = normalize(cross(t[0], t[1]));
-    return dot(n, frame.cameraPos.xyz - p) < 0.0 ? -n : n;
+    return dot(n, ViewDirection(p)) < 0.0 ? -n : n;
 }
 
 // Screen-space reflection: marches the ray linearly through NDC (where
@@ -1079,7 +1079,7 @@ void main()
     TransmissionBegin(alpha);
     SubsurfaceBegin(baseColor, emissive, metallic, specularTint);
 
-    vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
+    vec3 v = ViewDirection(inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
     // makes winding/orientation and normal sign irrelevant.
     vec3 ng = normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos)));

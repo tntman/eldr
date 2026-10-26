@@ -157,7 +157,7 @@ vec3 Geometry(bool normal, uint space)
 vec3 Geometry(bool normal, uint space)
 {
     vec3 n = dot(inNormal, inNormal) > 1e-12 ? inNormal : cross(dFdx(inWorldPos), dFdy(inWorldPos));
-    n = dot(inNormal, inNormal) > 1e-12 || dot(n, frame.cameraPos.xyz - inWorldPos) >= 0.0 ? n : -n;
+    n = dot(inNormal, inNormal) > 1e-12 || dot(n, ViewDirection(inWorldPos)) >= 0.0 ? n : -n;
     if (space != 0u) {
         return normal ? normalize(n) : inWorldPos;
     }
