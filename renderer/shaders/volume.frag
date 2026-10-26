@@ -317,6 +317,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             continue;
         }
         float rho = Density(density, p, fract(noise + vec3(0.8191725, 0.6710436, 0.5497005) * float(stepsLeft)));
+        // The other volumes' shadow steps start at a different fraction each
+        // step (golden ratio), so they average over the march, not per frame.
+        float shadowNoise = fract(noise + 0.6180340 * float(stepsLeft));
         float sigma = rho * extinction;
         vec3 x = origin + t * dir;
         vec3 emitted = vec3(0.0);
@@ -347,7 +350,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 float depth = ShadowMarch(shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
                                           (params.shadowSteps + 1u) / 2u, extinction);
                 if (mutual) {
-                    depth += OthersDepth(i, x, up * 1e4, noise);  // the other volumes above, as its own
+                    depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
                 light = dome * exp(-0.5 * depth);
             }
@@ -366,7 +369,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 }
                 if (mutual) {
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
-                    scattered *= exp(-OthersDepth(i, x, l * 1e4, noise));
+                    scattered *= exp(-OthersDepth(i, x, l * 1e4, shadowNoise));
                 }
                 light += sun.color.rgb * sun.halfHeight.w * scattered;
             }
@@ -380,7 +383,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                         vec3 e = LocalIrradiance(index, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))
-                                ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, noise)) : e;
+                                ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, shadowNoise)) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 } else {
@@ -388,7 +391,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                         vec3 e = LocalIrradiance(k, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))
-                                ? e * exp(-OthersDepth(i, x, lights[k].position.xyz - x, noise)) : e;
+                                ? e * exp(-OthersDepth(i, x, lights[k].position.xyz - x, shadowNoise)) : e;
                         light += e * Phase(dot(dir, l), g);
                     }
                 }
