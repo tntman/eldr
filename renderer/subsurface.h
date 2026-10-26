@@ -41,9 +41,10 @@ public:
     // depth's NDC to world space.
     // With `moveSplits` the same difference moves in the light splits
     // `splits` (Aovs::SplitsView), shared between direct and indirect
-    // diffuse by their unblurred shares.
+    // diffuse by their unblurred shares, without the light path
+    // intensities (`direct`, `indirect`) the colour carries.
     void Blur(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], uint32_t samples,
-              VkImageView splits, bool moveSplits);
+              VkImageView splits, bool moveSplits, float direct = 1.0f, float indirect = 1.0f);
 
 private:
     void _Destroy();

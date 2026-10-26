@@ -2619,7 +2619,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
                                  sizeof(VkDrawIndexedIndirectCommand));
     }
     vkCmdEndRendering(_cmd);
-    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits);
+    _subsurface.Blur(_cmd, _color.view, invViewProj, frame.subsurfaceSamples, _aovs.SplitsView(), splits,
+                     std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f));
 }
 
 bool Renderer::IsConverged() const

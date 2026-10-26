@@ -651,8 +651,10 @@ lights test scene. They accumulate like the colour: over TAA frames, or the film
 
 **Light path intensity** (`directIntensity`, `indirectIntensity`, both 1; Blender 5.1)
 multiplies the same direct and indirect light in the final pixel, not in the light transport
-(GI still bounces unscaled light) nor in the AOVs. Closures outside the splits (subsurface
-transmission, refraction, fog, toon) stay unscaled. At 1 the shaders compile without it.
+(GI still bounces unscaled light) nor in the AOVs, so the beauty is the splits times their
+intensities. Refracted light is indirect glossy (traced, or the screen-space copy of what is
+behind, whose own light the intensities already scaled), the sun's light through thin subsurface
+parts direct diffuse. Fog and toon shading stay unscaled. At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes

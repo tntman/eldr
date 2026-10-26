@@ -1,7 +1,8 @@
 """Light-split AOVs against the beauty: direct + indirect, diffuse + glossy, plus
 emission, must add up to the linear EXR beauty (eldr:productLinear) for the
 layered materials too: coat, sheen, subsurface and transmission, plain and
-under GI and the denoised SSR, each to within TOLERANCE.
+under GI and the denoised SSR, each to within TOLERANCE; with light path
+intensities other than 1, the splits scaled by them.
 Run: usdenv.cmd python tests\\test_aov_sums.py <exrinfo>"""
 import os
 import subprocess
@@ -95,8 +96,16 @@ def pixel(x, y):
 VARIANTS = {"default": ["eldr:rtRefraction=0"], "gi": ["eldr:gi=true", "eldr:rtRefraction=0"],
             "ssrDenoise": ["eldr:ssr=true", "eldr:ssrDenoise=true", "eldr:rtRefraction=0"],
             "rtRefraction": ["eldr:rtRefraction=2"]}
+# Light path intensity: the beauty is the direct splits times the direct
+# intensity plus the indirect ones times the indirect intensity, refracted
+# and subsurface-transmitted light included.
+INTENSITIES = ["eldr:directIntensity=1.6", "eldr:indirectIntensity=0.5"]
+VARIANTS.update({"intensity": ["eldr:rtRefraction=0"] + INTENSITIES,
+                 "intensityRt": ["eldr:rtRefraction=2"] + INTENSITIES})
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
+    scale = {"directdiffuse": 1.6, "directglossy": 1.6, "indirectdiffuse": 0.5, "indirectglossy": 0.5,
+             "emission": 1.0} if INTENSITIES[0] in settings else dict.fromkeys(SPLITS, 1.0)
     run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                     scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
                    check=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
@@ -109,13 +118,13 @@ for variant, settings in VARIANTS.items():
             brightness = max(max(beauty), 1e-3)
             brightest = max(brightest, brightness)
             for i, c in enumerate("RGB"):
-                residual = (beauty[i] - sum(p.get(f"{v}.{c}", 0) for v in SPLITS)) / brightness
+                residual = (beauty[i] - sum(scale[v] * p.get(f"{v}.{c}", 0) for v in SPLITS)) / brightness
                 worst = residual if abs(residual) > abs(worst) else worst
         print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
         if name == "transmission":  # what it refracts (traced or not) is indirect glossy
             p = pixel(centre[0], centre[1])
-            share = p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
+            share = scale["indirectglossy"] * p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
             expect(share > 0.6, f"{variant} transmission: refracted light in indirect glossy ({share:.2f})")
         expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
 

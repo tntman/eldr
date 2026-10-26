@@ -1047,7 +1047,7 @@ void main()
         color = emissive + clamped;
     }
     vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
-    const vec3 splitThrough = SubsurfaceTransmission(inWorldPos, n);  // direct diffuse, unscaled by the light paths
+    const vec3 splitThrough = SubsurfaceTransmission(inWorldPos, n);  // direct diffuse
     color += splitThrough;
 
     // Image-based lighting from the dome, if any.
@@ -1164,7 +1164,7 @@ void main()
         splitIndirectGlossy -= splitDomeGlossy;
     }
     if (LightPathScaled()) {
-        color += (frame.lightPath.x - 1.0) * (splitDirect + splitDomeGlossy) +
+        color += (frame.lightPath.x - 1.0) * (splitDirect + splitDomeGlossy + splitThrough) +
                  (frame.lightPath.y - 1.0) * (splitIndirectDiffuse + splitIndirectGlossy);
     }
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
@@ -1183,6 +1183,11 @@ void main()
         color = ToonShade(color, emissive, diffuseColor + f0);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
+    if (LightPathScaled()) {
+        // What it refracts is indirect glossy (screen space: the copied
+        // colour behind, already scaled, is scaled once more).
+        color += (frame.lightPath.y - 1.0) * gRefractedLight;
+    }
     // Cutouts: last, so every derivative above saw the whole quad; and
     // the other level's pixels of a level of detail crossfade.
     if (!present || ((kCompiledFeatures & kFeatureLod) != 0u && !LodKeep(inEntry, gl_FragCoord.xy))) {
