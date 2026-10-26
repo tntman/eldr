@@ -169,7 +169,7 @@ LensDistortion::LensDistortion(Device &device)
     ci.pColorBlendState = &blend;
     ci.pDynamicState = &dynamic;
     ci.layout = _layout;
-    const VkResult r = vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_pipeline);
+    const VkResult r = vkCreateGraphicsPipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &_pipeline);
     vkDestroyShaderModule(d, vert, nullptr);
     vkDestroyShaderModule(d, frag, nullptr);
     Check(r, "vkCreateGraphicsPipelines");

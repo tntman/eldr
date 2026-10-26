@@ -19,6 +19,8 @@
 //                      free camera) on the stage instead of a free camera
 //   --set name=value   a render setting (bool 0/1, int, float or string)
 //   --csv path         per-frame times (begin, execute, maps, frame)
+//   --startup          instead of timing: a cold start (plugin, delegate,
+//                      scene, first frames) and frames to convergence
 //   --ids              check primId/instanceId against the render index
 //   --check            instead of timing: which AOVs render and read back
 //                      when the app reads only some (needs normal bound)
@@ -71,7 +73,7 @@ int main(int argc, char **argv)
     int width = 1280, height = 720, frames = 120, share = 0;
     double appMs = 0;
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
-    bool houdini = false;
+    bool houdini = false, startup = false;
     std::string csvPath;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
@@ -108,6 +110,8 @@ int main(int argc, char **argv)
             overlap = true;
         } else if (a == "--no-overlap") {
             noOverlap = true;
+        } else if (a == "--startup") {
+            startup = true;
         }
     }
 
@@ -116,9 +120,12 @@ int main(int argc, char **argv)
         std::printf("FAIL: can't open %s\n", argv[1]);
         return 1;
     }
+    const auto tStart = Clock::now();
     HdRendererPluginRegistry &registry = HdRendererPluginRegistry::GetInstance();
     HdRendererPlugin *plugin = registry.GetRendererPlugin(TfToken("HdVkRendererPlugin"));
+    const auto tPlugin = Clock::now();
     HdRenderDelegate *delegate = plugin ? plugin->CreateRenderDelegate() : nullptr;
+    const auto tDelegate = Clock::now();
     if (!delegate) {
         std::puts("FAIL: no Eldr delegate (PXR_PLUGINPATH_NAME?)");
         return 1;
@@ -146,6 +153,7 @@ int main(int argc, char **argv)
         UsdImagingDelegate scene(index, SdfPath::AbsoluteRootPath());
         scene.Populate(stage->GetPseudoRoot());
         scene.SetTime(UsdTimeCode::EarliestTime());
+        const auto tScene = Clock::now();
         HdxTaskController controller(index, SdfPath("/viewportBench"));
         controller.SetRenderBufferSize(GfVec2i(width, height));
         controller.SetFraming(CameraUtilFraming(GfRect2i(GfVec2i(0, 0), width, height)));
@@ -224,8 +232,13 @@ int main(int argc, char **argv)
             read(normal);  // a frame old; rendered from the next one
             passes = frame(2);
             expect(passes.count("aovs"), "moving: a read extra AOV renders");
-            passes = frame(2);
-            expect(passes.count("aovs"), "still: the extra AOVs render, read or not");
+            // eldr:lazyExtraAovs: unread ones wait for the film to converge.
+            int waited = 0;
+            do {
+                passes = frame(2);
+            } while (!passes.count("aovs") && ++waited < 400);
+            expect(passes.count("aovs") && waited > 0,
+                   TfStringPrintf("still: the unread extra AOVs render once converged (%d frames)", waited).c_str());
         }
         if (nav) {
             // Houdini's camera tools: the pivot and pan scale come from the
@@ -429,7 +442,70 @@ int main(int argc, char **argv)
             }
             shows(overlapped[6], sync[6], sync[4], "a still camera's frame is its own");
         }
-        if (!check && !nav && !overlap) {
+        if (startup) {
+            // What each frame took until the film converged: a first still
+            // frame, nine moving ones, then still.
+            controller.SetFreeCameraMatrices(view, projection);
+            std::vector<double> frameMs;
+            std::string stage;
+            // Depth and primId pixels that changed since the frame before
+            // (jitter: Houdini depth-tests its guides and outlines the
+            // selection with them).
+            HdRenderBuffer *depthBuffer = controller.GetRenderOutput(HdAovTokens->depth);
+            HdRenderBuffer *idBuffer = controller.GetRenderOutput(HdAovTokens->primId);
+            std::vector<float> lastDepth;
+            std::vector<int32_t> lastIds;
+            std::vector<std::pair<int, int>> changed;
+            const auto tFirst = Clock::now();
+            while (frameMs.size() < 2000 && stage != "converged") {
+                // Frames 2 to 10 orbit, then the camera stops (TAA, then the film).
+                const double angle = 0.5 * double(std::min<size_t>(frameMs.size(), 9));
+                controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,
+                                                 projection);
+                const auto f0 = Clock::now();
+                engine.Execute(index, &tasks);
+                for (auto &[name, b] : buffers) {
+                    b->Map();
+                    b->Unmap();
+                }
+                frameMs.push_back(Ms(f0, Clock::now()));
+                if (depthBuffer && idBuffer) {
+                    const auto *d = static_cast<const float *>(depthBuffer->Map());
+                    const auto *p = static_cast<const int32_t *>(idBuffer->Map());
+                    const size_t n = size_t(width) * height;
+                    int dc = 0, ic = 0;
+                    for (size_t i = 0; i < n && !lastDepth.empty(); ++i) {
+                        dc += std::abs(d[i] - lastDepth[i]) > 1e-4f * std::max(std::abs(d[i]), 1e-3f);
+                        ic += p[i] != lastIds[i];
+                    }
+                    lastDepth.assign(d, d + n);
+                    lastIds.assign(p, p + n);
+                    depthBuffer->Unmap();
+                    idBuffer->Unmap();
+                    changed.push_back({dc, ic});
+                }
+                const VtDictionary stats = delegate->GetRenderStats();
+                auto it = stats.find("rendererStage");
+                stage = it != stats.end() && it->second.IsHolding<std::string>() ? it->second.UncheckedGet<std::string>()
+                                                                                  : "";
+            }
+            std::printf("startup: plugin %.0f ms, delegate %.0f ms, scene %.0f ms, first frame %.0f ms\n",
+                        Ms(tStart, tPlugin), Ms(tPlugin, tDelegate), Ms(tDelegate, tScene), frameMs[0]);
+            std::printf("  frames 2-6:");
+            for (size_t i = 1; i < std::min<size_t>(frameMs.size(), 6); ++i) {
+                std::printf(" %.0f", frameMs[i]);
+            }
+            std::printf(" ms; %s after %zu frames, %.0f ms from the first frame, %.0f ms from the plugin\n",
+                        stage.c_str(), frameMs.size(), Ms(tFirst, Clock::now()), Ms(tStart, Clock::now()));
+            std::printf("  depth / primId pixels changed from the frame before:");
+            for (size_t i = 1; i < changed.size(); ++i) {
+                if ((i >= 9 && i < 30) || i + 3 > changed.size()) {
+                    std::printf(" %d/%d", changed[i].first, changed[i].second);
+                }
+            }
+            std::puts("");
+        }
+        if (!check && !nav && !overlap && !startup) {
             double executeMs = 0, gpuMs = 0, renderMs = 0, total = 0;
             std::map<std::string, double> mapMs, passMs;
             std::vector<double> times;  // per frame: their median resists other GPU users
