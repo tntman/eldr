@@ -175,11 +175,45 @@ running mean of the frames.
 | Light | Support |
 |---|---|
 | DistantLight | The sun: `inputs:angle` gives soft penumbrae. First shadow-casting one gets the cascades. |
-| SphereLight | Representative-point specular, horizon-clipped diffuse, `treatAsPoint`. |
+| SphereLight | Energy-conserving representative-point specular (below), horizon-clipped diffuse, `treatAsPoint`. |
 | RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z. `inputs:texture:file` textures them. |
 | CylinderLight | Side only; `treatAsLine`. |
 | DomeLight | Latlong texture (`inputs:texture:file`), rotation; becomes diffuse SH9 and a GGX-prefiltered cube. |
 | Shaping | ShapingAPI cone angle, softness, focus and focus tint. |
+
+**Highlights of lights with a size** (spheres, rects, disks, cylinders and
+the sun's disc) use a representative point (Karis 2013) normalized exactly
+rather than by Karis' `(a / a')^2`. In half-vector space, where the GGX
+lobe is isotropic, the light is an ellipse (sphere, disk, sun) or a box
+(rect, cylinder silhouette) of area `solid angle / (4 VoH)`. The
+normalization gives the reflection's centre the lobe's share of slopes
+within that region, so a mirror reflects the light's radiance. The region
+is then inset by the lobe's width so that the whole highlight carries the
+light's power: by Steiner's formula, `area / (pi a^2) + perimeter / (4 a)
++ 1 = 1 / N`. Before, small lights' reflections on glossy surfaces were
+1.2-4x too bright (worst at grazing angles and for tubes); the diffuse
+light is unchanged.
+
+Floor reflections at roughness 0.15 (direct glossy, `tests/scenes/lights.usda`
+plus a 4 degree sun and a tube) were measured against a brute-force GGX
+integral, and Karma 22 (64 spp, colour limit off) against the same. The cells
+give the peak / the highlight's total, relative to the integral.
+
+| Light | Before | After | Karma |
+|---|---|---|---|
+| Sphere (bulb) | 1.75 / 2.31 | 1.05 / 1.00 | 1.01 / 1.00 |
+| Rect (panel) | 1.98 / 1.62 | 1.03 / 0.98 | 1.03 / 0.98 |
+| Disk | 1.04 / 1.22 | 1.00 / 1.04 | 1.02 / 1.04 |
+| Sun, 4 degrees | 2.61 / 1.00 | 1.04 / 0.96 | 1.02 / 1.04 |
+| Cylinder (tube) | 3.76 / 4.05 | 1.03 / 0.97 | 0.99 / 0.96 |
+
+vkrtest checks a sphere light on a tilted floor against the same integral.
+The coat lobe is normalized for the light's half-vector area as for a disc,
+and shares the base lobe's point. Where a light is thinner than the lobe
+along the plane of incidence (a small sun or a tube at grazing angles), that
+axis collapses to a line and the highlight is up to ~20% short along it
+(sun: spread 33 against 41 pixels, the total still right). LTC (Heitz 2016)
+would be exact for polygons of any size.
 
 Local lights go into a clustered forward+ grid: a cluster holds at most 63
 lights and each light is cut off where it would light a white surface at 1% of

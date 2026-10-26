@@ -3075,6 +3075,95 @@ int main()
         }
 
         {
+            // Glossy reflection of a sphere light against the brute-force integral of GGX (D V F cos, f0 0.04)
+            // over the light's cone, per pixel: a black quad tilted 50 degrees (NoV ~0.64), the light 1.5 away
+            // along the mirror direction, once larger than the lobe (roughness 0.15) and once about as wide
+            // (0.4). The peak and the highlight's total match within 5% (LightRegion; 0.475 vs 0.457 and 50.6 vs 52.9,
+            // 0.183 vs 0.177 and 40.5 vs 41.3).
+            const float tilt = 50.0f * 3.14159265f / 180.0f, tanTilt = std::tan(tilt);
+            const float nrm[3] = {-std::sin(tilt), 0, -std::cos(tilt)};  // facing the camera
+            vkr::Scene scene(&device);
+            vkr::Mesh *quad = scene.AddMesh();
+            const float x0 = -0.4f, x1 = 0.4f, z0 = 0.5f - x0 * tanTilt, z1 = 0.5f - x1 * tanTilt;
+            quad->points = {x0, -1, z0, x1, -1, z1, x1, 1, z1, x0, -1, z0, x1, 1, z1, x0, 1, z0};
+            auto glossy = std::make_shared<vkr::Material>();
+            std::fill(glossy->baseColor, glossy->baseColor + 3, 0.0f);
+            quad->material = glossy;
+            // Mirror direction at (0, 0, 0.5) seen from the camera at z = -2.
+            const float v0[3] = {0, 0, -1}, nv = -nrm[2];
+            const float r0[3] = {2 * nv * nrm[0] - v0[0], 0, 2 * nv * nrm[2] - v0[2]};
+            const float radius = 0.3f, L = 10.0f;
+            AddSphereLight(scene, 1.5f * r0[0], 0, 0.5f + 1.5f * r0[2], radius, L);
+            scene.Commit();
+            const float c[3] = {1.5f * r0[0], 0, 0.5f + 1.5f * r0[2]};
+            for (float roughness : {0.15f, 0.4f}) {
+                glossy->roughness = roughness;
+                scene.Commit();
+                const Image img = Render(renderer, scene);
+                const double a = double(roughness) * roughness, a2 = a * a;
+                double sumGpu = 0, sumCpu = 0, peakGpu = 0, peakCpu = 0;
+                for (int py = 0; py < 64; ++py) {
+                    for (int px = 0; px < 64; ++px) {
+                        const double p[3] = {PixelNdc(px), PixelNdc(py), 0.5 - PixelNdc(px) * tanTilt};
+                        if (p[0] < x0 + 0.02 || p[0] > x1 - 0.02) {
+                            continue;  // the quad's edge pixels
+                        }
+                        double v[3] = {-p[0], -p[1], -2 - p[2]}, w[3] = {c[0] - p[0], c[1] - p[1], c[2] - p[2]};
+                        const double vl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                        const double dist = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+                        for (int k = 0; k < 3; ++k) {
+                            v[k] /= vl;
+                            w[k] /= dist;
+                        }
+                        // A frame around w and the cone of the sphere, uniform in solid angle.
+                        double t[3] = {w[1], -w[0], 0};  // w is never along z here
+                        const double tl = std::sqrt(t[0] * t[0] + t[1] * t[1]);
+                        t[0] /= tl;
+                        t[1] /= tl;
+                        const double b[3] = {w[1] * t[2] - w[2] * t[1], w[2] * t[0] - w[0] * t[2], w[0] * t[1] - w[1] * t[0]};
+                        const double cosMax = std::sqrt(1 - double(radius) * radius / (dist * dist));
+                        const double NoV = std::max(nrm[0] * v[0] + nrm[1] * v[1] + nrm[2] * v[2], 1e-4);
+                        const int nu = 48, nphi = 96;
+                        double sum = 0;
+                        for (int i = 0; i < nu; ++i) {
+                            const double u = 1 - (i + 0.5) / nu * (1 - cosMax), s = std::sqrt(1 - u * u);
+                            for (int j = 0; j < nphi; ++j) {
+                                const double phi = (j + 0.5) / nphi * 2 * 3.14159265358979;
+                                double l[3], h[3];
+                                for (int k = 0; k < 3; ++k) {
+                                    l[k] = s * (std::cos(phi) * t[k] + std::sin(phi) * b[k]) + u * w[k];
+                                    h[k] = l[k] + v[k];
+                                }
+                                const double hl = std::sqrt(h[0] * h[0] + h[1] * h[1] + h[2] * h[2]);
+                                const double NoL = nrm[0] * l[0] + nrm[1] * l[1] + nrm[2] * l[2];
+                                if (NoL <= 0) {
+                                    continue;
+                                }
+                                const double NoH = (nrm[0] * h[0] + nrm[1] * h[1] + nrm[2] * h[2]) / hl;
+                                const double LoH = (l[0] * h[0] + l[1] * h[1] + l[2] * h[2]) / hl;
+                                const double f = NoH * NoH * (a2 - 1) + 1;
+                                const double D = a2 / (3.14159265358979 * f * f);
+                                const double V = 0.5 / (NoL * std::sqrt(NoV * NoV * (1 - a2) + a2) +
+                                                        NoV * std::sqrt(NoL * NoL * (1 - a2) + a2));
+                                const double F = 0.04 + 0.96 * std::pow(1 - LoH, 5.0);
+                                sum += D * V * F * NoL;
+                            }
+                        }
+                        const double expected = L * sum * 2 * 3.14159265358979 * (1 - cosMax) / (nu * nphi);
+                        sumCpu += expected;
+                        sumGpu += img.At(px, py, 0);
+                        peakCpu = std::max(peakCpu, expected);
+                        peakGpu = std::max(peakGpu, double(img.At(px, py, 0)));
+                    }
+                }
+                std::printf("sphere light glossy reflection (roughness %.2f): peak %.3f vs %.3f, total %.2f vs %.2f\n",
+                            roughness, peakGpu, peakCpu, sumGpu, sumCpu);
+                Expect(std::abs(peakGpu / peakCpu - 1) < 0.07, "sphere light: glossy reflection's peak as the GGX integral");
+                Expect(std::abs(sumGpu / sumCpu - 1) < 0.07, "sphere light: glossy reflection's energy as the GGX integral");
+            }
+        }
+
+        {
             // Light shapes (Frame::lightShapesVisible): spheres at (+-0.5, 0.5) and a cylinder at (0.5, -0.5), all
             // radiance 50, over a quad in front of the left half (z -0.8; the lights are at z -0.5). The shapes show
             // as their radiance where nothing is nearer; one hidden from the camera doesn't.

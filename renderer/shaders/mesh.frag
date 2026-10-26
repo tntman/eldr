@@ -306,13 +306,150 @@ vec3 CylinderFormFactor(vec3 toLight, vec3 axis, float r)
     return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
 }
 
+// p into the axis-aligned ellipse of semi-axes ab (ab.x >= ab.y >= 0):
+// radially for a round one; for an elongated one along the major axis, then
+// within the minor's chord there (near the nearest point, also for a
+// segment); blended by elongation, so continuous.
+vec2 ClampEllipse(vec2 p, vec2 ab)
+{
+    vec2 radial = p / max(length(p / max(ab, 1e-6)), 1.0);
+    float x = clamp(p.x, -ab.x, ab.x), c = ab.y * sqrt(max(1.0 - x * x / max(ab.x * ab.x, 1e-12), 0.0));
+    return mix(radial, vec2(x, clamp(p.y, -c, c)), 1.0 - ab.y / max(ab.x, 1e-6));
+}
+
+// For an ellipse of semi-axes A >= B in half-vector space (units of a):
+// returns N, the lobe's share within it over its area (exact), and sets mu,
+// the inset for which the lobe's integral beyond the inset region, area /
+// pi + perimeter / 4 (Steiner, Ramanujan's perimeter: continuous down to a
+// segment), is 1 / N - 1 (bisection; negative grows it).
+float EllipseInset(float A, float B, out float mu)
+{
+    float norm = min(sqrt(1.0 / ((1.0 + A * A) * (1.0 + B * B))), 1.0);
+    float target = 1.0 / norm - 1.0, lo = -target, hi = A;
+    for (int i = 0; i < 8; ++i) {
+        mu = 0.5 * (lo + hi);
+        float a = A - mu, b = max(B - mu, 0.0);
+        float spread = a * b + 0.25 * PI * (3.0 * (a + b) - sqrt((3.0 * a + b) * (a + 3.0 * b)));
+        lo = spread > target ? mu : lo;
+        hi = spread > target ? hi : mu;
+    }
+    mu = 0.5 * (lo + hi);
+    return norm;
+}
+
+// Energy-conserving representative point for a light with a size (Karis
+// 2013's idea, normalized exactly instead of by (a / a')^2, which made small
+// lights' highlights 1.2-4x too bright). The light is a region around
+// toLight (its centre, at distance d) with half axes a1, a2, an ellipse or a
+// box, of solid angle omega; uv is where the reflection ray passes in it, in
+// half axes (inout: the representative point's). In half-vector space, where
+// the GGX lobe is isotropic, the region is a1, a2 projected (/ 2 in the
+// plane of v and l, / (2 VoH) across it; area omega / (4 VoH)):
+// - the returned N (the light's specular is Specular(l) * E * N) gives the
+//   reflection's centre exactly the lobe's share of slopes within the
+//   region (the product of its axes' shares: exact for ellipses, fitted
+//   within 2% for boxes), so mirrors reflect the light's radiance;
+// - l, the point of the region inset by mu nearest the ray (ellipses in
+//   their principal frame, ClampEllipse; boxes in their own axes), gives
+//   the reflection's integral exactly the light's power (Steiner's formula
+//   for the lobe around a convex region: area / (pi a^2) + perimeter / (4 a)
+//   + 1 = 1 / N).
+// Against brute-force GGX integrals: peaks and the highlights' totals within
+// 6% (docs/features.md: lights.usda's floor, a 4 degree sun, a tube).
+// regionArea: the region's half-vector area / pi, for the coat (LayerLight).
+// ponytail: small-angle half-vector mapping around the representative
+// point, and an axis thinner than the lobe collapses to a line, so the
+// highlight is up to ~20% short along it; LTC (Heitz 2016) would be exact
+// for polygons of any size.
+float LightRegion(vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inout vec2 uv, bool box,
+                  float omega, out vec3 l, out float regionArea)
+{
+    vec2 c0 = box ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
+    vec3 l0 = normalize(toLight + mat2x3(a1, a2) * c0);
+    float VoH = max(dot(v, normalize(v + l0)), 1e-3);
+    vec3 ePar = v - dot(v, l0) * l0;
+    float len = length(ePar);
+    ePar = len > 1e-5 ? ePar / len
+                      : normalize(cross(l0, abs(l0.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+    vec3 ePerp = cross(l0, ePar);
+    // The half axes in half-vector space, in units of a, scaled to the
+    // exact solid angle (the projection is linear), but a line or a point
+    // keeps its own limit.
+    mat2 m = mat2(vec2(dot(a1, ePar), dot(a1, ePerp) / VoH), vec2(dot(a2, ePar), dot(a2, ePerp) / VoH)) / (2.0 * d);
+    float g = box ? 4.0 : PI;
+    float cr = abs(determinant(m));
+    float s2 = cr > 1e-12 ? min(omega / (4.0 * VoH * g * cr), 4.0) : 1.0;
+    regionArea = g * cr * s2 / PI;
+    m *= sqrt(s2) / a;
+    float norm;
+    if (box) {
+        float x = max(length(m[0]), 1e-3), y = max(length(m[1]), 1e-3);
+        float share = x * inversesqrt(1.0 + x * x) * y * inversesqrt(1.0 + y * y) *
+                      (1.0 + (4.0 / PI - 1.0) * pow((1.0 + x * x) * (1.0 + y * y), -0.75));
+        norm = min(share / (4.0 / PI * x * y), 1.0);
+        // Inset by mu: area 4 (x - mu)(y - mu), perimeter 4 (x + y - 2 mu).
+        float qa = 4.0 / PI, qb = -(qa * (x + y) + 2.0), qc = qa * x * y + x + y - (1.0 / norm - 1.0);
+        float mu = min(2.0 * qc / (-qb + sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))), min(x, y));
+        vec2 rho = max(1.0 - mu / vec2(x, y), 1e-4);
+        uv = clamp(uv, -rho, rho);
+    } else {
+        // In the principal frame (semi-axes A >= B, A along e1): the half
+        // axes are conjugate there, skewed by the projection.
+        mat2 gram = outerProduct(m[0], m[0]) + outerProduct(m[1], m[1]);
+        float tr = gram[0][0] + gram[1][1], det = determinant(m) * determinant(m);
+        float disc = sqrt(max(tr * tr * 0.25 - det, 0.0));
+        float A = sqrt(max(tr * 0.5 + disc, 1e-6)), B = sqrt(max(tr * 0.5 - disc, 1e-6));
+        // A's direction: the longer of the eigenvector's two forms (the
+        // other is rounding noise when the axis is near x or y).
+        vec2 ex = vec2(A * A - gram[1][1], gram[1][0]), ey = vec2(gram[1][0], A * A - gram[0][0]);
+        vec2 e1 = dot(ex, ex) >= dot(ey, ey) ? ex : ey;
+        e1 = dot(e1, e1) > 1e-20 ? normalize(e1) : vec2(1.0, 0.0);
+        float mu;
+        norm = EllipseInset(A, B, mu);
+        if (abs(determinant(m)) > 1e-12) {
+            mat2 frame = mat2(e1, vec2(-e1.y, e1.x));  // principal to m's space
+            vec2 p = transpose(frame) * (m * uv);
+            uv = inverse(m) * (frame * ClampEllipse(p, vec2(A - mu, max(B - mu, 0.0))));
+        }
+    }
+    l = normalize(toLight + mat2x3(a1, a2) * uv);
+    return norm;
+}
+
+// A sphere (or the sun's disc, at d = 1) of radius R seen from p, as
+// LightRegion's ellipse: the disc facing p, whose half axes in half-vector
+// space are already principal (R / (2 d) in the plane of v, R / (2 d VoH)
+// across it), so it needs no eigenvectors (and keeps the sun's path in
+// every shader light).
+float SphereRegion(vec3 v, vec3 r, float a, vec3 toLight, float d, float R, float omega, out vec3 l,
+                   out float regionArea)
+{
+    vec3 w = toLight / d, e = v - dot(v, w) * w;
+    e = dot(e, e) > 1e-10 ? normalize(e)
+                          : normalize(cross(w, abs(w.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+    vec3 f = cross(w, e);
+    vec3 centerToRay = dot(toLight, r) * r - toLight;
+    vec2 uv = vec2(dot(centerToRay, e), dot(centerToRay, f)) / max(R, 1e-12);  // in radii
+    vec3 l0 = normalize(toLight + R * mat2x3(e, f) * (uv / max(length(uv), 1.0)));
+    float VoH = max(dot(v, normalize(v + l0)), 1e-3);
+    // Semi-axes in units of a, scaled to the exact solid angle.
+    float s = R > 0.0 ? sqrt(min(omega * d * d / (PI * R * R), 4.0)) : 1.0;
+    float B = max(s * R / (2.0 * d * a), 1e-3), A = max(B / VoH, 1e-3);
+    regionArea = A * B * a * a;
+    float mu, norm = EllipseInset(A, B, mu);
+    // Major axis across (f), minor in plane (e).
+    vec2 q = ClampEllipse(vec2(uv.y * A, uv.x * B), vec2(A - mu, max(B - mu, 0.0)));
+    uv = vec2(q.y / B, q.x / A);
+    l = normalize(toLight + R * mat2x3(e, f) * uv);
+    return norm;
+}
+
 // Sphere, rect, disk or cylinder light (UsdLux semantics as in hdEmbree:
 // cone and focus shaping around the emission axis; rects and disks emit
 // from their -Z side, cylinders from their sides). Diffuse: Frostbite's
 // horizon-clipped sphere/disk illuminance; for rects (and cylinders' rect
 // silhouettes) the exact polygon form factor vector with Heitz's horizon
-// approximation.
-// Specular: Karis' representative point with (a / a')^2 normalization.
+// approximation. Specular: LightRegion's representative point.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
                 float NoV, vec3 energyCompensation)
 {
@@ -333,42 +470,39 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                                                    : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
 
     vec3 r = reflect(-v, n);
-    float diffuseE, specularE, sourceRadius;
+    float diffuseE, specularE, norm, regionArea;
     vec3 l;
     vec3 diffuseTint = vec3(1.0), specularTint = vec3(1.0);  // a rect or disk light's texture
     if (uint(light.position.w) == kLightSphere) {
         float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
         diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
         specularE = PI * sinSigmaSqr;
-        sourceRadius = light.halfWidth.w;
-        vec3 centerToRay = dot(toLight, r) * r - toLight;
-        l = normalize(toLight + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
+        norm = SphereRegion(v, r, a, toLight, d, light.halfWidth.w, specularE, l, regionArea);
     } else if (uint(light.position.w) == kLightCylinder) {
         // Diffuse: the form factor of its side facing p (the caps don't
-        // emit). Specular: the point of the axis closest to the reflection
-        // ray (Karis 2013), widened by the radius like a sphere's;
-        // normalized a / a' across and along the axis.
+        // emit). Specular: its silhouette as a box, the axis by the side
+        // facing p: the point of the axis closest to the reflection ray
+        // (Karis 2013), towards it by up to the radius.
         vec3 axis = light.halfWidth.xyz;
         vec3 formFactor = CylinderFormFactor(toLight, axis, light.axis.w);
         float f = length(formFactor);
         diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
-        sourceRadius = light.halfWidth.w;
-        vec3 l0 = toLight - axis, l1 = toLight + axis, ld = l1 - l0;
-        float rd = dot(r, ld);
-        vec3 closest = l0 + ld * clamp((dot(r, l0) * rd - dot(l0, ld)) / max(dot(ld, ld) - rd * rd, 1e-8), 0.0, 1.0);
+        specularE = PI * f;
+        vec3 side = cross(axis, toLight);
+        side = dot(side, side) > 1e-16 ? normalize(side) * light.halfWidth.w : vec3(0.0);
+        float ra = dot(r, axis);
+        float t = (dot(r, toLight) * ra - dot(toLight, axis)) / max(dot(axis, axis) - ra * ra, 1e-8);
+        vec3 closest = toLight + axis * clamp(t, -1.0, 1.0);
         vec3 centerToRay = dot(closest, r) * r - closest;
-        l = normalize(closest + centerToRay * clamp(sourceRadius / max(length(centerToRay), 1e-8), 0.0, 1.0));
-        d = max(length(closest), 1e-8);  // aWide below: across the axis, at its nearest part
-        float cosSubtended = dot(normalize(l0), normalize(l1));
-        float aAcross = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
-        float aAlong = clamp(aAcross + sqrt((1.0 - cosSubtended) / (1.0 + cosSubtended + 1e-4)) / 3.0, 0.0, 1.0);
-        specularE = PI * f * aAcross / aAlong;
+        vec2 uv = vec2(t, dot(centerToRay, side) / max(dot(side, side), 1e-12));
+        norm = LightRegion(v, a, toLight, d, axis, side, uv, true, specularE, l, regionArea);
     } else {
         if (dot(toLight, light.axis.xyz) >= 0.0) {
             return vec3(0.0);  // behind the emitting side
         }
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
         bool rect = uint(light.position.w) == kLightRect;
+        float sourceRadius;
         if (rect) {
             vec3 formFactor = RectFormFactor(toLight, hw, hh);
             float f = length(formFactor);
@@ -383,13 +517,12 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             specularE = PI * sinSigmaSqr * cosLight;
             sourceRadius = sqrt(r2);
         }
-        // Where the reflection ray meets the light's plane, clamped to the
-        // rectangle or disk (in units of its half extents).
+        // Where the reflection ray meets the light's plane (in units of its
+        // half extents); LightRegion clamps it to the rectangle or disk.
         float rDotAxis = dot(r, light.axis.xyz);
         vec3 q = rDotAxis < -1e-4 ? r * (dot(toLight, light.axis.xyz) / rDotAxis) - toLight : vec3(0.0);
         vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
-        uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
-        l = normalize(toLight + hw * uv.x + hh * uv.y);
+        norm = LightRegion(v, a, toLight, d, hw, hh, uv, rect, specularE, l, regionArea);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
             // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
@@ -411,11 +544,9 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             diffuseTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + foot * vec2(-0.5, 0.5), footLod).rgb;
         }
     }
-    float aWide = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w * diffuseTint;
-    vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE *
-                    (a * a) / (aWide * aWide) * light.shaping.w;
-    specular += LayerLight(n, v, l, NoV, sourceRadius / (3.0 * d)) * specularE * light.shaping.w;
+    vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE * norm * light.shaping.w;
+    specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
     specular *= specularTint;
     if (LightSplits()) {
         splitDirectDiffuse += radiance * diffuse * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
@@ -871,12 +1002,20 @@ void main()
         if (NoL <= 0.0) {
             continue;
         }
+        // The sun's disc (angular radius axis.w) as a sphere at distance 1,
+        // unless its half-vector area (~ tan^2 / (4 NoV)) is under 0.1% of
+        // the lobe's a^2 (then N > 0.999 and l the centre: most surfaces).
+        float tanHalf = tan(light.axis.w), sunNorm = 1.0, sunArea = 0.0;
+        vec3 ls = l;
+        if (tanHalf * tanHalf > 4e-3 * NoV * a * a) {
+            sunNorm = SphereRegion(v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
+        }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         (Specular(n, v, l, a, f0, NoV) * energyCompensation + LayerLight(n, v, l, NoV, 0.0)) *
-                             light.shaping.w) *
+                         (Specular(n, v, ls, a, f0, NoV) * energyCompensation * sunNorm +
+                          LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l);
+            radiance *= Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
         }
         color += radiance;
         if (LightSplits()) {
