@@ -513,6 +513,10 @@ public:
     const Stats &GetStats() const { return _stats; }
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
     void WaitForPrewarm();
+    // Tells the worker to stop after the pipelines it is compiling, and writes
+    // the pipeline cache (if it changed); returns without waiting for the
+    // worker. The destructor still waits for it. Render thread only.
+    void StopPrewarm();
 
     // GPU sharing (interop.h): the last frame's images, in
     // TRANSFER_SRC_OPTIMAL until the next Render: colour as Targets::color

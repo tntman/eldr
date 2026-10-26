@@ -521,7 +521,7 @@ void Device::LoadPipelineCache(uint64_t shaderHash)
         Check(vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache), "vkCreatePipelineCache");
         data.clear();
     }
-    pipelineCacheBytes = data.size();
+    pipelineCacheBytes = _savedCacheBytes = data.size();
 }
 
 void Device::SavePipelineCache()
@@ -533,8 +533,15 @@ void Device::SavePipelineCache()
     if (vkGetPipelineCacheData(device, pipelineCache, &size, nullptr) != VK_SUCCESS || size == 0) {
         return;
     }
-    std::vector<char> data(size);
-    if (vkGetPipelineCacheData(device, pipelineCache, &size, data.data()) != VK_SUCCESS) {
+    // Nothing compiled since the last load or save (the cache only grows):
+    // no write, so leaving is quick.
+    bool unchanged;
+    {
+        std::lock_guard<std::mutex> lock(_pipelineCacheMutex);
+        unchanged = size == _savedCacheBytes;
+    }
+    std::vector<char> data(unchanged ? 0 : size);
+    if (!unchanged && vkGetPipelineCacheData(device, pipelineCache, &size, data.data()) != VK_SUCCESS) {
         return;
     }
     // Written aside, then moved over the old file: a crash mid-write leaves
@@ -542,17 +549,20 @@ void Device::SavePipelineCache()
     std::lock_guard<std::mutex> lock(_pipelineCacheMutex);
     std::error_code error;
     const std::filesystem::path path(_pipelineCachePath), temp = path.string() + ".tmp";
-    std::filesystem::create_directories(path.parent_path(), error);
-    {
-        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-        out.write(data.data(), std::streamsize(size));
-        if (!out) {
+    if (!unchanged) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        {
+            std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+            out.write(data.data(), std::streamsize(size));
+            if (!out) {
+                return;
+            }
+        }
+        std::filesystem::rename(temp, path, error);
+        if (error) {
             return;
         }
-    }
-    std::filesystem::rename(temp, path, error);
-    if (error) {
-        return;
+        _savedCacheBytes = size;
     }
     // Only the newest per driver stays: caches of other shader builds (the
     // same driver's UUID, another hash) are stale.

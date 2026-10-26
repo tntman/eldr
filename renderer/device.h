@@ -127,6 +127,7 @@ private:
 
     std::string _pipelineCachePath;
     std::mutex _pipelineCacheMutex;  // one writer of the file at a time
+    size_t _savedCacheBytes = 0;     // the file's size as loaded or last written: equal size, nothing new to write
 
     VkCommandPool _submitPool = VK_NULL_HANDLE;
     VkFence _submitFence = VK_NULL_HANDLE;

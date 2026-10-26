@@ -312,6 +312,8 @@ set_tests_properties(plugin PROPERTIES ENVIRONMENT_MODIFICATION
 file(TO_NATIVE_PATH ${pxr_DIR} usdRoot)
 get_property(allTests DIRECTORY PROPERTY TESTS)
 set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "USD_ROOT=${usdRoot}")
+# Tests wait for the delegate's Vulkan teardown, so the validation layer's leak check runs.
+set_property(TEST ${allTests} APPEND PROPERTY ENVIRONMENT "HDVK_SYNC_TEARDOWN=1")
 # Under VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation any validation message
 # fails a test (the Python ones would otherwise pass over it).
 set_property(TEST ${allTests} PROPERTY FAIL_REGULAR_EXPRESSION "Validation Error")
