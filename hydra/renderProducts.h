@@ -29,7 +29,7 @@ protected:
 // Render vars name their AOV as UsdRender does (sourceType "lpe": "lpe:" +
 // sourceName, "primvar": "primvars:" + sourceName, else sourceName): Hydra's
 // color, depth, primId, instanceId and Eldr's extra AOVs (HdVkExtraAovs,
-// Karma's names). Cryptomatte vars become layers <name>00 (rank 0 and 1)
+// Karma's names). Cryptomatte vars become layers <name>00..02 (ranks 0-5, soft edges under the film)
 // with the spec's metadata (cryptomatte/<key>/name, hash, conversion,
 // manifest).
 // With eldr:productResolution the frame renders at the first raster

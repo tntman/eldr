@@ -131,6 +131,10 @@ public:
         // reflection where nothing replaces it) counts as direct; off: as
         // indirect, with GI, probes and reflections.
         bool splitDomeDirect = true;
+        // Cryptomatte under the film: coverage of up to 6 ids per pixel from
+        // the film samples (their filter weights), as 3 rank layers; off: the
+        // nearest sample's id, rank 0 at coverage 1.
+        bool cryptomatteSoft = true;
         // Blender 5.1's Light Path Intensity: multipliers of the direct and
         // indirect light in the final pixel (the light splits' division, the
         // dome per splitDomeDirect), not of the light transport. 1: off, no cost.

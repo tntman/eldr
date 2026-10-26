@@ -9,7 +9,7 @@ from pxr.Usdviewq.qt import QtCore, QtWidgets
 GROUPS = [
     ("Performance and geometry",
      "depthPrepass frustumCulling cullPixels lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons "
-     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect directIntensity indirectIntensity renderProducts productResolution productLinear pipelineCache "
+     "pointSprites displacementScale displacementGraphs anisotropy shareFrame extraAovs splitDomeDirect cryptomatteSoft directIntensity indirectIntensity renderProducts productResolution productLinear pipelineCache "
      "pipelinePrewarm"),
     ("Lighting",
      "imageBasedLighting localLights clusteredLights lightTextures lightShapesVisible emissiveLights emissiveLightThreshold domeSun domeSunThreshold ambientOcclusion "

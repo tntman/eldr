@@ -4018,11 +4018,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                  VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-    // Film: ids, Cryptomatte and depth come from the sample nearest the
-    // pixel centre so far, not the last: a nearer one is kept in _filmIds,
-    // a farther one gets the kept ones back (the ids before the extra
-    // AOVs' Cryptomatte, depth after them: their G-buffer and the
-    // positions they average are this sample's).
+    // Film: ids and depth come from the sample nearest the pixel centre so
+    // far, not the last: a nearer one is kept in _filmIds, a farther one gets
+    // the kept ones back (the ids after the extra AOVs, which read this
+    // sample's ids: Cryptomatte's coverage sums all samples', its nearest-id
+    // fallback and the positions skip a farther sample; depth after them
+    // too: their G-buffer and positions are this sample's).
     const bool filmNearer = film && (filmMode != 0 || std::hypot(filmOffset[0], filmOffset[1]) < _filmIdDistance);
     auto filmIds = [&](uint32_t first, uint32_t count) {
         if (!film) {
@@ -4067,7 +4068,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (filmNearer) {
         _filmIdDistance = std::hypot(filmOffset[0], filmOffset[1]);
     }
-    filmIds(0, 2);
 
     // Extra AOVs (aov.h), before the lens bends depth and the ids.
     if (frame.extraAovs && Aovs::Any(out.aovs)) {
@@ -4083,6 +4083,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         params.maxFrames = film ? std::max(frame.filmSamples, 1u) : taa ? taaSamples : 1;
         params.film = film;
         params.filmNearer = filmNearer;
+        params.cryptoSoft = frame.cryptomatteSoft;
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
         params.filmRadius = std::clamp(frame.filmFilterRadius, 0.0f, 2.0f);
         params.filmWeights = _taa.FilmWeights();
@@ -4102,7 +4103,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         pass("aovs");
     }
 
-    filmIds(2, 1);
+    filmIds(0, 3);
 
     // Lens distortion warps everything read back.
     if (frame.lensDistortion && frame.distortion.Active()) {

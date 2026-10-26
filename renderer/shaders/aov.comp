@@ -23,6 +23,10 @@ layout(set = 0, binding = 7) uniform sampler2DArray splits;
 // weight * value, the weights' sum (film.comp's), then the film's count of
 // the pixel's samples when it last took one.
 layout(std430, set = 0, binding = 8) buffer Sums { float sums[]; };
+// Cryptomatte under the film, per pixel: 6 ids (float bits), their 6 weights,
+// the pixel's total weight, the film's sample count; in Sums at
+// kCryptoStride floats each.
+const uint kCryptoStride = 14u, kRanks = 6u;
 // The film's: weight, samples (y)... A pixel the adaptive film stopped
 // sampling takes none here either.
 layout(set = 0, binding = 9, rgba32f) uniform readonly image2D filmWeights;
@@ -51,6 +55,11 @@ vec3 OctDecode(vec2 e)
         n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
     }
     return normalize(n);
+}
+
+bool IsCrypto(uint kind)
+{
+    return kind == kCryptoObject || kind == kCryptoMaterial;
 }
 
 bool IsColour(uint kind)
@@ -94,6 +103,86 @@ void main()
     ivec2 size = textureSize(depth, 0);
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     if (p.x >= size.x || p.y >= size.y) {
+        return;
+    }
+    if (pc.film != 0u && IsCrypto(pc.kind)) {
+        // Soft Cryptomatte: this sample's ids at the colour AOVs' filter
+        // weights (film.comp's), merged into the pixel's best 6 by weight.
+        // Coverage = an id's weight / all weight, the background's too.
+        uint s = pc.sumsOffset + uint(p.y * size.x + p.x) * kCryptoStride;
+        float count = imageLoad(filmWeights, p).y;
+        if (pc.film != 2u && count == sums[s + 13u]) {
+            return;
+        }
+        sums[s + 13u] = count;
+        uint ids[15];
+        float weights[15];
+        uint n = 0u;
+        float total = 0.0;
+        if (pc.film != 2u) {
+            total = sums[s + 12u];
+            for (uint i = 0u; i < kRanks; ++i) {
+                if (sums[s + kRanks + i] > 0.0) {
+                    ids[n] = floatBitsToUint(sums[s + i]);
+                    weights[n++] = sums[s + kRanks + i];
+                }
+            }
+        }
+        float radius = pc.filmRadius;
+        float k = -0.5 / max(0.284 * 0.284 * radius * radius, 1e-6);
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                ivec2 q = p + ivec2(x, y);
+                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) {
+                    continue;
+                }
+                vec2 d = vec2(x, y) + pc.filmOffset;
+                float r2 = dot(d, d);
+                float w = r2 < radius * radius ? exp(k * r2) : 0.0;
+                w = (x == 0 && y == 0) ? max(w, 1e-6) : w;
+                total += w;
+                int pid = texelFetch(primId, q, 0).r;
+                uint id = pid >= 0 && uint(pid) < pc.cryptomatteIds
+                              ? cryptomatte[uint(pid) * 2u + (pc.kind == kCryptoMaterial ? 1u : 0u)] : 0u;
+                if (id == 0u || w <= 0.0) {
+                    continue;
+                }
+                uint j = 0u;
+                while (j < n && ids[j] != id) {
+                    ++j;
+                }
+                if (j == n) {
+                    ids[n] = id;
+                    weights[n++] = 0.0;
+                }
+                weights[j] += w;
+            }
+        }
+        // The best kRanks first (selection sort), then the state and the output.
+        uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
+        for (uint i = 0u; i < kRanks; ++i) {
+            uint best = i;
+            for (uint j = i + 1u; j < n; ++j) {
+                best = weights[j] > weights[best] ? j : best;
+            }
+            uint id = 0u;
+            float w = 0.0;
+            if (i < n) {
+                id = ids[best];
+                w = weights[best];
+                ids[best] = ids[i];
+                weights[best] = weights[i];
+            }
+            sums[s + i] = uintBitsToFloat(id);
+            sums[s + kRanks + i] = w;
+            if (2u * i < pc.components) {
+                values[base + 2u * i] = uintBitsToFloat(id);
+            }
+            if (2u * i + 1u < pc.components) {
+                values[base + 2u * i + 1u] = w / total;
+            }
+        }
+        sums[s + 12u] = total;
         return;
     }
     if (pc.film != 0u && IsColour(pc.kind)) {
@@ -163,9 +252,14 @@ void main()
         }
     }
     uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
+    // Ids (Cryptomatte) aren't averaged: the latest frame's, or (weight 0)
+    // the nearest film sample's so far.
+    bool nearest = IsCrypto(pc.kind);
+    if (nearest && pc.weight < 0.5) {
+        return;
+    }
     for (uint c = 0u; c < pc.components; ++c) {
-        // Ids (Cryptomatte) aren't averaged: the latest frame's.
-        bool nearest = pc.kind == kCryptoObject || pc.kind == kCryptoMaterial;
-        values[base + c] = nearest || pc.weight >= 1.0 ? v[c] : mix(values[base + c], v[c], pc.weight);
+        float x = c < 4u ? v[c] : 0.0;
+        values[base + c] = nearest || pc.weight >= 1.0 ? x : mix(values[base + c], x, pc.weight);
     }
 }

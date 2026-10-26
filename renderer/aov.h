@@ -19,9 +19,12 @@ uint32_t CryptomatteHash(const std::string &name);
 // depth and the ids (eye-space position and depth, Cryptomatte). A compute
 // pass writes each one packed (floats, bottom row first), then they are
 // copied to memory the CPU reads. Where nothing was drawn all are 0.
-// ponytail: Cryptomatte has one sample per pixel, so rank 0 holds the
-// pixel's id at coverage 1 and edges don't blend; average jittered frames'
-// ranks when mattes need soft edges. They show the view before lens
+// Cryptomatte is 12 floats per pixel: 6 ranks of (id, coverage), sorted by
+// coverage, read as 3 layers of (id, coverage, id, coverage). Under the film
+// the ranks are the 6 ids with the most weight of the samples' filter (the
+// colour AOVs' Gaussian: coverage = an id's weight / all weight, the
+// background's included); otherwise (TAA, Params::cryptoSoft off) the pixel's
+// id is rank 0 at coverage 1. Everything shows the view before lens
 // distortion.
 class Aovs {
 public:
@@ -33,7 +36,7 @@ public:
         kSt,              // the mesh's texture coordinates, 2 floats
         kAlbedo,          // base colour, rgb
         kEmission,        // emitted radiance, rgb
-        kCryptoObject,    // Cryptomatte rank 0 and 1: (id, coverage, id, coverage)
+        kCryptoObject,    // Cryptomatte: 6 x (id, coverage), best first
         kCryptoMaterial,
         kPositionWorld,   // world-space position (Karma's P)
         kDepth,           // distance along the view axis, positive (Karma's depth, ray:hitPz)
@@ -93,6 +96,7 @@ public:
         // their weights); the rest take the sample nearest the pixel centre
         // so far (`filmNearer`, as the ids) instead of averaging.
         bool film = false, filmNearer = false;
+        bool cryptoSoft = true;  // Cryptomatte takes the film's samples (else the nearest one's id)
         float filmOffset[2] = {}, filmRadius = 0;
         VkImageView filmWeights = VK_NULL_HANDLE;  // the film's (TemporalAA::FilmWeights), GENERAL
     };

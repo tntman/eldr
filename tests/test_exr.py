@@ -204,5 +204,76 @@ expect(none.get("G", 0) > 0.05, "linear beauty: lit")
 tonemapped = beauty("agx", "false")
 expect(abs(tonemapped["G"] - none["G"]) > 0.02, "eldr:productLinear off: the tonemapped beauty")
 
+# Soft Cryptomatte: two cubes side by side, their shared edge slanted so the
+# pixels along it are partly each; the film's samples give the edge pixels
+# the coverage of both ids (3 rank layers), and a decoder (the standard one:
+# name -> manifest hash -> float -> the layers' coverage) gets a soft matte.
+edgePath = os.path.join(folder, "edge.usda")
+edgeExr = os.path.join(folder, "edge.exr").replace("\\", "/")
+edge = Usd.Stage.CreateNew(edgePath)
+UsdGeom.SetStageUpAxis(edge, UsdGeom.Tokens.y)
+pair = UsdGeom.Xform.Define(edge, "/pair")
+pair.AddRotateZOp().Set(20.0)
+for name, x in (("left", -0.5), ("right", 0.5)):
+    cubePrim = UsdGeom.Cube.Define(edge, "/pair/" + name)
+    cubePrim.AddTranslateOp().Set(Gf.Vec3d(x, 0, 0))
+    cubePrim.CreateSizeAttr(1.0)
+UsdLux.DomeLight.Define(edge, "/sky").CreateIntensityAttr(1.0)
+UsdGeom.Camera.Define(edge, "/cam").AddTranslateOp().Set(Gf.Vec3d(0, 0, 6))
+edgeSettings = UsdRender.Settings.Define(edge, "/Render/settings")
+edgeProduct = UsdRender.Product.Define(edge, "/Render/product")
+edgeProduct.CreateProductNameAttr(edgeExr)
+edgeProduct.CreateResolutionAttr(Gf.Vec2i(64, 64))
+edgeProduct.CreateCameraRel().SetTargets(["/cam"])
+edgeSettings.CreateProductsRel().SetTargets([edgeProduct.GetPath()])
+edgeSettings.CreateCameraRel().SetTargets(["/cam"])
+edgeVar = UsdRender.Var.Define(edge, "/Render/Vars/Crypto")
+edgeVar.CreateSourceTypeAttr("primvar")
+edgeVar.CreateSourceNameAttr("__name")
+edgeVar.CreateDataTypeAttr("float3")
+edgeProduct.CreateOrderedVarsRel().AddTarget(edgeVar.GetPath())
+edge.GetRootLayer().Save()
+run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
+     "-w", "64", edgePath, os.path.join(folder, "unused.png")], check=True, shell=True)
+expect(os.path.exists(edgeExr), "the edge scene's EXR is written")
+info = run([exrinfo, edgeExr, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+channels = [l.split(" ", 1)[1] for l in info if l.startswith("channel ")]
+for layer in ("Crypto00", "Crypto01", "Crypto02"):
+    expect(all(layer + "." + c in channels for c in "RGBA"), "Cryptomatte layer " + layer)
+meta = dict(l[5:].split("=", 1) for l in info if l.startswith("meta "))
+edgeKey = "%08x" % Murmur3("Crypto")
+edgeManifest = json.loads(meta.get("cryptomatte/%s/manifest" % edgeKey[:7], "{}"))
+asFloat = lambda h: struct.unpack("<f", struct.pack("<I", int(h, 16)))[0]
+
+
+def matte(pixel, name):
+    """The standard decode: the manifest's hash of `name` as a float, then the
+    coverage of every rank (layer L: ranks 2L and 2L+1) holding that id."""
+    wanted, total = f32(asFloat(edgeManifest[name])), 0.0
+    for layer in ("Crypto00", "Crypto01", "Crypto02"):
+        for id, coverage in ((layer + ".R", layer + ".G"), (layer + ".B", layer + ".A")):
+            if f32(pixel.get(id, 0.0)) == wanted:
+                total += pixel.get(coverage, 0.0)
+    return total
+
+
+soft, worst, ranked = 0, 0.0, True
+for y in (26, 32, 38):
+    for x in (20,) + tuple(range(27, 38)) + (44,):
+        out = run([exrinfo, edgeExr, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
+        pixel = {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
+        left, right = matte(pixel, "/pair/left"), matte(pixel, "/pair/right")
+        worst = max(worst, abs(left + right - 1.0))
+        coverages = [pixel.get(l + "." + c, 0.0) for l in ("Crypto00", "Crypto01", "Crypto02") for c in "GA"]
+        ranked = ranked and all(a >= b - 1e-6 for a, b in zip(coverages, coverages[1:]))
+        soft += 0.05 < left < 0.95 and 0.05 < right < 0.95
+        if x == 20:
+            expect(left > 0.99 and right < 0.01, "far left of the edge: the left cube alone, coverage 1")
+        if x == 44:
+            expect(right > 0.99 and left < 0.01, "far right of the edge: the right cube alone, coverage 1")
+expect(worst < 0.02, "edge pixels: the two cubes' coverages sum to 1 (off by %g)" % worst)
+expect(soft >= 3, "the edge has soft pixels (%d with both cubes between 5%% and 95%%)" % soft)
+expect(ranked, "ranks are sorted by coverage")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
