@@ -1,39 +1,34 @@
 # How Eldr works
 
-Eldr (code name HdVk) is a Hydra 2.0 render delegate on Vulkan 1.3 for
-OpenUSD 26.08. It is built for fast, high-quality raster renders for VFX:
-seconds per frame is fine when it buys quality, output is EXR with AOVs. It is
-not a game renderer. It is a rasterizer first (clustered forward shading, GPU
-culling and skinning); ray tracing, where the GPU has it, adds shadows,
-reflections and global illumination on top. Everything is switched by render
-settings; see [settings.md](settings.md) for every key.
+Eldr is a Hydra 2.0 render delegate on Vulkan 1.3 for OpenUSD 26.08. It is a rasterizer (clustered forward shading, GPU culling and skinning); ray tracing, where the GPU has it, adds shadows, reflections, refraction and GI. Every feature has an `eldr:` setting.
 
-Contents: [Quick recipes](#quick-recipes) -
-[Frame pipeline](#the-frame-pipeline) -
-[Film, TAA, final quality](#film-accumulation-interactive-taa-and-final-quality) -
-[Lighting and shadows](#lighting-and-shadows) -
-[GI](#global-illumination) - [Reflections](#reflections) -
-[Transparency](#transparency-and-refraction) -
-[Volumes and fog](#volumes-and-fog) - [Materials](#materials) -
-[Geometry](#geometry) - [Motion blur, DOF, upscaling](#motion-blur-depth-of-field-and-upscaling) -
-[Output](#output-aovs-exr-products-cryptomatte-light-splits) -
-[Performance](#performance) -
-[USD authoring conventions](#usd-authoring-conventions) -
-[Known limitations](#known-limitations)
+| Section | Topic |
+|---|---|
+| Quick recipes | Rendering a frame, final-quality settings |
+| Frame pipeline | GPU passes in order |
+| Film and final quality | Sample accumulation |
+| Lighting and shadows | Lights, shadow modes |
+| Global illumination | Probes, SSGI, AO |
+| Reflections | SSR, probes, planar, ray-traced |
+| Transparency | OIT, refraction, holdouts |
+| Volumes and fog | OpenVDB, froxel fog |
+| Materials | MaterialX, OpenPBR, lobes |
+| Geometry | Subdivision, displacement, LOD, skinning |
+| Camera | DOF, motion blur, distortion |
+| Output | AOVs, EXR, Cryptomatte, light splits |
+| Performance | Pipelines, caches |
+| USD authoring conventions | Primvars and attributes |
+| Known limitations | |
 
 ## Quick recipes
 
-Render a frame to EXR with a render settings prim (needs a USD built with
-OpenImageIO; Eldr writes the files itself once the frame has converged):
+Render a frame to EXR with a render settings prim (needs a USD built with OpenImageIO; Eldr writes the files once the frame converged):
 
 ```
 usdenv.cmd usdrecord --renderer Eldr --camera /cam --renderSettingsPrimPath /Render/settings scene.usda out.png
 ```
 
-usdenv.cmd sets the plugin paths (see the header of `usdenv.cmd`). The renderer
-name for `--renderer` is `Eldr`.
-
-Settings through Python (a script that renders with `UsdImagingGL.Engine`):
+Settings from Python:
 
 ```python
 engine.SetRendererPlugin("HdVkRendererPlugin")
@@ -41,886 +36,357 @@ engine.SetRendererSetting("eldr:finalQuality", True)
 engine.SetRendererSetting("eldr:filmSamples", 256)
 ```
 
-A sensible final-quality starting point:
-
 | Goal | Settings |
 |---|---|
-| Converge from scratch, no interactive shortcuts | `eldr:finalQuality` on, `eldr:filmSamples` 128-512 |
-| Linear, ungraded EXR for comp | the default: the product's beauty is linear and untonemapped (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
-| True soft shadows, bokeh, motion blur | leave `shadowJitter`, `dofJitter`, `motionBlurTimeSamples` on (defaults) |
-| Indirect light | `eldr:gi` and `eldr:ssgi` (and `eldr:ssgiBitmask` for thin occluders) |
-| Accurate shadows and reflections off screen | `eldr:finalShadows` `raytraced` (or `auto`), `eldr:rtReflections` with 1 ray (the film averages) |
-| Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off, `--complexity veryhigh` (or `eldr:maxRefineLevel`) |
-| Fireflies | `eldr:directClamp` / `eldr:indirectClamp` |
+| Converge from scratch | `eldr:finalQuality` on, `eldr:filmSamples` 128-512 |
+| Linear ungraded EXR for comp | Default (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
+| True soft shadows, bokeh, motion blur | Leave `eldr:shadowJitter`, `eldr:dofJitter`, `eldr:motionBlurTimeSamples` on (defaults) |
+| Indirect light | `eldr:gi`, `eldr:ssgi` (+ `eldr:ssgiBitmask` for thin occluders) |
+| Accurate off-screen shadows and reflections | `eldr:finalShadows` `raytraced` or `auto`; `eldr:rtReflections` with 1 ray |
+| Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off; `--complexity veryhigh` or `eldr:maxRefineLevel` |
+| Fireflies | `eldr:directClamp`, `eldr:indirectClamp` |
 
-Environment variables: `HDVK_NO_RAY_TRACING=1` pretends the GPU has no ray
-tracing; `HDVK_PIPELINE_CACHE_DIR` moves the shader cache folder
-(default `%LOCALAPPDATA%\Eldr`); `usdenv.cmd` honours `USD_ROOT`, `USD_VENV`
-and `HDVK_BUILD`.
+| Environment variable | Effect |
+|---|---|
+| `HDVK_NO_RAY_TRACING=1` | Pretend the GPU has no ray tracing |
+| `HDVK_PIPELINE_CACHE_DIR` | Move the pipeline cache (default `%LOCALAPPDATA%\Eldr`) |
+| `USD_ROOT`, `USD_VENV`, `HDVK_BUILD` | Read by `usdenv.cmd` (sets plugin paths) |
 
-## The frame pipeline
+## Frame pipeline
 
-One frame, in the order the GPU passes run. The names are the timer names in
-usdview's **Eldr > Render Statistics** window and in
-`GetRenderStats()["gpuPassMs"]`. Passes marked (opt) run only when their
-feature is on or something needs them.
+GPU passes in order. Names are the timers in usdview's **Eldr > Render Statistics** and `GetRenderStats()["gpuPassMs"]`. (opt) = runs only when needed.
 
 | # | Pass | What it does |
 |---|---|---|
-| 0 | `probeCapture`, `planarReflection` (opt) | Second renderers draw the reflection probe cube and the mirrored views of planar mirrors. Skinned meshes keep their last joints in these. |
-| 1 | skinning (not timed) | `skin.comp` builds joint matrices on the GPU from the skeletons' transforms. |
-| 2 | `shutter` (opt) | With motion blur time samples: moves instances, joints, blend shape weights and the camera to the sample's shutter time. |
-| 3 | `culling` | GPU frustum and size culling per instance, level-of-detail choice; fills indirect draw commands. |
-| 4 | `lightClusters` | Assigns local lights to 16x9x24 view clusters. |
-| 5 | `sunShadows`, `sunShadowMin` | Four-cascade sun shadow maps (and a min-depth reduction that bounds the soft-shadow search). Translucent and volume tint maps are drawn here too. |
-| 6 | `depthPrepass` | Depth only (plus cutout alpha tests). Later passes read it. |
-| 7 | `accelerationStructures`, `rayTracing` (opt) | BLAS/TLAS updates; one ray generation pass finds each pixel's surface and traces shadow and reflection rays, and GI probe updates. |
-| 8 | `ssgi` or `ambientOcclusion` | Screen-space GI (replacing AO) or GTAO. |
-| 9 | `localShadows` | Shadow atlas for sphere, rect, disk, spot and cylinder lights. |
-| 10 | `fog` (opt) | Froxel fog: inject lighting, integrate front to back. |
-| 11 | `shading` | Sky, then opaque meshes: PBR with the sun, local lights, dome, probes, GI, SSR, fog. Writes colour, ids, motion vectors and (if asked) the light splits. |
-| 12 | `ssrDenoise` (opt) | Glossy SSR spatial, temporal and bilateral filter. |
-| 13 | `subsurface` (opt) | Screen-space subsurface blur. |
-| 14 | `volumes` (opt) | OpenVDB ray march; `volumesInFront` is the part in front of glass. |
-| 15 | `translucency` (opt) | Refraction layers, weighted blended OIT (or sorted blending), holdout mattes. |
-| 16 | `depthOfField` (opt) | Post DOF (skipped when the film uses lens jitter). |
-| 17 | `film` or `taa` | Film accumulation (plain average) or TAA resolve. |
-| 18 | `motionBlur` (opt) | Post motion blur (skipped under time samples). |
-| 19 | `post` | Auto exposure, bloom, tonemap. |
-| 20 | `aovs` (opt) | G-buffer pass and packing for bound extra AOVs. |
-| 21 | `lensDistortion` (opt) | Warps colour, depth and ids. |
-| 22 | `readback` | Colour and depth go to OpenGL on the GPU, or to the CPU. |
+| 0 | `probeCapture`, `planarReflection` (opt) | Draw the probe cube and mirrored views |
+| 1 | skinning | GPU joint matrices from skeletons (not timed) |
+| 2 | `shutter` (opt) | Moves instances, joints, blend shapes, camera to the sample's shutter time |
+| 3 | `culling` | Frustum and size culling, LOD choice, indirect draws |
+| 4 | `lightClusters` | Local lights into 16x9x24 view clusters |
+| 5 | `sunShadows`, `sunShadowMin` | 4 cascades, min-depth reduction for the soft search; translucent and volume tint maps |
+| 6 | `depthPrepass` | Depth plus cutout alpha tests |
+| 7 | `accelerationStructures`, `rayTracing` (opt) | BLAS/TLAS; traced shadows, reflections, GI probe updates |
+| 8 | `ssgi` or `ambientOcclusion` | SSGI (replaces AO) or GTAO |
+| 9 | `localShadows` | Atlas for sphere, rect, disk, spot, cylinder lights |
+| 10 | `fog` (opt) | Froxel fog |
+| 11 | `shading` | Sky, then opaque PBR: sun, local lights, dome, probes, GI, SSR, fog. Writes colour, ids, motion, light splits |
+| 12 | `ssrDenoise` (opt) | Glossy SSR filters |
+| 13 | `subsurface` (opt) | Screen-space subsurface blur |
+| 14 | `volumes` (opt) | OpenVDB march; `volumesInFront` is the part before glass |
+| 15 | `translucency` (opt) | Refraction layers, OIT, holdouts |
+| 16 | `depthOfField` (opt) | Post DOF (skipped with lens jitter) |
+| 17 | `film` or `taa` | Film average or TAA resolve |
+| 18 | `motionBlur` (opt) | Post blur (skipped with time samples) |
+| 19 | `post` | Auto exposure, bloom, tonemap |
+| 20 | `aovs` (opt) | G-buffer and packing for bound AOVs |
+| 21 | `lensDistortion` (opt) | Warps colour, depth, ids |
+| 22 | `readback` | Colour and depth to OpenGL on the GPU, or to the CPU |
 
-The renderer is synchronous: one frame in flight. A typical animated
-20,000-agent skinned crowd renders in about 21 ms at 1280x720 with the defaults
-on a GTX 1080 Ti.
+One frame in flight (synchronous). The 20k-agent crowd renders in about 21 ms at 1280x720 with defaults.
 
-## Film accumulation, interactive TAA and final quality
+## Film and final quality
 
-Eldr has three ways to turn jittered, noisy samples into a pixel.
+Three ways to turn jittered samples into a pixel.
 
-**Interactive TAA.** While the camera or the scene moves, the camera is jittered
-(Halton 2,3), and a temporal anti-aliasing resolve reprojects history with
-camera and object motion vectors (Catmull-Rom history, YCoCg variance clipping
-on tonemapper-compressed colour). The stochastic effects loop over their first
-`eldr:interactiveSamples` (8) noise samples so the history settles. With
-`eldr:renderScale` below 1, the scene renders smaller and TAA upscales
-(TAAU).
+| Mode | When | How |
+|---|---|---|
+| Interactive TAA | Camera or scene moves | Halton 2,3 jitter; Catmull-Rom history with YCoCg clipping and motion vectors. Effects loop over `eldr:interactiveSamples` (8) noise samples. `eldr:renderScale` < 1 upscales. |
+| Film | Still for 3 frames; first frame of a fresh history (usdrecord) | fp32 weighted average through a Gaussian filter (`eldr:filmFilterRadius`, 1.5 px) until `eldr:filmSamples` (64): then converged (`IsConverged`, `percentDone`). Any camera, scene or setting change restarts it. `eldr:taaSamples` only sets the jitter cycle. |
+| Final quality | `eldr:finalQuality`, or `enableInteractive = false` (husk, hdPrman convention) | The film restarts from scratch after every change, never from the TAA image. |
 
-**Film accumulation.** TAA's clipping also clips legitimate noise (soft
-shadows, SSGI, SSR) so a still camera would converge to a biased mean. Once the
-camera and scene have been still for 3 frames, from the first frame of a fresh
-history (the first frame of `usdrecord`), and always in final quality, the film
-replaces TAA: a plain weighted average in fp32 of each jittered sample through
-a Gaussian pixel filter (`eldr:filmFilterRadius`, 1.5 px). It runs until
-`eldr:filmSamples` (64) is reached, which is when the render reports itself
-converged (`IsConverged`, and `percentDone` in the statistics). Any change to
-the camera, the Hydra scene or the settings starts it over. With the film,
-`taaSamples` only sets the pixel jitter cycle. Frames with motion blur used to
-stay TAA's; with time samples they stay on the film.
+What the film enables (each has a switch, all on by default):
 
-**Final quality** (`eldr:finalQuality`, or Hydra's `enableInteractive = false`,
-the convention of husk and hdPrman) makes the film start from scratch after
-every change, never from the TAA image. Use it for offline renders.
+| Feature | Setting | Notes |
+|---|---|---|
+| Exact soft-shadow penumbrae | `eldr:shadowJitter` | Final-quality runs only |
+| True depth of field with occlusion | `eldr:dofJitter` | |
+| Motion blur at shutter times | `eldr:motionBlurTimeSamples` | |
+| Fog without history | `eldr:fogFilmJitter` | |
+| GI preconvergence | `eldr:giPreconverge` | Film waits for fresh probes |
+| Adaptive sampling | `eldr:adaptiveThreshold` (0), `eldr:adaptiveFinalThreshold` (0.01, final quality) | Converged once `eldr:adaptivePixelFraction` (0.999) of pixels stopped. Not with motion blur time samples (they run to `eldr:filmSamples`). |
 
-What the film enables (each has its own switch, all on by default and
-marked [film] in the settings):
-
-- Jittered light shapes: true soft-shadow penumbrae (`shadowJitter`), in
-  final-quality runs only (a fresh film or `finalQuality`).
-- Lens jitter: true depth of field with occlusion (`dofJitter`).
-- Motion blur by rendering the scene at shutter times
-  (`motionBlurTimeSamples`).
-- Per-sample froxel fog without history (`fogFilmJitter`).
-- GI preconvergence: the film waits until fresh probes have settled
-  (`giPreconverge`).
-- Adaptive sampling: off in interactive films (`adaptiveThreshold`, 0); in
-  final-quality runs on by default (`adaptiveFinalThreshold`, 0.01), and a film
-  counts as converged once `adaptivePixelFraction` (0.999) of the pixels
-  stopped. Films with motion blur time samples are not adaptive: a time
-  sample moves the whole scene, so the error is copies of the moving
-  object, not noise a pixel's variance shows, and a pixel the motion
-  covers for a few percent of the shutter misses all of its first samples
-  and would stop dark (a blur's faint tails were cut off). They run to
-  `filmSamples`.
-
-All stochastic effects take their noise from per-effect Sobol dimensions with
-blue-noise rotation (`eldr:sampleDimensions`), so the average converges
-without screen-space patterns. Measured at 960 px against a 1024-sample
-reference (RMSE): sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004,
-Kitchen_set 0.0068 to 0.0004. Convergence at 64 samples takes 0.2-0.5 s on
-those scenes.
-
-Ids and depth are one unfiltered sample's (Cryptomatte is not: see Output): under the film the
-one nearest the pixel centre so far (kept while later samples land farther
-out, so id edges don't move with the last sample's jitter; the jitter is
-the same for every pixel), else the frame's (TAA: its jittered sample).
-The extra AOVs follow the same split. Surface data (normal, st, P, camera
-depth) is the nearest sample's too, not an average. The colour AOVs
-(albedo, emission, diffuse albedo and the light splits) are reconstructed
-as the beauty is: the film's Gaussian filter (`eldr:filmFilterRadius`,
-3x3 gather around the pixel, each sample at its jittered position), summed
-as weighted values and weights per pixel (aov.comp), with the same NaN/Inf
-and negative rejection, and a pixel the adaptive film stopped takes no more
-samples there either. So the splits keep summing to the beauty with noisy
-per-sample content (traced refraction). Without the film (TAA) they stay a
-running mean of the frames.
+- Stochastic effects use per-effect Sobol dimensions with blue-noise rotation (`eldr:sampleDimensions`). RMSE against a 1024-sample reference, 64 samples: sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004, Kitchen_set 0.0068 to 0.0004; 0.2-0.5 s.
+- Ids, depth and surface AOVs (normal, st, P, camera depth) are the sample nearest the pixel centre, not averages.
+- Colour AOVs (albedo, emission, light splits) are filtered like the beauty, so the splits keep summing to it. Without the film (TAA) they are a running mean.
 
 ## Lighting and shadows
 
-**Lights** are UsdLux, with UsdLux semantics as in hdEmbree: radiance =
-`color * intensity * 2^exposure`, times a blackbody colour if
-`enableColorTemperature`, divided by area when `normalize`.
+Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody if `enableColorTemperature`, divided by area when `normalize`.
 
 | Light | Support |
 |---|---|
-| DistantLight | The sun: `inputs:angle` gives soft penumbrae. First shadow-casting one gets the cascades. |
-| SphereLight | Energy-conserving representative-point specular (below), horizon-clipped diffuse, `treatAsPoint`. |
-| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z. `inputs:texture:file` textures them. |
-| CylinderLight | Side only; `treatAsLine`. |
-| DomeLight | Latlong texture (`inputs:texture:file`), rotation; becomes diffuse SH9 and a GGX-prefiltered cube. |
-| Shaping | ShapingAPI cone angle, softness, focus and focus tint. |
+| DistantLight | The sun; `inputs:angle` gives soft penumbrae. The first shadow-casting one gets the cascades. |
+| SphereLight | Energy-conserving representative-point specular, horizon-clipped diffuse, `treatAsPoint` |
+| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures them (Karma orientation: left edge at +X, top row at +Y) |
+| CylinderLight | Side only; `treatAsLine` |
+| DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube |
+| Shaping | Cone angle, softness, focus, focus tint |
 
-**Highlights of lights with a size** (spheres, rects, disks, cylinders and
-the sun's disc) use a representative point (Karis 2013) normalized exactly
-rather than by Karis' `(a / a')^2`. In half-vector space, where the GGX
-lobe is isotropic, the light is an ellipse (sphere, disk, sun) or a box
-(rect, cylinder silhouette) of area `solid angle / (4 VoH)`. The
-normalization gives the reflection's centre the lobe's share of slopes
-within that region, so a mirror reflects the light's radiance. The region
-is then inset by the lobe's width so that the whole highlight carries the
-light's power: by Steiner's formula, `area / (pi a^2) + perimeter / (4 a)
-+ 1 = 1 / N`.
+- **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Diffuse is unchanged. Textured lights are read at the lobe's mip.
+- **Clustered lights:** 63 per cluster, cut off at 1% of mid-gray on a white surface.
+- **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows.
+- **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one.
+- **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
+- **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` (10) limit fireflies.
+- **Ambient:** GTAO on the dome's light, or with SSGI the traced visibility.
 
-A representative point alone gives the highlight the light's shape with
-the lobe's edge, but the true highlight is the light convolved with the
-lobe. That is wider, most across an axis thinner than the lobe, which the
-inset collapses to a line. So the lobe is also stretched along the region's
-axes, more across the minor one. The stretch was fitted to that
-convolution for ellipses and boxes from 0.5 x 0.5 to 12 x 12 lobe widths,
-and the share and inset are taken in the stretched space. A thin box (a
-tube) is stretched across only as far as keeps its energy.
+### Shadow modes
 
-Before, small lights' reflections on glossy surfaces were 1.2-4x too
-bright, worst at grazing angles and for tubes. The diffuse light is
-unchanged.
+| Mode | How |
+|---|---|
+| Sun cascades | 4 cascades fit to the scene, texel-snapped, normal offset and slope bias. Soft from the light angle (PCSS, bounded blocker search) or 3x3 PCF. |
+| Local light atlas | 4096x4096 tiles; spots one perspective tile, others six cube faces; nearest lights first. Tiles halve (to 64, about 680 lights) before any light goes unshadowed. Redraws only when scene or tiles change. |
+| Translucent and volume tint | Colour maps beside the shadow maps. |
+| Ray-traced (`eldr:rtShadows`) | Sun + 3 local lights (15 in final quality), soft from light size; skinned instances capped (`eldr:rtSkinnedInstances`). Rays pass translucent casters (taking their colour) and march volumes (`eldr:rtTranslucentShadows`). |
+| Final-quality traced (`eldr:finalShadows`) | `maps`, `raytraced` or `auto`. One ray per light and film sample at the sample dimensions' point of the light: exact penumbra. `auto` traces dense scenes whose skinned instances all block rays. |
+| Jittered maps (`eldr:shadowJitter`) | Maps rendered from a point on the light each film sample: exact penumbra (sun error 0.016 vs PCSS 0.065). |
 
-Floor reflections at roughness 0.15 were measured as direct glossy, with
-`tests/scenes/lights.usda` for the sphere, rect and disk and
-`light_reflections.usda` for a 4 degree sun and a tube. They were compared
-against a brute-force GGX integral, and Karma 22 (64 spp, colour limit off)
-against the same. The cells give the peak / the highlight's total / its
-spread across / along the plane of incidence (weighted standard deviation
-in pixels), relative to the integral. The disk's spread across is left out
-because other highlights overlap it.
-
-| Light | Before | After | Karma |
-|---|---|---|---|
-| Sphere (bulb) | 1.75 / 2.31 / 1.10 / 0.98 | 1.01 / 0.99 / 1.06 / 0.97 | 1.01 / 1.00 / 1.00 / 0.99 |
-| Rect (panel) | 1.98 / 1.62 / 0.99 / 1.04 | 1.02 / 0.96 / 1.00 / 0.98 | 1.03 / 0.98 / 0.97 / 0.99 |
-| Disk | 1.04 / 1.22 / - / 0.89 | 1.00 / 1.01 / - / 1.01 | 1.02 / 1.04 / - / 1.05 |
-| Sun, 4 degrees | 2.61 / 1.00 / 0.77 / 0.94 | 0.99 / 1.00 / 1.03 / 0.96 | 1.02 / 1.04 / 1.00 / 1.03 |
-| Cylinder (tube) | 3.76 / 4.05 / 1.00 / 0.86 | 1.00 / 0.94 / 1.00 / 0.93 | 0.99 / 0.96 / 0.99 / 0.97 |
-
-A rect or disk light's texture is read at the representative point, at the
-mip of the stretched lobe's footprint at the light. Before, the mip came
-from the light's own size, which blurred a glossy reflection of the texture
-as if it were rough. vkrtest checks a sphere light on a tilted floor against
-the same integral, and a textured rect light's sharp reflection.
-The coat lobe is normalized for the light's half-vector area as for a disc,
-and shares the base lobe's point (not its stretch). LTC (Heitz 2016) would be
-exact for polygons of any size.
-
-Local lights go into a clustered forward+ grid: a cluster holds at most 63
-lights and each light is cut off where it would light a white surface at 1% of
-middle gray. Emissive meshes (constant `emissiveColor` above
-`emissiveLightThreshold`, small enough) are additionally promoted to lights
-(rects for flat panels, spheres otherwise; at most 32) and cast shadows.
-Light shapes are not drawn to the camera unless `lightShapesVisible` is on
-(a light with Karma's `bool inputs:karma:light:renderlightgeo = 0`, "Render Light Geometry", is never drawn;
-it still lights the scene and shows in reflections of what it lights, not of
-its own shape).
-
-**Shadows.**
-
-- Sun: four cascades fitted to the scene bounds, texel-snapped, with normal
-  offset and slope bias. Soft penumbrae from the light's angle (PCSS with a
-  bounded blocker search), or 3x3 PCF.
-- Local lights: a 4096x4096 atlas of tiles; spots get one perspective tile,
-  others six cube faces; lights nearest the camera get tiles first. When the
-  requested tile size would not fit every shadowed light, all tiles halve (down
-  to 64 texels, about 680 point lights) so none goes unshadowed; past that the
-  farthest go unshadowed. The atlas redraws only when the scene or the shadowed tiles change.
-- Translucent casters and volumes tint shadows through colour maps beside the
-  shadow maps.
-- Ray-traced shadows (`rtShadows`) replace maps for the sun and the three most
-  important local lights (15 in final quality), soft from the light's size,
-  with a skinned-character cap (`rtSkinnedInstances`). In final quality they
-  take one ray per light and film sample at the sample dimensions' point of
-  the light's shape, so the film converges to the exact penumbra.
-  Traced shadow rays pass translucent casters, taking their colour, and march
-  the volumes (`rtTranslucentShadows`), as the tint maps do.
-  `finalShadows` (`maps`, `raytraced`, `auto`) traces them in final quality
-  without `rtShadows`; `auto` traces dense scenes (2 triangles per pixel and
-  shadowed light) whose skinned instances all block rays.
-  Traced rays start 256 ulps of the hit's largest coordinate off the surface,
-  so floors far from the origin don't shadow themselves (until sweep 4,
-  Kitchen_set's sunlit floor came out 37% too dark traced; the shadow maps
-  were right).
-  The traced image covers opaque pixels only, so a traced sun keeps its
-  cascades while volumes, fog, translucent surfaces or subsurface materials
-  are in the scene: smoke and fog in a room are lit only in the window's beam,
-  and glass is shadowed by the maps (until sweep 4 they saw no shadow, and the
-  sun shone through walls). Costs the cascades again: 1.05 ms on volume.usda
-  at 1280x720; the crowd, without such users, traces only. Traced local lights
-  likewise keep atlas tiles then, placed after the untraced lights' (whose
-  tiles don't change), for glass, fog and smoke (until sweep 4 glass and fog
-  saw no shadow from them). The tiles cost an atlas redraw only when lights or
-  casters move (three sphere lights on volume.usda: about 1.4 ms; still frames
-  0.0-0.2 ms).
-- Under the film, `shadowJitter` renders the maps from a point on the light so
-  the average is the exact penumbra (sun disc: worst error 0.016 against PCSS
-  0.065).
-
-**Dome sun.** `domeSun` (on by default) pulls the bright texels of an HDRI out
-of the image-based light and turns them into a shadowed distant light.
-
-**Clamps.** `directClamp` / `indirectClamp` limit brightness against
-fireflies. 0 is off; `indirectClamp` is 10 by default, `directClamp` 0.
-
-Ambient: GTAO (visibility, bent AO and multi-bounce on the dome's light) or,
-with SSGI, the traced visibility.
+Traced shadows cover opaque pixels only. With volumes, fog, translucent surfaces or subsurface in the scene a traced sun keeps its cascades for those (1.05 ms on volume.usda); traced local lights keep atlas tiles for them (about 1.4 ms for three lights; still frames 0-0.2 ms).
 
 ## Global illumination
 
-Three layers, each separately switchable:
-
 | Layer | Setting | Needs | What it gives |
 |---|---|---|---|
-| Dome light + AO | `imageBasedLighting`, `ambientOcclusion` | prepass | Unoccluded sky light darkened by GTAO. |
-| DDGI probes | `gi` | ray tracing | A grid of probes traces rays each frame (`giProbes` across the scene, `giRaysPerProbe` rays). Irradiance and visibility are octahedral atlases blended with `giHysteresis`. Chebyshev visibility prevents light leaks; probes inside geometry drop out; where no probe sees a surface, shading falls back to the dome. Hits are shaded with direct light, emission and further bounces from the probes themselves. |
-| SSGI | `ssgi` | prepass | Per-pixel near-field indirect light from the screen (GTAO's horizon scan, lighting from last frame), traced at half resolution (a different pixel of each 2 x 2 tile every frame, `ssgiTileOrder`) and denoised, accumulated over still frames. Replaces AO; the probes or dome provide the rest. |
+| Dome light + AO | `eldr:imageBasedLighting`, `eldr:ambientOcclusion` | prepass | Unoccluded sky light darkened by GTAO |
+| DDGI probes | `eldr:gi` | ray tracing | Probe grid (`eldr:giProbes`, `eldr:giRaysPerProbe`); octahedral irradiance and visibility atlases blended by `eldr:giHysteresis`; Chebyshev visibility prevents leaks; probes in geometry drop out; hits shaded with direct light, emission and probe bounces; dome fallback |
+| SSGI | `eldr:ssgi` | prepass | Near-field indirect light from the screen (GTAO horizon scan, last frame's lighting) at half resolution, denoised. Replaces AO. |
 
-SSGI variants: `ssgiBitmask` uses an EEVEE-style 32-sector visibility bitmask
-(light passes behind thin objects, occluders `ssgiBitmaskThickness` of the
-radius thick); `ssgiThickness` makes rays respect thin
-and grazing surfaces. `screenBackface` (on) gives hits on the back of what
-the camera sees `screenBackfaceScale` (0.25) of the front's light, in SSGI and
-SSR alike (Blender 5.2's Backface option). Each pixel's slices are
-normalized by what they would see unoccluded, so visibility and gathered
-light add up to exactly the sky's share: in a white furnace no pixel gets
-brighter than under the open sky (before: up to 2.3% at grazing angles). `emissiveLights`, `fogGiAmbient` and `probeNormalize`
-use the GI. With the film, `giPreconverge` waits for the probes: their about 33
-updates run in the first frame, as probe traces and updates alone (no raster or
-shading in between), not as 33 frames.
+- `eldr:ssgiBitmask`: 32-sector bitmask, light passes behind thin objects (occluder thickness `eldr:ssgiBitmaskThickness`).
+- `eldr:ssgiThickness`: rays respect thin and grazing surfaces.
+- `eldr:screenBackface`: back-face hits take `eldr:screenBackfaceScale` (0.25) of the light, in SSGI and SSR.
+- Slices are normalized so a white furnace never exceeds the open sky.
+- `eldr:emissiveLights`, `eldr:fogGiAmbient`, `eldr:probeNormalize` use GI.
+- `eldr:giPreconverge`: the probes' about 33 updates run in the first frame.
 
-Typical costs on a 1080 Ti at 1280x720: probes 2-3 ms (Kitchen), SSGI
-0.67 ms at half resolution.
+Costs at 1280x720: probes 2-3 ms (Kitchen), SSGI 0.67 ms at half resolution.
 
 ## Reflections
 
-Reflections are layered; each pixel takes the best available source for its
-roughness:
+Each pixel takes the best source for its roughness.
 
-1. **SSR** (`ssr`): ray marching against the depth buffer, 32 steps by
-   default, bisection refinement at crossings, shaded from last frame's image,
-   fades with roughness (0.3 to 0.6) and at screen edges. Thickness estimator
-   (`ssgiThickness`) handles thin strips and grazing surfaces. `ssrHitFilter`
-   reads each hit from the mip of last frame's image that matches the ray's
-   cone (the history keeps 6 mips for it), so rough reflections blur instead
-   of sparkling; hits outside last frame's view are misses (probe or dome).
-2. **SSR denoiser** (`ssrDenoise`, off): one GGX-visible-normal ray per pixel,
-   a ratio-estimator spatial filter (9 rays), temporal reprojection through the
-   reflected point and a variance-guided bilateral filter. Handles roughness
-   up to 0.8 (fade 0.5 to 0.8). Costly (the crowd's shading goes from 11.7 to
-   20.4 ms); not combined with ray-traced reflections.
-3. **Reflection probes** (`reflectionProbe`): a cube captured in the scene,
-   prefiltered like the dome, with parallax correction against a box and the
-   captured distances. One automatic probe at the scene centre, or up to 8
-   authored probes (meshes flagged `primvars:eldr:reflectionProbe`, smallest
-   box wins, soft edges). `probeNormalize` scales a probe by the local ambient
-   light (needs GI or SSGI) to stop dark corners reflecting a lit room.
-4. **Planar reflections** (`planarReflections`): mirrors (flagged
-   `primvars:eldr:planarReflection`, or the largest flat glossy opaque mesh)
-   get the scene rendered mirrored in their plane, with an oblique near plane,
-   up to `planarCount` (4) mirrors at `planarScale` of the frame size.
-5. **Ray-traced reflections** (`rtReflections`): GGX-sampled rays, shaded at
-   hits, up to roughness 0.7, replace the dome and SSR; rough ones are
-   averaged over up to 12 pixels in the surface plane before the film.
-   Displacement is seen (`rtDisplacement`), also on skinned instances (displaced
-   before skinning, as the raster does, in rt_skin.comp); skinned instances only up to the
-   cap.
+| Source | Setting | How |
+|---|---|---|
+| SSR | `eldr:ssr` | 32-step ray march with bisection, shaded from last frame; fades with roughness (0.3-0.6) and at edges. `eldr:ssrHitFilter` reads hits at the ray cone's mip (6 mips). Hits outside last frame's view are misses. |
+| SSR denoiser | `eldr:ssrDenoise` (off) | One GGX ray per pixel, 9-ray spatial filter, temporal reprojection, bilateral filter; roughness up to 0.8. Crowd shading 11.7 to 20.4 ms. Not with ray-traced reflections. |
+| Reflection probes | `eldr:reflectionProbe` | Captured cube with parallax correction. One automatic probe, or up to 8 authored (`primvars:eldr:reflectionProbe`; smallest box wins, soft edges). `eldr:probeNormalize` needs GI or SSGI. |
+| Planar reflections | `eldr:planarReflections` | Mirrors (`primvars:eldr:planarReflection`, else largest flat glossy opaque mesh) render the scene mirrored with an oblique near plane; `eldr:planarCount` (4) at `eldr:planarScale` (0.5). |
+| Ray-traced reflections | `eldr:rtReflections` | GGX rays shaded at hits, up to roughness 0.7, replace dome and SSR; rough ones averaged over up to 12 pixels. Sees displacement (`eldr:rtDisplacement`) and skinned instances up to the cap. |
 
-Mirror pixels take their planar reflection instead of SSR; other surfaces
-use the probe (if on) or the dome as the base and SSR where the screen has
-the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
-0.7.
+Mirror pixels take the planar reflection; others use the probe (if on) or the dome as the base, with SSR where the screen has the hit.
 
-## Transparency and refraction
+## Transparency
 
-- **Cutouts**: UsdPreviewSurface opacity with `opacityThreshold > 0`, and
-  MaterialX opacity textures at a fixed 0.5, are alpha-tested in every pass,
-  shadows included.
-- **Translucency**: opacity below 1 (constant, or a texture without a
-  threshold) makes a material translucent. Translucent meshes are drawn after
-  the sky in their own pass, sorted per mesh back to front, with weighted
-  blended OIT (`oit`, distance weights to `oitDepthWeight`) by default; diffuse
-  and emission scale with opacity, highlights do not.
-- **Refraction** (`refraction`, needs the prepass): materials with
-  transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or
-  an authored UsdPreviewSurface `ior` refract a mip-chained copy of the opaque
-  colour. A thickness estimate (distance to the opaque surface behind, capped
-  by the mesh size, or the view ray for `thin_walled`) places the exit
-  point; roughness blurs over mips and `refractionSamples` taps; Fresnel
-  splits reflection and transmission; colour absorbs at the surface or with
-  Beer-Lambert over `transmission_depth`.
-- **From inside** (`refractionBackFaces`): back faces are drawn first with the
-  inverted ior, so water from below shows Snell's window and total internal
-  reflection (the critical angle is 48.8 degrees for water).
-- **Layers** (`multiRefraction`): refracting meshes draw back to front and the
-  colour is copied again after each, so glass behind glass shows (up to
-  `refractionLayers` copies).
-- **Ray-traced refraction** (`rtRefraction`, needs ray tracing and the
-  prepass; on in final quality by default): refraction rays see the
-  translucent meshes' TLAS instances (kRtMaskTranslucent, which traced
-  shadows also tint through; reflection and GI rays pass them), skinned ones
-  among `rtSkinnedInstances` included. Per pixel a ray finds the nearest
-  refracting surface (through translucent ones that don't refract) and
-  follows its refracted ray through the glass, up to `rtRefractionBounces`
-  interfaces: into and out of each medium, glass behind glass, total internal
-  reflection, a Fresnel choice between reflecting and refracting after the
-  first surface, Beer-Lambert absorption over `transmission_depth`, and a GGX
-  microfacet normal per sample by the roughness (rough glass converges over
-  the film). Each surface's material is evaluated at the hit as shading does
-  (textures, material programs and their lobe inputs, normal maps), so the
-  first surface bends by its fragment's normal and ior, and later ones by
-  their own ior, transmission colour, weight, opacity, depth and thin walls
-  (after the first, each lets the ray through straight, refracts it, or ends
-  it on its diffuse surface, by its fractions). It is shaded at its hit as
-  traced reflections are, so what is off screen or behind other objects
-  shows through glass, and counts as indirect glossy light in the light
-  splits. The front surface keeps its own Fresnel, tint and reflections;
-  other refracting fragments at the pixel stay screen space. Displaced glass
-  (`rtRefractionDisplacement`, with `rtDisplacement`) bends the rays by its
-  displaced triangles and its height map's bump, as the shading pass bumps
-  its fragments (a displacement graph's by its displaced facets), so rippled
-  water or hammered glass distorts what is behind it.
-- **Translucent shadows** (`translucentShadows`): glass casts a faint, green
-  glass a green, shadow.
-- **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
-  depth, ids and shadows. Translucent holdouts (`holdoutAlpha`) cut colour and
-  alpha by their opacity, also one a MaterialX graph computes (the matte pass runs the
-  material program, per pixel).
-- **Subsurface** (`subsurface`): see Materials.
-
-Screen-space limits (without ray-traced refraction): only what is on screen is refracted, and OIT is an
-approximation (sorting is per mesh, not per triangle).
+| Feature | Setting | How |
+|---|---|---|
+| Cutouts | | UsdPreviewSurface `opacityThreshold > 0`, MaterialX opacity textures at 0.5; alpha-tested in every pass, shadows too |
+| Translucency | `eldr:translucency`, `eldr:oit` | Opacity below 1 (constant, or a texture without threshold). Drawn after the sky, weighted blended OIT (`eldr:oitDepthWeight`) or sorted per mesh. Diffuse and emission scale with opacity, highlights don't. |
+| Refraction | `eldr:refraction` | [prepass] Transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or authored `ior` refract a mip-chained copy of the opaque colour. Thickness estimate places the exit point; roughness blurs (`eldr:refractionSamples`); Fresnel splits; absorption at the surface or Beer-Lambert over `transmission_depth`. |
+| From inside | `eldr:refractionBackFaces` | Back faces first with inverted ior: Snell's window, total internal reflection (48.8 degrees for water) |
+| Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied after each layer: glass behind glass |
+| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as indirect glossy in the light splits. Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
+| Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
+| Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
+| Subsurface | `eldr:subsurface` | See Materials |
 
 ## Volumes and fog
 
-**Fog** (`fog`): height fog in a 160x90x64 froxel grid over the view frustum
-(depth slices grow quadratically to the scene's far end or `fogMaxDistance`).
-Each froxel's medium is `density * exp(-falloff * (height - base))`, lit through
-a Henyey-Greenstein phase by every distant light (through its cascades, so
-pillars throw shafts), local lights (through their atlas tiles) and the dome
-(from GI probes if `fogGiAmbient` and GI are on). Front-to-back integration is
-energy conserving; the shading pass applies it to opaque and translucent
-surfaces and the sky pass to the sky. Under the film each sample gets
-per-froxel jitter with no history (`fogFilmJitter`). There is no USD fog
-schema; fog is driven by settings only.
+**Fog** (`eldr:fog`): height fog in a 160x90x64 froxel grid; medium = `density * exp(-falloff * (height - base))`, Henyey-Greenstein phase, lit by distant lights (cascades: pillars throw shafts), local lights (atlas tiles) and the dome (probes if `eldr:fogGiAmbient`). Energy-conserving; applied to surfaces and sky. No USD fog schema: settings only.
 
-**OpenVDB volumes** (`volumes`; builds against a USD with OpenVDB, as the
-default `C:\dev\usd-26.08-vdb`): `UsdVolVolume` with `OpenVDBAsset` fields.
-Fields bind by name: `density`, `temperature`, `Cd` or `color`, `emission`;
-`fieldIndex` is honoured. Grids become NanoVDB on the GPU and are ray-marched
-by a fullscreen pass over the shaded image, empty space skipped with the
-tree. Lighting: Henyey-Greenstein phase, three-octave multiple scattering of
-distant lights, the sun's cascades for opaque occluders, the dome's SH
-convolved with the phase, local lights as points through one tap of their
-atlas tiles per step (until sweep 4 walls did not block them; three sphere
-lights on volume.usda: volumes 36.8 to 41.8 ms at 1280x720), and emission from
-temperature (blackbody) or an emission field. Volume materials come from
-MaterialX (`volume` shader: absorption/scattering per density, anisotropic
-vdf, uniform_edf emission, blackbody temperature emission). Settings
-multiply density and emission, and `volumeAnisotropy` is for volumes without
-a material.
+**OpenVDB volumes** (`eldr:volumes`; needs a USD with OpenVDB):
 
-Interactions: volumes shadow surfaces from the sun through the translucent
-tint maps (`volumeShadows`) and from the local lights' atlas tiles
-(`localVolumeShadows`); volumes shadow each other from the sun, the local
-lights and the dome (`volumeMutualShadows`): the light towards each step also
-marches the other volumes' boxes (smoke between the sun and a fire darkens the
-fire's smoke; a lone volume pays nothing). The froxel fog reads the sun's tint
-map and the local lights' atlas tint as surfaces do, so volumes shadow it and glass tints it whenever those
-shadows are on (fog inside a volume by the part of it nearer the light: each
-texel keeps the volumes' optical-depth range); volumes behind glass are dimmed and refracted
-(`volumeUnderTransparency`); a half-resolution march
-(`volumeResolution` 2) cuts cost by about 3x.
+| Aspect | Support |
+|---|---|
+| Prims | `UsdVolVolume` with `OpenVDBAsset` fields; bound by name: `density`, `temperature`, `Cd` or `color`, `emission`; `fieldIndex` honoured |
+| Rendering | NanoVDB on the GPU, fullscreen march over the shaded image, empty space skipped |
+| Lighting | HG phase, 3-octave multiple scattering of distant lights, sun cascades for opaque occluders, dome SH, local lights as points via atlas tiles; emission from temperature (blackbody) or an emission field |
+| Materials | MaterialX `volume`: absorption/scattering per density, anisotropic vdf, uniform_edf emission, blackbody temperature. `eldr:volumeAnisotropy` for volumes without one. |
+| Houdini SOP volumes | Houdini build only; see the Houdini page |
+
+| Interaction | Setting |
+|---|---|
+| Volumes shadow surfaces and fog from the sun | `eldr:volumeShadows` |
+| ... from local lights | `eldr:localVolumeShadows` |
+| Volumes shadow each other (sun, local lights, dome); a lone volume pays nothing | `eldr:volumeMutualShadows` |
+| Glass tints fog; volumes behind glass are dimmed and refracted | `eldr:volumeUnderTransparency` |
+| Half-resolution march, about 3x cheaper | `eldr:volumeResolution` 2 |
 
 ## Materials
 
-Eldr shades in linear Rec.709. Colour-space-tagged textures and colours
-(`sourceColorSpace`, UsdColorSpaceAPI) are converted from ACEScg, ACES2065-1,
-P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as
-untagged.
-
-**Supported surfaces**
+Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged.
 
 | Surface | Notes |
 |---|---|
-| UsdPreviewSurface | Metallic and specular workflows (`useSpecularWorkflow`), clearcoat (F0 from `ior`), `ior` refraction, opacity and cutouts, displacement, normal maps. |
-| MaterialX standard_surface | base, specular (and `specular_color`), roughness, metalness, coat, sheen, thin film, anisotropy, transmission, subsurface, emission, opacity, normal maps, displacement. |
-| OpenPBR Surface | The same lobes under OpenPBR names (`fuzz_*`, `coat_*`, `thin_film_*`, `geometry_opacity`, `transmission_*`, `subsurface_*`). |
+| UsdPreviewSurface | Metallic and specular workflows, clearcoat (F0 from `ior`), `ior` refraction, opacity, cutouts, displacement, normal maps |
+| MaterialX standard_surface | base, specular (`specular_color`), roughness, metalness, coat, sheen, thin film, anisotropy, transmission, subsurface, emission, opacity, normal maps, displacement |
+| OpenPBR Surface | The same lobes under OpenPBR names (`fuzz_*`, `coat_*`, `thin_film_*`, `geometry_opacity`, `transmission_*`, `subsurface_*`) |
 
-Material context order: `mtlx`, then Storm's `glslfx`, then universal
-(`outputs:surface`), so Houdini/Karma assets and assets made for usdview both
-work.
+Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`).
 
-**Lobes** (layered over the metallic base, in separate pipelines so plain
-materials do not pay): clearcoat (own GGX lobe, tints the base),
-sheen (Charlie microfiber), thin film (Belcour-Barla Airy model), anisotropic
-GGX (tangent from the uv set's u direction, rotated by `specular_rotation`),
-hair (Kajiya-Kay two-lobe on BasisCurves), toon bands, and the base's energy
-compensation (multi-scattering).
-
-**What can be textured.** Texture reads (UsdUVTexture, MaterialX `image` /
-`tiledimage`, UDIM, per-texture wrap modes, uv transforms, several uv sets
-through the material program) cover base colour, roughness, metallic,
-emission, opacity, normal, displacement, and (with
-`texturedLobes` / `texturedTransmission`) specularColor, coat, coat colour,
-coat roughness, sheen, sheen colour and roughness, anisotropy and rotation,
-thin film thickness, weight and IOR, ior, transmission, transmission colour,
-transmission depth (Beer-Lambert per pixel), thin walled (above 0.5),
-subsurface, subsurface colour, radius and its scale (standard_surface
-`subsurface_scale`, OpenPBR `subsurface_radius_scale`).
-
-**Material programs** (`materialGraphs`): graphs behind inputs that a
-texture or constant cannot express are compiled to a small per-pixel
-interpreter: MaterialX math, mix, overlay, clamp, remap, conditionals, HSV,
-extract/combine, `image`, `tiledimage`, `place2d`, `texcoord`,
-`geompropvalue`, ramps, `normalmap`, UsdUVTexture, UsdTransform2d and
-primvar readers; Houdini's ramp nodes `hinvlinear` and `huniformramp`. With
-`proceduralTextures` they include MaterialX noise (noise2d/3d, fractal2d/3d,
-cellnoise, worleynoise, position, normal), ported from MaterialX's own
-library so results agree with Storm. A graph is compiled whole or not at all;
-if it cannot be, the input keeps its constant (a warning is printed once per
-node type).
-
-Geometry-side: per-vertex `displayColor`, GeomSubsets with their own
-materials, and any primvar a program names, at constant, uniform, varying,
-vertex, faceVarying or instance rate (instancer primvars, e.g. Houdini crowd
-`random`).
-
-**Subsurface.** The diffuse light of subsurface materials is blurred by
-separable per-channel Gaussians (taps spread over three times the largest
-radius, at most 128 px, depth-aware) in a second shading pass; thin parts
-transmit the sun, and thin-walled materials pass it whole.
-
-**Toon.** `inputs:eldr:toonBands` on a material, or `eldr:toonBands` globally,
-quantises the lit intensity relative to the albedo into flat bands with
-`inputs:eldr:toonSoftness` edges; emission is untouched.
+| Topic | Support |
+|---|---|
+| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Charlie), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation |
+| Texturable inputs | base colour, roughness, metallic, emission, opacity, normal, displacement; with `eldr:texturedLobes` / `eldr:texturedTransmission`: specularColor, coat (colour, roughness), sheen, anisotropy, thin film, ior, transmission (colour, depth, thin walled), subsurface (colour, radius, scale) |
+| Texture reads | UsdUVTexture, MaterialX `image` / `tiledimage`, UDIM, wrap modes, uv transforms, several uv sets |
+| Material programs (`eldr:materialGraphs`) | Graphs compiled whole into per-pixel programs: math, mix, overlay, clamp, remap, conditionals, HSV, extract/combine, `image`, `tiledimage`, `place2d`, `texcoord`, `geompropvalue`, ramps, `normalmap`, UsdUVTexture, UsdTransform2d, primvar readers, Houdini ramps `hinvlinear` and `huniformramp`. With `eldr:proceduralTextures`: MaterialX noise (noise2d/3d, fractal2d/3d, cellnoise, worleynoise, position, normal), matching Storm. An uncompilable graph keeps the input's constant (one warning per node type). |
+| Geometry-side | per-vertex `displayColor`, GeomSubsets with materials, any primvar a program names at any rate (including instancer primvars such as Houdini crowd `random`) |
+| Subsurface | Separable per-channel Gaussian of the diffuse light (taps over 3x the largest radius, max 128 px, depth-aware); thin parts transmit the sun, thin-walled pass it whole |
+| Toon | `inputs:eldr:toonBands` on a material, or `eldr:toonBands` globally; `inputs:eldr:toonSoftness` edges; emission untouched |
 
 ## Geometry
 
-- **Meshes** with implicit surfaces (sphere, cube, cone, cylinder, capsule,
-  plane) converted to meshes, GeomSubsets, instancing (PointInstancer, native
-  instances; one indirect draw per prototype), render tags/purposes.
-- **Subdivision** (`subdivision`, `maxRefineLevel`): catmullClark, loop and
-  bilinear refined with OpenSubdiv to the display style's refine level.
-  Creases, corners, holes, boundary and face-varying interpolation are
-  honoured; limit positions and normals; face-varying uv seams stay seams.
-  Skinned meshes refine in the rest pose and skin on the GPU.
-- **Displacement** (`displacement`): UsdPreviewSurface `displacement` and
-  MaterialX displacement shaders move vertices along their normals in the
-  vertex stage, so depth, shadows, motion vectors and ray tracing all see the
-  same surface; the shading normal is bumped by the height map's slope
-  (surface gradient). Best on refined subdivision surfaces. Culling bounds grow
-  by the largest offset. Height maps are read at the mip whose texels are as
-  far apart as the mesh's vertices, so a map finer than the mesh doesn't
-  alias. With `displacementGraphs`, a displacement driven by a shading graph
-  (math, noise, several textures) runs that graph per vertex, also for ray
-  tracing's BLASes (`rtDisplacement`). A graph reading what differs between
-  a mesh's instances (world-space position or normal, instance primvars)
-  gives the 256 instances largest on screen a displaced BLAS each, rebuilt
-  when they move or their instance primvars change; the rest share the mesh's (displaced as its first
-  instance).
-- **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
-  get up to three coarser levels (quadric error simplification that also
-  weighs normals, uvs and colours, and joint weights for skinned meshes);
-  culling picks the coarsest level whose error stays under about a pixel with
-  hysteresis. Measured: crowd 54.5M triangles drawn down to 13.6M with the
-  image within 0.6% of pixels, GPU 68 ms to 28-34 ms; Kitchen at Very High
-  34.8M to 6.4M triangles, 30 ms to 10.5 ms. With `lodFade` a level change
-  crossfades over 8 frames with a moving dither that TAA or the film blends,
-  instead of popping.
-- **Skinning** (UsdSkel): GPU linear blend or dual quaternion
-  (`primvars:skel:skinningMethod = "dualQuaternion"`), four or eight influences,
-  blend shapes; per-instance poses so a crowd is one indirect draw per
-  prototype. Authored normals on skinned meshes are kept.
-- **Curves** (BasisCurves): linear, bezier, bspline and catmullRom, tubes of
-  six sides or flat ribbons when normals exist; `widths`, `displayColor`,
-  materials, instancing. u runs along each curve for hair shading and
-  textures. 100k hair curves come up in about 2 s. `curveRibbons` (or a
-  curve's `primvars:eldr:ribbons`) draws curves without normals as flat
-  ribbons turned towards each pass's eye: 2 triangles per step instead of 12.
-- **Points**: icosahedra `widths` across, or with `pointSprites` (or
-  `primvars:eldr:sprites`) camera-facing discs shaded like spheres.
-- **Volumes**: see above.
+| Feature | Support |
+|---|---|
+| Meshes | Implicit surfaces converted to meshes, GeomSubsets, PointInstancer and native instancing (one indirect draw per prototype), render tags and purposes |
+| Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level; creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
+| Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset. Height maps read at the mip matching vertex spacing. |
+| Displacement graphs (`eldr:displacementGraphs`) | A shading graph runs per vertex, also for ray-tracing BLASes (`eldr:rtDisplacement`). Graphs reading world position, normal or instance primvars give the 256 largest instances a BLAS each (rebuilt when they or their primvars change); others share the first instance's. |
+| LOD (`eldr:lod`, `eldr:lodBias`) | Meshes of 1000+ triangles get up to 3 coarser levels (quadric simplification weighing normals, uvs, colours, joint weights); culling picks the coarsest level under about 1 px of error, with hysteresis. Crowd 54.5M to 13.6M triangles, 68 to 28-34 ms; Kitchen at Very High 34.8M to 6.4M, 30 to 10.5 ms. `eldr:lodFade` crossfades over 8 frames. |
+| Skinning (UsdSkel) | GPU linear blend or dual quaternion (`primvars:skel:skinningMethod = "dualQuaternion"`), 4 or 8 influences, blend shapes, per-instance poses (one draw per prototype); authored normals kept |
+| Curves (BasisCurves) | linear, bezier, bspline, catmullRom; 6-sided tubes or flat ribbons (with normals); `widths`, `displayColor`, materials, instancing; u runs along the curve. 100k hair curves in about 2 s. `eldr:curveRibbons` / `primvars:eldr:ribbons`: camera-facing ribbons (2 triangles per step instead of 12). |
+| Points | Icosahedra `widths` across, or camera-facing discs with `eldr:pointSprites` / `primvars:eldr:sprites` |
+| Volumes | See Volumes and fog |
 
-## Motion blur, depth of field and upscaling
+## Camera
 
-**Camera lens** (UsdGeomCamera): `focalLength`, `horizontalAperture`,
-`fStop`, `focusDistance`, `shutter:open`, `shutter:close`. usdview's free camera
-has no lens (no DOF, no blur).
+Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance`, `shutter:open`, `shutter:close`. usdview's free camera has no lens (no DOF or blur).
 
-- **Depth of field.** Interactive/TAA: a thin lens's circle of confusion
-  gathered on a golden-angle spiral before TAA, with a 32x32 tile pass of the
-  largest near-field circle so blurred foreground spreads, background never
-  bleeds over sharper foreground. Film: `dofJitter` instead moves the camera
-  across the aperture per sample, shearing the view so the focus plane stays
-  (true bokeh with occlusion). With `dofResidualBlur` (on) the post DOF
-  still runs per sample at 1/√(film samples) of the circle of confusion,
-  filling the gaps between lens samples, as EEVEE does.
-- **Motion blur.** Interactive: McGuire's reconstruction along each pixel's
-  motion (camera reprojection plus object motion vectors including skinning and
-  blend shapes) after TAA. Film: `motionBlurTimeSamples` renders the scene at a
-  Halton-spread time inside the shutter per sample (box shutter, motion
-  linear from the previous frame to this one for instances, joints, blend
-  shapes and the camera), so shadows, rays, refraction and DOF all see the
-  moving geometry. Costs one shutter pass per sample (1.7-2.1 ms on the 20k
-  crowd). Each sample moves the whole scene, so a fast move gives one copy
-  per sample, shutter / `filmSamples` apart (64 samples over a 120-pixel
-  move: copies 1.9 pixels apart, steps of 15% across the blur). With
-  `motionBlurResidual` (on) each sample is spread over its stratum of the
-  shutter by a short gather along its motion vectors, which in a time
-  sample run from the frame before to the sample's time (rigid instances,
-  skinned joints and blend shape weights from the shutter's capture, point
-  caches from their velocities), so the
-  strata tile the shutter and the copies blend into a smooth blur. Karma
-  instead samples a time per pixel sample, which gives noise, not steps;
-  Eldr's samples render a whole frame each, so it fills between them
-  instead (EEVEE's vector blur between its steps). Such films are not
-  adaptive (see the film's adaptive sampling) and run to `filmSamples`. With `sampledMotion` (on) rigid prims, instances and the camera
-  take their motion from the scene's transform samples at shutter open and
-  close (continued linearly to a frame), not from the last rendered frame, so
-  a single usdrecord or husk frame is blurred too. With `deformationBlur`
-  (on) meshes whose points move (point caches) get a velocity per point
-  from Hydra's point samples at shutter open and close, which time samples
-  and motion vectors follow (ray tracing still sees the frame's points).
-  Skinned joints still need a rendered frame before.
-- **Upscaling** (`renderScale` below 1): while TAA resolves, render at that
-  fraction (min 0.25) and reconstruct into a full-size history (Gaussian
-  weights from the 3x3 samples' sub-pixel positions). Interactive only: the
-  film and final quality render at full size, as do frames with DOF, an open
-  shutter, lens distortion or extra AOVs.
-- **Lens distortion**: `lensDistortion:*` camera attributes (`k1`, `k2` radial;
-  `k3`-`k6`, `p1`, `p2` OpenCV terms; `center`, `anaSq`, `asym`, `scale`,
-  type `standard` or `fisheye`) warp the finished frame with ids and depth.
-  The scene renders wider (overscan, up to 2x). Karma's lens material binding
-  (`karma:camera:material:binding` with `karma:camera:use_lensshader`) is read
-  so Karma cameras distort the same.
-
-## Output: AOVs, EXR products, Cryptomatte, light splits
-
-**Hydra AOVs** (usdview AOV menu, `usdrecord`, husk): `color` (RGBA16F, linear
-unless the tonemapper runs; see below), `depth`, `primId`, `instanceId`
-(picking and selection), plus the extra AOVs below. They cost nothing unless
-bound. Where nothing was drawn they are 0. A bound buffer comes back to the
-CPU with the frame only if the app read (mapped) it since the last frame,
-else when it is mapped. While the camera moves, an extra AOV the app didn't
-read last frame isn't rendered (Houdini's viewport binds normal and
-primvars:st but shows them only on request); still frames, final quality
-and render products render every bound one.
-
-**Extra AOVs and Karma-style names.** The names UsdRender hands Hydra are the
-source names of Houdini Karma's standard render vars (nothing of Houdini is
-linked).
-
-| AOV | Names it answers to | Content |
+| Feature | Interactive | Film |
 |---|---|---|
-| Normal | `normal`, `ray:hitN`, `ray:hitN_facing` | World-space shading normal (always camera-facing, Karma's N_facing) |
+| Depth of field | Thin-lens gather on a golden-angle spiral before TAA, with a 32x32 near-field tile pass (foreground spreads, background never bleeds over sharper foreground) | `eldr:dofJitter` moves the camera across the aperture per sample (sheared, focus plane stays): true bokeh with occlusion. `eldr:dofResidualBlur` runs post DOF at 1/sqrt(samples) of the blur to fill gaps. |
+| Motion blur | McGuire reconstruction along motion vectors (camera, objects, skinning, blend shapes) after TAA | `eldr:motionBlurTimeSamples` renders the whole scene at a Halton-spread shutter time per sample (box shutter, linear motion from the previous frame; instances, joints, blend shapes, camera), so shadows, rays, refraction and DOF see the motion. 1.7-2.1 ms per sample on the crowd. `eldr:motionBlurResidual` spreads each sample over its shutter stratum along motion vectors for a smooth blur. |
+| Single-frame blur | | `eldr:sampledMotion`: rigid prims, instances and camera take motion from the scene's transform samples across the shutter. `eldr:deformationBlur`: point caches use per-point velocity. Skinned joints still need a rendered frame before. |
+| Upscaling | `eldr:renderScale` < 1 (min 0.25): TAA reconstructs a full-size history. Film, final quality, DOF, open shutter, lens distortion and extra AOVs render full size. | |
+
+**Lens distortion:** camera attributes `lensDistortion:*` warp the finished frame with ids and depth; the scene renders wider (overscan, up to 2x). A Karma Physical Lens (`karma:camera:lensshader`, or a bound lens material) is read, so Karma cameras distort the same.
+
+## Output
+
+**Hydra AOVs** (usdview AOV menu, usdrecord, husk): `color` (RGBA16F, linear unless the tonemapper runs), `depth`, `primId`, `instanceId` and the extra AOVs below. They cost nothing unless bound. Empty pixels are 0. A bound buffer returns to the CPU only if the app read it since the last frame. While the camera moves, extra AOVs the app didn't read last frame are skipped; stills, final quality and render products render all.
+
+**Extra AOVs.** UsdRender source names match Houdini Karma's standard render vars:
+
+| AOV | Names | Content |
+|---|---|---|
+| Normal | `normal`, `ray:hitN`, `ray:hitN_facing` | World-space shading normal, camera-facing |
 | Camera normal | `Neye`, `ray:hitN_camera` | Camera space |
 | Position | `ray:hitP` | World space |
 | Camera position | `Peye`, `ray:hitP_camera` | Camera space |
 | Depth | `ray:hitPz` | Distance along the view axis, positive |
 | Camera depth | `cameraDepth` | Camera-space z (negative in front, like hdEmbree) |
-| st | `primvars:st` | Texture coordinates (1 to 3 components) |
+| st | `primvars:st` | Texture coordinates (1-3 components) |
 | Base colour | `export_basecolor` | Base colour |
-| Diffuse albedo | `lpe:CDA` | Base colour times (1 - metallic) |
-| Emission | `lpe:CO`, `lpe:C.*O` | Emitted radiance (emission seen in reflections is not tracked) |
-| Diffuse | `lpe:C<RD>L` (direct), `lpe:C<RD>.+L` (indirect), `lpe:C<RD>.*L` (combined) | Light splits |
+| Diffuse albedo | `lpe:CDA` | Base colour x (1 - metallic) |
+| Emission | `lpe:CO`, `lpe:C.*O` | Emitted radiance (not in reflections) |
+| Diffuse | `lpe:C<RD>L` direct, `lpe:C<RD>.+L` indirect, `lpe:C<RD>.*L` combined | Light splits |
 | Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*[LO]` | Light splits |
 | Cryptomatte object | `primvars:__name` | Ids of the rprim path |
 | Cryptomatte material | `primvars:__materialname` | Ids of the material path |
 
-A bound buffer of any float format gets as many components as it has. Only one
-buffer per kind: if two names for the same kind are bound, the last wins.
+A bound float buffer gets as many components as it has. One buffer per kind; if two names for a kind are bound, the last wins.
 
-**Light splits.** "Direct" is the lights' (distant, sphere, rect, disk,
-cylinder) and, as in Karma, the dome's directly visible light
-(`splitDomeDirect`, on): its diffuse irradiance under the AO's or SSGI's
-visibility, and its reflection under specular occlusion where no probe,
-mirror, SSR or traced reflection replaced it. Indirect is what GI's probes,
-SSGI, multi-bounce, probes and reflections add beyond that. Direct and
-indirect add up to the combined value, and with the emission to the linear beauty
-(tests/test_aov_sums.py), for every closure (diffuse, coat, sheen, emissive, subsurface,
-transmission), plain and under GI, the denoised SSR and ray-traced refraction, to within 3%. Where the
-light is added after the shading it joins the splits there: a transmissive surface's
-refracted light (what it samples from the background) counts as indirect glossy
-(there is no separate refraction AOV); the denoised SSR's rays go to indirect glossy when the pass adds them; the
-subsurface blur moves the same light in the diffuse splits (shared between direct and
-indirect by their unblurred shares); the sun's light through thin subsurface parts is
-direct diffuse. A sheen or coat's
-dome light counts as dome light (direct with `splitDomeDirect`), also under GI. They are
-only compiled into the shading pipelines when an AOV asks for them (one bit of
-the pipeline set key), at 0.92 ms against 0.62 ms for the shading pass of the
-lights test scene. They accumulate like the colour: over TAA frames, or the film.
+**Light splits.**
 
-**Light path intensity** (`directIntensity`, `indirectIntensity`, both 1; Blender 5.1)
-multiplies the same direct and indirect light in the final pixel, not in the light transport
-(GI still bounces unscaled light) nor in the AOVs, so the beauty is the splits times their
-intensities. Refracted light is indirect glossy and scaled once: traced, or from the
-screen-space copy of what is behind, which takes the intensities out again by its light splits
-(stored for it). The sun's light through thin subsurface parts is direct diffuse. Fog and toon
-shading stay unscaled. SSR's reflections of the previous frame are scaled once too: last frame's
-splits (kept for it) take the intensities out at the hit (at the hit's pixel, not over a
-rough ray's mip footprint). Both go through the fog in front of what they copy or reflect.
-Translucent surfaces that blend (not refract) keep no splits, so a refraction layer copied
-over them takes out the intensities of the surface behind only. At 1 the shaders compile without it.
+| Part | Definition |
+|---|---|
+| Direct | Lights' light; also the dome's unblocked light (`eldr:splitDomeDirect`): diffuse under AO/SSGI visibility, reflection where no probe, mirror, SSR or traced hit replaced it |
+| Indirect | GI, SSGI, multi-bounce, probes, reflections beyond that |
+| Sum | Direct + indirect = combined; with emission = the linear beauty, within 3%, for diffuse, coat, sheen, emissive, subsurface, transmission, under GI, denoised SSR and traced refraction |
+| Refraction | Counts as indirect glossy (no separate AOV) |
+| Denoised SSR | Indirect glossy |
+| Subsurface | Moves light within the diffuse splits |
+| Sun through thin subsurface | Direct diffuse |
+| Cost | Compiled in only when an AOV asks: lights scene 0.92 vs 0.62 ms |
+| Accumulation | Like colour: TAA frames or film |
 
-**EXR render products** (`renderProducts`): with an active UsdRenderSettings
-prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes
-one EXR through OpenImageIO, once the frame has converged. Render vars name
-their AOVs as UsdRender does (`sourceType` `lpe` gives `lpe:` plus the source
-name, `primvar` gives `primvars:` plus it, else the source name). Channel
-layout:
+**Light path intensity** (`eldr:directIntensity`, `eldr:indirectIntensity`, both 1) scales direct or indirect light in the final pixel only, not the light transport or AOVs: the beauty is the splits times the intensities. Refracted light and SSR reflections are scaled once. Fog and toon shading stay unscaled. At 1 the shaders compile without it.
 
-- The first colour render var is the R, G, B, A layer; further ones are
-  `<var>.R/G/B/A`; single channels are `<var>.Z`.
-- primId and instanceId are int-valued `<var>.R`.
-- Cryptomatte vars become `<var>00`, `01` and `02` layers (ranks 0-5, each
-  layer `(id, coverage, id, coverage)` as R, G, B, A, as Karma writes
-  them) with the spec's metadata (`cryptomatte/<key>/name`, `hash`
-  MurmurHash3_32, `conversion` uint32_to_float32, `manifest` JSON of name to
-  hex id). The manifests are also in `GetRenderStats()["cryptomatte"]`.
-  Under the film (`cryptomatteSoft`, on) every pixel sums, over the film's
-  samples, the filter weight of each id (the colour AOVs' Gaussian: the 3x3
-  neighbours' ids at their weights, `aov.comp`), keeps the 6 ids with the most
-  weight and writes each one's coverage, its weight over all the weight
-  (background included), sorted. Pixels on an edge are partly each id, the
-  coverages of an edge between two objects sum to 1, and a decoder (name,
-  manifest hash, float, the coverage of every rank holding it) gets the
-  filtered matte the beauty has. The state is 14 floats per pixel and kind
-  (116 MB at 1920 x 1080 per Cryptomatte AOV), only under the film. Interactive
-  frames (TAA) and `cryptomatteSoft` off keep one id per pixel, the film
-  sample's nearest the pixel centre, at coverage 1 (rank 0 only).
-- Files are zip-compressed float32 EXR. With `productResolution` (on) the
-  frame renders at the first raster product's `resolution`, conformed to its
-  `pixelAspectRatio` by its `aspectRatioConformPolicy` and cut to its
-  `dataWindowNDC`, when that isn't the app's buffer size (usdrecord sizes
-  its buffers from `-w` and the camera). A product with nothing authored
-  renders at UsdRenderSettingsBase's fallback 2048 x 1080, as in husk and
-  Karma, not at the app's size: the EXR's display window is the
-  resolution, its data window the part rendered, with `PixelAspectRatio`.
-  The app's colour, depth, ids and other AOVs (and husk's float primid and
-  Cryptomatte layers) get that frame resampled (nearest), whatever format
-  the app bound. Off: the frame's size.
+**EXR render products** (`eldr:renderProducts`): with an active UsdRenderSettings (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes an EXR through OpenImageIO once converged. Render vars name AOVs as UsdRender does (`sourceType` `lpe` gives `lpe:` + source name, `primvar` gives `primvars:` + it, else the source name). Files are zip-compressed float32.
 
-**husk and the settings prim.** husk binds its render vars by its own channel
-names ("C", "depth") and carries UsdRender's `sourceName`/`sourceType` in the
-binding; Eldr takes the AOV from that source, so the table above holds under
-husk too, and husk writes the EXR from the buffers (Float32Vec4 colour is
-rendered as half and widened). A settings prim with `husk:` attributes makes
-the frame offline: final quality, no auto exposure (unless it authors
-`eldr:autoExposure`), the linear beauty. Any `eldr:<setting>` attribute on the
-active UsdRenderSettings prim is that render setting (typed like its default),
-applied when the prim's value changes. See [houdini.md](houdini.md).
+| Layer | Layout |
+|---|---|
+| First colour var | R, G, B, A |
+| Further vars | `<var>.R/G/B/A`; single channels `<var>.Z` |
+| primId, instanceId | int-valued `<var>.R` |
+| Cryptomatte | `<var>00`, `01`, `02` (ranks 0-5, each `(id, coverage, id, coverage)`) as Karma writes them, with spec metadata: `cryptomatte/<key>/name`, `hash` MurmurHash3_32, `conversion` uint32_to_float32, `manifest` JSON. Manifests are also in `GetRenderStats()["cryptomatte"]`. |
 
-**Colour in the EXR.** By default (`productLinear`) the beauty is linear and
-untonemapped: the scene exposed by the frame's exposure, without bloom, whatever
-`eldr:tonemapper` says (the viewport keeps its tonemapper). For values exactly
-as rendered turn off `eldr:autoExposure` and set `eldr:exposureCompensation` to
-0. With `productLinear` off the beauty is what the post chain presents:
-exposed, bloomed and tonemapped (ACES by default).
+- **Soft Cryptomatte** (`eldr:cryptomatteSoft`, film only): per pixel, the 6 ids with the most filter weight, each with its coverage over all weight (background included), sorted. Edges between two objects sum to 1, so a decoder gets the filtered matte of the beauty. State: 14 floats per pixel per AOV (116 MB at 1080p). Interactive or off: one id, coverage 1, rank 0.
+- **Size** (`eldr:productResolution`): the frame renders at the first raster product's `resolution`, `pixelAspectRatio` (by `aspectRatioConformPolicy`) and `dataWindowNDC` when that differs from the app's buffers. No authored `resolution` means 2048x1080 (as husk and Karma). The EXR display window is the resolution, the data window the rendered part. The app's buffers (colour, depth, ids, AOVs, husk's float primid and Cryptomatte) get a nearest resample.
+- **Colour** (`eldr:productLinear`, on): the beauty is linear and untonemapped, exposed by the frame's exposure, no bloom. For exactly-as-rendered values set `eldr:autoExposure` off and `eldr:exposureCompensation` 0. Off: exposed, bloomed, tonemapped (ACES default).
 
-**Holdouts and mattes** produce black with zero alpha; see
-[authoring](#usd-authoring-conventions).
+**husk.** husk binds vars by its own channel names ("C", "depth") and carries `sourceName`/`sourceType`; Eldr resolves the AOV from that, so the table above holds under husk, which writes the EXR (Float32Vec4 colour renders as half and widens). A settings prim with `husk:` attributes makes the frame offline: final quality, no auto exposure (unless `eldr:autoExposure` is authored), linear beauty. Any `eldr:<setting>` attribute on the active UsdRenderSettings prim is that render setting, applied when its value changes.
 
 ## Performance
 
-- **GPU-driven scene**: vertex, index and instance pools are device-local;
-  only changed meshes upload. Culling (frustum, small objects, LOD choice)
-  produces indirect draws; shadow cascades and atlas tiles are culled the same
-  way. Big scenes: pools are sized once per commit; draws split into calls of at
-  most 500M triangles so a huge frame cannot trip the driver timeout.
-- **Optional features cost nothing when off.** The shading pipelines are
-  compiled in sets, one per combination of optional features a frame uses
-  (`kCompiledFeatures` specialization constant), because skipped branches still
-  cost registers: all features together made the plain fragment stage 123
-  registers and 103 KB instead of 110 and 56 KB (1.75 ms on the crowd). So
-  turning a feature on the first time compiles a new set (about 96
-  pipelines, up to 35 s cold on a heavy scene).
-- **Pipeline cache** (`pipelineCache`): compiled pipelines are saved to disk
-  (`%LOCALAPPDATA%\Eldr\pipelines-<driver uuid>-<shader hash>.bin`); a new shader
-  build starts a new file (delete old ones to reclaim space). Crowd first frame
-  33.5 s to 2.0 s on a second run.
-- **Prewarm** (`pipelinePrewarm`, Hydra default): after each frame whose
-  features changed, a worker thread compiles the sets one toggle away (GI,
-  SSGI, fog first) on half the cores, so toggling in usdview takes tens of
-  milliseconds rather than half a minute. Batch renders do not need it.
-- **Culling**: GPU frustum culling, small-object culling (`cullPixels`),
-  levels of detail, and distance-based light cut-off. There is no Hi-Z
-  occlusion culling.
-- **GPU sharing**: with an OpenGL Hgi, colour and depth reach usdview without a
-  CPU round trip (1080p frame 17.4 ms to 3.2 ms).
-- **Numerics**: NaN/Inf are cleaned where they enter each history (TAA, SSGI,
-  GI, exposure), so one bad pixel cannot spread.
+| Topic | How |
+|---|---|
+| GPU-driven scene | Device-local vertex, index and instance pools; only changed meshes upload. Culling (frustum, small objects, LOD) produces indirect draws, also for shadow cascades and atlas tiles. Draws split at 500M triangles to avoid driver timeouts. |
+| Zero cost when off | Shading pipelines compile in sets per combination of optional features (`kCompiledFeatures`). A new combination compiles about 96 pipelines (up to 35 s cold on heavy scenes). |
+| Pipeline cache | `eldr:pipelineCache`: `%LOCALAPPDATA%\Eldr\pipelines-<driver uuid>-<shader hash>.bin`; a new shader build starts a new file (delete old ones). Crowd first frame 33.5 to 2.0 s. |
+| Prewarm | `eldr:pipelinePrewarm` (Hydra default): after a feature change, compiles the sets one toggle away (GI, SSGI, fog first) on half the cores. |
+| Culling | GPU frustum, small-object (`eldr:cullPixels`), LOD, distance light cut-off. No Hi-Z occlusion. |
+| GPU sharing | With an OpenGL Hgi, colour and depth skip the CPU (1080p 17.4 to 3.2 ms) |
+| Numerics | NaN/Inf cleaned where they enter each history (TAA, SSGI, GI, exposure) |
 
-Rough budget on a GTX 1080 Ti at 1280x720 for the 20k crowd, defaults: about
-21 ms. Costly opt-ins: `ssrDenoise` (+9 ms on that scene), `rtShadows`
-(+10 ms Kitchen), `rtReflections` (+15 ms Kitchen), `gi` (2-3 ms), volumes
-(7-22 ms for a large cloud). They matter little to seconds-per-frame renders.
+Costly opt-ins on a 1080 Ti at 1280x720: `eldr:ssrDenoise` +9 ms (crowd), `eldr:rtShadows` +10 ms (Kitchen), `eldr:rtReflections` +15 ms (Kitchen), `eldr:gi` 2-3 ms, volumes 7-22 ms for a large cloud. They matter little for seconds-per-frame renders.
 
 ## USD authoring conventions
 
-What Eldr reads beyond standard UsdPreviewSurface, UsdLux and UsdGeom. All are
-optional; the namespaces are `eldr:` for scene-level features and `eldr:` for
-shading inputs.
+All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 
-| Convention | Where | Meaning |
+| Convention | On | Meaning |
 |---|---|---|
-| `bool primvars:eldr:reflectionProbe = 1` | any mesh, typically an invisible Cube | The mesh is a reflection probe: never drawn, never in the scene bounds or shadows. Its world box is the influence and parallax volume, captured from its centre. Up to 8, smallest first. Needs `eldr:reflectionProbe` on. |
-| `bool primvars:eldr:planarReflection = 1` | a flat mesh | Marks the mirror for planar reflections. Without any, the largest flat glossy opaque mesh is used. Needs `eldr:planarReflections`. |
-| `bool primvars:eldr:hair = 0` | BasisCurves, constant | Opt out of hair shading: the curves shade as ordinary surfaces with SSR (cables, ropes). Unauthored or true: hair. An int works. |
-| `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | a material's surface shader | Toon bands per unit of light (0: none) and band edge width, in bands. |
-| `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (UsdPreviewSurface has none; read as standard_surface `coat_color`). Constant or connected. |
-| `int primvars:karma:object:holdoutmode = 1` (Karma's) | a gprim | Holdout: black, zero alpha, keeps depth, ids and shadows. Mode 2 (background) is treated as matte. A gprim in the active UsdRenderPass's `matte` collection is a holdout too (through Eldr's own `eldr:matte` primvar). |
-| `collection:matte` on a UsdRenderPass | active render pass | Everything in the collection is a holdout (the delegate reads the pass itself; usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, which needs the pass's `renderSource`). Whole gprims only. |
-| UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | Active settings write EXR products with the AOVs and Cryptomatte listed above. `sourceType` `lpe` and `primvar` are honoured. |
-| `lensDistortion:k1,k2,k3,k4,k5,k6,p1,p2,center,anaSq,asym,scale` and `lensDistortion:type` (`standard`, `fisheye`) | custom attributes on a camera | Lens warp. `k1`, `k2`, `type`, `center`, `anaSq`, `asym`, `scale` come through HdCamera; `k3`-`k6`, `p1`, `p2` are OpenCV terms Eldr reads from the camera. See [Output](#output-aovs-exr-products-cryptomatte-light-splits) and `renderer/distortion.h`. |
-| `karma:camera:material:binding`, `karma:camera:use_lensshader` | camera | A Karma Physical Lens (`kma_physicallens`) material's `opencv_k1..k6`, `opencv_p1`, `opencv_p2` become the same distortion. Edits reach the camera on its next sync. |
-| `primvars:skel:skinningMethod = "dualQuaternion"` | skinned mesh | Dual-quaternion skinning (otherwise linear blend). |
-| `inputs:angle` | DistantLight | Sun angular diameter for soft shadows (plus the film's jitter). |
-| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image over the light's surface (rect and disk; s = 0 is at +X as UsdLux specifies, and the image's top row is at +Y as in Karma, which differs from UsdLux's st (0,0) corner) or the dome's latlong. |
-| `shadow:enable` | lights | Lights without it cast no shadows. |
-| `emissiveColor` (constant) | UsdPreviewSurface or standard_surface emission | Small bright emitters are promoted to lights. |
-| Camera `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field and motion blur. |
-| `UsdUVTexture` `wrapS/wrapT` | textures | repeat, mirror, clamp, black, useMetadata (the default: the file's own wraps, black without). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
-| Sdf asset paths with `<UDIM>` | textures | Tiles 1001-1100 are found by the resolver (also inside usdz). |
-| Subdivision tags, GeomSubsets, `displayColor` primvars | meshes | As UsdGeom defines them. |
-| UsdVolVolume with OpenVDBAsset fields (`fieldName`, `fieldIndex`) and a MaterialX `volume` material | volumes | Field roles `density`, `temperature`, `Cd`/`color`, `emission`. |
-
-Houdini: a separate optional module of the Houdini build (not required for
-the standalone renderer) maps render statistics into Solaris; Houdini ramp
-nodes work through the MaterialX path.
+| `bool primvars:eldr:reflectionProbe = 1` | mesh (typically an invisible Cube) | Reflection probe: never drawn, not in bounds or shadows; its world box is the influence and parallax volume, captured from its centre. Max 8, smallest first. Needs `eldr:reflectionProbe`. |
+| `bool primvars:eldr:planarReflection = 1` | flat mesh | Planar mirror. Needs `eldr:planarReflections`. Without any, the largest flat glossy opaque mesh. |
+| `bool primvars:eldr:hair = 0` | BasisCurves (constant) | Opt out of hair shading (cables, ropes). Unauthored or true: hair. |
+| `bool primvars:eldr:ribbons` | BasisCurves | Overrides `eldr:curveRibbons` per curve |
+| `bool primvars:eldr:sprites` | Points | Overrides `eldr:pointSprites` per prim |
+| `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | material surface shader | Toon bands per unit of light (0 = none), band edge width |
+| `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (read as `coat_color`); constant or connected |
+| `int primvars:karma:object:holdoutmode = 1` | gprim | Holdout: black, zero alpha, keeps depth, ids, shadows. Mode 2 acts as matte. |
+| `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
+| UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
+| `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |
+| `lensDistortion:k1,k2,k3,k4,k5,k6,p1,p2,center,anaSq,asym,scale`, `lensDistortion:type` (`standard`, `fisheye`) | camera (custom) | Lens warp; `k3`-`k6`, `p1`, `p2` are OpenCV terms |
+| `karma:camera:material:binding`, `karma:camera:use_lensshader`, `karma:camera:lensshader` | camera | Karma Physical Lens `opencv_k1..k6`, `opencv_p1`, `opencv_p2` become the same distortion |
+| `primvars:skel:skinningMethod = "dualQuaternion"` | skinned mesh | Dual-quaternion skinning (default linear blend) |
+| `inputs:angle` | DistantLight | Sun angular diameter for soft shadows |
+| `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image on the light (left edge at +X, top row at +Y, as Karma) or the dome's latlong |
+| `shadow:enable` | lights | Lights without it cast no shadows |
+| `emissiveColor` (constant) | UsdPreviewSurface / standard_surface emission | Small bright emitters become lights |
+| `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field, motion blur |
+| `wrapS/wrapT` | UsdUVTexture | repeat, mirror, clamp, black, useMetadata (default). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
+| `<UDIM>` asset paths | textures | Tiles 1001-1100 found by the resolver, also in usdz |
+| Subdivision tags, GeomSubsets, `displayColor` | meshes | As UsdGeom defines |
+| `fieldName`, `fieldIndex` and a MaterialX `volume` material | UsdVolVolume with OpenVDBAsset | Roles `density`, `temperature`, `Cd`/`color`, `emission` |
 
 ## Known limitations
 
-Collected from the `ponytail:` comments in the code (shortcuts with a known
-ceiling). Each is a candidate for later work.
-
-Output and Hydra
-
-- Render products all render at the first raster product's framing; the
-  collection is ignored. Vars Eldr cannot
-  fill are left out with a warning. No `elementId` AOV (face picking).
-- Cryptomatte ranks are the film's samples within the 3x3 filter footprint: ids a
-  sample far from the pixel centre hit with little weight still count, but a
-  thin object between samples can be missed (as in the beauty). Interactive
-  frames have one id per pixel.
-- Volumes are not pickable. A field prim's own transform is ignored (as in
-  Storm); only OpenVDB assets.
-- Dome `poleAxis`, portals, shadow colour/distance and IES profiles are
-  ignored.
-- One frame in flight; the renderer is synchronous.
-
-Lighting and shadows
-
-- Cluster capacity is 63 lights; the rest are dropped. Every cluster tests
-  every light (fine for hundreds).
-- Sun shadows: no blend between cascades; kernels clamp to 5% of a cascade.
-- Local light shadows: all-or-nothing redraw when a caster moves; kernels are
-  clamped at cube-face seams.
-- Textured lights use two taps, not a filtered polygon; fog, ray-traced
-  reflections and emissive-as-light do not see the texture.
-- Emissive surfaces become lights only when constant, rigid, small and
-  at most 32; textured, program-driven, skinned or big emitters light the scene
-  through GI only.
-- Fog: single-tap shadows; the dome's light in fog is unoccluded without GI.
-
-GI and reflections
-
-- GI probes cannot tell a single-sided wall from the inside of a closed object;
-  meshes without normals use the winding for back faces.
-- SSGI/SSR: no depth mip chain (very large radii sample sparsely); SSR
-  full resolution and one ray; hits in the history are shaded from last frame's
-  image, so only what is on screen is reflected.
-- Probes: reflections inside probes lack screen-space effects and volumes;
-  prefiltering on the CPU; no seam filtering; one sharp reflection for rougher
-  mirrors in planar reflections; planar mirrors do not share coplanar renders.
-- Ray tracing: translucent meshes do not block rays; rt skinned instances are
-  capped; no BLAS compaction (about twice the memory); local lights are
-  unshadowed at hit points; the closest-hit normal is the rest triangle's for
-  displaced meshes.
-
-Transparency
-
-- OIT and sorting are per mesh; one mesh's triangles keep their order.
-- Refraction is screen space outside final quality (ray-traced refraction
-  traces only the nearest refracting surface's ray; displacement doesn't
-  bend its rays, and skinned glass beyond `rtSkinnedInstances` isn't traced);
-  the translucent depth for volumes covers whole
-  meshes and only the nearest layer splits a volume ray.
-- Holdout mattes cut everything at the pixel (also layers in front); the
-  holdout opacity comes from constants or textures, not material programs.
-- Subsurface is a per-channel Gaussian (not Burley), the sun only for
-  transmission.
-
-Materials
-
-- A graph is compiled whole or not at all; unsupported nodes (and Arnold or
-  RenderMan volume shaders) leave the input at its constant.
-- Gray textures in gamma-encoded colour spaces are not decoded.
-- No tangent primvars: the tangent frame follows the uv set's derivatives.
-- Coat: no coat normal, anisotropy or screen-space reflection; OpenPBR
-  `coat_darkening` is not modelled. Thin film assumes air above it. Hair has no
-  TT lobe (backlit hair gets no glow) and a closed curve's u jumps at its weld.
-- With the textured setting
-  off, a material with a textured weight is still drawn in the translucent or
-  subsurface pass (weight 0).
-- Displacement: top mip only; vector displacement drops tangential
-  components; no shading graphs in the vertex stage; skinning stretch does not
-  scale the bump; HdDisplayStyle `displacementEnabled` is not read.
-- Texture capacity: textures past the table size fall back to constants. A mesh
-  carries up to two extra uv sets (vertex-rate primvars share four floats); a
-  GeomSubset whose first uv set differs from the mesh's reads the mesh's.
-- Skinning is applied after refinement from the rest pose; subdivision refines
-  skinned meshes in the rest pose.
-
-Geometry
-
-- LOD: border and seam vertices never move, so meshes cut into many uv
-  islands simplify little; no dithered crossfade; meshes with over a million
-  instances keep one coarser level only.
-- Curves are world-space tubes of six sides (12 triangles per step).
-- No Hi-Z occlusion culling.
-
-Film and camera
-
-- Motion blur uses a box shutter and linear motion between frames.
-- The film's pixel filter gather is 3x3, enough up to the default 1.5 px.
-- Adaptive sampling rarely stops early on scenes with edges.
-- The overscanned view renders at the output resolution, so the centre
-  loses detail by up to 2x; Karma's curvature and aberration lens effects and its exact
-  NDC for wide images are not matched.
-- Post: bloom does not spill onto the app's background colour.
-
-Performance and tooling
-
-- Pipeline prewarm handles single toggles only (GI and SSGI at once wait for a
-  compile), and prewarms sets without the light splits.
-- Cache files of older shader builds stay on disk; delete the folder to
-  reclaim space.
-- The scene upload is one synchronous submit per commit; the volume grid pool
-  is uploaded whole when any grid changes.
-- The Attribute Editor (usdview plugin) edits to the session layer only.
+| Area | Limitation |
+|---|---|
+| Output | All render products use the first raster product's framing; the collection is ignored. Vars Eldr cannot fill are left out with a warning. No `elementId` AOV. |
+| Output | Cryptomatte ranks come from film samples in the 3x3 filter footprint; thin objects between samples can be missed. Interactive: one id per pixel. |
+| Hydra | Volumes are not pickable; a field prim's own transform is ignored; OpenVDB assets only. |
+| Hydra | Dome `poleAxis`, portals, shadow colour/distance and IES profiles are ignored. One frame in flight. |
+| Lights | 63 lights per cluster (the rest are dropped); every cluster tests every light. |
+| Lights | Textured lights use two taps, not a filtered polygon; fog, ray-traced reflections and emissive-as-light ignore the texture. |
+| Lights | Emissive surfaces become lights only when constant, rigid, small and at most 32; others light via GI only. |
+| Shadows | Sun: no blend between cascades; kernels clamp to 5% of a cascade. Local lights: redraw is all-or-nothing when a caster moves; kernels clamp at cube-face seams. |
+| Fog | Single-tap shadows; the dome's light in fog is unoccluded without GI. |
+| GI | Probes can't tell a single-sided wall from the inside of a closed object; meshes without normals use winding. |
+| SSGI, SSR | No depth mip chain (large radii sample sparsely); SSR runs at full resolution with one ray and reflects only what is on screen. |
+| Probes, planar | Probe reflections lack screen-space effects and volumes; CPU prefilter; no seam filtering. Planar: one sharp reflection for rough mirrors; coplanar mirrors don't share renders. |
+| Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
+| Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
+| Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |
+| Materials | A graph compiles whole or not at all (unsupported nodes, Arnold or RenderMan volume shaders keep the constant). Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
+| Materials | Coat: no coat normal, anisotropy or SSR; no `coat_darkening`. Thin film assumes air above. Hair has no TT lobe; a closed curve's u jumps at its weld. |
+| Materials | With a textured setting off, a material with a textured weight is still drawn in the translucent or subsurface pass (weight 0). |
+| Displacement | Top mip only; vector displacement drops tangential parts; skinning stretch doesn't scale bump; `displacementEnabled` not read. |
+| Textures | Past the table size they fall back to constants. A mesh carries up to two extra uv sets; a GeomSubset with a different first uv set reads the mesh's. |
+| LOD | Border and seam vertices never move (many uv islands simplify little); meshes with over a million instances keep one coarser level. |
+| Curves | World-space 6-sided tubes (12 triangles per step) unless ribbons. |
+| Culling | No Hi-Z occlusion culling. |
+| Camera | Box shutter, linear motion between frames. Film filter gather is 3x3 (enough to 1.5 px). Overscan renders at output resolution (centre loses up to 2x detail). Karma's curvature and aberration lens effects are not matched. |
+| Sampling | Adaptive sampling rarely stops early on scenes with edges. |
+| Post | Bloom doesn't spill onto the app's background colour. |
+| Tooling | Prewarm handles single toggles only and prewarms sets without light splits. Old cache files stay on disk. Scene upload is one synchronous submit per commit; the volume grid pool uploads whole on any change. The Attribute Editor (usdview plugin) edits the session layer only. |

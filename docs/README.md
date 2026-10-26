@@ -1,29 +1,21 @@
 # Eldr documentation
 
-Eldr (code name HdVk) is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08,
-aimed at fast, high-quality raster renders for VFX (EXR output; seconds per
-frame is fine for final quality).
+Eldr is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08, for fast raster renders to EXR.
 
-| File | What is in it |
+| Page | Contents |
 |---|---|
-| [features.md](features.md) | How the renderer works, area by area: frame pipeline, film and TAA, lighting, GI, reflections, transparency, volumes, materials, geometry, camera, output (AOVs, EXR, Cryptomatte), performance, USD authoring conventions, known limitations. |
-| [settings.md](settings.md) | Every `eldr:` render setting, in the order of usdview's Eldr > Render Settings window: type, default, effect, when to change it, cost. |
-| [comparison.md](comparison.md) | Feature-by-feature comparison of Eldr with Blender EEVEE (5.2) and Unreal Engine 5: yes, partial or no, with notes. Update Eldr's column when a feature lands. |
-| [houdini.md](houdini.md) | Building Eldr against Houdini 22's USD, installing it in Solaris, what is tested. |
-| [eevee-lardomar.md](eevee-lardomar.md) | Design notes on what Eldr can learn from Blender EEVEE (in Swedish). |
+| goals | What Eldr is for and the ground rules |
+| features | How Eldr works: pipeline, film, lighting, GI, reflections, transparency, volumes, materials, geometry, camera, output, authoring conventions, limitations |
+| settings | Every `eldr:` render setting: type, default, effect, cost |
+| comparison | Feature table: Eldr vs EEVEE and Unreal |
+| houdini | Houdini 22 build, install and use |
 
 ## Keeping the docs current
 
-- **New or changed setting**: add or edit its row in `settings.md`, in the
-  table of the group that `GROUPS` in `usdview/hdvkUsdview/settings.py` puts it
-  in. Give the key in backticks (`eldr:name`). `tests/test_docs.py` (ctest
-  `docs`) fails when the renderer exposes a key the page lacks, or the page
-  names a key the renderer no longer has.
-- **New feature**: describe it in the matching section of `features.md`, with
-  the setting names, what it needs and a measured cost if you have one (the
-  commit message usually has it). Put authoring conventions (primvars, inputs,
-  attributes) in the table under "USD authoring conventions".
-- **Known shortcut**: a `ponytail:` comment in the code is a limitation;
-  list it under "Known limitations" (`git grep -n "ponytail:"` finds them).
-- Numbers are GPU milliseconds on a GTX 1080 Ti unless stated; re-measure
-  before quoting a new one.
+| Change | Do |
+|---|---|
+| New or changed setting | Edit its row in `settings.md`, in the table of its `GROUPS` group (`usdview/hdvkUsdview/settings.py`). Key in backticks. ctest `docs` fails on missing or unknown keys. |
+| New feature | Add it to the matching section of `features.md` with setting names, requirements and a measured cost. Add primvars and attributes to "USD authoring conventions". Update Eldr's column in `comparison.md`. |
+| Code shortcut (`ponytail:` comment) | Add a row to "Known limitations". Searching the code for `ponytail:` finds them. |
+
+Numbers are GPU milliseconds on a GTX 1080 Ti unless stated.
