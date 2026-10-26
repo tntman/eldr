@@ -598,6 +598,8 @@ Renderer::~Renderer()
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
+    _dev.Destroy(_frameReadback[0]);
+    _dev.Destroy(_frameReadback[1]);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
     _dev.Destroy(_prevJoints);
@@ -4253,11 +4255,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         {outImages[3]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.velocity, 0},
     };
     const bool defer = frame.deferReadback && std::none_of(out.aovs, out.aovs + Aovs::kCount, [](float *a) { return a; });
-    if (defer) {  // room for Read's outputs after these until Collect
-        _dev.Reserve(_readback, VkDeviceSize(_outWidth) * _outHeight * (8 + 4 + 4 + 4 + 4 + 8 + 24),
-                     VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-    }
+    // Not the slot the app may be reading (Targets::inPlace).
+    const uint32_t slot = _deliveredSlot ^ 1u;
+    Buffer &readback = _frameReadback[slot];
+    _dev.Reserve(readback, VkDeviceSize(_outWidth) * _outHeight * (8 + 4 + 4 + 4 + 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _deferred = {};
+    _deferred.slot = slot;
     _deferred.width = _outWidth;
     _deferred.height = _outHeight;
     _deferred.postProcess = frame.postProcess;
@@ -4274,7 +4278,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         copy.imageSubresource = {o.aspect, 0, 0, 1};
         copy.imageExtent = {_outWidth, _outHeight, 1};
         vkCmdCopyImageToBuffer(_cmd, o.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               _readback.buffer, 1, &copy);
+                               readback.buffer, 1, &copy);
         offset += o.bytesPerPixel * _outWidth * _outHeight;
     }
 
@@ -4284,7 +4288,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
     toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
     toHost.srcQueueFamilyIndex = toHost.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    toHost.buffer = _readback.buffer;
+    toHost.buffer = readback.buffer;
     toHost.size = VK_WHOLE_SIZE;
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.bufferMemoryBarrierCount = 1;
@@ -4331,7 +4335,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     si.pCommandBufferInfos = &cbi;
     Check(vkQueueSubmit2(_dev.queue, 1, &si, _fence), "vkQueueSubmit2");
     _inFlight = true;
-    _deferred.bytes = offset;
 
     _stats.drawCalls = 0;
     for (size_t i = 0; draw && i + 1 < gpu.drawChunks.size(); ++i) {
@@ -4345,12 +4348,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _deferredOutputs = true;
     } else {
         _WaitInFlight();
-        const auto *src = static_cast<const uint8_t *>(_readback.mapped);
-        for (const Output &o : outputs) {
-            if (o.dst) {
-                std::memcpy(o.dst, src + o.offset, o.bytesPerPixel * _outWidth * _outHeight);
-            }
-        }
+        _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
         if (frame.extraAovs) {
             _aovs.Read(out.aovs);
         }
@@ -4364,7 +4362,9 @@ void Renderer::_WaitInFlight()
     if (!_inFlight) {
         return;
     }
+    const auto waitStart = std::chrono::steady_clock::now();
     Check(vkWaitForFences(_dev.device, 1, &_fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+    _stats.waitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
     Check(vkResetFences(_dev.device, 1, &_fence), "vkResetFences");
     _inFlight = false;
 
@@ -4421,19 +4421,31 @@ bool Renderer::Collect(const Targets &out, uint32_t width, uint32_t height)
         return false;
     }
     void *const dsts[5] = {out.color, out.depth, out.primId, out.instanceId, out.velocity};
-    constexpr VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
     for (int i = 0; i < 5; ++i) {
         if (dsts[i] && _deferred.offsets[i] == kNoOutput) {
             return false;
         }
     }
-    const auto *src = static_cast<const uint8_t *>(_readback.mapped);
+    _Deliver(_deferred.slot, _deferred.offsets, width, height, out);
+    return true;
+}
+
+// A frame's outputs from its readback slot: copied to `out`, or (inPlace)
+// left there for HostOutput. Either way that slot is now the app's.
+void Renderer::_Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height,
+                        const Targets &out)
+{
+    void *const dsts[5] = {out.color, out.depth, out.primId, out.instanceId, out.velocity};
+    constexpr VkDeviceSize bytesPerPixel[5] = {8, 4, 4, 4, 4};
+    auto *src = static_cast<uint8_t *>(_frameReadback[slot].mapped);
     for (int i = 0; i < 5; ++i) {
-        if (dsts[i]) {
-            std::memcpy(dsts[i], src + _deferred.offsets[i], bytesPerPixel[i] * width * height);
+        const bool read = dsts[i] && offsets[i] != kNoOutput;
+        _delivered[i] = read && out.inPlace ? src + offsets[i] : nullptr;
+        if (read && !out.inPlace) {
+            std::memcpy(dsts[i], src + offsets[i], bytesPerPixel[i] * width * height);
         }
     }
-    return true;
+    _deliveredSlot = slot;
 }
 
 // As Render's readback, from the images it left in TRANSFER_SRC_OPTIMAL.
@@ -4455,7 +4467,7 @@ void Renderer::Read(const Targets &out)
     VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
-    VkDeviceSize offsets[6] = {}, offset = _deferredOutputs ? _deferred.bytes : 0;  // Collect's stay
+    VkDeviceSize offsets[6] = {}, offset = 0;  // its own buffer: Render's outputs stay
     for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             offsets[i] = offset;

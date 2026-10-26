@@ -39,6 +39,7 @@ public:
         _format = format;
         _texture = HgiTextureHandle();
         _fetch = nullptr;
+        _external = nullptr;
         _mapped = true;  // a new buffer counts as read: its first frame fills it
         _data.resize(size_t(_width) * _height * HdDataSizeOfFormat(format));
         return true;
@@ -56,10 +57,11 @@ public:
             std::function<void(void *)> fetch = std::move(_fetch);
             _fetch = nullptr;
             fetch(_data.data());
+            _external = nullptr;
         }
         ++_mappers;
         _mapped = true;
-        return _data.data();
+        return _external ? _external : _data.data();
     }
     // Whether it was mapped since the last call (the render pass's, once a frame).
     bool TakeMapped() { return _mapped.exchange(false); }
@@ -107,6 +109,9 @@ public:
     void SetTexture(HgiTextureHandle texture) { _texture = texture; }
     // Fills the CPU copy on the next Map (null: it is current).
     void SetFetch(std::function<void(void *)> fetch) { _fetch = std::move(fetch); }
+    // The frame where the renderer read it back (eldr:inPlaceReadback),
+    // mapped instead of the CPU copy until the next fetch; null: the copy.
+    void SetExternal(void *data) { _external = data; }
 
 protected:
     void _Deallocate() override
@@ -124,6 +129,7 @@ private:
     std::atomic<bool> _mapped{true};
     HgiTextureHandle _texture;
     std::function<void(void *)> _fetch;
+    void *_external = nullptr;
 #ifdef HDVK_HOUDINI
     std::vector<float> _cryptoPlane;
     UT_HUSDExtraAOVResourcePtr _crypto;
