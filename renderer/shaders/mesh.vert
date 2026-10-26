@@ -60,15 +60,22 @@ layout(location = 5) out vec4 outPrimvars;
 #define DISPLACE_VERTEX
 #include "displace.glsl"
 
-// A time sample's motion vectors start from its capture (t = 0).
+// A time sample's motion vectors start from its capture (t = 0). Only the
+// pipelines of a frame with a time sample have the code (kFeatureTimeSample
+// in kCompiledFeatures): it costs the crowd's vertices 0.8 ms otherwise.
+bool TimeSample()
+{
+    return (kCompiledFeatures & kFeatureTimeSample) != 0u && frame.deform.z != 0.0;
+}
+
 bool FromShutterJoints()
 {
-    return frame.deform.z != 0.0 && (uint(frame.deform.w) & 1u) != 0u;
+    return TimeSample() && (uint(frame.deform.w) & 1u) != 0u;
 }
 
 bool FromShutterWeights()
 {
-    return frame.deform.z != 0.0 && (uint(frame.deform.w) & 2u) != 0u;
+    return TimeSample() && (uint(frame.deform.w) & 2u) != 0u;
 }
 
 mat4 Joint(uint i, bool previous)
@@ -165,7 +172,7 @@ void main()
     // A time sample moved the instances (and joints, blend shape weights)
     // to its time (shutter.comp): their motion runs from the capture
     // (t = 0), for the residual blur between time samples.
-    if (frame.deform.z != 0.0 && d.skin == kFreeSlot) {
+    if (TimeSample() && d.skin == kFreeSlot) {
         uint row = slot * 3u;
         prevModel = transpose(mat4(shutterRows[row], shutterRows[row + 1u], shutterRows[row + 2u], vec4(0, 0, 0, 1)));
     }

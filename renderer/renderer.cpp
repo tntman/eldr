@@ -148,12 +148,15 @@ constexpr uint32_t kFeatureHoldouts = 32768;
 constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
 // Mesh.frag's sun disc region (Scene::Gpu::sunRegion).
 constexpr uint32_t kFeatureSunRegion = 1u << 24;
+// Mesh.vert's time sample code (FrameData::deform.z).
+constexpr uint32_t kFeatureTimeSample = 1u << 25;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
                                        kFeatureRefraction |
                                        kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
-                                       kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | kFeatureSunRegion;
+                                       kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | kFeatureSunRegion |
+                                       kFeatureTimeSample;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -963,8 +966,10 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     // again with the LAYERS fragment shaders (bit 4: lobes, brdf.glsl); all
     // of them again for displaced materials (bit 5: displace.glsl's
     // kDisplacement in both stages), made by _CreatePipelines(true).
-    const VkSpecializationMapEntry vertexEntries[3] = {
-        {0, 0, sizeof(VkBool32)}, {1, sizeof(VkBool32), sizeof(VkBool32)}, {10, 2 * sizeof(VkBool32), sizeof(VkBool32)}};
+    const VkSpecializationMapEntry vertexEntries[4] = {{0, 0, sizeof(uint32_t)},
+                                                       {1, sizeof(uint32_t), sizeof(VkBool32)},
+                                                       {10, 2 * sizeof(uint32_t), sizeof(VkBool32)},
+                                                       {13, 3 * sizeof(uint32_t), sizeof(uint32_t)}};
     // The fragment constants: transparency.glsl's kShadingPass (`pass`: 1
     // OIT, 2 subsurface), program.glsl's kProcedurals, kDisplacement,
     // frame.glsl's kCompiledFeatures (the shading set's; others all).
@@ -975,7 +980,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     // Pipelines are queued, then compiled on as many threads (drivers
     // compile each on one): a shading set's four passes at once.
     struct Job {
-        VkBool32 vertexData[3];
+        uint32_t vertexData[4];
         uint32_t fragmentData[4];
         VkSpecializationInfo vertexSpec, fragmentSpec;
         VkPipelineShaderStageCreateInfo stages[2];
@@ -991,9 +996,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
                 continue;  // not this pass's or call's; noise comes with a program
             }
             Job &j = jobs.emplace_back();
-            j = Job{{v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE},
+            j = Job{{v & 1 ? VK_TRUE : VK_FALSE, v & 2 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE, features},
                     {pass, v & 8 ? VK_TRUE : VK_FALSE, v & 32 ? VK_TRUE : VK_FALSE, features}};
-            j.vertexSpec = {3, vertexEntries, sizeof(j.vertexData), j.vertexData};
+            j.vertexSpec = {4, vertexEntries, sizeof(j.vertexData), j.vertexData};
             j.fragmentSpec = {4, fragmentEntries, sizeof(j.fragmentData), j.fragmentData};
             std::copy(info.pStages, info.pStages + info.stageCount, j.stages);
             j.stages[0].pSpecializationInfo = &j.vertexSpec;  // the vertex stage comes first
@@ -2875,6 +2880,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.deform[0] = shutterT - 1.0f;
     fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
     fd.deform[2] = timeSample ? 1.0f : 0.0f;
+    fd.features[0] |= timeSample ? kFeatureTimeSample : 0;
     fd.deform[3] = timeSample ? float((_shutter.joints ? 1 : 0) | (_shutter.weights ? 2 : 0)) : 0.0f;
     Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
     if (timeSample) {
