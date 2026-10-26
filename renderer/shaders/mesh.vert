@@ -27,6 +27,9 @@ layout(std430, set = 0, binding = 26) readonly buffer PrevJoints { mat4 prevJoin
 layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
 // Last frame's blend shape weights (copied after each frame's draws).
 layout(std430, set = 0, binding = 60) readonly buffer PrevBlendWeights { float prevBlendWeights[]; };
+// Motion blur time samples (shutter.comp): rigid rows at the shutter's
+// t = 0, per instance slot (3 each).
+layout(std430, set = 0, binding = 69) readonly buffer ShutterRows { vec4 shutterRows[]; };
 // Deformation blur: point velocities (object units per frame) of rigid
 // meshes whose points move (DrawInfo::velocities).
 layout(std430, set = 0, binding = 33) readonly buffer Velocities { vec4 velocities[]; };
@@ -133,18 +136,26 @@ void main()
     bool facing = kDisplacement && d.facing != 0u;
     vec3 position = facing ? inPosition : Displace(inPosition, inNormal, d, slot, model, inVertexColor.rgb),
          prevPosition = position;
-    // Moving points: at the time sample's time, a frame's velocity before
-    // for motion vectors.
+    // Moving points: at the time sample's time; motion vectors from where
+    // they were a frame before (t = 0), as for rigid motion.
     if (d.velocities != kFreeSlot && frame.deform.y != 0.0) {
         vec3 v = velocities[d.velocities + uint(gl_VertexIndex) - d.vertexBase].xyz;
-        position += v * frame.deform.x;
         prevPosition = position - v;
+        position += v * frame.deform.x;
     }
     mat4 prevModel = model;
 #ifndef DEPTH_ONLY
     if (pc.motion != 0u && d.skin == kFreeSlot && d.motion != kFreeSlot) {
         uint row = (d.motion + uint(inst.index)) * 3u;
         prevModel = transpose(mat4(motionRows[row], motionRows[row + 1u], motionRows[row + 2u], vec4(0, 0, 0, 1)));
+    }
+    // A time sample moved the instances to its time (shutter.comp): their
+    // motion runs from the capture's rows (t = 0), for the residual blur
+    // between time samples. ponytail: skinned meshes keep the joints'
+    // motion vectors (none once the scene stands still).
+    if (frame.deform.z != 0.0 && d.skin == kFreeSlot) {
+        uint row = slot * 3u;
+        prevModel = transpose(mat4(shutterRows[row], shutterRows[row + 1u], shutterRows[row + 2u], vec4(0, 0, 0, 1)));
     }
 #endif
     if (d.skin != kFreeSlot) {

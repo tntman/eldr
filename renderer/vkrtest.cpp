@@ -1574,9 +1574,11 @@ int main()
             // A long blur in final quality (defaults: adaptive sampling,
             // Gaussian film filter): the edge moves 48 pixels (8 to 56) over
             // the shutter, so pixel x is covered for 1 - (x + 0.5 - 8) / 48
-            // of it. The tail's pixels (covered 1-12% of the shutter) must
-            // not stop dark after the first samples missed them (adaptive
-            // sampling).
+            // of it. 16 samples are 3 pixels apart: without the residual
+            // blur between them (Frame::motionBlurResidual) the ramp is a
+            // staircase of 1/16 steps (up to 0.06 off). At 64 the tail's
+            // pixels (covered 1-12% of the shutter) must not stop dark after
+            // the first samples missed them (adaptive sampling).
             vkr::Scene scene(&device);
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 0.0f);
@@ -1615,6 +1617,15 @@ int main()
                 return row;
             };
             int frames = 0;
+            const std::vector<float> coarse = longRamp(16, &frames);
+            float worst = 0.0f, rise = 0.0f;
+            for (int x = 12; x < 52; ++x) {
+                worst = std::max(worst, std::abs(coarse[x] - (1.0f - (x + 0.5f - 8.0f) / 48.0f)));
+                rise = std::max(rise, coarse[x + 1] - coarse[x]);
+            }
+            const std::string smooth = "long blur, 16 time samples: a smooth, monotonic ramp, not steps (worst " +
+                                       std::to_string(worst) + ", rise " + std::to_string(rise) + ")";
+            Expect(worst < 0.025f && rise < 0.01f, smooth.c_str());
             const std::vector<float> fine = longRamp(64, &frames);
             bool tail = true;
             for (int x = 50; x < 56; ++x) {  // covered 1.0-11.5% of the shutter

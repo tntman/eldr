@@ -180,6 +180,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((sampledMotion, "eldr:sampledMotion")) \
     ((deformationBlur, "eldr:deformationBlur")) \
     ((dofResidualBlur, "eldr:dofResidualBlur")) \
+    ((motionBlurResidual, "eldr:motionBlurResidual")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \

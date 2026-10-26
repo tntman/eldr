@@ -338,6 +338,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
         {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
          VtValue(frame.motionBlurTimeSamples)},
+        {"Residual Motion Blur between Time Samples (shutter/samples)", t2.motionBlurResidual,
+         VtValue(frame.motionBlurResidual)},
         {"Sampled Motion (shutter samples: first frames blur too)", t2.sampledMotion, VtValue(true)},
         {"Deformation Blur (point caches through the shutter)", t2.deformationBlur, VtValue(frame.deformationBlur)},
         {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},

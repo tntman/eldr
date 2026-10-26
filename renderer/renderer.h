@@ -100,6 +100,12 @@ public:
         // by 1/sqrt(filmSamples), to fill the gaps between lens samples
         // (EEVEE's).
         bool dofResidualBlur = true;
+        // Residual motion blur (eldr:motionBlurResidual): with time samples
+        // each film sample is spread along its motion vectors over its
+        // stratum of the shutter (1 / filmSamples of it), so the copies of
+        // a moving object between time samples blend into a smooth blur
+        // (EEVEE's vector blur between steps).
+        bool motionBlurResidual = true;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):
