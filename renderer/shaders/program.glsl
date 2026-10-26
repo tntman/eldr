@@ -28,7 +28,7 @@ const uint kOpOutput = 0u, kOpTexcoord = 1u, kOpDisplayColor = 2u, kOpPrimvar = 
            kOpAffine = 38u, kOpNormalMap = 39u, kOpInvLinear = 40u, kOpUniformRamp = 41u;
 const uint kOpNoise = 42u, kOpFractal = 43u, kOpCellNoise = 44u, kOpWorleyNoise = 45u, kOpPosition = 46u,
            kOpGeomNormal = 47u;
-const uint kProgramRegisters = 8u;
+const uint kProgramRegisters = 16u;
 const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
 // Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
 // others the noise code compiles away and costs nothing.

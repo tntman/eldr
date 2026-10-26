@@ -81,7 +81,7 @@ struct TextureRef {
 // constant byte - kRegisters); imm0. Values are vec4s: floats splat to all
 // four components, vector2 is (x, y, 0, 0).
 struct MaterialProgram {
-    static constexpr uint32_t kRegisters = 8;
+    static constexpr uint32_t kRegisters = 16;
     enum Op : uint8_t {
         kOutput,       // material input imm0 (Program::Input) = a
         kTexcoord,     // the mesh's uv set

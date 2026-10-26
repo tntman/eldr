@@ -912,6 +912,7 @@ public:
     // or the constants don't fit the operand bytes.
     bool Finish()
     {
+        _DropDeadOps();
         std::vector<int> last(_ops.size(), -1), reg(_ops.size(), -1);
         for (size_t i = 0; i < _ops.size(); ++i) {
             for (const Value &a : _ops[i].args) {
@@ -970,10 +971,51 @@ private:
         return {true, uint32_t(_ops.size() - 1)};
     }
 
+    // A constant, shared with an equal one already there (operand bytes
+    // reach only 256 - kRegisters of them).
     Value _Const(GfVec4f const &v)
+    {
+        for (size_t i = 0; i + 4 <= _p.constants.size(); i += 4) {
+            if (std::equal(v.data(), v.data() + 4, _p.constants.begin() + i)) {
+                return {false, uint32_t(i / 4)};
+            }
+        }
+        return _NewConst(v);
+    }
+
+    // A constant of its own: after the last one (ramps read them in a row).
+    Value _NewConst(GfVec4f const &v)
     {
         _p.constants.insert(_p.constants.end(), v.data(), v.data() + 4);
         return {false, uint32_t(_p.constants.size() / 4 - 1)};
+    }
+
+    // Removes ops no output reads (an expanded nodegraph's unused outputs,
+    // the parts of a node compiled before it failed and was bypassed).
+    void _DropDeadOps()
+    {
+        std::vector<bool> live(_ops.size(), false);
+        for (size_t i = _ops.size(); i-- > 0;) {
+            live[i] = live[i] || _ops[i].op == P::kOutput;
+            for (const Value &a : _ops[i].args) {
+                if (live[i] && a.op) {
+                    live[a.index] = true;
+                }
+            }
+        }
+        std::vector<uint32_t> index(_ops.size());
+        size_t n = 0;
+        for (size_t i = 0; i < _ops.size(); ++i) {
+            if (live[i]) {
+                index[i] = uint32_t(n);
+                _ops[n] = std::move(_ops[i]);
+                for (Value &a : _ops[n].args) {
+                    a.index = a.op ? index[a.index] : a.index;
+                }
+                ++n;
+            }
+        }
+        _ops.resize(n);
     }
 
     // Floats packed four to a constant; the first one's index.
@@ -1500,7 +1542,7 @@ private:
             }
             const uint32_t first = uint32_t(_p.constants.size() / 4);
             for (const GfVec4f &v : values) {
-                _Const(v);
+                _NewConst(v);
             }
             return _Emit(P::kUniformRamp, {*t, *num}, first);
         }
