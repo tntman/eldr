@@ -680,6 +680,10 @@ public:
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
         float shadowAngle = 0;              // its Light::angle (soft sun shadows)
+        // A distant light's disc is wide enough, or some material glossy
+        // enough, for mesh.frag's sun region (kFeatureSunRegion): sun
+        // tan^2 > 4e-4 a^2 of the least rough material (a: its roughness^2).
+        bool sunRegion = false;
         // Sphere/rect/disk lights that cast shadows; the renderer gives the
         // ones that matter most this frame tiles in its shadow atlas.
         struct ShadowCaster {

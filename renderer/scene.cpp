@@ -1499,6 +1499,10 @@ void Scene::Commit(bool keepMotion)
     _gpu.textureWraps.clear();
     _textureSlots.clear();
     std::unordered_map<const Material *, uint32_t> materialSlots;
+    // The least roughness any material may have (default 0.5; a texture or
+    // graph may reach the clamp's 0.045), coat included: whether the sun's
+    // disc matters for them (Gpu::sunRegion).
+    float minPerceptual = 0.5f;
     std::vector<GpuMaterial> materials;
     std::vector<int32_t> udimTiles;
     std::vector<uint32_t> programCode;
@@ -1552,6 +1556,8 @@ void Scene::Commit(bool keepMotion)
             g.params[0] = m.metallic;
             g.params[1] = m.roughness;
             g.params[2] = m.occlusion;
+            minPerceptual = std::min(minPerceptual, m.roughnessTex.texture || m.program.Valid() ? 0.045f : m.roughness);
+            minPerceptual = std::min(minPerceptual, m.coat > 0 ? m.coatRoughness : 1.0f);
             const TextureRef *refs[7] = {&m.baseColorTex, &m.emissiveTex, &m.metallicTex, &m.roughnessTex,
                                          &m.occlusionTex,  &m.normalTex,   &m.opacityTex};
             for (int i = 0; i < 7; ++i) {
@@ -1949,6 +1955,7 @@ void Scene::Commit(bool keepMotion)
     _gpu.shadowLight = kNone;
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
+    _gpu.sunRegion = false;
     for (const bool distant : {true, false}) {  // distant lights first
         for (const Light *l : sceneLights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
@@ -1968,6 +1975,8 @@ void Scene::Commit(bool keepMotion)
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);
                 g.axis[3] = 0.5f * l->angle * 0.0174532925f;
+                const float sunTan = std::tan(g.axis[3]), a = minPerceptual * minPerceptual;
+                _gpu.sunRegion = _gpu.sunRegion || sunTan * sunTan > 4e-4f * a * a;
                 ++lightCount;
                 continue;
             }

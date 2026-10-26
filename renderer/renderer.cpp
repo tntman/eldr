@@ -146,12 +146,14 @@ constexpr uint32_t kFeatureSubsurface = 16384;
 // Holdouts (transparency.glsl).
 constexpr uint32_t kFeatureHoldouts = 32768;
 constexpr uint32_t kFeatureSoftSun = 65536, kFeatureFog = 131072, kFeatureProbe = 262144, kFeaturePlanar = 524288;
+// Mesh.frag's sun disc region (Scene::Gpu::sunRegion).
+constexpr uint32_t kFeatureSunRegion = 1u << 24;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
                                        kFeatureRefraction |
                                        kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
-                                       kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon;
+                                       kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | kFeatureSunRegion;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -2739,6 +2741,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                    (frame.texturedTransmission ? kStyleTexturedTransmission : 0);
     fd.styles[1] = frame.toon ? std::min(frame.toonBands, 64u) : 0;
     fd.features[0] |= fd.styles[1] > 0 ? kFeatureToon : 0;
+    fd.features[0] |= gpu.sunRegion ? kFeatureSunRegion : 0;
     fd.features[1] = std::clamp(frame.ssrSteps, 1u, 256u);
     fd.features[2] = std::clamp(frame.softShadowSamples, 1u, 16u);
     if (frame.displacement && gpu.displaced) {
