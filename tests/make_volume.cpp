@@ -6,12 +6,17 @@
 //   density      again (fieldIndex 1): a ball of radius 0.5, density 4.
 // Voxels 0.05 apart, centred on the origin. Built with volumes (OpenVDB);
 // run: make_volume tests\scenes\volume.vdb
+// make_volume --sequence <dir> <frames> instead writes <dir>/seq_0000.vdb ...:
+// a density ball per frame, growing (a new bbox and size each frame), for
+// test_volume_sequence.py.
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/Prune.h>
 
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -59,10 +64,40 @@ openvdb::FloatGrid::Ptr Grid(const char *name)
     return grid;
 }
 
+// Frame f of the sequence: a ball of radius 0.3 + 0.1 f, density 3.
+void WriteSequence(const std::string &dir, int frames)
+{
+    for (int f = 0; f < frames; ++f) {
+        openvdb::FloatGrid::Ptr ball = Grid("density");
+        auto b = ball->getAccessor();
+        const double radius = 0.3 + 0.1 * f;
+        const int n = int(radius / kVoxel) + 1;
+        for (int i = -n; i <= n; ++i) {
+            for (int j = -n; j <= n; ++j) {
+                for (int k = -n; k <= n; ++k) {
+                    if (std::sqrt(double(i * i + j * j + k * k)) * kVoxel <= radius) {
+                        b.setValue({i, j, k}, 3.0f);
+                    }
+                }
+            }
+        }
+        char name[32];
+        std::snprintf(name, sizeof(name), "/seq_%04d.vdb", f);
+        openvdb::io::File file(dir + name);
+        file.write({ball});
+        file.close();
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
+    if (argc == 4 && std::string(argv[1]) == "--sequence") {
+        openvdb::initialize();
+        WriteSequence(argv[2], std::atoi(argv[3]));
+        return 0;
+    }
     if (argc != 2) {
         std::fprintf(stderr, "usage: make_volume out.vdb\n");
         return 2;

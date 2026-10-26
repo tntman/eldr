@@ -170,7 +170,10 @@ if(TARGET hioOpenVDB AND HDVK_NANOVDB_INCLUDE)
     message(STATUS "HdVk: volumes (OpenVDB) on")
     target_sources(hdVk PRIVATE hydra/volume.cpp hydra/field.cpp)
     # _USE_MATH_DEFINES: OpenVDB's headers use M_PI (as hioOpenVDB builds).
-    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES _USE_MATH_DEFINES)
+    # NANOVDB_USE_TBB: without it NanoVDB's conversion runs on raw std::threads
+    # (nested: ~100 per grid), where any exception, a failed thread start
+    # included, terminates the host (Houdini crashed playing a VDB sequence).
+    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES _USE_MATH_DEFINES NANOVDB_USE_TBB)
     target_include_directories(hdVk PRIVATE ${HDVK_NANOVDB_INCLUDE})
     target_link_libraries(hdVk PRIVATE hioOpenVDB)
     # Writes tests/scenes/volume.vdb.
@@ -183,7 +186,7 @@ elseif(HDVK_HOUDINI)
     # Houdini's own OpenVDB (openvdb_sesi) and NanoVDB headers instead.
     message(STATUS "HdVk: volumes (Houdini's OpenVDB) on")
     target_sources(hdVk PRIVATE hydra/volume.cpp hydra/field.cpp houdini/field.cpp)
-    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES HDVK_HOUDINI NANOVDB_USE_OPENVDB)
+    target_compile_definitions(hdVk PRIVATE HDVK_VOLUMES HDVK_HOUDINI NANOVDB_USE_OPENVDB NANOVDB_USE_TBB)
     target_include_directories(hdVk PRIVATE hydra)
     set(HDVK_VOLUMES ON)
 else()
@@ -303,6 +306,11 @@ if(WIN32)
     if(HDVK_VOLUMES)
         add_test(NAME volume COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume.py)
         set_tests_properties(volume PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        if(TARGET make_volume)  # A VDB sequence played through time codes (usdview's and Houdini's Play).
+            add_test(NAME volume_sequence COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py
+                     $<TARGET_FILE:make_volume>)
+            set_tests_properties(volume_sequence PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        endif()
         add_test(NAME traced_media COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_traced_media.py)
         set_tests_properties(traced_media PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
