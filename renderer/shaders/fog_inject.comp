@@ -56,7 +56,10 @@ float SunShadow(vec3 p, float viewDepth)
     return texture(shadowMap, vec4(clip.xy / clip.w * 0.5 + 0.5, float(c), clip.z / clip.w * 0.5 + 0.5));
 }
 
-// The sun's tint map at p (frame.media.x): one nearest tap.
+const uint kFeatureTranslucentShadows = 8192u;  // as transparency.glsl's
+
+// The sun's tint map at p (kFeatureTranslucentShadows: whenever volumes or
+// translucent casters draw into it, as surfaces read it): one nearest tap.
 // ponytail: the sun only; local lights' atlas tint isn't read.
 vec3 SunTint(vec3 p, float viewDepth)
 {
@@ -181,7 +184,7 @@ void main()
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light sun = lights[i];
         vec3 shadow = vec3(i == frame.counts.y ? SunShadow(p, depth) : 1.0);
-        if (i == frame.counts.y && frame.media.x != 0u) {
+        if (i == frame.counts.y && Feature(kFeatureTranslucentShadows)) {
             shadow *= SunTint(p, depth);
         }
         light += sun.color.rgb * (sun.halfHeight.w * Phase(dot(-sun.position.xyz, toCamera)) * shadow);

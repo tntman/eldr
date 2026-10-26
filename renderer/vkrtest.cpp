@@ -3774,7 +3774,7 @@ int main()
                    "fog: the sun's shadow volumes stay dark");
 
             // Volumes shadow the fog from the sun (through the sun's tint
-            // map, VolumePass::Settings::mutualShadows): a flat dense cloud
+            // map, VolumePass::Settings::shadows, as surfaces): a flat dense cloud
             // at y 1.5 over x < 0 instead of the roof. Fresh renderers: no
             // fog history.
             roof->visible = false;
@@ -3783,9 +3783,9 @@ int main()
             cloud->transforms = {16, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0, 16, 0, -6, 1.5f, -2, 1};
             scene.Commit();
             const Image clouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
-            frame.volume.mutualShadows = false;
+            frame.volume.shadows = false;
             const Image unclouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
-            frame.volume.mutualShadows = true;
+            frame.volume.shadows = true;
             cloud->visible = false;
             scene.Commit();
             const Image clear = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
@@ -3796,7 +3796,27 @@ int main()
                        std::abs(clouded.At(52, 32, 0) - unclouded.At(52, 32, 0)) < 0.02f * unclouded.At(52, 32, 0),
                    "fog: volumes shadow it from the sun");
             Expect(std::abs(unclouded.At(12, 32, 0) - clear.At(12, 32, 0)) < 0.02f * clear.At(12, 32, 0),
-                   "fog: mutual volume shadows off, as without the volume");
+                   "fog: volume shadows off, as without the volume");
+
+            // Red glass (transmission colour 1, 0.2, 0.2) as the roof, no
+            // volumes: the fog under it is lit red through the sun's tint
+            // map whenever translucent shadows are on.
+            auto redGlass = std::make_shared<vkr::Material>();
+            redGlass->transmission = 1;
+            redGlass->transmissionColor[1] = redGlass->transmissionColor[2] = 0.2f;
+            roof->material = redGlass;
+            roof->visible = true;
+            scene.Commit();
+            const Image redFog = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.translucentShadows = false;
+            const Image plainFog = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.translucentShadows = true;
+            roof->material = backdrop->material;
+            std::printf("fog under red glass %.3f %.3f, translucent shadows off %.3f %.3f\n", redFog.At(12, 32, 0),
+                        redFog.At(12, 32, 1), plainFog.At(12, 32, 0), plainFog.At(12, 32, 1));
+            Expect(redFog.At(12, 32, 0) > 0.1f && redFog.At(12, 32, 1) < 0.4f * redFog.At(12, 32, 0) &&
+                       plainFog.At(12, 32, 1) >= 0.9f * plainFog.At(12, 32, 0),
+                   "fog: glass between it and the sun tints it, without volumes too");
 
             // Height fog: thinner upwards (y), so less light scatters at the
             // top of the view than at the bottom.
