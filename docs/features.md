@@ -190,30 +190,46 @@ normalization gives the reflection's centre the lobe's share of slopes
 within that region, so a mirror reflects the light's radiance. The region
 is then inset by the lobe's width so that the whole highlight carries the
 light's power: by Steiner's formula, `area / (pi a^2) + perimeter / (4 a)
-+ 1 = 1 / N`. Before, small lights' reflections on glossy surfaces were
-1.2-4x too bright (worst at grazing angles and for tubes); the diffuse
-light is unchanged.
++ 1 = 1 / N`.
 
-Floor reflections at roughness 0.15 (direct glossy, `tests/scenes/lights.usda`
-plus a 4 degree sun and a tube) were measured against a brute-force GGX
-integral, and Karma 22 (64 spp, colour limit off) against the same. The cells
-give the peak / the highlight's total, relative to the integral.
+A representative point alone gives the highlight the light's shape with
+the lobe's edge, but the true highlight is the light convolved with the
+lobe. That is wider, most across an axis thinner than the lobe, which the
+inset collapses to a line. So the lobe is also stretched along the region's
+axes, more across the minor one. The stretch was fitted to that
+convolution for ellipses and boxes from 0.5 x 0.5 to 12 x 12 lobe widths,
+and the share and inset are taken in the stretched space. A thin box (a
+tube) is stretched across only as far as keeps its energy.
+
+Before, small lights' reflections on glossy surfaces were 1.2-4x too
+bright, worst at grazing angles and for tubes. The diffuse light is
+unchanged.
+
+Floor reflections at roughness 0.15 were measured as direct glossy, with
+`tests/scenes/lights.usda` for the sphere, rect and disk and
+`light_reflections.usda` for a 4 degree sun and a tube. They were compared
+against a brute-force GGX integral, and Karma 22 (64 spp, colour limit off)
+against the same. The cells give the peak / the highlight's total / its
+spread across / along the plane of incidence (weighted standard deviation
+in pixels), relative to the integral. The disk's spread across is left out
+because other highlights overlap it.
 
 | Light | Before | After | Karma |
 |---|---|---|---|
-| Sphere (bulb) | 1.75 / 2.31 | 1.05 / 1.00 | 1.01 / 1.00 |
-| Rect (panel) | 1.98 / 1.62 | 1.03 / 0.98 | 1.03 / 0.98 |
-| Disk | 1.04 / 1.22 | 1.00 / 1.04 | 1.02 / 1.04 |
-| Sun, 4 degrees | 2.61 / 1.00 | 1.04 / 0.96 | 1.02 / 1.04 |
-| Cylinder (tube) | 3.76 / 4.05 | 1.03 / 0.97 | 0.99 / 0.96 |
+| Sphere (bulb) | 1.75 / 2.31 / 1.10 / 0.98 | 1.01 / 0.99 / 1.06 / 0.97 | 1.01 / 1.00 / 1.00 / 0.99 |
+| Rect (panel) | 1.98 / 1.62 / 0.99 / 1.04 | 1.02 / 0.96 / 1.00 / 0.98 | 1.03 / 0.98 / 0.97 / 0.99 |
+| Disk | 1.04 / 1.22 / - / 0.89 | 1.00 / 1.01 / - / 1.01 | 1.02 / 1.04 / - / 1.05 |
+| Sun, 4 degrees | 2.61 / 1.00 / 0.77 / 0.94 | 0.99 / 1.00 / 1.03 / 0.96 | 1.02 / 1.04 / 1.00 / 1.03 |
+| Cylinder (tube) | 3.76 / 4.05 / 1.00 / 0.86 | 1.00 / 0.94 / 1.00 / 0.93 | 0.99 / 0.96 / 0.99 / 0.97 |
 
-vkrtest checks a sphere light on a tilted floor against the same integral.
+A rect or disk light's texture is read at the representative point, at the
+mip of the stretched lobe's footprint at the light. Before, the mip came
+from the light's own size, which blurred a glossy reflection of the texture
+as if it were rough. vkrtest checks a sphere light on a tilted floor against
+the same integral, and a textured rect light's sharp reflection.
 The coat lobe is normalized for the light's half-vector area as for a disc,
-and shares the base lobe's point. Where a light is thinner than the lobe
-along the plane of incidence (a small sun or a tube at grazing angles), that
-axis collapses to a line and the highlight is up to ~20% short along it
-(sun: spread 33 against 41 pixels, the total still right). LTC (Heitz 2016)
-would be exact for polygons of any size.
+and shares the base lobe's point (not its stretch). LTC (Heitz 2016) would be
+exact for polygons of any size.
 
 Local lights go into a clustered forward+ grid: a cluster holds at most 63
 lights and each light is cut off where it would light a white surface at 1% of

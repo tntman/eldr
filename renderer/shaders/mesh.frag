@@ -317,18 +317,61 @@ vec2 ClampEllipse(vec2 p, vec2 ab)
     return mix(radial, vec2(x, clamp(p.y, -c, c)), 1.0 - ab.y / max(ab.x, 1e-6));
 }
 
-// For an ellipse of semi-axes A >= B in half-vector space (units of a):
-// returns N, the lobe's share within it over its area (exact), and sets mu,
-// the inset for which the lobe's integral beyond the inset region, area /
-// pi + perimeter / 4 (Steiner, Ramanujan's perimeter: continuous down to a
-// segment), is 1 / N - 1 (bisection; negative grows it).
-float EllipseInset(float A, float B, out float mu)
+// How much LightRegion widens the lobe along a light's major and minor axes
+// (half-vector semi-axes A >= B of its region or equal-area ellipse, units
+// of a). The representative point alone gives the highlight the light's
+// shape with the lobe's edge; the true one is the light convolved with the
+// lobe, wider by up to ~20% (most across a thin axis, which the inset
+// collapses to a line). Fitted to that convolution (ellipses and boxes,
+// A x B from 0.5 x 0.5 to 12 x 12): spreads within 5% for most, 8% at
+// worst, peak and total kept.
+vec2 RegionStretch(float A, float B, bool box)
 {
-    float norm = min(sqrt(1.0 / ((1.0 + A * A) * (1.0 + B * B))), 1.0);
-    float target = 1.0 / norm - 1.0, lo = -target, hi = A;
+    float minor = 1.0 + 1.05 * A * B / (A * B + 6.75), thin = 1.0 - B / max(A, 1e-6);
+    return vec2(1.0 + (minor - 1.0) * (1.0 - thin), minor + (box ? 0.0 : 0.1 * thin));
+}
+
+// The stretched lobe of the last LightRegion/SphereRegion: widened by
+// regionStretch along regionStretchDir (a tangent) and across it.
+vec3 regionStretchDir = vec3(0.0);
+vec2 regionStretch = vec2(1.0);
+
+// GGX's D stretched as above over the plain one, for light from l.
+float StretchRatio(vec3 n, vec3 v, vec3 l, float a)
+{
+    if (regionStretch == vec2(1.0) || regionStretchDir == vec3(0.0)) {
+        return 1.0;
+    }
+    vec3 h = normalize(v + l);
+    float hu = dot(h, regionStretchDir), hw = dot(h, cross(n, regionStretchDir)), hn = dot(h, n);
+    float aa = a * a;
+    float plain = (hu * hu + hw * hw) / aa + hn * hn;
+    float stretched = (hu * hu / (regionStretch.x * regionStretch.x) + hw * hw / (regionStretch.y * regionStretch.y)) / aa +
+                      hn * hn;
+    return plain * plain / (stretched * stretched * regionStretch.x * regionStretch.y);
+}
+
+// The tangent along the half-vector direction (x along ePar, y along ePerp).
+vec3 StretchTangent(vec3 n, vec3 ePar, vec3 ePerp, vec2 dir)
+{
+    vec3 t = dir.x * (ePar - dot(ePar, n) * n) + dir.y * (ePerp - dot(ePerp, n) * n);
+    return dot(t, t) > 1e-12 ? normalize(t) : vec3(0.0);
+}
+
+// For an ellipse of semi-axes A >= B in half-vector space (units of a) and
+// the lobe stretched by s (along A, B): returns N, the plain lobe's share
+// within it (exact) over its area and the stretched lobe's peak, and sets
+// mu, the inset (in the stretched space, where the lobe is round again) for
+// which the lobe's integral beyond the inset region, area / pi + perimeter
+// / 4 (Steiner, Ramanujan's perimeter: continuous down to a segment), is
+// 1 / N - 1 (bisection; negative grows it).
+float EllipseInset(float A, float B, vec2 s, out float mu)
+{
+    float norm = s.x * s.y / sqrt((1.0 + A * A) * (1.0 + B * B));
+    float target = max(1.0 / norm - 1.0, 0.0), lo = -target, hi = A / s.x;
     for (int i = 0; i < 8; ++i) {
         mu = 0.5 * (lo + hi);
-        float a = A - mu, b = max(B - mu, 0.0);
+        float a = A / s.x - mu, b = max(B / s.y - mu, 0.0);
         float spread = a * b + 0.25 * PI * (3.0 * (a + b) - sqrt((3.0 * a + b) * (a + 3.0 * b)));
         lo = spread > target ? mu : lo;
         hi = spread > target ? hi : mu;
@@ -345,23 +388,26 @@ float EllipseInset(float A, float B, out float mu)
 // half axes (inout: the representative point's). In half-vector space, where
 // the GGX lobe is isotropic, the region is a1, a2 projected (/ 2 in the
 // plane of v and l, / (2 VoH) across it; area omega / (4 VoH)):
-// - the returned N (the light's specular is Specular(l) * E * N) gives the
-//   reflection's centre exactly the lobe's share of slopes within the
-//   region (the product of its axes' shares: exact for ellipses, fitted
-//   within 2% for boxes), so mirrors reflect the light's radiance;
-// - l, the point of the region inset by mu nearest the ray (ellipses in
-//   their principal frame, ClampEllipse; boxes in their own axes), gives
-//   the reflection's integral exactly the light's power (Steiner's formula
-//   for the lobe around a convex region: area / (pi a^2) + perimeter / (4 a)
-//   + 1 = 1 / N).
-// Against brute-force GGX integrals: peaks and the highlights' totals within
-// 6% (docs/features.md: lights.usda's floor, a 4 degree sun, a tube).
+// - the lobe is stretched along the region's axes (RegionStretch; set in
+//   regionStretch, for StretchRatio), so the highlight's spread is the
+//   light convolved with the lobe's, not the light's shape;
+// - the returned N (the light's specular is Specular(l) * StretchRatio *
+//   E * N) gives the reflection's centre exactly the plain lobe's share of
+//   slopes within the region (the product of its axes' shares: exact for
+//   ellipses, fitted within 2% for boxes), so mirrors reflect the light's
+//   radiance;
+// - l, the point of the region inset by mu nearest the ray (in the
+//   stretched space; ellipses in their principal frame, ClampEllipse; boxes
+//   in their own axes), gives the reflection's integral exactly the light's
+//   power (Steiner's formula for the lobe around a convex region: area /
+//   (pi a^2) + perimeter / (4 a) + 1 = 1 / N).
+// Against brute-force GGX integrals: peaks, totals and spreads within ~5%
+// (docs/features.md: lights.usda's floor, light_reflections.usda's sun and
+// tube).
 // regionArea: the region's half-vector area / pi, for the coat (LayerLight).
 // ponytail: small-angle half-vector mapping around the representative
-// point, and an axis thinner than the lobe collapses to a line, so the
-// highlight is up to ~20% short along it; LTC (Heitz 2016) would be exact
-// for polygons of any size.
-float LightRegion(vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inout vec2 uv, bool box,
+// point; LTC (Heitz 2016) would be exact for polygons of any size.
+float LightRegion(vec3 n, vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inout vec2 uv, bool box,
                   float omega, out vec3 l, out float regionArea)
 {
     vec2 c0 = box ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
@@ -383,14 +429,37 @@ float LightRegion(vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inou
     m *= sqrt(s2) / a;
     float norm;
     if (box) {
+        // Stretched along the box's first axis and across it, by its
+        // equal-area ellipse's stretch.
         float x = max(length(m[0]), 1e-3), y = max(length(m[1]), 1e-3);
+        vec2 s = RegionStretch(1.1283792 * max(x, y), 1.1283792 * min(x, y), true);
+        s = x >= y ? s : s.yx;
+        regionStretch = s;
+        regionStretchDir = StretchTangent(n, ePar, ePerp, m[0] / x);
         float share = x * inversesqrt(1.0 + x * x) * y * inversesqrt(1.0 + y * y) *
                       (1.0 + (4.0 / PI - 1.0) * pow((1.0 + x * x) * (1.0 + y * y), -0.75));
-        norm = min(share / (4.0 / PI * x * y), 1.0);
-        // Inset by mu: area 4 (x - mu)(y - mu), perimeter 4 (x + y - 2 mu).
-        float qa = 4.0 / PI, qb = -(qa * (x + y) + 2.0), qc = qa * x * y + x + y - (1.0 / norm - 1.0);
-        float mu = min(2.0 * qc / (-qb + sqrt(max(qb * qb - 4.0 * qa * qc, 0.0))), min(x, y));
-        vec2 rho = max(1.0 - mu / vec2(x, y), 1e-4);
+        norm = share * s.x * s.y / (4.0 / PI * x * y);
+        // Inset by mu (stretched): area 4 (x - mu)(y - mu), perimeter
+        // 4 (x + y - 2 mu). Where that would swallow the shorter half axis
+        // (a thin box), the lobe is stretched across it only as far as
+        // keeps the energy with the inset at that axis (a segment of the
+        // longer one's rest, whose spread is its length): s = (4 x y / (pi
+        // share) + y S) / (x + S), the longer x stretched by S.
+        vec2 q = vec2(x, y) / s;
+        float target = max(1.0 / norm - 1.0, 0.0);
+        float qa = 4.0 / PI, qb = -(qa * (q.x + q.y) + 2.0), qc = qa * q.x * q.y + q.x + q.y - target;
+        float mu = 2.0 * qc / (-qb + sqrt(max(qb * qb - 4.0 * qa * qc, 0.0)));
+        if (mu > min(q.x, q.y)) {
+            bool longX = x >= y;
+            float L = longX ? x : y, W = longX ? y : x, S = longX ? s.x : s.y;
+            float across = max((4.0 / PI * x * y / max(share, 1e-12) + W * S) / (L + S), 1.0);
+            s = longX ? vec2(S, across) : vec2(across, S);
+            regionStretch = s;
+            norm = share * s.x * s.y / (4.0 / PI * x * y);
+            q = vec2(x, y) / s;
+            mu = min(q.x, q.y);
+        }
+        vec2 rho = max(1.0 - mu / q, 1e-4);
         uv = clamp(uv, -rho, rho);
     } else {
         // In the principal frame (semi-axes A >= B, A along e1): the half
@@ -404,12 +473,15 @@ float LightRegion(vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inou
         vec2 ex = vec2(A * A - gram[1][1], gram[1][0]), ey = vec2(gram[1][0], A * A - gram[0][0]);
         vec2 e1 = dot(ex, ex) >= dot(ey, ey) ? ex : ey;
         e1 = dot(e1, e1) > 1e-20 ? normalize(e1) : vec2(1.0, 0.0);
+        vec2 s = RegionStretch(A, B, false);
+        regionStretch = s;
+        regionStretchDir = StretchTangent(n, ePar, ePerp, e1);
         float mu;
-        norm = EllipseInset(A, B, mu);
+        norm = EllipseInset(A, B, s, mu);
         if (abs(determinant(m)) > 1e-12) {
             mat2 frame = mat2(e1, vec2(-e1.y, e1.x));  // principal to m's space
-            vec2 p = transpose(frame) * (m * uv);
-            uv = inverse(m) * (frame * ClampEllipse(p, vec2(A - mu, max(B - mu, 0.0))));
+            vec2 p = transpose(frame) * (m * uv) / s;
+            uv = inverse(m) * (frame * (s * ClampEllipse(p, vec2(A / s.x - mu, max(B / s.y - mu, 0.0)))));
         }
     }
     l = normalize(toLight + mat2x3(a1, a2) * uv);
@@ -421,7 +493,7 @@ float LightRegion(vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inou
 // space are already principal (R / (2 d) in the plane of v, R / (2 d VoH)
 // across it), so it needs no eigenvectors (and keeps the sun's path in
 // every shader light).
-float SphereRegion(vec3 v, vec3 r, float a, vec3 toLight, float d, float R, float omega, out vec3 l,
+float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float R, float omega, out vec3 l,
                    out float regionArea)
 {
     vec3 w = toLight / d, e = v - dot(v, w) * w;
@@ -432,13 +504,17 @@ float SphereRegion(vec3 v, vec3 r, float a, vec3 toLight, float d, float R, floa
     vec2 uv = vec2(dot(centerToRay, e), dot(centerToRay, f)) / max(R, 1e-12);  // in radii
     vec3 l0 = normalize(toLight + R * mat2x3(e, f) * (uv / max(length(uv), 1.0)));
     float VoH = max(dot(v, normalize(v + l0)), 1e-3);
-    // Semi-axes in units of a, scaled to the exact solid angle.
+    // Semi-axes in units of a, scaled to the exact solid angle; the major
+    // axis across (f), the minor in the plane of v (e).
     float s = R > 0.0 ? sqrt(min(omega * d * d / (PI * R * R), 4.0)) : 1.0;
     float B = max(s * R / (2.0 * d * a), 1e-3), A = max(B / VoH, 1e-3);
     regionArea = A * B * a * a;
-    float mu, norm = EllipseInset(A, B, mu);
-    // Major axis across (f), minor in plane (e).
-    vec2 q = ClampEllipse(vec2(uv.y * A, uv.x * B), vec2(A - mu, max(B - mu, 0.0)));
+    vec2 st = RegionStretch(A, B, false);
+    vec3 across = f - dot(f, n) * n;
+    regionStretch = st;
+    regionStretchDir = dot(across, across) > 1e-12 ? normalize(across) : vec3(0.0);
+    float mu, norm = EllipseInset(A, B, st, mu);
+    vec2 q = st * ClampEllipse(vec2(uv.y * A, uv.x * B) / st, vec2(A / st.x - mu, max(B / st.y - mu, 0.0)));
     uv = vec2(q.y / B, q.x / A);
     l = normalize(toLight + R * mat2x3(e, f) * uv);
     return norm;
@@ -477,7 +553,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
         diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
         specularE = PI * sinSigmaSqr;
-        norm = SphereRegion(v, r, a, toLight, d, light.halfWidth.w, specularE, l, regionArea);
+        norm = SphereRegion(n, v, r, a, toLight, d, light.halfWidth.w, specularE, l, regionArea);
     } else if (uint(light.position.w) == kLightCylinder) {
         // Diffuse: the form factor of its side facing p (the caps don't
         // emit). Specular: its silhouette as a box, the axis by the side
@@ -495,46 +571,45 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec3 closest = toLight + axis * clamp(t, -1.0, 1.0);
         vec3 centerToRay = dot(closest, r) * r - closest;
         vec2 uv = vec2(t, dot(centerToRay, side) / max(dot(side, side), 1e-12));
-        norm = LightRegion(v, a, toLight, d, axis, side, uv, true, specularE, l, regionArea);
+        norm = LightRegion(n, v, a, toLight, d, axis, side, uv, true, specularE, l, regionArea);
     } else {
         if (dot(toLight, light.axis.xyz) >= 0.0) {
             return vec3(0.0);  // behind the emitting side
         }
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
         bool rect = uint(light.position.w) == kLightRect;
-        float sourceRadius;
         if (rect) {
             vec3 formFactor = RectFormFactor(toLight, hw, hh);
             float f = length(formFactor);
             diffuseE = PI * max((f * f + dot(formFactor, n)) / (f + 1.0), 0.0);
             specularE = PI * f;
-            sourceRadius = sqrt(4.0 * length(cross(hw, hh)) / PI);
         } else {
             float r2 = length(cross(hw, hh));  // radius^2 of the equal-area circle
             float cosLight = clamp(dot(light.axis.xyz, -toLight / d), 0.0, 1.0);
             float sinSigmaSqr = r2 / (r2 + d * d);
             diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr) * cosLight;
             specularE = PI * sinSigmaSqr * cosLight;
-            sourceRadius = sqrt(r2);
         }
         // Where the reflection ray meets the light's plane (in units of its
         // half extents); LightRegion clamps it to the rectangle or disk.
         float rDotAxis = dot(r, light.axis.xyz);
         vec3 q = rDotAxis < -1e-4 ? r * (dot(toLight, light.axis.xyz) / rDotAxis) - toLight : vec3(0.0);
         vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
-        norm = LightRegion(v, a, toLight, d, hw, hh, uv, rect, specularE, l, regionArea);
+        norm = LightRegion(n, v, a, toLight, d, hw, hh, uv, rect, specularE, l, regionArea);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
             // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
             // above p (its foot on the plane) for diffuse, each at the mip
-            // of what it gathers: the lobe's footprint at the light, and
-            // the light seen from its height over the plane.
+            // of what it gathers: the lobe's footprint at the light (its
+            // radius in light directions, 2 a, stretched as LightRegion
+            // stretched it), and the light seen from its height over the
+            // plane.
             // ponytail: two taps; no prefiltered form factor (Heitz's
             // filtered polygon lights would get the wide lobes right).
             float extent = length(hw) + length(hh);
             float texels = float(max(textureSize(textures[nonuniformEXT(tex)], 0).x,
                                      textureSize(textures[nonuniformEXT(tex)], 0).y));
-            float aLobe = clamp(a + sourceRadius / (3.0 * d), 0.0, 1.0);
+            float aLobe = min(2.0 * a * max(regionStretch.x, regionStretch.y), 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
             specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
             vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
@@ -545,7 +620,8 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         }
     }
     vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w * diffuseTint;
-    vec3 specular = Specular(n, v, l, a, f0, NoV) * energyCompensation * specularE * norm * light.shaping.w;
+    vec3 specular = Specular(n, v, l, a, f0, NoV) * StretchRatio(n, v, l, a) * energyCompensation * specularE * norm *
+                    light.shaping.w;
     specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
     specular *= specularTint;
     if (LightSplits()) {
@@ -1007,11 +1083,12 @@ void main()
         // the lobe's a^2 (then N > 0.999 and l the centre: most surfaces).
         float tanHalf = tan(light.axis.w), sunNorm = 1.0, sunArea = 0.0;
         vec3 ls = l;
+        regionStretch = vec2(1.0);
         if (tanHalf * tanHalf > 4e-3 * NoV * a * a) {
-            sunNorm = SphereRegion(v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
+            sunNorm = SphereRegion(n, v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
         }
         vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         (Specular(n, v, ls, a, f0, NoV) * energyCompensation * sunNorm +
+                         (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * energyCompensation * sunNorm +
                           LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {

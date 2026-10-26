@@ -3207,6 +3207,42 @@ int main()
         }
 
         {
+            // A rect light's texture in a glossy reflection (roughness 0.1) takes the mip of the lobe's
+            // footprint at the light, not of the light's size: a 1 x 1 light 0.5 in front of a black quad,
+            // its texture black over one half and white over the other, reflects both halves sharply on
+            // either side of the edge (0.09 from it at the light; a mip as wide as the light's size mixed
+            // them to ~30%).
+            vkr::Scene scene(&device);
+            auto glossy = std::make_shared<vkr::Material>();
+            std::fill(glossy->baseColor, glossy->baseColor + 3, 0.0f);
+            glossy->roughness = 0.1f;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = glossy;
+            vkr::Light *rect = scene.AddLight();
+            rect->type = vkr::Light::Type::Rect;
+            rect->halfWidth[0] = 0.5f;
+            rect->halfHeight[1] = 0.5f;
+            rect->direction[2] = 1;  // emits towards the quad
+            std::fill(rect->radiance, rect->radiance + 3, 10.0f);
+            auto halves = std::make_shared<vkr::Texture>();
+            halves->width = 64;
+            halves->height = 64;
+            halves->pixels.assign(64 * 64 * 4, 255);
+            for (int y = 0; y < 64; ++y) {
+                std::fill_n(&halves->pixels[y * 64 * 4], 32 * 4, uint8_t(0));
+                for (int x = 0; x < 32; ++x) {
+                    halves->pixels[(y * 64 + x) * 4 + 3] = 255;
+                }
+            }
+            rect->texture = halves;
+            scene.Commit();
+            const Image img = Render(renderer, scene);
+            const float left = img.At(28, 32, 0), right = img.At(35, 32, 0);
+            std::printf("textured rect light reflection either side of the edge: %.4f, %.4f\n", left, right);
+            Expect(std::max(left, right) > 0.05f && std::min(left, right) < 0.1f * std::max(left, right),
+                   "rect light texture: a glossy reflection takes the lobe's mip, sharp across the edge");
+        }
+
+        {
             // Light shapes (Frame::lightShapesVisible): spheres at (+-0.5, 0.5) and a cylinder at (0.5, -0.5), all
             // radiance 50, over a quad in front of the left half (z -0.8; the lights are at z -0.5). The shapes show
             // as their radiance where nothing is nearer; one hidden from the camera doesn't.

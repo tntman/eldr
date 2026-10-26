@@ -1,0 +1,63 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Glossy reflections of light shapes thinner than the GGX lobe along the
+# plane of incidence: a 4 degree sun and a tube (cylinder light) over a
+# glossy floor (roughness 0.15), seen at grazing angles. Compare the floor's
+# direct glossy against Karma (husk, colour limit off) or a brute-force GGX
+# integral; docs/features.md (Lighting) has the numbers.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 4, 12)
+    float xformOp:rotateX = -16
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 50
+    float inputs:angle = 4
+    color3f inputs:color = (1, 0.9, 0.7)
+    float xformOp:rotateX = -155
+    uniform token[] xformOpOrder = ["xformOp:rotateX"]
+}
+
+def CylinderLight "tube"
+{
+    float inputs:intensity = 20
+    float inputs:length = 1.5
+    float inputs:radius = 0.08
+    color3f inputs:color = (0.5, 0.8, 1)
+    double3 xformOp:translate = (-2.5, 1, -2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "mtl"
+{
+    def Material "glossy"
+    {
+        token outputs:surface.connect = </mtl/glossy/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.05)
+            float inputs:roughness = 0.15
+            token outputs:surface
+        }
+    }
+}
+
+def Mesh "floor" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-20, 0, -30), (-20, 0, 14), (20, 0, 14), (20, 0, -30)]
+    rel material:binding = </mtl/glossy>
+}
