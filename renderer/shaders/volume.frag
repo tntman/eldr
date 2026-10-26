@@ -231,8 +231,9 @@ float ShadowMarch(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo, v
 // out here. No tint maps: they hold all volumes' transmittance together,
 // the lit volume's own included, with one depth per texel, so they can't
 // tell another volume in front from this one.
-// ponytail: fixed steps per box, empty tiles not skipped; cost grows with
-// the volumes crossed.
+// Steps landing in an empty tile go on to the first step past it; the
+// march stops once nothing is left to dim (kShadowOpaque).
+// ponytail: fixed steps per box; cost grows with the volumes crossed.
 float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
 {
     float tau = 0.0;
@@ -247,13 +248,27 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
         if (!(span.x < span.y)) {
             continue;
         }
-        float ds = (span.y - span.x) / float(params.shadowSteps), sum = 0.0;
+        float ds = (span.y - span.x) / float(params.shadowSteps);
+        float scale = ds * length(dir) * volumes[j].medium.x * params.density;
+        vec3 safe = SafeDir(di);
         pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
-        for (uint k = 0u; k < params.shadowSteps; ++k) {
-            vec3 p = oi + di * (span.x + (float(k) + noise) * ds);
-            sum += max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(p + 0.5))), 0.0);
+        float k = 0.0;
+        while (k < float(params.shadowSteps) && tau < kShadowOpaque) {
+            vec3 q = oi + di * (span.x + (k + noise) * ds) + 0.5;  // nearest voxel: floor(q)
+            uint level;
+            pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, acc,
+                                                                                     ivec3(floor(q)), level);
+            float v = pnanovdb_read_float(buf, a);
+            if (level > 0u && v <= 0.0) {
+                // An empty tile (or the background): on to the first step past its far side.
+                float dim = level == 1u ? 8.0 : level == 2u ? 128.0 : 4096.0;
+                vec3 exits = (floor(q / dim) * dim + step(0.0, di) * dim - 0.5 - oi) / safe;
+                k = max(k + 1.0, ceil((min(min(exits.x, exits.y), exits.z) - span.x) / ds - noise));
+                continue;
+            }
+            tau += max(v, 0.0) * scale;
+            k += 1.0;
         }
-        tau += sum * ds * length(dir) * volumes[j].medium.x * params.density;
     }
     return tau;
 }
