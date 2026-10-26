@@ -1223,7 +1223,7 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
 {
     auto it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
     if (it == _shadingSets.end() && _shadingSets.size() + 1 >= kShadingSets) {
-        features = kOptionalFeatures;
+        features = kOptionalFeatures | 1u | kFeatureLod;  // with the light splits' and crossfade's code too
         it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
     }
     if (it != _shadingSets.end()) {
