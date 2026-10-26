@@ -118,6 +118,7 @@ Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0
 | Topic | Behaviour |
 |---|---|
 | Readback | Houdini gives an OpenGL Hgi but composites with Vulkan, so shared GL textures show nothing: Eldr reads frames back. Houdini binds colour (Float16Vec4), depth, normal, primvars:st, primId, instanceId. A buffer returns only if Houdini mapped it since the last frame; while the camera moves, unread extra AOVs are skipped. `HDVK_DEBUG_AOVS=1` prints the bindings. |
+| Render Settings LOP | Looking through one changes only what its Eldr tab sets. Houdini sets `houdini:viewport`: the frame stays interactive (no husk mode, the film never starts "final", even after a camera switch) and the products' resolution doesn't apply. A missing camera (the default `/cameras/camera1`) keeps the viewport's camera. `tests/houdini_render_settings.py` checks this headless. |
 | Diagnostics | `HDVK_DEBUG_AOVS=1` also prints every non-`eldr:` setting the host sets (`houdini:viewport`, `renderCameraPath`, husk's `rasterRenderProducts`) |
 | Selection outline | `UsdRenderers.json` sets `"needsselection": true`; Houdini draws the outline itself |
 | Ids | primId is the render index's prim id, instanceId the instance index, as Houdini's picking expects |

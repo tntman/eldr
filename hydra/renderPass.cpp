@@ -478,6 +478,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // scene renders that much wider for the warp to sample.
     GfMatrix4d projection = state->GetProjectionMatrix();
     const HdCamera *camera = state->GetCamera();
+    // A camera path to no camera (a default Render Settings LOP's
+    // /cameras/camera1) leaves identity matrices: keep the last real view,
+    // the viewport's camera, instead of a unit box at the origin.
+    GfMatrix4d view = state->GetWorldToViewMatrix();
+    if (!camera && view == GfMatrix4d(1.0) && projection == GfMatrix4d(1.0)) {
+        if (_hasLastCamera) {
+            view = _lastView;
+            projection = _lastProjection;
+        }
+    } else {
+        _hasLastCamera = true;
+        _lastView = view;
+        _lastProjection = projection;
+    }
     if (productSized) {
         projection = ProductProjection(camera ? camera->ComputeProjectionMatrix() : projection, framing);
     }
@@ -503,7 +517,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             projection = projection * widen;
         }
     }
-    const GfMatrix4d view = state->GetWorldToViewMatrix();
     const GfMatrix4f viewF(view);
     std::copy(viewF.data(), viewF.data() + 16, frame.view);
     const GfMatrix4d viewProj = view * projection;
