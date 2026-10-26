@@ -52,6 +52,8 @@ struct TlasInstance {
     uvec2 blas;
 };
 layout(std430, set = 1, binding = 0) writeonly buffer TlasInstances { TlasInstance tlasInstances[]; };
+// Per instance slot, a BLAS of its own (per-instance displacement), else 0.
+layout(std430, set = 1, binding = 8) readonly buffer RtInstanceBlas { uvec2 rtInstanceBlas[]; };
 
 layout(local_size_x = 64) in;
 
@@ -84,7 +86,7 @@ void main()
         RtSlot s = rtSlots[inst.draw];
         t.indexMask = inst.draw | (Mask(s.flags) << 24);
         t.sbtFlags = InstanceFlags(s.flags) << 24;
-        t.blas = s.blas;
+        t.blas = i < rtInstanceBlas.length() && rtInstanceBlas[i] != uvec2(0u) ? rtInstanceBlas[i] : s.blas;
     }
     tlasInstances[i] = t;
 }

@@ -537,8 +537,11 @@ quantises the lit intensity relative to the albedo into flat bands with
   far apart as the mesh's vertices, so a map finer than the mesh doesn't
   alias. With `displacementGraphs`, a displacement driven by a shading graph
   (math, noise, several textures) runs that graph per vertex, also for ray
-  tracing's BLASes (`rtDisplacement`; one BLAS per mesh, so a graph reading
-  per-instance inputs displaces every instance as the mesh's first).
+  tracing's BLASes (`rtDisplacement`). A graph reading what differs between
+  a mesh's instances (world-space position or normal, instance primvars)
+  gives the 256 instances largest on screen a displaced BLAS each, rebuilt
+  when they move; the rest share the mesh's (displaced as its first
+  instance).
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also
   weighs normals, uvs and colours, and joint weights for skinned meshes);

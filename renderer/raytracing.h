@@ -74,6 +74,10 @@ public:
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
         uint32_t skinnedCapacity = 0;
+        // Instances whose displacement graph reads per-instance inputs
+        // (Scene::LargestDisplacedInstances): a displaced BLAS each; the
+        // others of their meshes share the mesh's.
+        std::vector<Scene::DisplacedInstance> displacedInstances;
         // The instances moved without a new Scene::Gpu::version (motion
         // blur time samples): the TLAS is rebuilt.
         bool moving = false;
@@ -141,7 +145,14 @@ private:
     void _BuildBlases(const Scene::Gpu &gpu);
     void _DestroyBlas(Blas &blas);
     VkDeviceSize _PrepareSkinned(const Scene::Gpu &gpu);
-    void _PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<uint32_t> &slots);
+    // A displaced BLAS to make: of mesh slot `slot`, for one instance slot
+    // of its own (perInstance, keyed by `key`) or shared (the first).
+    struct DisplacedJob {
+        uint32_t slot, instance;
+        bool perInstance;
+        uint64_t key;
+    };
+    void _PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<DisplacedJob> &jobs);
     void _DestroySkinned(Skinned &s);
     VkAccelerationStructureBuildGeometryInfoKHR _SkinnedBuildInfo(const Skinned &s, const Scene::Gpu &gpu,
                                                                   VkAccelerationStructureGeometryKHR *geometry) const;
@@ -183,6 +194,16 @@ private:
     bool _tlasDirty = true;
     uint64_t _tlasVersion = 0;  // Scene::Gpu::version it was built from
     std::vector<uint32_t> _slotWords;  // what _slots holds
+    // Per-instance displaced BLASes by instance slot (Work::displacedInstances),
+    // and per instance slot the BLAS overriding its mesh's (0: none; set 1
+    // binding 8, tlas.comp).
+    struct InstanceBlas {
+        Blas blas;
+        uint64_t key = 0;
+    };
+    std::unordered_map<uint32_t, InstanceBlas> _instanceBlas;
+    Buffer _instanceBlasBuffer;
+    std::vector<uint32_t> _instanceBlasWords;
     // Skinned instances by instance slot, this frame's in table order.
     std::unordered_map<uint32_t, Skinned> _skinned;
     std::vector<uint32_t> _skinnedOrder;

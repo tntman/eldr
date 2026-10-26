@@ -315,6 +315,47 @@ std::vector<Scene::SkinnedInstance> Scene::LargestSkinned(const float eye[3], ui
     return largest;
 }
 
+std::vector<Scene::DisplacedInstance> Scene::LargestDisplacedInstances(const float eye[3], uint32_t count) const
+{
+    std::vector<std::pair<float, DisplacedInstance>> found;
+    for (const auto &mp : _meshes) {
+        const Mesh &m = *mp;
+        if (!m._displacePerInstance || m._slot >= _gpu.slotGeometry.size() ||
+            _gpu.slotGeometry[m._slot].version == 0) {
+            continue;
+        }
+        float c[3], r2 = 0;
+        for (int k = 0; k < 3; ++k) {
+            c[k] = 0.5f * (m._boundsMin[k] + m._boundsMax[k]);
+            r2 += 0.25f * (m._boundsMax[k] - m._boundsMin[k]) * (m._boundsMax[k] - m._boundsMin[k]);
+        }
+        for (uint32_t i = 0; i < m._instanceCount; ++i) {
+            const float *x = &m.transforms[size_t(i) * 16];  // row-vector order
+            float d2 = 0;
+            for (int k = 0; k < 3; ++k) {
+                const float w = c[0] * x[k] + c[1] * x[4 + k] + c[2] * x[8 + k] + x[12 + k] - eye[k];
+                d2 += w * w;
+            }
+            const float scale2 = x[0] * x[0] + x[1] * x[1] + x[2] * x[2];
+            uint64_t key = 1469598103934665603ull;  // FNV-1a over the transform's bits
+            for (int k = 0; k < 16; ++k) {
+                uint32_t bits;
+                std::memcpy(&bits, &x[k], sizeof(bits));
+                key = (key ^ bits) * 1099511628211ull;
+            }
+            found.push_back({r2 * scale2 / std::max(d2, 1e-12f), {m._instanceBase + i, uint32_t(m._slot), key}});
+        }
+    }
+    const size_t n = std::min<size_t>(count, found.size());
+    std::partial_sort(found.begin(), found.begin() + n, found.end(),
+                      [](const auto &a, const auto &b) { return a.first > b.first; });
+    std::vector<DisplacedInstance> largest;
+    for (size_t i = 0; i < n; ++i) {
+        largest.push_back(found[i].second);
+    }
+    return largest;
+}
+
 bool Scene::SetDomeSun(bool on, float threshold)
 {
     const bool changed = on != _domeSunOn || (on && threshold != _domeSunThreshold);
@@ -1724,6 +1765,19 @@ void Scene::Commit(bool keepMotion)
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
         templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
+        // A displacement graph reading per-instance inputs, with instances
+        // to differ: ray tracing displaces each (LargestDisplacedInstances).
+        m._displacePerInstance =
+            drawable && m.material && m._instanceCount > 1 && m._skinCount == 0 && (variant & Gpu::kDisplaced) &&
+            m.material->displacementProgram.PerInstance([&](uint32_t slot) {
+                const std::vector<std::string> &names = m.material->program.primvars;
+                for (const Primvar &pv : m.primvars) {
+                    if (slot < names.size() && pv.name == names[slot]) {
+                        return pv.rate == Primvar::Rate::Instance;
+                    }
+                }
+                return false;
+            });
         // Translucent meshes are traced too, seen by shadow rays only (tints).
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,

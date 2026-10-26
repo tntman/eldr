@@ -461,6 +461,10 @@ public:
     static constexpr VkFormat kVelocityFormat = VK_FORMAT_R16G16_SFLOAT;
     static constexpr uint32_t kCascades = 4;
     static constexpr uint32_t kMaxRtSkinned = 256;  // Frame::rtSkinnedInstances
+    // Instances displaced one by one (per-instance displacement graphs); the
+    // rest share their mesh's displaced BLAS.
+    // ponytail: a fixed cap; a setting if scenes need more.
+    static constexpr uint32_t kMaxRtDisplacedInstances = 256;
     // Shadow atlas for sphere/rect/disk lights, in square tiles
     // (Frame::localShadowResolution).
     static constexpr uint32_t kShadowAtlasSize = 4096;

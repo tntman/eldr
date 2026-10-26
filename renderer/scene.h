@@ -160,6 +160,21 @@ struct MaterialProgram {
         }
         return false;
     }
+    // Whether it reads the surface in world space (kPosition, kGeomNormal
+    // with imm0 1) or a primvar `instanceRate` says is per instance: what
+    // differs between a mesh's instances.
+    template <class F>
+    bool PerInstance(F instanceRate) const
+    {
+        for (size_t i = 0; i < code.size(); i += 4) {
+            const uint32_t op = code[i] & 0xFFu;
+            if (((op == kPosition || op == kGeomNormal) && code[i + 2] == 1) ||
+                (op == kPrimvar && instanceRate(code[i + 2]))) {
+                return true;
+            }
+        }
+        return false;
+    }
     bool Outputs(Input input) const
     {
         for (size_t i = 0; i < code.size(); i += 4) {
@@ -389,6 +404,9 @@ private:
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
     uint32_t _instanceBase = 0, _instanceCount = 0;
+    // Its displacement graph reads what differs between its instances
+    // (MaterialProgram::PerInstance): ray tracing displaces them one by one.
+    mutable bool _displacePerInstance = false;  // set by the commit
     uint32_t _skinOffset = 0, _skinCount = 0;    // SkinVertex pool, _skinStride per vertex
     uint32_t _skinStride = 1;
     uint32_t _jointBase = 0, _jointSlots = 0;    // joint matrices (GPU-built), instances * jointCount
@@ -795,6 +813,14 @@ public:
         uint32_t flags;           // 1: eight influences, 2: dual quaternions
     };
     std::vector<SkinnedInstance> LargestSkinned(const float eye[3], uint32_t count) const;
+    // Instances of meshes displaced per instance (Mesh::_displacePerInstance),
+    // the `count` largest on screen as LargestSkinned, with a key that
+    // changes with their transform.
+    struct DisplacedInstance {
+        uint32_t instance, slot;  // instance slot, mesh slot
+        uint64_t key;             // of its transform
+    };
+    std::vector<DisplacedInstance> LargestDisplacedInstances(const float eye[3], uint32_t count) const;
 
     // Bytes of the GPU pools: per-vertex and per-instance data (skinning,
     // blend shapes, joints and vertex-rate primvars included), and triangle

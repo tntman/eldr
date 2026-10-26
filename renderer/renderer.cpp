@@ -3210,6 +3210,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
+        rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
         _rt->Prepare(gpu, rt, _width, _height);
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
