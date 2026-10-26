@@ -1343,6 +1343,7 @@ private:
             {"rgbtohsv", {P::kRgbToHsv, {"in"}}},
             {"hsvtorgb", {P::kHsvToRgb, {"in"}}},
             {"normalmap", {P::kNormalMap, {"in", "scale"}}},
+            {"heighttonormal", {P::kHeightToNormal, {"in", "scale", "texcoord"}}},  // bump's nodegraph
             {"combine2", {P::kCombine, {"in1", "in2"}}},
             {"combine3", {P::kCombine, {"in1", "in2", "in3"}}},
             {"combine4", {P::kCombine, {"in1", "in2", "in3", "in4"}}},

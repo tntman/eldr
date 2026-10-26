@@ -28,6 +28,7 @@ const uint kOpOutput = 0u, kOpTexcoord = 1u, kOpDisplayColor = 2u, kOpPrimvar = 
            kOpAffine = 38u, kOpNormalMap = 39u, kOpInvLinear = 40u, kOpUniformRamp = 41u;
 const uint kOpNoise = 42u, kOpFractal = 43u, kOpCellNoise = 44u, kOpWorleyNoise = 45u, kOpPosition = 46u,
            kOpGeomNormal = 47u;
+const uint kOpHeightToNormal = 48u;
 const uint kProgramRegisters = 16u;
 const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
 // Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
@@ -323,6 +324,19 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             float f = clamp(a.x, 0.0, 1.0) * (clamp(b.x, 0.0, 10.0) - 1.0), k = floor(f);
             uint base = c + imm0, k0 = uint(clamp(k, 0.0, 9.0)), k1 = uint(clamp(k + 1.0, 0.0, 9.0));
             r = mix(programConstants[base + k0], programConstants[base + k1], f - k);
+            break;
+        }
+        case kOpHeightToNormal: {
+            // MaterialX's mx_heighttonormal_vector3: a normal map (encoded)
+            // from the height's and uv's screen derivatives, 1/16 for
+            // parity with a Sobel filter. Flat without derivatives.
+            r = vec4(0.5, 0.5, 1.0, 0.0);
+#ifndef PROGRAM_VERTEX
+            vec2 dh = vec2(dFdx(a.x), dFdy(a.x)) * b.x / 16.0;
+            vec3 n = cross(vec3(dFdx(x.x), dFdx(x.y), dh.x), vec3(dFdy(x.x), dFdy(x.y), dh.y));
+            n = dot(n, n) < 1.4210855e-14 ? vec3(0.0, 0.0, 1.0) : n.z < 0.0 ? -n : n;
+            r = vec4(normalize(n) * 0.5 + 0.5, 0.0);
+#endif
             break;
         }
         default:

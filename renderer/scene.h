@@ -118,6 +118,10 @@ struct MaterialProgram {
         kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
+        // MaterialX heighttonormal: height a.x, scale b.x, texcoord c, from
+        // screen derivatives (fragment only; per vertex and at ray hits
+        // flat, (0.5, 0.5, 1)).
+        kHeightToNormal,
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them, then
     // the lobes' (Material's constants of the same names; brdf.glsl reads

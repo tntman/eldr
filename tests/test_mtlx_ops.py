@@ -29,7 +29,15 @@ def out_float(src):
     return f("out", "convert", {"in": ("float", "@" + src)}, "color3")
 
 
-# (label, nodes (the last one "out", color3), expected rgb at uv (0.5, 0.5))
+def u_times(k, name="h"):
+    """`name`: texcoord u times k (float)."""
+    return (f(name + "uv", "texcoord", {}, "vector2") +
+            f(name + "u", "extract", {"in": ("vector2", "@%suv" % name), "index": ("integer", "0")}) +
+            f(name, "multiply", {"in1": ("float", "@%su" % name), "in2": ("float", str(k))}))
+
+
+# (label, nodes (the last one "out", color3; a vector3 node "nrm" drives the surface's
+# normal), expected rgb at uv (0.5, 0.5))
 CASES = [
     # A node Eldr can't compile is bypassed: hextiledimage's pass-through is its `default`.
     ("bypass hextiledimage -> default",
@@ -50,6 +58,14 @@ CASES = [
     # geompropvalue without a geomprop reads its default.
     ("geompropvalue without a name",
      f("out", "geompropvalue", {"default": ("color3", "0.3, 0.5, 0.7")}, "color3"), (0.3, 0.5, 0.7)),
+    # heighttonormal of h = 16 u: dh/du 16 times 1/16 (Sobel parity) tilts the normal 45 degrees
+    # against u, encoded: (-1, 0, 1) / sqrt 2 * 0.5 + 0.5.
+    ("heighttonormal", u_times(16) + f("n", "heighttonormal", {"in": ("float", "@h")}, "vector3") +
+     f("out", "convert", {"in": ("vector3", "@n")}, "color3"), (0.5 - 0.5 ** 1.5, 0.5, 0.5 + 0.5 ** 1.5)),
+    # bump (heighttonormal into normalmap) on the normal compiles (the stats show no fallback).
+    ("bump on the normal",
+     u_times(4) + f("nrm", "bump", {"height": ("float", "@h"), "scale": ("float", "0.5")}, "vector3") +
+     f("out", "constant", {"value": ("color3", "0.25, 0.5, 0.75")}, "color3"), (0.25, 0.5, 0.75)),
 ]
 
 SIZE = 512
@@ -72,11 +88,13 @@ mtlx = os.path.join(folder, "cases.mtlx")
 with open(mtlx, "w") as fh:
     fh.write('<?xml version="1.0"?>\n<materialx version="1.39">\n')
     for i, (label, nodes, _) in enumerate(cases):
-        fh.write('<nodegraph name="g%d">%s<output name="o" type="color3" nodename="out"/></nodegraph>\n' % (i, nodes))
+        normal = 'name="nrm"' in nodes
+        fh.write('<nodegraph name="g%d">%s<output name="o" type="color3" nodename="out"/>%s</nodegraph>\n'
+                 % (i, nodes, '<output name="n" type="vector3" nodename="nrm"/>' if normal else ""))
         fh.write('<standard_surface name="s%d" type="surfaceshader"><input name="base" type="float" value="0"/>'
                  '<input name="specular" type="float" value="0"/><input name="emission" type="float" value="1"/>'
-                 '<input name="emission_color" type="color3" nodegraph="g%d" output="o"/></standard_surface>\n'
-                 % (i, i))
+                 '<input name="emission_color" type="color3" nodegraph="g%d" output="o"/>%s</standard_surface>\n'
+                 % (i, i, '<input name="normal" type="vector3" nodegraph="g%d" output="n"/>' % i if normal else ""))
         fh.write('<surfacematerial name="m%d" type="material"><input name="surfaceshader" type="surfaceshader" '
                  'nodename="s%d"/></surfacematerial>\n' % (i, i))
     fh.write("</materialx>\n")
