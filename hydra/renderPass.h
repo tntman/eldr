@@ -46,6 +46,7 @@ private:
     std::array<uintptr_t, 6> _lastReadback = {};
     std::array<float, 4> _lastDepthConstants = {};
     bool _lastDeferred = false;  // last frame was left to Collect
+    bool _extraStale = false;    // unread extra AOVs were left out of the last frame (eldr:lazyExtraAovs)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

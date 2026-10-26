@@ -196,10 +196,10 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 
 | Aspect | Support |
 |---|---|
-| Prims | `UsdVolVolume` with `OpenVDBAsset` fields; bound by name: `density`, `temperature`, `Cd` or `color`, `emission`; `fieldIndex` honoured |
+| Prims | `UsdVolVolume` with `OpenVDBAsset` fields, bound by name; `fieldIndex` honoured. Without a volume material only `density` is read, as in Karma; `eldr:volumeDefaultFields` adds `temperature` (blackbody), `Cd`/`color` and `emission` |
 | Rendering | NanoVDB on the GPU, fullscreen march over the shaded image, empty space skipped |
 | Lighting | HG phase, 3-octave multiple scattering of distant lights, sun cascades for opaque occluders, dome SH, local lights as points via atlas tiles; emission from temperature (blackbody) or an emission field |
-| Materials | MaterialX `volume`: absorption/scattering per density, anisotropic vdf, uniform_edf emission, blackbody temperature. `eldr:volumeAnisotropy` for volumes without one. |
+| Materials | MaterialX `volume` (anisotropic_vdf, absorption_vdf, uniform_edf) or Karma's `kma_volume`. Inputs: constants, `geompropvalue` field reads and their products (`constant`, `multiply`, `convert`, `dot`), blackbody of a temperature field. Absorption and scattering are per channel: coloured smoke, coloured transmittance. Coefficients are per unit of density. A colour field scales the scattering; another field times a colour is emission. Any other node: the material is ignored with a warning. `eldr:volumeAnisotropy` for volumes without one. |
 | Houdini SOP volumes | Houdini build only; see the Houdini page |
 
 | Interaction | Setting |
@@ -220,7 +220,7 @@ Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSp
 | MaterialX standard_surface | base, specular (`specular_color`), roughness, metalness, coat, sheen, thin film, anisotropy, transmission, subsurface, emission, opacity, normal maps, displacement |
 | OpenPBR Surface | The same lobes under OpenPBR names (`fuzz_*`, `coat_*`, `thin_film_*`, `geometry_opacity`, `transmission_*`, `subsurface_*`) |
 
-Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`).
+Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`). Other surfaces (glTF PBR, Disney, pbrlib BSDF graphs, `surface_unlit`) render the default grey; docs/materialx.md has the measured node coverage.
 
 ### Spec conformance
 
@@ -263,7 +263,7 @@ Not mapped: MaterialX `gltf_pbr` (no surface), UsdPreviewSurface `opacityMode` p
 | Feature | Support |
 |---|---|
 | Meshes | Implicit surfaces converted to meshes, GeomSubsets, PointInstancer and native instancing (one indirect draw per prototype), render tags and purposes |
-| Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level; creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
+| Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level or a mesh's own (`primvars:eldr:refineLevel`); creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
 | Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset. Height maps read at the mip matching vertex spacing. |
 | Displacement graphs (`eldr:displacementGraphs`) | A shading graph runs per vertex, also for ray-tracing BLASes (`eldr:rtDisplacement`). Graphs reading world position, normal or instance primvars give the 256 largest instances a BLAS each (rebuilt when they or their primvars change); others share the first instance's. |
 | LOD (`eldr:lod`, `eldr:lodBias`) | Meshes of 1000+ triangles get up to 3 coarser levels (quadric simplification weighing normals, uvs, colours, joint weights); culling picks the coarsest level under about 1 px of error, with hysteresis. Crowd 54.5M to 13.6M triangles, 68 to 28-34 ms; Kitchen at Very High 34.8M to 6.4M, 30 to 10.5 ms. `eldr:lodFade` crossfades over 8 frames. |
@@ -368,7 +368,13 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | `bool primvars:eldr:sprites` | Points | Overrides `eldr:pointSprites` per prim |
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | material surface shader | Toon bands per unit of light (0 = none), band edge width |
 | `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (read as `coat_color`); constant or connected |
+| `int primvars:eldr:refineLevel` | subdivision mesh | Its own refine level instead of the host's (usdview Complexity, Houdini Level of Detail); still at most `eldr:maxRefineLevel` |
 | `int primvars:karma:object:holdoutmode = 1` | gprim | Holdout: black, zero alpha, keeps depth, ids, shadows. Mode 2 acts as matte. |
+| `string primvars:karma:object:rendervisibility` | mesh, curves, points | Karma's ray visibility: `*`, `-primary` (phantom: unseen, still shadows and reflects), `-shadow`, `primary\|shadow`, `""` (unrenderable). Diffuse, reflect and refract are one class in Eldr (ray-traced reflections, GI, refraction); screen-space effects see what the camera sees. |
+| `bool primvars:karma:object:mblur = 0` | gprim | No motion blur of its own (transform, deformation); camera motion still blurs it |
+| `int primvars:karma:object:curve_style`, `point_style` | BasisCurves, Points | Karma's Render Curves As (0, 2 ribbons; 1 tubes; 3 the render setting) and Render Points As (0, 2 discs; 1 spheres). Oriented ribbons without normals and oriented discs face the camera. `eldr:ribbons`, `eldr:sprites` win. |
+| `float primvars:karma:object:width_scale` | BasisCurves, Points | Multiplies the widths |
+| `int primvars:karma:object:dicingdepthmax` | subdivision mesh | Caps the refine level (-1: no cap) |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
 | `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |
@@ -383,7 +389,7 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | `wrapS/wrapT` | UsdUVTexture | repeat, mirror, clamp, black, useMetadata (default). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
 | `<UDIM>` asset paths | textures | Tiles 1001-1100 found by the resolver, also in usdz |
 | Subdivision tags, GeomSubsets, `displayColor` | meshes | As UsdGeom defines |
-| `fieldName`, `fieldIndex` and a MaterialX `volume` material | UsdVolVolume with OpenVDBAsset | Roles `density`, `temperature`, `Cd`/`color`, `emission` |
+| `fieldName`, `fieldIndex` and a MaterialX `volume` or Karma `kma_volume` material | UsdVolVolume with OpenVDBAsset | Fields by the material's `geompropvalue` names; without a material `density` (`eldr:volumeDefaultFields`: also `temperature`, `Cd`/`color`, `emission`) |
 
 ## Known limitations
 
@@ -404,7 +410,7 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
 | Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
 | Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |
-| Materials | A graph compiles whole or not at all (unsupported nodes, Arnold or RenderMan volume shaders keep the constant). Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
+| Materials | A graph compiles whole or not at all (unsupported nodes, Arnold or RenderMan volume shaders keep the constant). Volume graphs: Karma's Pyro Shader (switches, ramps) and Pyro Preview aren't read; ramps of temperature to emission neither. Volume shadow maps and traced shadows use the mean of coloured extinction; half-resolution volumes keep only the mean transmittance. A constant coefficient (no field read) counts per unit of density; Karma fills the active voxels uniformly. Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
 | Materials | Coat: no coat normal, anisotropy or SSR; no `coat_darkening`. Thin film assumes air above. Hair has no TT lobe; a closed curve's u jumps at its weld. |
 | Materials | With a textured setting off, a material with a textured weight is still drawn in the translucent or subsurface pass (weight 0). |
 | Displacement | Top mip only; vector displacement drops tangential parts; skinning stretch doesn't scale bump; `displacementEnabled` not read. |

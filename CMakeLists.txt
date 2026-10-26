@@ -261,6 +261,8 @@ if(WIN32)
     set_tests_properties(stats PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME materialx COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_materialx.py)
     set_tests_properties(materialx PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    # The MaterialX corpus audit's wrapping and node rule, no rendering (the audit: tests/mtlx_corpus.py --out).
+    add_test(NAME mtlx_corpus COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/mtlx_corpus.py --selftest)
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)
     set_tests_properties(attributes PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME settings COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_settings_window.py)
@@ -312,6 +314,11 @@ if(WIN32)
             add_test(NAME volume_sequence COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py
                      $<TARGET_FILE:make_volume>)
             set_tests_properties(volume_sequence PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+            # Through UsdImaging's legacy delegate, as Houdini's viewport.
+            add_test(NAME volume_sequence_legacy COMMAND ${usdenv} python
+                     ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py $<TARGET_FILE:make_volume>)
+            set_tests_properties(volume_sequence_legacy PROPERTIES ENVIRONMENT
+                "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX=0;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX_DEPRECATION_WARNING=0")
         endif()
         add_test(NAME traced_media COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_traced_media.py)
         set_tests_properties(traced_media PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

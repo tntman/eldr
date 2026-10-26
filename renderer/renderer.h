@@ -159,6 +159,13 @@ public:
         // layer's, while the camera moves). Not with Targets::aovs.
         bool deferReadback = false;
         bool overlapReadback = true;  // eldr:overlapReadback: the Hydra layer may set deferReadback
+        bool inPlaceReadback = true;  // eldr:inPlaceReadback: the Hydra layer may set Targets::inPlace
+        // A shading set's pipelines compile when the scene first draws with
+        // them (eldr:lazyPipelines), not its 120 variants and passes at once.
+        bool lazyPipelines = true;
+        // The Hydra layer renders extra AOVs the app didn't read last frame
+        // only once the film converged (eldr:lazyExtraAovs), not every frame.
+        bool lazyExtraAovs = true;
         // Render products (the Hydra layer's HdVkRenderProducts): the active
         // UsdRenderSettings' products are written as EXR files once converged.
         bool renderProducts = true;
@@ -466,6 +473,10 @@ public:
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
         uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
+        // Render and Collect leave colour, depth, the ids and velocity in
+        // the renderer's host memory (HostOutput) instead of copying them:
+        // their pointers only say which to read back. Not Read's.
+        bool inPlace = false;
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -495,6 +506,11 @@ public:
     // and after a Render without deferReadback. Meanwhile the app's own work
     // overlaps the GPU's.
     bool Collect(const Targets &out, uint32_t width, uint32_t height);
+    // Targets::inPlace: the last frame delivered (a Render without
+    // deferReadback, or Collect), output 0..4 (colour, depth, primId,
+    // instanceId, velocity) in host memory, null if not read back. Stays
+    // until the second Render after; the caller may change it (depth).
+    void *HostOutput(int output) const { return _delivered[output]; }
 
     // False while auto-exposure adapts or TAA is still accumulating a still
     // camera: keep rendering frames.
@@ -507,6 +523,7 @@ public:
     struct Stats {
         double cpuMs = 0;  // Render's wall time: recording, the GPU's work, readback
         double gpuMs = 0;  // the frame on the GPU; 0 without timestamps
+        double waitMs = 0;  // the last wait for a frame in flight (Render, Collect)
         // GPU milliseconds per pass, in the order they ran (see Render).
         std::vector<std::pair<const char *, double>> passMs;
         uint64_t triangles = 0;   // the camera drew, after culling
@@ -517,6 +534,9 @@ public:
         uint32_t filmActivePixels = 0;  // adaptive film: pixels still taking samples
         uint32_t taaTarget = 0;
         bool film = false;        // the film is accumulating (else interactive TAA)
+        // The camera moved this frame: TAA's taaSamples is then its history
+        // weight (1 / 10 of the new frame), not samples towards taaTarget.
+        bool moving = false;
         bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
         double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double exposure = 1;      // the tonemap's multiplier of scene radiance
@@ -556,9 +576,12 @@ private:
     struct ShadingTargets {
         VkPipeline *opaque, *translucent, *oit, *subsurface, *refractBack;
     };
+    // `wanted`: with `shading`, only these variants (bits) of its passes
+    // (opaque, translucent, refractBack, OIT, subsurface); else all.
     void _CreatePipelines(bool displaced = false, uint32_t features = kNone, const ShadingTargets *shading = nullptr,
-                          VkPipelineCache cache = VK_NULL_HANDLE);
-    uint32_t _ShadingSet(uint32_t features);
+                          VkPipelineCache cache = VK_NULL_HANDLE, const uint64_t *wanted = nullptr);
+    uint32_t _ShadingSet(uint32_t features, bool lazy);
+    void _EnsureShading(const Scene::Gpu &gpu, uint32_t set);
     ShadingTargets _SetTargets(uint32_t set)
     {
         const uint32_t base = set * kVariants;
@@ -778,17 +801,25 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
-    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback)
+    std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback: Read's)
     // Frame::deferReadback: the frame in flight (its fence not waited for;
     // Device::waitFrame waits before anything touches what it uses), and
-    // its outputs in _readback until Collect. Offsets per Render's output
+    // its outputs in _frameReadback until Collect. Offsets per Render's output
     // (colour, depth, primId, instanceId, velocity; kNoOutput: not read).
     void _WaitInFlight();  // with _frameMutex held
+    // Render's outputs, two in turn: the app reads the frame delivered last
+    // (Targets::inPlace) while the next one renders into the other.
+    // ponytail: one app at a time; render passes taking turns on one
+    // renderer would each need their own pair.
+    Buffer _frameReadback[2];
+    uint32_t _deliveredSlot = 0;
+    void *_delivered[5] = {};
+    void _Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height, const Targets &out);
     static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);
     std::atomic<bool> _inFlight{false}, _deferredOutputs{false};
     struct Deferred {
         VkDeviceSize offsets[5] = {kNoOutput, kNoOutput, kNoOutput, kNoOutput, kNoOutput};
-        VkDeviceSize bytes = 0;  // all of them: Read copies after
+        uint32_t slot = 0;  // in _frameReadback
         uint32_t width = 0, height = 0;
         bool postProcess = false;
         float adaptivePixelFraction = 0;

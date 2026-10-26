@@ -91,9 +91,9 @@ openvdb::GridBase::ConstPtr HdVkReadGrid(const std::string &path, const std::str
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-HdVkField::HdVkField(SdfPath const &id, bool houdiniField)
+HdVkField::HdVkField(SdfPath const &id, std::shared_ptr<vkr::VolumeGrid> grid, bool houdiniField)
     : HdField(id)
-    , _grid(std::make_shared<vkr::VolumeGrid>())
+    , _grid(std::move(grid))
     , _houdiniField(houdiniField)
 {
 }

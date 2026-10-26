@@ -18,6 +18,8 @@
 #endif
 
 const uint kFreeSlot = 0xFFFFFFFFu;
+// DrawInfo::visible's bits (vkr::Mesh::Rays).
+const uint kRaysCamera = 1u, kRaysShadow = 2u, kRaysSecondary = 4u;
 
 struct Instance {
     vec4 rows[3];    // affine transform, rows of the column-vector form
@@ -38,7 +40,7 @@ struct DrawInfo {
     vec4 color;      // displayColor
     uint material;
     int primId;
-    uint visible;
+    uint visible;     // the rays that see it (kRays*), 0: not drawn
     uint skin;        // first SkinVertex, kFreeSlot if rigid
     uint vertexBase;  // the mesh's first vertex in the vertex pool
     uint vertexColors;  // 1: per-vertex displayColor, else color

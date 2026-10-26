@@ -53,7 +53,7 @@
 | Ray-traced refraction (off-screen content) | Yes | No | Partial | Eldr: final quality (`eldr:rtRefraction`); glass behind glass, materials evaluated at every hit. |
 | Ray-traced refraction through displaced glass | Yes | No | No | Eldr: rippled water bends the rays (`eldr:rtRefractionDisplacement`). |
 | Holdouts and mattes | Yes | Yes | Yes | |
-| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX volume materials. |
+| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX or `kma_volume` materials, coloured extinction. Not Karma's Pyro Shader graph. |
 | Houdini SOP volumes (no files) | Yes | No | No | Eldr: VDB and Houdini volumes from a SOP Import LOP, in the Houdini build. |
 | Froxel fog | Yes | Yes | Yes | |
 | Physical sky and atmosphere | No | Partial | Yes | EEVEE has a sky texture. |
@@ -70,7 +70,8 @@
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
 | Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
-| Subdivision surfaces | Yes | Yes | Partial | |
+| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels, per mesh or from the host; no adaptive dicing. |
+| Per-object ray visibility (camera, shadow, reflections) | Partial | Yes | Yes | Eldr: Karma's render visibility; reflections and GI only when ray traced, screen-space effects see what the camera sees. |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
 | Virtual geometry (Nanite-style) | No | No | Yes | *(interactive)* |
 | Texture streaming | No | No | Yes | Needed for very large assets. |

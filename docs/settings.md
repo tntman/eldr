@@ -73,7 +73,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Levels of Detail<br>`eldr:lod` | on | Meshes of 1000+ triangles get up to 3 coarser levels, chosen per instance on the GPU (error under about 1 px). Built on worker threads; not converged until they exist. Translucent and displaced meshes keep full detail. Off for pixel-exact comparison. | Crowd 68 to 28-34 ms; Kitchen at Very High 30 to 10.5 ms |
 | Level of Detail Bias<br>`eldr:lodBias` | float 0 | +1 allows twice the error, -1 half. Use negative for finals. | -1: crowd 13.6M instead of 9.6M triangles |
 | Level of Detail Crossfade<br>`eldr:lodFade` | on | A level change dithers over 8 frames (TAA or film blends it). Off: levels pop. Without TAA the dither shows as stipple. | Crowd +0.05 ms |
-| Subdivision Surfaces<br>`eldr:subdivision` | on | Refines catmullClark, loop and bilinear meshes (OpenSubdiv) to Hydra's refine level (usdview Complexity, `usdrecord --complexity`). Off draws the cage. | 4x memory per level; Kitchen at Very High: 35M triangles, 5.5 s load |
+| Subdivision Surfaces<br>`eldr:subdivision` | on | Refines catmullClark, loop and bilinear meshes (OpenSubdiv) to Hydra's refine level (usdview Complexity, `usdrecord --complexity`, Houdini's Level of Detail) or a mesh's `primvars:eldr:refineLevel`. Off draws the cage. | 4x memory per level; Kitchen at Very High: 35M triangles, 5.5 s load |
 | Subdivision Max Level<br>`eldr:maxRefineLevel` | int 3 | Clamps the refine level (0-8). | |
 | Displacement<br>`eldr:displacement` | on | Honours material displacement (UsdPreviewSurface, MaterialX) in the vertex stage, so every pass sees it. Needs enough vertices: use subdivision. | Only displaced materials pay |
 | Curves as Camera-Facing Ribbons<br>`eldr:curveRibbons` | off | Curves without normals draw as flat ribbons facing the eye, not 6-sided tubes. `primvars:eldr:ribbons` (bool) overrides per curve. | 2 triangles per step instead of 12; 100k blades 14.9 to 9.6 ms. Ray tracing sees lines. |
@@ -221,6 +221,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Shadows<br>`eldr:volumeShadows` | on | Volumes darken surfaces and fog from the sun via the tint maps. | volume.usda sunShadows 1.0 vs 0.07 ms |
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
+| Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
 
 ### Camera and film
 
@@ -253,8 +254,11 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Small Object Culling<br>`eldr:cullPixels` | float 0.5 | Skips instances under this screen radius in pixels; 0 = off. Use 0 for finals with tiny props. | |
 | Share Frames with OpenGL<br>`eldr:shareFrame` | on | usdview and usdrecord keep colour and depth on the GPU. Falls back to readback if unsupported. Off for debugging. | 1080p 17.4 to 3.2 ms; 4K 67 to 9.6 ms |
 | Overlap Readback while Moving<br>`eldr:overlapReadback` | on | Read back (Houdini): while the camera moves, a frame finishes on the GPU while the app draws and arrives with the next one, one frame behind. A still camera's frame is its own. Off: every frame waits for its own. | step4 1866x737, colour and depth, 11 ms app work: 20.3 to 14.0 ms a frame |
+| Read Back in Place<br>`eldr:inPlaceReadback` | on | Read back (Houdini): colour, depth and ids stay where the GPU copied them, two buffers in turn, and the app maps them there instead of a copy of its own. Off: copied into the app's buffers. | macbeth 1866x737, 4 AOVs: 14.6 to 8.2 ms a frame |
 | Pipeline Cache on Disk<br>`eldr:pipelineCache` | on | Saves compiled pipelines to `%LOCALAPPDATA%\Eldr\pipelines-*.bin` (`HDVK_PIPELINE_CACHE_DIR` moves it). | Crowd first frame 33.5 to 2.0 s; GI toggle 35 s to 79 ms; file about 16 MB |
 | Prewarm Pipelines<br>`eldr:pipelinePrewarm` | on in Hydra, off for embedders | Compiles sets one toggle away (GI, SSGI, fog) on a worker thread so usdview doesn't freeze. Irrelevant for batch. | Half the cores in the background |
+| Compile Pipelines on Demand<br>`eldr:lazyPipelines` | on | A shading set compiles only the pipeline variants the scene draws with, when first drawn, not its 120 at once. A new kind of material (skinned, MaterialX graph, layered) then compiles a few. Off: whole sets. | macbeth, cold caches: first frame 34.3 to 6.1 s |
 | Extra AOVs<br>`eldr:extraAovs` | on | Renders AOVs beyond colour, depth and ids when bound. | None unless bound. A bound AOV forces full size (no `eldr:renderScale`). |
+| Unread AOVs Once Converged<br>`eldr:lazyExtraAovs` | on | Extra AOVs bound but not read last frame (Houdini binds normal and st) render once the film converged, not every still frame. One mapped earlier is a frame old once. Off: every still frame. | macbeth still frame 1866x737: 4.9 ms GPU less |
 | Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25) renders smaller and TAA upscales. Film, final quality, DOF, motion blur, lens distortion and extra AOVs render full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
 | Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | [interactive] Sample dimensions loop over this many samples (1-256) so TAA settles. | |

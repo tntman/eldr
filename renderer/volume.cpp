@@ -42,6 +42,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t cascade, mapSize;  // RecordShadow's
     uint32_t originX, originY;
     uint32_t mutual;  // Settings::mutualShadows
+    uint32_t defaultFields;  // Settings::defaultFields
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -55,6 +56,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.anisotropy = std::clamp(s.anisotropy, -0.95f, 0.95f);
     p.count = count;
     p.mutual = s.mutualShadows;
+    p.defaultFields = s.defaultFields;
     return p;
 }
 
@@ -153,9 +155,17 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    const VkDevice d = _dev.device;
+}
+
+// When a volume or light shape first draws: a scene without them doesn't
+// compile them (seconds with a cold driver cache).
+void VolumePass::_EnsurePipelines()
+{
+    if (_pipeline) {
+        return;
+    }
     _pipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
-                                         false, true);
+                                         false, true, false, VK_FORMAT_UNDEFINED, true);
     _halfPipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
     _upsamplePipeline = CreateFullscreenPipeline(_dev, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
                                                  Renderer::kColorFormat, false, true);
@@ -210,6 +220,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     if (volumeCount == 0) {
         return false;
     }
+    _EnsurePipelines();
     // The shading pass's colour writes land before the blend reads them.
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -248,6 +259,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
 void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,
                                    VkImageView color, uint32_t width, uint32_t height)
 {
+    _EnsurePipelines();
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
     b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
@@ -264,6 +276,7 @@ void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uin
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
                               uint32_t mapSize, const Settings &s)
 {
+    _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.cascade = cascade;
     p.mapSize = mapSize;
@@ -276,6 +289,7 @@ void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t
 void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
                                   uint32_t x, uint32_t y, uint32_t size, const Settings &s)
 {
+    _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.part = 1;
     p.cascade = tile;
@@ -392,24 +406,27 @@ void Scene::_CommitVolumes()
             g.types[1 + k] = other.type;
             Store(toOther * indexToObject, g.toGrid[k]);
         }
-        // The material's coefficients: extinction is grey (their mean),
-        // the albedo carries the colour.
-        // ponytail: coloured absorption only tints the scattered light, not
-        // what shows through (one transmittance for all channels).
+        // The material's coefficients per channel (the march's
+        // transmittance is coloured); the shadow maps and traced shadows
+        // take their mean.
         const VolumeShading &s = d.shading;
         float extinction = 0.0f;
         for (int c = 0; c < 3; ++c) {
             extinction += (std::max(s.scattering[c], 0.0f) + std::max(s.absorption[c], 0.0f)) / 3.0f;
         }
         for (int c = 0; c < 3; ++c) {
-            g.albedo[c] = extinction > 0 ? std::max(s.scattering[c], 0.0f) / extinction : 0.0f;
+            g.scattering[c] = std::max(s.scattering[c], 0.0f) * s.densityScale;
+            g.absorption[c] = std::max(s.absorption[c], 0.0f) * s.densityScale;
             g.emission[c] = s.emission[c] * s.densityScale;
         }
         const bool anisotropy = !std::isnan(s.anisotropy);
-        g.albedo[3] = anisotropy ? std::clamp(s.anisotropy, -0.95f, 0.95f) : 0.0f;
+        g.scattering[3] = anisotropy ? std::clamp(s.anisotropy, -0.95f, 0.95f) : 0.0f;
         g.medium[0] = extinction * s.densityScale;
         g.medium[1] = anisotropy ? 1.0f : 0.0f;
-        g.medium[3] = s.emissionScale;
+        g.medium[2] = s.material ? 0.0f : 1.0f;
+        for (int c = 0; c < 3; ++c) {
+            g.fieldEmission[c] = s.emissionScale * s.emissionTint[c];
+        }
         // Temperature in Kelvin, or normalized (Houdini's pyro: ~1 burning)
         // to 5000 K as Arnold's blackbody does, unless the material says.
         // ponytail: without a material, decided by the grid's maximum.

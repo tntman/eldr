@@ -6,6 +6,8 @@
   the shutter that Hydra's transform samples give, with no frame before it.
 - Deformation blur: the same for a mesh whose points move (a point cache),
   through Hydra's primvar samples.
+- Karma's per-object Enable Motion Blur (primvars:karma:object:mblur) off
+  keeps either sharp.
 Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
@@ -146,6 +148,13 @@ expect(blurred >= 12, "a single usdrecord frame is motion blurred (%d edge pixel
 render([2], {"eldr:sampledMotion": False})
 sharp = ramp(32)
 expect(sharp <= 4, "eldr:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
+render([2], {"eldr:finalQuality": True})
+blurred = ramp(32)
+expect(blurred >= 12, "a final frame through the engine is motion blurred (%d edge pixels)" % blurred)
+UsdGeom.PrimvarsAPI(cube).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
+render([2], {"eldr:finalQuality": True})
+sharp = ramp(32)
+expect(sharp <= 4, "primvars:karma:object:mblur off: the moving cube is sharp (%d edge pixels)" % sharp)
 
 # Deformation blur: the same cube as a mesh whose points move (no transform
 # animation), one usdrecord frame.
@@ -171,6 +180,13 @@ render([2], {"eldr:deformationBlur": False, "eldr:finalQuality": True})
 sharp = ramp(32)
 expect(sharp <= 4, "eldr:deformationBlur off: moving points stay sharp (%d edge pixels)" % sharp)
 print("deformation blur: %d edge pixels on, %d off" % (blurred, sharp))
+render([2], {"eldr:finalQuality": True})
+blurred = ramp(32)
+expect(blurred >= 12, "a final frame of moving points through the engine is blurred (%d edge pixels)" % blurred)
+UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
+render([2], {"eldr:finalQuality": True})
+sharp = ramp(32)
+expect(sharp <= 4, "primvars:karma:object:mblur off: moving points stay sharp (%d edge pixels)" % sharp)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

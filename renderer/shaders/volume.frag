@@ -57,9 +57,14 @@ layout(push_constant) uniform Params {
     uint part;          // VolumePass::Part: 0 all, 1 behind the nearest translucent surface, 2 in front
     uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
     uint mutual;        // 1: volumes shadow each other
+    uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
 } params;
 
-layout(location = 0) out vec4 outColor;  // premultiplied: radiance, 1 - transmittance
+// Premultiplied: radiance, 1 - the mean transmittance; at full resolution
+// the image is multiplied by the coloured transmittance (dual-source blend).
+// ponytail: the half resolution target keeps only the mean.
+layout(location = 0, index = 0) out vec4 outColor;
+layout(location = 0, index = 1) out vec4 outTransmittance;
 
 const uint kMaxVolumes = 8u;     // per pixel, the nearest
 const float kOpaque = 0.01;      // transmittance at which a ray stops
@@ -187,6 +192,11 @@ vec3 LocalIrradiance(uint index, vec3 x, out vec3 l)
     return radiance * area * cosOff / max(d * d, area);
 }
 
+float Max3(vec3 v)
+{
+    return max(max(v.x, v.y), v.z);
+}
+
 // A float or Vec3f grid's value (floats splat to grey).
 vec3 ReadRgb(uint type, inout pnanovdb_readaccessor_t acc, ivec3 ijk)
 {
@@ -276,17 +286,22 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
 // Marches volume i over [t0, t1] of the world ray, adding to radiance and
 // attenuating transmittance; steps come out of stepsLeft.
 void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 up, inout uint stepsLeft,
-           inout vec3 radiance, inout float transmittance)
+           inout vec3 radiance, inout vec3 transmittance)
 {
     vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
     vec3 lo = volumes[i].indexMin.xyz, hi = volumes[i].indexMax.xyz;
     uvec4 grids = volumes[i].grids, types = volumes[i].types;
+    if (volumes[i].medium.z > 0.0 && params.defaultFields == 0u) {
+        grids.yzw = uvec3(kNone);  // no volume material: density only (VolumePass::Settings::defaultFields)
+    }
     vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
     vec3 safe = SafeDir(di);
-    // The material (or the defaults): extinction per unit of density, the
-    // phase function, the dome's light scattered with it.
-    float extinction = volumes[i].medium.x * params.density;
-    float g = volumes[i].medium.y > 0.0 ? volumes[i].albedo.w : params.anisotropy;
+    // The material (or the defaults): scattering and absorption per unit of
+    // density, per channel, the phase function, the dome's light scattered
+    // with it.
+    vec3 scattering = volumes[i].scattering.rgb * params.density;
+    vec3 absorption = volumes[i].absorption.rgb * params.density;
+    float g = volumes[i].medium.y > 0.0 ? volumes[i].scattering.w : params.anisotropy;
     vec3 dome = frame.envRadiance.w > 0.0 ? DomeScatter(dir, g) : vec3(0.0);
 
     // Steps of stepSize voxels; a box that would need more than maxSteps
@@ -299,7 +314,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     pnanovdb_readaccessor_t emission = Accessor(grids.w != kNone ? grids.w : grids.x);
     const bool mutual = params.mutual != 0u && params.count > 1u && params.shadowSteps > 0u;
     float t = t0 + noise * dt;
-    while (t < t1 && stepsLeft > 0u && transmittance > kOpaque) {
+    while (t < t1 && stepsLeft > 0u && Max3(transmittance) > kOpaque) {
         --stepsLeft;
         vec3 p = oi + t * di;
         ivec3 ijk = ivec3(floor(p));
@@ -320,7 +335,17 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
         // The other volumes' shadow steps start at a different fraction each
         // step (golden ratio), so they average over the march, not per frame.
         float shadowNoise = fract(noise + 0.6180340 * float(stepsLeft));
-        float sigma = rho * extinction;
+        // The colour field scales the scattering (MaterialX: a colour
+        // geompropvalue times it), so it colours what shows through too.
+        vec3 sigmaS = rho * scattering;
+        if (grids.z != kNone) {
+            vec3 q = Row3(volumes[i].toGrid[3], volumes[i].toGrid[4], volumes[i].toGrid[5], p, 1.0);
+            sigmaS *= clamp(ReadRgb(types.z, color, ivec3(floor(q + 0.5))), 0.0, 1.0);
+        }
+        vec3 sigma = rho * absorption + sigmaS;
+        // Towards the lights: the density's optical depth times this
+        // point's extinction per unit of density.
+        vec3 extinction = sigma / max(rho, 1e-20);
         vec3 x = origin + t * dir;
         vec3 emitted = vec3(0.0);
         if (grids.y != kNone) {
@@ -335,20 +360,16 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
         }
         if (grids.w != kNone) {
             vec3 q = Row3(volumes[i].toGrid[6], volumes[i].toGrid[7], volumes[i].toGrid[8], p, 1.0);
-            emitted += max(ReadRgb(types.w, emission, ivec3(floor(q + 0.5))), 0.0) * volumes[i].medium.w;
+            emitted += max(ReadRgb(types.w, emission, ivec3(floor(q + 0.5))), 0.0) * volumes[i].fieldEmission.rgb;
         }
         emitted += volumes[i].emission.rgb * rho;
         radiance += transmittance * emitted * params.emission * dt;
-        if (sigma > 0.0) {
-            vec3 albedo = volumes[i].albedo.rgb;
-            if (grids.z != kNone) {
-                vec3 q = Row3(volumes[i].toGrid[3], volumes[i].toGrid[4], volumes[i].toGrid[5], p, 1.0);
-                albedo *= clamp(ReadRgb(types.z, color, ivec3(floor(q + 0.5))), 0.0, 1.0);
-            }
+        if (Max3(sigma) > 0.0) {
+            vec3 albedo = mix(vec3(0.0), sigmaS / max(sigma, 1e-20), greaterThan(sigma, vec3(0.0)));
             vec3 light = vec3(0.0);
             if (frame.envRadiance.w > 0.0) {
-                float depth = ShadowMarch(shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
-                                          (params.shadowSteps + 1u) / 2u, extinction);
+                vec3 depth = extinction * ShadowMarch(shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
+                                                      (params.shadowSteps + 1u) / 2u, 1.0);
                 if (mutual) {
                     depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
@@ -357,10 +378,10 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
                 vec3 l = sun.position.xyz;
-                float depth = ShadowMarch(shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise, params.shadowSteps,
-                                          extinction);
+                vec3 depth = extinction * ShadowMarch(shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
+                                                      params.shadowSteps, 1.0);
                 // Octave i: light, optical depth and anisotropy times 1/2^i.
-                float scattered = 0.0;
+                vec3 scattered = vec3(0.0);
                 for (float a = 1.0; a > 0.2; a *= 0.5) {
                     scattered += a * exp(-depth * a) * Phase(dot(dir, l), g * a);
                 }
@@ -397,7 +418,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 }
             }
             // In-scattering integrated over the step (Hillaire 2015).
-            float stepT = exp(-sigma * dt);
+            vec3 stepT = exp(-sigma * dt);
             radiance += transmittance * albedo * light * (1.0 - stepT);
             transmittance *= stepT;
         }
@@ -485,11 +506,11 @@ void main()
     mat3 toDome = mat3(frame.envWorldToLocal);
     vec3 up = normalize(vec3(toDome[0][1], toDome[1][1], toDome[2][1]));
     vec3 radiance = vec3(0.0);
-    float transmittance = 1.0;
+    vec3 transmittance = vec3(1.0);
     uint stepsLeft = params.maxSteps;
-    for (uint k = 0u; k < n && transmittance > kOpaque; ++k) {
+    for (uint k = 0u; k < n && Max3(transmittance) > kOpaque; ++k) {
         vec3 before = radiance;
-        float transmittanceBefore = transmittance;
+        vec3 transmittanceBefore = transmittance;
         March(ids[k], origin, dir, spans[k].x, spans[k].y, noise, up, stepsLeft, radiance, transmittance);
         // Volumetric fog (fog.glsl): the image below carries it all the way
         // to the surface behind. The volume's light reaches the eye through
@@ -499,5 +520,7 @@ void main()
         vec4 fog = Fog(fragCoord, dot(origin + spans[k].x * dir - frame.cameraPos.xyz, frame.cameraForward.xyz));
         radiance = before + (radiance - before) * fog.a + (transmittanceBefore - transmittance) * fog.rgb;
     }
-    outColor = vec4(radiance, 1.0 - transmittance);
+    float mean = dot(transmittance, vec3(1.0 / 3.0));
+    outColor = vec4(radiance, 1.0 - mean);
+    outTransmittance = vec4(transmittance, mean);
 }

@@ -20,6 +20,7 @@ namespace vkr {
 class Device;
 class Renderer;
 class Scene;
+struct VolumeGrid;
 }
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -185,11 +186,14 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((motionBlurResidual, "eldr:motionBlurResidual")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
-    ((volumeMutualShadows, "eldr:volumeMutualShadows")) \
+    ((volumeMutualShadows, "eldr:volumeMutualShadows"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
     ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
+    ((inPlaceReadback, "eldr:inPlaceReadback")) \
+    ((lazyPipelines, "eldr:lazyPipelines")) \
+    ((lazyExtraAovs, "eldr:lazyExtraAovs")) \
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
@@ -292,6 +296,7 @@ public:
     // Cryptomatte manifests of the last frame with those AOVs (JSON: name
     // to hex id), reported in GetRenderStats()["cryptomatte"].
     void SetCryptomatteManifests(std::string object, std::string material);
+    double CommitMs() const { return _commitMs; }  // the last CommitResources
 
     // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
     void SetDrivers(HdDriverVector const &drivers) override;
@@ -321,6 +326,9 @@ public:
 
 private:
     std::atomic<uint64_t> _sceneEdits{0};  // rprims sync in parallel
+    // Fields' grids by path (CreateBprim). ponytail: entries of removed
+    // fields stay (an expired pointer each).
+    std::unordered_map<SdfPath, std::weak_ptr<vkr::VolumeGrid>, SdfPath::Hash> _fieldGrids;
     HdResourceRegistrySharedPtr _resourceRegistry;
     // Declaration order is destruction order in reverse: renderer and scene
     // release GPU resources before the device goes away.

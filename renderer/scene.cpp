@@ -1667,6 +1667,7 @@ void Scene::Commit(bool keepMotion)
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
+    std::vector<uint32_t> rays(slots);   // the rays that see them (the TLAS's masks)
     std::vector<uint32_t> primvarTable;  // uvec4 per program primvar slot
     std::vector<float> primvarData;
     std::vector<uint8_t> kind(slots, Gpu::kOpaque);
@@ -1687,7 +1688,7 @@ void Scene::Commit(bool keepMotion)
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
-        const bool drawable = m.visible && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
+        const bool drawable = m.visible && m.rays != 0 && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
                               (m._skinCount == 0 || m._skinXformSlots > 0) && !m.reflectionProbe;
         DrawInfo &d = draws[slot];
         d = DrawInfo{};
@@ -1770,7 +1771,7 @@ void Scene::Commit(bool keepMotion)
         d.primId = m.primId;
         d.holdout = m.holdout ? 1u : 0u;
         _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
-        d.visible = drawable ? 1u : 0u;
+        d.visible = drawable ? m.rays : 0u;  // cull.comp, tlas.comp
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
         d.vertexColors = m.colors.empty() ? 0u : 1u;
@@ -1802,6 +1803,7 @@ void Scene::Commit(bool keepMotion)
                                    drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
                                    (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase};
         drawn[slot] = drawable ? m._instanceCount : 0;
+        rays[slot] = drawable ? m.rays : 0;
         if (drawable) {
             anyDrawable = true;
             for (int k = 0; k < 3; ++k) {
@@ -1876,10 +1878,11 @@ void Scene::Commit(bool keepMotion)
     _gpu.drawChunks.push_back(uint32_t(commandSlots));
 
     // Visibility edits change what shadows draw without any upload.
-    if (changed || drawn != _lastDrawn) {
+    if (changed || drawn != _lastDrawn || rays != _lastRays) {
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;
         _lastDrawn = std::move(drawn);
+        _lastRays = std::move(rays);
     }
     _gpu.hasBounds = anyDrawable;
     _gpu.facing = facing;
@@ -1916,7 +1919,7 @@ void Scene::Commit(bool keepMotion)
     const float sceneSize = anyDrawable ? Length(Vec3{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}) : 0.0f;
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
-        if (!draws[slot].visible || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
+        if (!(draws[slot].visible & Mesh::kCameraRays) || !m._flat || (kind[slot] & (Gpu::kWide - 1)) != Gpu::kOpaque ||
             m.transforms.size() < 16) {
             continue;
         }
