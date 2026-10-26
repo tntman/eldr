@@ -528,8 +528,9 @@ has no lens (no DOF, no blur).
   move: copies 1.9 pixels apart, steps of 15% across the blur). With
   `motionBlurResidual` (on) each sample is spread over its stratum of the
   shutter by a short gather along its motion vectors, which in a time
-  sample run from the frame before to the sample's time (rigid instances
-  from the shutter's capture, point caches from their velocities), so the
+  sample run from the frame before to the sample's time (rigid instances,
+  skinned joints and blend shape weights from the shutter's capture, point
+  caches from their velocities), so the
   strata tile the shutter and the copies blend into a smooth blur. Karma
   instead samples a time per pixel sample, which gives noise, not steps;
   Eldr's samples render a whole frame each, so it fills between them

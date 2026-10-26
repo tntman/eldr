@@ -58,7 +58,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     uvec4 lodFade;       // x: frames a level of detail change crossfades over (0: it pops; LodKeep)
     vec4 lightPath;      // x: direct, y: indirect light's multiplier in the final pixel; z 1: either isn't 1
     vec4 deform;         // x: the time sample's offset from this frame (frames), y: 1 = point velocities on,
-                         // z: 1 = a time sample (rigid motion vectors from the shutter's capture)
+                         // z: 1 = a time sample (motion vectors from the shutter's capture),
+                         // w: its capture holds joints (+1) and blend shape weights (+2)
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl)
 } frame;
 

@@ -61,7 +61,8 @@ struct FrameData {
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
     float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
-                             // z: 1 = a time sample (rigid motion vectors from the shutter's capture)
+                             // z: 1 = a time sample (motion vectors from the shutter's capture),
+                             // w: its capture holds joints (+1) and blend shape weights (+2)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
 };
 
@@ -769,8 +770,8 @@ void Renderer::_CreateDescriptors()
         // Motion blur time samples (shutter.comp): last frame's rigid rows,
         // joints and blend shape weights.
         {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
-        {70, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
-        {71, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {70, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
+        {71, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
         // Denoised SSR (SsrDenoise): what mesh.frag traces for it, bound
         // once it is on (partially bound, last).
         {72, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
@@ -2871,6 +2872,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.deform[0] = shutterT - 1.0f;
     fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
     fd.deform[2] = timeSample ? 1.0f : 0.0f;
+    fd.deform[3] = timeSample ? float((_shutter.joints ? 1 : 0) | (_shutter.weights ? 2 : 0)) : 0.0f;
     Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
