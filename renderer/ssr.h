@@ -53,7 +53,7 @@ public:
     // gradient noise shifted by `noise`.
     void Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16], const float prevViewProj[16],
                  const float eye[3], uint32_t noise, bool history, float dimension,
-                 VkImageView splits, bool addToSplits);
+                 VkImageView splits, bool addToSplits, float indirect = 1.0f);
     // The 64 x 64 RGBA8 blue noise (Renderer's), before the first Prepare.
     void SetBlueNoise(VkImageView noise) { _blueNoise = noise; }
 

@@ -19,6 +19,7 @@ layout(set = 0, binding = 5) uniform samplerCube envCube;
 layout(set = 0, binding = 6) uniform sampler2D brdfLut;
 layout(set = 0, binding = 11) uniform sampler2D ambientOcclusion;  // GTAO, 1 = unoccluded
 layout(set = 0, binding = 12) uniform sampler2D previousColor;     // last frame's HDR result, premultiplied
+layout(set = 0, binding = 76) uniform sampler2DArray previousSplits;  // last frame's light splits (frame.ssr.w)
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;        // prepass depth, window [0, 1]
 
 // Local lights' shadows (Renderer::_PlanLocalShadows): per light its first
@@ -969,6 +970,18 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
     }
     hit = textureLod(previousColor, prevUv, lod);
+    if (frame.ssr.w > 0.0) {
+        // Last frame's colour carries the light path intensities; its
+        // splits take them out, so the reflection is scaled once (as
+        // indirect glossy) like traced reflections.
+        // ponytail: the splits at the hit, not over the mip's footprint
+        // nor TAA's blend over frames.
+        vec3 direct = textureLod(previousSplits, vec3(prevUv, 0.0), 0.0).rgb +
+                      textureLod(previousSplits, vec3(prevUv, 2.0), 0.0).rgb;
+        vec3 indirect = textureLod(previousSplits, vec3(prevUv, 1.0), 0.0).rgb +
+                        textureLod(previousSplits, vec3(prevUv, 3.0), 0.0).rgb;
+        hit.rgb += (1.0 - frame.lightPath.x) * direct + (1.0 - frame.lightPath.y) * indirect;
+    }
     hit.rgb = BrightnessClamp(hit.rgb, frame.lightClamp.y);
     // Met from behind (the ray went behind an object): the light of
     // its unseen side is guessed as a share of the front's

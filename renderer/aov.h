@@ -62,10 +62,15 @@ public:
     // The light splits' image (RGBA16F, layers direct diffuse, indirect
     // diffuse, direct glossy, indirect glossy; GENERAL): made at this size
     // (1 x 1 without splits) before the frame's descriptors are written;
-    // ClearSplits zeroes it before the shading pass stores into it.
-    void EnsureSplits(uint32_t width, uint32_t height);
+    // ClearSplits zeroes it before the shading pass stores into it, with
+    // `keepPrevious` first copying last frame's into PreviousSplitsView
+    // (SHADER_READ_ONLY; SSR takes the light path intensities out of last
+    // frame's colour by it). EnsureSplits returns true when it made them
+    // anew (no previous splits then).
+    bool EnsureSplits(uint32_t width, uint32_t height);
     VkImageView SplitsView() const { return _splits.view; }
-    void ClearSplits(VkCommandBuffer cmd);
+    VkImageView PreviousSplitsView() const { return _prevSplits.view; }
+    void ClearSplits(VkCommandBuffer cmd, bool keepPrevious = false);
 
     explicit Aovs(Device &device);
     ~Aovs();
@@ -123,6 +128,7 @@ private:
     VkDescriptorSet _set = VK_NULL_HANDLE;
     Image _normalSt, _albedo, _emission;  // the G-buffer
     Image _splits;                        // light splits, EnsureSplits
+    Image _prevSplits;                    // last frame's, ClearSplits
     uint32_t _splitsWidth = 0, _splitsHeight = 0;
     // Accumulation state (Record).
     uint32_t _frames = 0, _accumWidth = 0, _accumHeight = 0;

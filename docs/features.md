@@ -677,8 +677,9 @@ multiplies the same direct and indirect light in the final pixel, not in the lig
 intensities. Refracted light is indirect glossy and scaled once: traced, or from the
 screen-space copy of what is behind, which takes the intensities out again by its light splits
 (stored for it). The sun's light through thin subsurface parts is direct diffuse. Fog and toon
-shading stay unscaled. SSR still reflects the previous frame, which carries the intensities, so
-its reflections are scaled twice. At 1 the shaders compile without it.
+shading stay unscaled. SSR's reflections of the previous frame are scaled once too: last frame's
+splits (kept for it) take the intensities out at the hit (at the hit's pixel, not over a
+rough ray's mip footprint). At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes

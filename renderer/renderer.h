@@ -580,6 +580,8 @@ private:
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
     bool _taaValid = false;
     bool _historyValid = false;    // the TAA history holds last frame's image
+    // Last frame stored the light splits; this one keeps them for SSR (Aovs::ClearSplits).
+    bool _splitsStored = false, _keepSplits = false;
     bool _taaWarmup = false;  // accumulating a fresh history for a still camera
     bool _taaConverged = true;
     // Film: samples in it (0: TAA resolves), frames the camera and the
