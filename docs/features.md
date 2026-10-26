@@ -384,7 +384,11 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   traced reflections are, so what is off screen or behind other objects
   shows through glass, and counts as indirect glossy light in the light
   splits. The front surface keeps its own Fresnel, tint and reflections;
-  other refracting fragments at the pixel stay screen space.
+  other refracting fragments at the pixel stay screen space. Displaced glass
+  (`rtRefractionDisplacement`, with `rtDisplacement`) bends the rays by its
+  displaced triangles and its height map's bump, as the shading pass bumps
+  its fragments, so rippled water or hammered glass distorts what is behind
+  it; displacement graphs stay at their rest surface there.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep

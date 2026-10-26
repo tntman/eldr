@@ -25,7 +25,7 @@ struct RayTracingData {
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
     uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
-    uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces)
+    uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
 };
 // TLAS instance masks (shaders/gi.glsl).
 constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2;
@@ -54,6 +54,7 @@ public:
         // ray through the translucent meshes, up to this many interfaces.
         bool refraction = false;
         uint32_t refractionBounces = 4;
+        bool refractionDisplacement = false;  // displaced glass bends them (needs displacement)
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
         // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):

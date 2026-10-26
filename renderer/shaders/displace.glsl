@@ -3,10 +3,11 @@
 // shading pass bumps the normal by the height map's slope. Include after
 // frame.glsl and scene.glsl; the fragment stage defines DISPLACE_FRAGMENT
 // and includes material.glsl first (TexRef, Fetch, udimTiles), mesh.vert
-// DISPLACE_VERTEX (Displace, with displacement graphs).
+// DISPLACE_VERTEX (Displace, with displacement graphs); ray tracing stages
+// include it after material.glsl (BumpedNormal, the compute Displace).
 // std430 mirror of GpuDisplacement in scene.cpp.
 
-#ifndef DISPLACE_FRAGMENT
+#if !defined(DISPLACE_FRAGMENT) && !defined(RAY_TRACING)
 // material.glsl's Fetch with a footprint instead of screen derivatives.
 #define UV_FOOTPRINT
 #include "material.glsl"
@@ -96,6 +97,19 @@ vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, vec2 uv)
     return position + normalize(normal) * Fetch(d.tex, d.params.xxxx, uv).r * frame.geometry.x;
 }
 #endif
+// n bumped by a height h over a surface whose position and height change by
+// sigmaS, dhS along one direction and sigmaT, dhT along another (screen
+// derivatives in the shading pass, uv ones at ray hits): Mikkelsen 2010's
+// surface gradient.
+vec3 BumpedNormal(vec3 n, vec3 sigmaS, vec3 sigmaT, float dhS, float dhT)
+{
+    vec3 r1 = cross(sigmaT, n), r2 = cross(n, sigmaS);
+    float det = dot(sigmaS, r1);
+    vec3 gradient = sign(det) * (dhS * r1 + dhT * r2);
+    vec3 bumped = abs(det) * n - gradient;
+    return dot(bumped, bumped) > 1e-30 ? normalize(bumped) : n;
+}
+
 #ifdef DISPLACE_FRAGMENT
 // The displaced surface's shading normal: n bumped by the height map's
 // slope (Mikkelsen 2010, the surface gradient, which only sees the
@@ -126,11 +140,6 @@ vec3 DisplacedNormal(vec3 n, uint slot, vec3 p, vec2 uv)
     }
     float scale = pow(abs(determinant(mat3(InstanceTransform(inst)))), 1.0 / 3.0);
     float h = Fetch(d.tex, d.params.xxxx, uv).r * frame.geometry.x * scale;
-    vec3 sigmaS = dFdx(p), sigmaT = dFdy(p);
-    vec3 r1 = cross(sigmaT, n), r2 = cross(n, sigmaS);
-    float det = dot(sigmaS, r1);
-    vec3 gradient = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
-    vec3 bumped = abs(det) * n - gradient;
-    return dot(bumped, bumped) > 1e-30 ? normalize(bumped) : n;
+    return BumpedNormal(n, dFdx(p), dFdy(p), dFdx(h), dFdy(h));
 }
 #endif

@@ -366,6 +366,10 @@ public:
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
         uint32_t rtRefraction = 1;
         uint32_t rtRefractionBounces = 4;  // 1..16
+        // Displaced glass (with rtDisplacement) bends the traced refraction
+        // rays by its displaced surface: its facets and the height map's
+        // bump, as the shading pass bumps its fragments.
+        bool rtRefractionDisplacement = true;
         // Translucent holdouts (with holdouts) cut the image's colour and
         // alpha by their opacity; off: they draw nothing.
         bool holdoutAlpha = true;
