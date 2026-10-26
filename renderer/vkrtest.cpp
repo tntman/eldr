@@ -3737,6 +3737,31 @@ int main()
             Expect(img.At(12, 32, 0) < 0.3f * img.At(52, 32, 0) && img.At(52, 32, 0) > 0.2f,
                    "fog: the sun's shadow volumes stay dark");
 
+            // Volumes shadow the fog from the sun (through the sun's tint
+            // map, VolumePass::Settings::mutualShadows): a flat dense cloud
+            // at y 1.5 over x < 0 instead of the roof. Fresh renderers: no
+            // fog history.
+            roof->visible = false;
+            vkr::Volume *cloud = scene.AddVolume();
+            cloud->fields["density"] = BallGrid(12.0f, 20.0f);
+            cloud->transforms = {16, 0, 0, 0, 0, 0.5f, 0, 0, 0, 0, 16, 0, -6, 1.5f, -2, 1};
+            scene.Commit();
+            const Image clouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.volume.mutualShadows = false;
+            const Image unclouded = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            frame.volume.mutualShadows = true;
+            cloud->visible = false;
+            scene.Commit();
+            const Image clear = Render(*std::make_unique<vkr::Renderer>(device), scene, frame);
+            std::printf("fog under a volume %.3f / %.3f (off) / %.3f (no volume), beside it %.3f / %.3f\n",
+                        clouded.At(12, 32, 0), unclouded.At(12, 32, 0), clear.At(12, 32, 0), clouded.At(52, 32, 0),
+                        unclouded.At(52, 32, 0));
+            Expect(clouded.At(12, 32, 0) < 0.6f * unclouded.At(12, 32, 0) &&
+                       std::abs(clouded.At(52, 32, 0) - unclouded.At(52, 32, 0)) < 0.02f * unclouded.At(52, 32, 0),
+                   "fog: volumes shadow it from the sun");
+            Expect(std::abs(unclouded.At(12, 32, 0) - clear.At(12, 32, 0)) < 0.02f * clear.At(12, 32, 0),
+                   "fog: mutual volume shadows off, as without the volume");
+
             // Height fog: thinner upwards (y), so less light scatters at the
             // top of the view than at the bottom.
             roof->visible = false;
@@ -3942,6 +3967,70 @@ int main()
             img = Render(renderer, bulb, frame);
             Expect(img.At(40, 32, 0) > 0.05f && img.At(40, 32, 0) > 3.0f * img.At(23, 32, 0),
                    "a sphere light lights a volume's near side");
+
+            // Volumes shadow each other (VolumePass::Settings::mutualShadows):
+            // a big thin ball (radius 1.125, density 0.5) at x 2, between the
+            // ball and the light from +x. The ball's lit side (x 0.27, z within
+            // +-0.26 of its ray) gets the big one's transmittance along the
+            // light. Reference: brute force over the ball's voxels on the
+            // pixel's ray, each lit through the big one's voxels (nearest, as
+            // the shaders read them) along +x, averaged. The big one,
+            // upwind, is as without the ball; mutual shadows off, the ball is
+            // as alone. The same from a sphere light at x 4.
+            const float alone = Render(renderer, lit, frame).At(40, 32, 0);
+            auto inBall = [](int i, int j, int k) {
+                const float x = float(i) - 15.5f, y = float(j) - 15.5f, z = float(k) - 15.5f;
+                return x * x + y * y + z * z <= 144.0f;
+            };
+            const float px = (40.5f / 32.0f - 1.0f), py = (32.5f / 32.0f - 1.0f);  // the pixel's world x, y
+            double sumT = 0.0;
+            int samples = 0;
+            for (float z = -0.5f; z < 0.5f; z += 1.0f / 256.0f) {
+                if (!inBall(int(std::floor(px * 32 + 16)), int(std::floor(py * 32 + 16)), int(std::floor(z * 32 + 16)))) {
+                    continue;
+                }
+                int voxels = 0;  // the big one's along +x from (px, py, z): index (world - 2) * 32 / 3 + 15.5
+                const int j = int(std::floor(py * 32 / 3 + 16)), k = int(std::floor(z * 32 / 3 + 16));
+                for (int i = 0; i < 32; ++i) {
+                    voxels += inBall(i, j, k) && (float(i) - 15.5f) * 3 / 32 + 2 > px ? 1 : 0;
+                }
+                sumT += std::exp(-0.5 * voxels * 3.0 / 32.0);
+                ++samples;
+            }
+            const float expected = float(sumT / std::max(samples, 1));
+            for (int sun = 1; sun >= 0; --sun) {
+                vkr::Scene pair(&device);
+                pair.AddVolume()->fields["density"] = ball->fields["density"];
+                vkr::Volume *upwind = pair.AddVolume();
+                upwind->fields["density"] = BallGrid(12.0f, 0.5f);
+                upwind->transforms = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 2, 0, 0, 1};
+                if (sun) {
+                    AddLight(pair, 1, 0, 0)->castShadows = true;
+                } else {
+                    AddSphereLight(pair, 4, 0, 0, 0.05f, 6000.0f);
+                }
+                pair.Commit();
+                const Image both = Render(renderer, pair, frame);
+                frame.volume.mutualShadows = false;
+                const Image apart = Render(renderer, pair, frame);
+                frame.volume.mutualShadows = true;
+                const float ratio = both.At(40, 32, 0) / apart.At(40, 32, 0);
+                std::printf("mutual volume shadows (%s): lit side %.4f / %.4f = %.3f (expected %.3f), alone %.4f, "
+                            "upwind %.4f / %.4f\n", sun ? "sun" : "sphere", both.At(40, 32, 0), apart.At(40, 32, 0),
+                            ratio, expected, alone, both.At(62, 32, 0), apart.At(62, 32, 0));
+                Expect(apart.At(40, 32, 0) > 0.02f && std::abs(ratio - expected) < 0.02f,
+                       "a volume shadows another by its transmittance along the light");
+                Expect(std::abs(both.At(62, 32, 0) - apart.At(62, 32, 0)) <= 0.01f * apart.At(62, 32, 0),
+                       "a volume isn't shadowed by one behind it");
+                if (sun) {
+                    Expect(std::abs(apart.At(40, 32, 0) - alone) <= 0.01f * alone,
+                           "without mutual shadows a volume is lit as alone");
+                }
+            }
+            frame.volume.mutualShadows = false;
+            const float aloneOff = Render(renderer, lit, frame).At(40, 32, 0);
+            frame.volume.mutualShadows = true;
+            Expect(aloneOff == alone, "mutual shadows leave a lone volume alone");
 
             // The material (VolumeShading): absorption 1 at half the density
             // halves the optical depth and scatters nothing; red-only

@@ -349,6 +349,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Indirect Light Intensity (final pixel only)", t2.indirectIntensity, VtValue(frame.indirectIntensity)},
         {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,
          VtValue(frame.localVolumeShadows)},
+        {"Volume Mutual Shadows (volumes shadow each other)", t2.volumeMutualShadows,
+         VtValue(frame.volume.mutualShadows)},
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},

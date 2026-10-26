@@ -64,6 +64,7 @@ struct FrameData {
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
+    uint32_t media[4];         // x 1: fog lit through the sun's tint map (volumes, VolumePass::Settings::mutualShadows)
 };
 
 namespace {
@@ -738,8 +739,8 @@ void Renderer::_CreateDescriptors()
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
         {42, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {43, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {44, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {43, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},  // and fog
+        {44, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | VK_SHADER_STAGE_COMPUTE_BIT},
         {45, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {46, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Volumetric fog's volumes, the sun's raw depths, the reflection
@@ -1931,7 +1932,8 @@ bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *d
     // Last frame's grid is the history while the lights and the medium
     // stay the same (moving geometry keeps it: its shadows lag a little).
     uint64_t key = gpu.lightingHash;
-    for (const float v : {medium[0], medium[1], medium[2], medium[3], albedo[0], albedo[1], albedo[2]}) {
+    const float media = frame.volume.mutualShadows ? 1.0f : 0.0f;  // volumes shadow the fog (FrameData::media)
+    for (const float v : {medium[0], medium[1], medium[2], medium[3], albedo[0], albedo[1], albedo[2], media}) {
         uint32_t bits;
         std::memcpy(&bits, &v, sizeof(bits));
         key = (key ^ bits) * 1099511628211ull;
@@ -3239,6 +3241,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (translucentShadows || volumeShadows || localVolumeShadows) {
         fd.features[0] |= kFeatureTranslucentShadows;
     }
+    // Volumes shadow the fog from the sun as they do each other (the tint
+    // map holds the translucent casters too, which then tint it as well).
+    fd.media[0] = volumeShadows && frame.volume.mutualShadows ? 1u : 0u;
     if (frame.holdouts && gpu.holdouts) {
         fd.features[0] |= kFeatureHoldouts;
     }

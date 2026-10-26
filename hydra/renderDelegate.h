@@ -183,6 +183,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((motionBlurResidual, "eldr:motionBlurResidual")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
+    ((volumeMutualShadows, "eldr:volumeMutualShadows")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
