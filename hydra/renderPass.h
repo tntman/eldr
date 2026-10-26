@@ -9,6 +9,8 @@
 
 #include "renderProducts.h"
 
+#include <array>
+#include <cstdint>
 #include <map>
 
 namespace vkr {
@@ -39,6 +41,11 @@ private:
     float _lastViewProj[16] = {};  // the last frame's camera: moving or still
     GfMatrix4d _lastView, _lastProjection;  // the last real camera's (a missing camera keeps it)
     bool _hasLastCamera = false;
+    // eldr:overlapReadback: the buffers (colour, depth, ids) and size last
+    // frame read back into, and its depth AOV's constants.
+    std::array<uintptr_t, 6> _lastReadback = {};
+    std::array<float, 4> _lastDepthConstants = {};
+    bool _lastDeferred = false;  // last frame was left to Collect
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

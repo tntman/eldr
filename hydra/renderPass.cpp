@@ -359,6 +359,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.localVolumeShadows, &frame.localVolumeShadows},
                                 {t2.volumeMutualShadows, &frame.volume.mutualShadows},
                                 {t2.lightShapesVisible, &frame.lightShapesVisible},
+                                {t2.overlapReadback, &frame.overlapReadback},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
@@ -763,8 +764,30 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         out.primId = huskIds.data();
     }
 
+    // eldr:overlapReadback: while the camera moves this frame stays on the
+    // GPU while the app works, and the next one delivers it: the app shows
+    // the frame before (one behind; a still camera's frame is its own). Only
+    // the plain readback, into the buffers last frame filled: they keep that
+    // image until a deferred one is collected.
+    const std::array<uintptr_t, 6> readback = {uintptr_t(mapped[0]), uintptr_t(mapped[1]), uintptr_t(mapped[2]),
+                                               uintptr_t(mapped[3]), frame.width, frame.height};
+    const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
+                                                 frame.depthToDistance[2], frame.depthToDistance[3]};
+    std::array<float, 4> collectedDepth = depthConstants;
+    frame.deferReadback = frame.overlapReadback && moving && !frame.finalQuality && !productSized && !interop &&
+                          colorHalf.empty() && huskIds.empty() && !frame.linearColor && readback == _lastReadback &&
+                          std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
+    bool collected = false;
     bool shared = false;
     try {
+        if (frame.deferReadback && (collected = _renderer->Collect(out, frame.width, frame.height))) {
+            collectedDepth = _lastDepthConstants;
+        }
+        // Ours went uncollected (another pass rendered since): this one now.
+        frame.deferReadback = frame.deferReadback && (collected || !_lastDeferred);
+        _lastDeferred = frame.deferReadback;
+        _lastReadback = readback;
+        _lastDepthConstants = depthConstants;
         _renderer->Render(_scene, frame, out);
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
@@ -856,22 +879,24 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // axis, 0 where nothing was hit; UsdRenderers.json "depthstyle":
     // "linear"), so its pivot, pan speed and guide compositing don't depend
     // on the near and far planes it assumes for window depth.
-    const auto depthAov = [c = std::array<float, 4>{frame.depthToDistance[0], frame.depthToDistance[1],
-                                                    frame.depthToDistance[2], frame.depthToDistance[3]},
-                           clearDepth](float *d, size_t n) {
-        for (size_t p = 0; p < n; ++p) {
+    const auto depthAovOf = [clearDepth](std::array<float, 4> c) {
+        return [c, clearDepth](float *d, size_t n) {
+            for (size_t p = 0; p < n; ++p) {
 #ifdef HDVK_HOUDINI
-            const float z = d[p] * 2.0f - 1.0f;
-            d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
-            (void)clearDepth;
+                const float z = d[p] * 2.0f - 1.0f;
+                d[p] = d[p] >= 1.0f ? 0.0f : -(c[0] * z + c[1]) / (c[2] * z + c[3]);
+                (void)clearDepth;
 #else
-            d[p] = d[p] >= 1.0f ? clearDepth : d[p];
-            (void)c;
+                d[p] = d[p] >= 1.0f ? clearDepth : d[p];
+                (void)c;
 #endif
-        }
+            }
+        };
     };
-    if (mapped[1]) {
-        depthAov(static_cast<float *>(mapped[1]), size_t(appWidth) * appHeight);
+    const auto depthAov = depthAovOf(depthConstants);
+    // A deferred frame's buffer holds the last converted one unless collected.
+    if (mapped[1] && (!frame.deferReadback || collected)) {
+        depthAovOf(collectedDepth)(static_cast<float *>(mapped[1]), size_t(appWidth) * appHeight);
     }
     try {
         _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
