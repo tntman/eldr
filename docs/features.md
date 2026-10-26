@@ -136,7 +136,13 @@ marked [film] in the settings):
   (`giPreconverge`).
 - Adaptive sampling: off in interactive films (`adaptiveThreshold`, 0); in
   final-quality runs on by default (`adaptiveFinalThreshold`, 0.01), and a film
-  counts as converged once `adaptivePixelFraction` (0.99) of the pixels stopped.
+  counts as converged once `adaptivePixelFraction` (0.999) of the pixels
+  stopped. Films with motion blur time samples are not adaptive: a time
+  sample moves the whole scene, so the error is copies of the moving
+  object, not noise a pixel's variance shows, and a pixel the motion
+  covers for a few percent of the shutter misses all of its first samples
+  and would stop dark (a blur's faint tails were cut off). They run to
+  `filmSamples`.
 
 All stochastic effects take their noise from per-effect Sobol dimensions with
 blue-noise rotation (`eldr:sampleDimensions`), so the average converges
@@ -517,7 +523,18 @@ has no lens (no DOF, no blur).
   linear from the previous frame to this one for instances, joints, blend
   shapes and the camera), so shadows, rays, refraction and DOF all see the
   moving geometry. Costs one shutter pass per sample (1.7-2.1 ms on the 20k
-  crowd). With `sampledMotion` (on) rigid prims, instances and the camera
+  crowd). Each sample moves the whole scene, so a fast move gives one copy
+  per sample, shutter / `filmSamples` apart (64 samples over a 120-pixel
+  move: copies 1.9 pixels apart, steps of 15% across the blur). With
+  `motionBlurResidual` (on) each sample is spread over its stratum of the
+  shutter by a short gather along its motion vectors, which in a time
+  sample run from the frame before to the sample's time (rigid instances
+  from the shutter's capture, point caches from their velocities), so the
+  strata tile the shutter and the copies blend into a smooth blur. Karma
+  instead samples a time per pixel sample, which gives noise, not steps;
+  Eldr's samples render a whole frame each, so it fills between them
+  instead (EEVEE's vector blur between its steps). Such films are not
+  adaptive (see the film's adaptive sampling) and run to `filmSamples`. With `sampledMotion` (on) rigid prims, instances and the camera
   take their motion from the scene's transform samples at shutter open and
   close (continued linearly to a frame), not from the last rendered frame, so
   a single usdrecord or husk frame is blurred too. With `deformationBlur`

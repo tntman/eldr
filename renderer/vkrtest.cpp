@@ -1587,6 +1587,72 @@ int main()
         }
 
         {
+            // A long blur in final quality (defaults: adaptive sampling,
+            // Gaussian film filter): the edge moves 48 pixels (8 to 56) over
+            // the shutter, so pixel x is covered for 1 - (x + 0.5 - 8) / 48
+            // of it. 16 samples are 3 pixels apart: without the residual
+            // blur between them (Frame::motionBlurResidual) the ramp is a
+            // staircase of 1/16 steps (up to 0.06 off). At 64 the tail's
+            // pixels (covered 1-12% of the shutter) must not stop dark after
+            // the first samples missed them (adaptive sampling).
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.0f);
+            std::fill(white->emissive, white->emissive + 3, 1.0f);
+            vkr::Mesh *quad = AddQuad(scene, -4, -1, 0, 1, 0);  // its left edge stays off the image
+            quad->material = white;
+            auto longRamp = [&](uint32_t samples, int *frames) {
+                vkr::Renderer renderer(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.postProcess = true;
+                frame.post.autoExposure = false;
+                frame.post.bloomIntensity = 0.0f;
+                frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
+                frame.shutterOpen = -1.0f;
+                frame.shutter = 1.0f;
+                frame.finalQuality = true;
+                frame.filmSamples = samples;
+                frame.adaptiveFinalThreshold = vkr::Renderer::Frame().adaptiveFinalThreshold;
+                quad->transforms[12] = -0.75f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                Render(renderer, scene, frame);
+                quad->prevTransforms = quad->transforms;
+                quad->transforms[12] = 0.75f;
+                quad->transformsDirty = true;
+                scene.Commit();
+                Image img;
+                for (*frames = 0; *frames < 300 && (*frames == 0 || !renderer.IsConverged()); ++*frames) {
+                    img = Render(renderer, scene, frame);
+                    scene.Commit();
+                }
+                std::vector<float> row;
+                for (int x = 0; x < 64; ++x) {
+                    row.push_back(img.At(x, 32, 0) / std::max(img.At(2, 32, 0), 1e-6f));
+                }
+                return row;
+            };
+            int frames = 0;
+            const std::vector<float> coarse = longRamp(16, &frames);
+            float worst = 0.0f, rise = 0.0f;
+            for (int x = 12; x < 52; ++x) {
+                worst = std::max(worst, std::abs(coarse[x] - (1.0f - (x + 0.5f - 8.0f) / 48.0f)));
+                rise = std::max(rise, coarse[x + 1] - coarse[x]);
+            }
+            const std::string smooth = "long blur, 16 time samples: a smooth, monotonic ramp, not steps (worst " +
+                                       std::to_string(worst) + ", rise " + std::to_string(rise) + ")";
+            Expect(worst < 0.025f && rise < 0.01f, smooth.c_str());
+            const std::vector<float> fine = longRamp(64, &frames);
+            bool tail = true;
+            for (int x = 50; x < 56; ++x) {  // covered 1.0-11.5% of the shutter
+                tail = tail && fine[x] > 0.5f * (1.0f - (x + 0.5f - 8.0f) / 48.0f);
+            }
+            const std::string kept = "long blur: adaptive sampling keeps the faint tail's samples (" +
+                                     std::to_string(frames) + " frames, x 55: " + std::to_string(fine[55]) + ")";
+            Expect(frames == 64 && tail, kept.c_str());
+        }
+
+        {
             // Upscaling (TAAU): an emitter whose edges fall between pixels
             // (x = 0.3: pixel 41.6; y = 0.45: row 46.4), rendered at half
             // size while TAA resolves (film off: it stays so), comes out at

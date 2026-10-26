@@ -20,6 +20,9 @@ public:
         // Shutter in frames (0: no motion blur), longest half blur in
         // pixels; 1/width, 1/height (filled in by Lens).
         float shutter, maxHalfBlur, texel[2];
+        // Residual motion blur: the sample's stratum, from window[0] to
+        // window[1] strata around its time (zw unused).
+        float window[4];
     };
 
     explicit Lens(Device &device);
@@ -39,6 +42,10 @@ public:
     // Blurs `color` (COLOR_ATTACHMENT_OPTIMAL, left so) by each pixel's
     // circle of confusion.
     void RecordDepthOfField(VkCommandBuffer cmd, Params params);
+    // Spreads `color` (as RecordDepthOfField) over the time sample's
+    // stratum of the shutter: params.shutter is a stratum's (the residual
+    // blur between motion time samples, motion_residual.frag).
+    void RecordResidualMotionBlur(VkCommandBuffer cmd, Params params);
     // Blurs TAA's resolve (SHADER_READ_ONLY_OPTIMAL, left so) along each
     // pixel's motion over the shutter.
     void RecordMotionBlur(VkCommandBuffer cmd, Params params);
@@ -46,12 +53,14 @@ public:
 private:
     void _Destroy();
     void _Fill(Params *params) const;
+    void _RecordOnColor(VkCommandBuffer cmd, Params params, VkPipeline pipeline);
 
     Device &_dev;
     VkSampler _nearest = VK_NULL_HANDLE, _linear = VK_NULL_HANDLE;
     VkDescriptorSetLayout _setLayout = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
-    VkPipeline _tilesPipeline = VK_NULL_HANDLE, _dof = VK_NULL_HANDLE, _blur = VK_NULL_HANDLE;
+    VkPipeline _tilesPipeline = VK_NULL_HANDLE, _dof = VK_NULL_HANDLE, _blur = VK_NULL_HANDLE,
+               _residual = VK_NULL_HANDLE;
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _dofSet = VK_NULL_HANDLE, _blurSet = VK_NULL_HANDLE;
     Image _scratch;  // copy of `color` depth of field reads

@@ -60,7 +60,8 @@ struct FrameData {
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
     uint32_t lodFade[4];     // frames a level of detail crossfade lasts (0: none)
     float lightPath[4];      // Light path intensity: direct, indirect multiplier; z 1: either isn't 1 (mesh.frag)
-    float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on
+    float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
+                             // z: 1 = a time sample (rigid motion vectors from the shutter's capture)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
 };
 
@@ -767,7 +768,7 @@ void Renderer::_CreateDescriptors()
         {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
         // Motion blur time samples (shutter.comp): last frame's rigid rows,
         // joints and blend shape weights.
-        {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
         {70, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {71, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         // Denoised SSR (SsrDenoise): what mesh.frag traces for it, bound
@@ -2814,10 +2815,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // A run is final if it started so (filmMode 1); one that started from
     // the TAA image (2) stays interactive.
     _filmFinal = film && (filmMode == 1 || (filmMode == 0 && _filmFinal));
-    const float adaptiveThreshold = frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
-                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
-                                                                    : 0.0f;
-    _filmAdaptive = film && adaptiveThreshold > 0.0f;
     _filmRuns += filmMode != 0 ? 1 : 0;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
@@ -2853,6 +2850,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
                      gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
     const bool timeSample = film && _shutter.valid;
+    // Adaptive sampling stops a pixel on its own samples' variance, but
+    // the error of time samples is structured: every sample moves the
+    // whole scene, so a pixel the motion covers for 3% of the shutter
+    // misses all of its first 16 samples (zero variance) and would stop
+    // dark, and the copies of a moving object between samples are steps,
+    // not noise. Films with time samples run to filmSamples; the
+    // samples render the whole frame anyway, so only the film's early
+    // end is lost, which moving pixels prevent in most frames.
+    const float adaptiveThreshold = timeSample                      ? 0.0f
+                                  : frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
+                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
+                                                                    : 0.0f;
+    _filmAdaptive = film && adaptiveThreshold > 0.0f;
     // ponytail: a box shutter.
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);
@@ -2860,12 +2870,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Deformation blur: point velocities (mesh.vert) move by this.
     fd.deform[0] = shutterT - 1.0f;
     fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
+    fd.deform[2] = timeSample ? 1.0f : 0.0f;
+    Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
             lensed.viewProj[i] = _shutter.viewProj[i] + (appFrame.viewProj[i] - _shutter.viewProj[i]) * shutterT;
         }
         const Mat4 inv = Inverse(ToMat4(lensed.viewProj));
         std::memcpy(lensed.invViewProj, inv.m, sizeof(lensed.invViewProj));
+        shutterInvViewProj = inv;
         for (int i = 0; i < 3; ++i) {
             lensed.cameraPos[i] = _shutter.cameraPos[i] + (appFrame.cameraPos[i] - _shutter.cameraPos[i]) * shutterT;
         }
@@ -3853,9 +3866,22 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                     : 0.0f;
     const float residualScale = 1.0f / std::sqrt(float(std::max(frame.filmSamples, 1u)));
     const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
+    // Residual motion blur: time samples render whole copies of the scene,
+    // as many as the film has samples, about shutter / filmSamples apart;
+    // a fast move leaves pixels between the copies (steps across the
+    // blur). Each sample is spread over its stratum of the shutter (the
+    // first 2^m Sobol points are one per stratum), so the strata tile the
+    // shutter exactly (EEVEE's vector blur between its steps). The motion
+    // vectors of a time sample run from the frame before (t = 0) to its
+    // time, t of a frame's motion, so the stratum's shutter is divided by
+    // t. Pixels whose stratum moves them under a pixel are left alone.
+    // ponytail: filmSamples not a power of two leaves the strata uneven.
+    const bool residualBlur = timeSample && frame.motionBlurResidual && shutterT > 1e-3f;
     Lens::Params lens{};
-    if (dof || postBlur) {
-        const Mat4 back = postBlur ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj) : Mat4();
+    if (dof || postBlur || residualBlur) {
+        const Mat4 back = postBlur       ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj)
+                          : residualBlur ? shutterInvViewProj * ToMat4(_shutter.viewProj)
+                                         : Mat4();
         std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
         std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
         if (dof) {
@@ -3867,13 +3893,22 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
         lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);
         lens.frame = float(_haltonIndex % 64);
-        lens.shutter = postBlur ? frame.shutter : 0.0f;
+        lens.shutter = postBlur       ? frame.shutter
+                       : residualBlur ? frame.shutter / (float(std::max(frame.filmSamples, 1u)) * shutterT)
+                                      : 0.0f;
+        const float stratum = shutterU * float(std::max(frame.filmSamples, 1u));
+        lens.window[0] = std::floor(stratum) - stratum;
+        lens.window[1] = lens.window[0] + 1.0f;
         lens.maxHalfBlur = std::min(0.025f * float(frame.width), 32.0f);
         _lens.RecordTiles(_cmd, lens);
     }
     if (dof) {
         _lens.RecordDepthOfField(_cmd, lens);
         pass("depthOfField");
+    }
+    if (residualBlur) {
+        _lens.RecordResidualMotionBlur(_cmd, lens);
+        pass("motionBlur");
     }
     if (frame.postProcess) {
         // HDR color feeds TAA and post (TAA also reads the read-only depth).

@@ -226,8 +226,17 @@ another checkout's Eldr beside yours.
   default). They apply when the prim's value changes, so they also work with
   `usdrecord --renderSettingsPrimPath`.
 - **Several frames** (`husk -f 1 -n 3`, `$F4` in the product name) and motion
-  blur over the camera shutter work. Karma's blur is smooth; Eldr's is made
-  of discrete time samples (visible steps across a fast move).
+  blur over the camera shutter work. husk renders until Eldr reports the
+  frame converged, so the film reaches `eldr:filmSamples`. Eldr's time
+  samples used to show as steps across a fast move (a cube moving 120 px
+  at 256x64, 64 samples: copies 1.9 px apart, and the blur's faint ends
+  cut off by adaptive sampling). With the residual blur between time
+  samples (`eldr:motionBlurResidual`) and non-adaptive time-sampled films
+  the blur is smooth: against a 1024-sample render the row's RMS error
+  went from 0.0071 to 0.0027 (plateau 0.145), and normalised to its
+  plateau it follows Karma's (256 spp) within 0.04 on average, as the
+  1024-sample render does (0.037). Karma's blur is noise per pixel
+  sample instead.
 - **Lens distortion.** Solaris authors a Karma Physical Lens as a compiled
   string in `karma:camera:lensshader` ("opdef:/Vop/kma_physicallens?VflCode
   ... opencv_k1 0.12 ..."); Eldr reads opencv_k1..k6, p1, p2 from it (and

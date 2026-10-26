@@ -12,6 +12,9 @@ layout(push_constant) uniform LensParams {
     // Shutter in frames (0: no motion blur), longest half blur in pixels,
     // 1/width, 1/height.
     vec4 motion;
+    // Residual motion blur: the sample's stratum of the shutter, from x to
+    // y strata around the sample's time (motion_residual.frag).
+    vec4 window;
 } pc;
 
 float Distance(float depth)
