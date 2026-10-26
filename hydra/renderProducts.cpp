@@ -41,7 +41,7 @@ bool IsCryptomatte(uint32_t kind)
 
 } // namespace
 
-bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *framing)
+bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *framing, const GfVec2i *size)
 {
     if (!settings || !settings->IsActive()) {
         return false;
@@ -52,14 +52,14 @@ bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *f
         }
         // Literal USD: with nothing authored, a product is
         // UsdRenderSettingsBase's fallback 2048 x 1080, as in husk and Karma.
-        framing->resolution = rp.resolution;
+        framing->resolution = size ? *size : rp.resolution;
         framing->pixelAspectRatio = rp.pixelAspectRatio > 0.0f ? rp.pixelAspectRatio : 1.0f;
         framing->conformPolicy = rp.aspectRatioConformPolicy;
         // The data window in whole pixels, at least one, inside the image
         // (ponytail: no overscan beyond it).
         const GfRange2f ndc = rp.dataWindowNDC.IsEmpty() ? GfRange2f(GfVec2f(0), GfVec2f(1)) : rp.dataWindowNDC;
         for (int k = 0; k < 2; ++k) {
-            const int size = rp.resolution[k];
+            const int size = framing->resolution[k];
             const int lo = std::clamp(int(std::lround(ndc.GetMin()[k] * size)), 0, size - 1);
             const int hi = std::clamp(int(std::lround(ndc.GetMax()[k] * size)), lo + 1, size);
             framing->window[k] = lo;

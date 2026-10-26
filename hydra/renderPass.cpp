@@ -355,9 +355,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // the camera; husk from the product). The app's colour, depth and ids
     // then get the frame resampled (nearest), the extra AOVs and Cryptomatte too.
     HdVkRenderProducts::Framing framing;
+    // husk --res changes its buffers, not the product: the buffers' size is
+    // then the resolution (the camera conforms to its aspect by the product's
+    // policy), as in Karma. Elsewhere (usdrecord -w) the product's own stands.
+    const GfVec2i bufferSize(int(frame.width), int(frame.height));
     const bool hasFraming = frame.renderProducts && HdVkRenderProducts::GetFraming(
                                                         static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings(),
-                                                        &framing);
+                                                        &framing, batch ? &bufferSize : nullptr);
     const bool productSized = hasFraming && frame.productResolution &&
                               (framing.Width() != frame.width || framing.Height() != frame.height);
     const uint32_t appWidth = frame.width, appHeight = frame.height;
