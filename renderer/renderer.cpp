@@ -2640,6 +2640,7 @@ uint32_t Renderer::VisibleInstances() const
 // (interop.h) skips the readback; frames in flight would come next.
 void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &out)
 {
+    std::lock_guard<std::mutex> lock(_frameMutex);
     // The app's camera, or this film sample's through a point of the lens
     // (Frame::dofJitter, set once the film's state is known below); the
     // film's and TAA's motion tests compare the app's.
@@ -4256,6 +4257,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
 // As Render's readback, from the images it left in TRANSFER_SRC_OPTIMAL.
 void Renderer::Read(const Targets &out)
 {
+    std::lock_guard<std::mutex> lock(_frameMutex);
     if (!_frameColor) {
         return;
     }

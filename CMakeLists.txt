@@ -219,6 +219,12 @@ endforeach()
 add_executable(testPlugin tests/testPlugin.cpp)
 target_link_libraries(testPlugin PRIVATE hd)
 add_dependencies(testPlugin hdVk)
+if(NOT HDVK_HOUDINI)
+    # Frame times with Houdini's viewport AOV bindings, and its id check (docs/houdini.md).
+    add_executable(viewportBench tests/viewportBench.cpp)
+    target_link_libraries(viewportBench PRIVATE hd hdx usdImaging usdGeom)
+    add_dependencies(viewportBench hdVk)
+endif()
 
 enable_testing()
 add_test(NAME vkrtest COMMAND vkrtest)
@@ -228,6 +234,10 @@ if(WIN32)
     file(TO_NATIVE_PATH ${CMAKE_SOURCE_DIR}/usdenv.cmd usdenv)
     add_test(NAME selection COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_selection.py)
     set_tests_properties(selection PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    # Houdini's viewport bindings: lazy readback, unread extra AOVs, ids vs the render index.
+    add_test(NAME viewport_bindings COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
+             ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --check --ids)
+    set_tests_properties(viewport_bindings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME purpose COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_purpose.py)
     set_tests_properties(purpose PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME curves COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_curves.py)

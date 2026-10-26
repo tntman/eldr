@@ -18,9 +18,10 @@
 PXR_NAMESPACE_OPEN_SCOPE
 
 // CPU-side AOV storage the render pass fills via readback. Always converged.
-// With GPU sharing (HdVkGLInterop) colour and depth are also a texture of
-// the app's Hgi (GetResource), and the CPU copy is fetched only when
-// someone maps it (selection highlighting, picking).
+// The CPU copy is fetched only when someone maps it (SetFetch): an app
+// (Houdini's viewport) may bind more than it reads each frame. With GPU
+// sharing (HdVkGLInterop) colour and depth are also a texture of the app's
+// Hgi (GetResource).
 class HdVkRenderBuffer final : public HdRenderBuffer
 {
 public:
@@ -38,6 +39,7 @@ public:
         _format = format;
         _texture = HgiTextureHandle();
         _fetch = nullptr;
+        _mapped = true;  // a new buffer counts as read: its first frame fills it
         _data.resize(size_t(_width) * _height * HdDataSizeOfFormat(format));
         return true;
     }
@@ -56,8 +58,11 @@ public:
             fetch(_data.data());
         }
         ++_mappers;
+        _mapped = true;
         return _data.data();
     }
+    // Whether it was mapped since the last call (the render pass's, once a frame).
+    bool TakeMapped() { return _mapped.exchange(false); }
     void Unmap() override { --_mappers; }
     bool IsMapped() const override { return _mappers > 0; }
 
@@ -112,6 +117,7 @@ private:
     HdFormat _format = HdFormatInvalid;
     std::vector<uint8_t> _data;
     std::atomic<int> _mappers{0};
+    std::atomic<bool> _mapped{true};
     HgiTextureHandle _texture;
     std::function<void(void *)> _fetch;
 #ifdef HDVK_HOUDINI

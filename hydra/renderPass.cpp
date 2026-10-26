@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <map>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -179,7 +180,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         return b && b->GetFormat() == format && b->GetWidth() == frame.width &&
                b->GetHeight() == frame.height ? b : nullptr;
     };
-    // HDVK_DEBUG_AOVS=1: print what the app binds, once per set of bindings.
+    // The buffers the app mapped (read) since the last frame, new ones too:
+    // read back with the frame, in one copy; the rest only if mapped.
+    std::unordered_set<HdRenderBuffer *> read;
+    for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+        if (b.renderBuffer && static_cast<HdVkRenderBuffer *>(b.renderBuffer)->TakeMapped()) {
+            read.insert(b.renderBuffer);
+        }
+    }
+    // HDVK_DEBUG_AOVS=1: print what the app binds, once per set of bindings,
+    // and every 60 frames how many of them it mapped (read).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
         std::string list;
         for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
@@ -191,6 +201,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         if (list != last) {
             last = list;
             std::fprintf(stderr, "Eldr AOV bindings:%s\n", list.c_str());
+            std::fflush(stderr);
+        }
+        static std::map<std::string, int> maps;
+        static int frames = 0;
+        for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+            maps[b.aovName.GetString()] += read.count(b.renderBuffer) > 0;
+        }
+        if (++frames % 60 == 0) {
+            std::string counts;
+            for (auto &[name, n] : maps) {
+                counts += TfStringPrintf(" %s %d", name.c_str(), n);
+                n = 0;
+            }
+            std::fprintf(stderr, "Eldr AOVs mapped in the last 60 frames:%s\n", counts.c_str());
             std::fflush(stderr);
         }
     }
@@ -522,8 +546,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
     }
 
-    // GPU sharing: colour and depth go to the app's OpenGL as textures, and
-    // none of the four is read back unless someone maps it.
+    // The four come back with the frame if the app read them last frame
+    // (`read`), else only once it maps them: Houdini's viewport binds the
+    // ids for picking but needn't read them each frame. GPU sharing: colour
+    // and depth also go to the app's OpenGL as textures.
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
     HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
@@ -544,23 +570,31 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     void *mapped[4] = {};
     std::vector<uint8_t> productTargets[4];
     constexpr size_t kTargetBytes[4] = {8, 4, 4, 4};  // RGBA16F, float, int, int
-    if (!lazy) {
-        for (int i = 0; i < 4; ++i) {
-            mapped[i] = buffers[i] ? buffers[i]->Map() : nullptr;
-            if (productSized && mapped[i]) {
-                productTargets[i].resize(size_t(frame.width) * frame.height * kTargetBytes[i]);
-            }
+    for (int i = 0; i < 4; ++i) {
+        mapped[i] = buffers[i] && (productSized || read.count(buffers[i])) ? buffers[i]->Map() : nullptr;
+        if (productSized && mapped[i]) {
+            productTargets[i].resize(size_t(frame.width) * frame.height * kTargetBytes[i]);
         }
-        auto target = [&](int i) { return productSized && mapped[i] ? productTargets[i].data() : mapped[i]; };
-        out.color = target(0);
-        out.depth = static_cast<float *>(target(1));
-        out.primId = static_cast<int32_t *>(target(2));
-        out.instanceId = static_cast<int32_t *>(target(3));
     }
+    auto target = [&](int i) { return productSized && mapped[i] ? productTargets[i].data() : mapped[i]; };
+    out.color = target(0);
+    out.depth = static_cast<float *>(target(1));
+    out.primId = static_cast<int32_t *>(target(2));
+    out.instanceId = static_cast<int32_t *>(target(3));
     std::vector<GfHalf> colorHalf;
     if (colorFloat32 && !productSized) {
         colorHalf.resize(size_t(frame.width) * frame.height * 4);
         out.color = colorHalf.data();
+    }
+    // While the camera moves, extra AOVs the app didn't read last frame
+    // aren't rendered: Houdini's viewport binds normal and primvars:st beside
+    // the colour but reads them only when it shows them, and they cost a
+    // G-buffer pass and a readback. One mapped then is a frame old once,
+    // and rendered from the next frame on; still frames render them all.
+    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
+    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    for (HdRenderBuffer *&b : extra) {
+        b = b && moving && !frame.finalQuality && !productSized && !read.count(b) ? nullptr : b;
     }
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
         out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
@@ -690,17 +724,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         idForHusk->Unmap();
     }
-    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
-        static int frames = 0;
-        if (++frames % 60 == 1 && color && mapped[0]) {
-            const GfHalf *c = static_cast<const GfHalf *>(mapped[0]) + (size_t(frame.height / 2) * frame.width + frame.width / 2) * 4;
-            const float d = mapped[1] ? static_cast<const float *>(mapped[1])[size_t(frame.height / 2) * frame.width + frame.width / 2] : -1.0f;
-            std::fprintf(stderr, "Eldr frame %d: centre colour %g %g %g %g depth %g, shared %d, camera %s\n", frames,
-                         float(c[0]), float(c[1]), float(c[2]), float(c[3]), d, int(shared),
-                         camera ? camera->GetId().GetText() : "(none)");
-            std::fflush(stderr);
-        }
-    }
     for (int i = 0; i < 4 && productSized; ++i) {
         if (!mapped[i]) {
             continue;
@@ -726,8 +749,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         buffers[i]->SetTexture(shared && i == 0 ? interop->Color() : shared && i == 1 ? interop->Depth()
                                                                                     : HgiTextureHandle());
-        if (!lazy) {
+        if (mapped[i]) {
             buffers[i]->Unmap();
+            buffers[i]->TakeMapped();  // the pass's own map
             buffers[i]->SetFetch(nullptr);
             continue;
         }
@@ -744,9 +768,28 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         });
     }
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug) {
+        static int frames = 0;
+        if (++frames % 60 == 1 && color) {  // reads them back like the app would
+            const size_t centre = size_t(frame.height / 2) * frame.width + frame.width / 2;
+            const GfHalf *c = static_cast<const GfHalf *>(color->Map()) + centre * 4;
+            const float d = depth ? static_cast<const float *>(depth->Map())[centre] : -1.0f;
+            std::fprintf(stderr, "Eldr frame %d: centre colour %g %g %g %g depth %g, shared %d, camera %s\n", frames,
+                         float(c[0]), float(c[1]), float(c[2]), float(c[3]), d, int(shared),
+                         camera ? camera->GetId().GetText() : "(none)");
+            std::fflush(stderr);
+            color->Unmap();
+            static_cast<HdVkRenderBuffer *>(color)->TakeMapped();  // not the app's
+            if (depth) {
+                depth->Unmap();
+                static_cast<HdVkRenderBuffer *>(depth)->TakeMapped();
+            }
+        }
+    }
     for (HdRenderBuffer *b : extra) {
         if (b) {
             b->Unmap();
+            static_cast<HdVkRenderBuffer *>(b)->TakeMapped();  // the pass's own map
         }
     }
 }
