@@ -1,0 +1,666 @@
+#usda 1.0
+(
+    defaultPrim = "Macbeth"
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# ColorChecker Classic, flat diffuse patches (roughness 1, specular 0). Values: BabelColor 2005
+# average, D50 xyY -> Bradford to D65 -> linear Rec.709. See tests/scenes/make_macbeth.py.
+# The light variant set picks the lighting; "hdri" is the default. StinsonBeach.hdr ships with
+# USD and resolves through the asset search path (usdenv.cmd sets it).
+def Xform "Macbeth" (
+    variants = {string light = "hdri"}
+    prepend variantSets = "light"
+)
+{
+    def Camera "cam"
+    {
+        float focalLength = 50
+        float horizontalAperture = 36
+        float verticalAperture = 24
+        float2 clippingRange = (1, 100)
+        double3 xformOp:translate = (0, 0, 10)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+    variantSet "light" = {
+        "hdri" {
+            def DomeLight "dome"
+            {
+                asset inputs:texture:file = @StinsonBeach.hdr@
+                float inputs:intensity = 1
+            }
+        }
+        "white" {
+            def DomeLight "dome"
+            {
+                color3f inputs:color = (1, 1, 1)
+                float inputs:intensity = 1
+            }
+        }
+        "distant" {
+            def DistantLight "sun"
+            {
+                float inputs:intensity = 3
+                float inputs:angle = 0
+            }
+        }
+        "rect" {
+            def RectLight "panel"
+            {
+                float inputs:width = 4
+                float inputs:height = 4
+                float inputs:intensity = 3
+                double3 xformOp:translate = (0, 5, 5)
+                float xformOp:rotateX = -45
+                uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+            }
+        }
+    }
+    def Scope "chart"
+    {
+        def Mesh "p01" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 1 dark skin: xyY D50 0.4316 0.3777 0.1008
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-3.250, 1.150, 0), (-2.250, 1.150, 0), (-2.250, 2.150, 0), (-3.250, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m01>
+        }
+        def Mesh "p02" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 2 light skin: xyY D50 0.4197 0.3744 0.3495
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-2.150, 1.150, 0), (-1.150, 1.150, 0), (-1.150, 2.150, 0), (-2.150, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m02>
+        }
+        def Mesh "p03" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 3 blue sky: xyY D50 0.276 0.3016 0.1836
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1.050, 1.150, 0), (-0.050, 1.150, 0), (-0.050, 2.150, 0), (-1.050, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m03>
+        }
+        def Mesh "p04" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 4 foliage: xyY D50 0.3703 0.4499 0.1325
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0.050, 1.150, 0), (1.050, 1.150, 0), (1.050, 2.150, 0), (0.050, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m04>
+        }
+        def Mesh "p05" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 5 blue flower: xyY D50 0.2999 0.2856 0.2304
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(1.150, 1.150, 0), (2.150, 1.150, 0), (2.150, 2.150, 0), (1.150, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m05>
+        }
+        def Mesh "p06" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 6 bluish green: xyY D50 0.2848 0.3911 0.4178
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2.250, 1.150, 0), (3.250, 1.150, 0), (3.250, 2.150, 0), (2.250, 2.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m06>
+        }
+        def Mesh "p07" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 7 orange: xyY D50 0.5295 0.4055 0.3118
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-3.250, 0.050, 0), (-2.250, 0.050, 0), (-2.250, 1.050, 0), (-3.250, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m07>
+        }
+        def Mesh "p08" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 8 purplish blue: xyY D50 0.2305 0.2106 0.1175
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-2.150, 0.050, 0), (-1.150, 0.050, 0), (-1.150, 1.050, 0), (-2.150, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m08>
+        }
+        def Mesh "p09" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 9 moderate red: xyY D50 0.5012 0.3273 0.1929
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1.050, 0.050, 0), (-0.050, 0.050, 0), (-0.050, 1.050, 0), (-1.050, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m09>
+        }
+        def Mesh "p10" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 10 purple: xyY D50 0.3319 0.2482 0.0643
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0.050, 0.050, 0), (1.050, 0.050, 0), (1.050, 1.050, 0), (0.050, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m10>
+        }
+        def Mesh "p11" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 11 yellow green: xyY D50 0.3984 0.5008 0.4393
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(1.150, 0.050, 0), (2.150, 0.050, 0), (2.150, 1.050, 0), (1.150, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m11>
+        }
+        def Mesh "p12" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 12 orange yellow: xyY D50 0.4957 0.4427 0.4357
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2.250, 0.050, 0), (3.250, 0.050, 0), (3.250, 1.050, 0), (2.250, 1.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m12>
+        }
+        def Mesh "p13" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 13 blue: xyY D50 0.2018 0.1692 0.0575
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-3.250, -1.050, 0), (-2.250, -1.050, 0), (-2.250, -0.050, 0), (-3.250, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m13>
+        }
+        def Mesh "p14" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 14 green: xyY D50 0.3253 0.5032 0.2318
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-2.150, -1.050, 0), (-1.150, -1.050, 0), (-1.150, -0.050, 0), (-2.150, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m14>
+        }
+        def Mesh "p15" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 15 red: xyY D50 0.5686 0.3303 0.1257
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1.050, -1.050, 0), (-0.050, -1.050, 0), (-0.050, -0.050, 0), (-1.050, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m15>
+        }
+        def Mesh "p16" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 16 yellow: xyY D50 0.4697 0.4734 0.5981
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0.050, -1.050, 0), (1.050, -1.050, 0), (1.050, -0.050, 0), (0.050, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m16>
+        }
+        def Mesh "p17" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 17 magenta: xyY D50 0.4159 0.2688 0.2009
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(1.150, -1.050, 0), (2.150, -1.050, 0), (2.150, -0.050, 0), (1.150, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m17>
+        }
+        def Mesh "p18" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 18 cyan: xyY D50 0.2131 0.3023 0.193
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2.250, -1.050, 0), (3.250, -1.050, 0), (3.250, -0.050, 0), (2.250, -0.050, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m18>
+        }
+        def Mesh "p19" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 19 white 9.5: xyY D50 0.3469 0.3608 0.9065
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-3.250, -2.150, 0), (-2.250, -2.150, 0), (-2.250, -1.150, 0), (-3.250, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m19>
+        }
+        def Mesh "p20" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 20 neutral 8: xyY D50 0.344 0.3584 0.5894
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-2.150, -2.150, 0), (-1.150, -2.150, 0), (-1.150, -1.150, 0), (-2.150, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m20>
+        }
+        def Mesh "p21" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 21 neutral 6.5: xyY D50 0.3432 0.3581 0.362
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(-1.050, -2.150, 0), (-0.050, -2.150, 0), (-0.050, -1.150, 0), (-1.050, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m21>
+        }
+        def Mesh "p22" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 22 neutral 5: xyY D50 0.3446 0.3579 0.1915
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(0.050, -2.150, 0), (1.050, -2.150, 0), (1.050, -1.150, 0), (0.050, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m22>
+        }
+        def Mesh "p23" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 23 neutral 3.5: xyY D50 0.3401 0.3548 0.0883
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(1.150, -2.150, 0), (2.150, -2.150, 0), (2.150, -1.150, 0), (1.150, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m23>
+        }
+        def Mesh "p24" (
+            prepend apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            # 24 black 2: xyY D50 0.3406 0.3537 0.0315
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+            point3f[] points = [(2.250, -2.150, 0), (3.250, -2.150, 0), (3.250, -1.150, 0), (2.250, -1.150, 0)]
+            normal3f[] normals = [(0, 0, 1), (0, 0, 1), (0, 0, 1), (0, 0, 1)] (interpolation = "vertex")
+            uniform token subdivisionScheme = "none"
+            rel material:binding = </Macbeth/mtl/m24>
+        }
+    }
+    def Scope "mtl"
+    {
+        def Material "m01"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m01/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.17302, 0.08211, 0.05672)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m02"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m02/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.56841, 0.29265, 0.21825)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m03"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m03/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.10353, 0.19596, 0.33139)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m04"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m04/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.10155, 0.14892, 0.05192)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m05"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m05/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.22161, 0.21587, 0.43454)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m06"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m06/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.10806, 0.51436, 0.41275)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m07"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m07/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.74728, 0.20062, 0.02813)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m08"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m08/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.06005, 0.10971, 0.42054)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m09"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m09/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.56423, 0.08389, 0.11912)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m10"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m10/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.11213, 0.04269, 0.14433)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m11"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m11/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.34153, 0.50266, 0.04880)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m12"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m12/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.79468, 0.35939, 0.02052)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m13"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m13/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.01707, 0.05021, 0.29215)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m14"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m14/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.05606, 0.30014, 0.06872)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m15"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m15/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.45601, 0.03035, 0.04085)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m16"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m16/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.85739, 0.56762, 0.00675)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m17"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m17/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.53369, 0.08859, 0.30751)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m18"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m18/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.00000, 0.24700, 0.40036)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m19"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m19/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.90540, 0.90848, 0.88713)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m20"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m20/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.57979, 0.59204, 0.59348)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m21"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m21/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.35380, 0.36417, 0.36638)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m22"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m22/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.19010, 0.19180, 0.19310)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m23"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m23/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.08523, 0.08889, 0.09257)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+        def Material "m24"
+        {
+            token outputs:surface.connect = </Macbeth/mtl/m24/pbr.outputs:surface>
+            def Shader "pbr"
+            {
+                uniform token info:id = "UsdPreviewSurface"
+                color3f inputs:diffuseColor = (0.03077, 0.03158, 0.03323)
+                int inputs:useSpecularWorkflow = 1
+                color3f inputs:specularColor = (0, 0, 0)
+                float inputs:roughness = 1
+                token outputs:surface
+            }
+        }
+    }
+}

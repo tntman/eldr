@@ -277,6 +277,10 @@ if(WIN32)
         set_tests_properties(exr PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         add_test(NAME aov_sums COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aov_sums.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(aov_sums PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # ColorChecker under a white dome: linear radiance = albedo (tests/macbeth_compare.py is the Karma comparison).
+        add_test(NAME macbeth COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/macbeth_compare.py
+                 --exrinfo $<TARGET_FILE:exrinfo> --variants white --no-karma --check)
+        set_tests_properties(macbeth PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         add_test(NAME motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_motion.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()

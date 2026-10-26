@@ -1,9 +1,10 @@
-// exrinfo image [x y]: prints an image's size, its data window's origin
+// exrinfo image [x y [w h]] (w h: pixel values are the mean over that box): prints an image's size, its data window's origin
 // and display window's size with the pixel aspect ratio, channel names,
 // string metadata (name=value, one per line) and, given a pixel of the data
 // window (x right, y down), its channel values. For tests/test_exr.py (no OpenImageIO in Python).
 #include <OpenImageIO/imageio.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -42,9 +43,17 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "can't read %s: %s\n", argv[1], in->geterror().c_str());
             return 1;
         }
+        const int w = argc >= 6 ? std::max(1, std::atoi(argv[4])) : 1, h = argc >= 6 ? std::max(1, std::atoi(argv[5])) : 1;
+        if (x + w > spec.width || y + h > spec.height) {
+            std::fprintf(stderr, "box %d %d %dx%d is outside the %dx%d data window\n", x, y, w, h, spec.width, spec.height);
+            return 1;
+        }
         for (int c = 0; c < spec.nchannels; ++c) {
-            std::printf("pixel %s %.9g\n", spec.channelnames[c].c_str(),
-                        pixels[(size_t(y) * spec.width + x) * spec.nchannels + c]);
+            double sum = 0;
+            for (int j = 0; j < h; ++j)
+                for (int i = 0; i < w; ++i)
+                    sum += pixels[((size_t(y) + j) * spec.width + x + i) * spec.nchannels + c];
+            std::printf("pixel %s %.9g\n", spec.channelnames[c].c_str(), sum / (double(w) * h));
         }
     }
     return 0;

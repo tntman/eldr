@@ -113,6 +113,21 @@ Within a few percent: step4 floor, highlight, normals, P, depth (1-5%); glass (0
 | Volumes | Rendered | Rendered (OpenVDB files and SOP volumes) |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s |
 
+### ColorChecker, Eldr vs Karma (linear EXR, no tonemap)
+
+`tests/scenes/macbeth.usda` is a ColorChecker Classic (BabelColor 2005 average, D50 xyY Bradford-adapted to D65, linear Rec.709; flat diffuse, roughness 1, specular 0; cyan clamped, it is outside Rec.709) with a `light` variant set: `hdri` (StinsonBeach.hdr), `white` (uniform dome, intensity 1), `distant`, `rect`. `tests/macbeth_compare.py --exrinfo <exrinfo>` renders each with Eldr and husk (Karma CPU) to linear EXRs and prints per patch the albedo, Eldr, Karma and their ratio, plus a CIEDE2000 summary (Lab white = Karma's white patch). Eldr is forced to `eldr:tonemapper` none, `eldr:autoExposure` off, `eldr:exposureCompensation` 0, `eldr:bloomIntensity` 0, `eldr:productLinear` on. ctest `macbeth` checks the white dome (radiance = albedo) for Eldr alone.
+
+| Lighting | Eldr / Karma | dE2000 Eldr vs Karma (mean, worst) | Against albedo |
+|---|---|---|---|
+| white dome | 1.004-1.005 | 0.09, 0.11 | Eldr within 0.4%, Karma 0.4% low |
+| distant | 1.003-1.005 | 0.08, 0.10 | |
+| rect | 1.03 (dark red-ish) to 1.04 (white): Eldr brighter | 0.77, 0.95 | |
+| hdri | R 0.96, G 1.02, B 0.90 | 2.72, 7.28 (white patch) | Both load the HDRI (white patch -58% vs the white dome) |
+
+With the HDRI Karma's sky is bluer: Eldr's blue is 10% lower on every patch, red 4% lower, green 2% higher. Not yet explained (candidates: Eldr's dome filtering or lat-long orientation).
+
+Display transforms are separate. Eldr's colour AOV in the viewport is ACES tonemapped (`eldr:tonemapper` aces, auto exposure on), display-referred but still linear; the host applies the sRGB or OCIO transfer on top. The same scene through usdrecord (default settings) reads, after decoding sRGB: white patch 0.906 -> 0.672, neutral 5 0.192 -> 0.171, black 0.032 -> 0.010, orange red channel 0.747 -> 0.658. So a viewport or PNG can never be compared with the linear EXR numbers above; in Houdini an ACES view on top would tonemap twice (not measured).
+
 ## Solaris viewport
 
 | Topic | Behaviour |
