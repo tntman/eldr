@@ -1,4 +1,5 @@
 #include "material.h"
+#include "timing.h"
 #include "renderDelegate.h"
 
 #include "instancer.h"
@@ -1712,6 +1713,7 @@ HdVkMaterial::HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures)
 void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                         HdDirtyBits *dirtyBits)
 {
+    HdVkTimedCall timed(HdVkCallTimes::kSync);
     HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults

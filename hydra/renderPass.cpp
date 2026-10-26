@@ -5,6 +5,7 @@
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
+#include "timing.h"
 
 #include "pxr/base/gf/half.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -124,7 +125,9 @@ struct FrameTiming {
             }
             std::fprintf(stderr, "Eldr: frame timings to %s\n", path.c_str());
             std::fputs("frame,t_ms,interval_ms,app_ms,commit_ms,setup_ms,collect_ms,wait_ms,render_ms,after_ms,execute_ms,"
-                       "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged\n",
+                       "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged,"
+                       "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
+                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -156,6 +159,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 // they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
+    HdVkTimedCall timed(HdVkCallTimes::kConverged);
     return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale);
 }
 
@@ -1053,13 +1057,23 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         for (int i = 0; i < 4; ++i) {
             readMask |= buffers[i] && read.count(buffers[i]) ? 1 << i : 0;
         }
-        std::fprintf(timing->csv, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%u,%u,%d\n",
+        std::fprintf(timing->csv, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%u,%u,%d",
                      timing->frame++, T::Ms(timing->start, tBegin), T::Ms(timing->lastBegin, tBegin),
                      T::Ms(timing->lastEnd, tBegin), vkDelegate->CommitMs(), T::Ms(tBegin, tCollect),
                      T::Ms(tCollect, tRender), stats.waitMs, T::Ms(tRender, tRendered), T::Ms(tRendered, tEnd), T::Ms(tBegin, tEnd),
                      timing->fetchUs.exchange(0) / 1000.0, stats.gpuMs, stats.cpuMs, int(moving),
                      int(frame.deferReadback), int(collected), readMask, appWidth, appHeight,
                      int(_renderer->IsConverged()));
+        // Eldr's entry points the app called since the last execute; the
+        // rest of app_ms is the app's own.
+        HdVkCallTimes &calls = HdVkCallTimes::Get();
+        double eldrMs = 0;
+        for (int e = 0; e < HdVkCallTimes::kCount; ++e) {
+            const double ms = calls.ns[e].exchange(0) / 1e6;
+            eldrMs += ms;
+            std::fprintf(timing->csv, ",%.3f,%lld", ms, (long long)calls.calls[e].exchange(0));
+        }
+        std::fprintf(timing->csv, ",%.3f\n", T::Ms(timing->lastEnd, tBegin) - eldrMs);
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;

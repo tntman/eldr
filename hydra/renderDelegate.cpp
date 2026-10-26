@@ -596,9 +596,12 @@ const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
 
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
+    HdVkTimedCall timed(HdVkCallTimes::kStats);
     VtDictionary stats;
     stats["rendererName"] = std::string("Eldr");  // plugInfo.json's displayName
-    if (!_device || !_renderer) {
+    // HDVK_NO_STATS=1: the name only (A/B: what the app's stats cost).
+    static const bool none = TfGetenvBool("HDVK_NO_STATS", false);
+    if (!_device || !_renderer || none) {
         return stats;
     }
     // Memory in bytes. gpuMemoryUsed (usdview's "GPU mem") is the graphics
