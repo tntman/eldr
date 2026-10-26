@@ -2179,6 +2179,7 @@ void Scene::Commit(bool keepMotion)
         std::copy((*dome)->worldToLocal, (*dome)->worldToLocal + 16, _gpu.environmentWorldToLocal);
         const int32_t index = _TextureIndex((*dome)->texture.get());
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
+        _gpu.environmentCameraVisible = (*dome)->cameraVisible;
     }
 
     // What lighting depends on besides geometry (FNV-1a, a word at a time).
@@ -2194,6 +2195,7 @@ void Scene::Commit(bool keepMotion)
     mix(lights, (lightCount + localLightCount) * sizeof(GpuLight));
     mix(materials.data(), materials.size() * sizeof(GpuMaterial));
     mix(&_gpu.environment, sizeof(_gpu.environment));
+    mix(&_gpu.environmentCameraVisible, sizeof(_gpu.environmentCameraVisible));
     mix(_gpu.environmentRadiance, sizeof(_gpu.environmentRadiance));
     mix(_gpu.environmentWorldToLocal, sizeof(_gpu.environmentWorldToLocal));
     _gpu.lightingHash = hash;

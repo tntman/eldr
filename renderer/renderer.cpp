@@ -3193,7 +3193,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::memcpy(fd.envRadiance, gpu.environmentRadiance, sizeof(gpu.environmentRadiance));
         fd.envRadiance[3] = 1.0f;
     }
-    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentLatlong != kNone;
+    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentCameraVisible && gpu.environmentLatlong != kNone;
     fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
