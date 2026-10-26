@@ -16,7 +16,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     mat4 envWorldToLocal;
     vec4 envRadiance;    // rgb multiplier, w = 1 if a dome is active
     mat4 prevViewProj;   // unjittered camera of the last frame (previousColor, motion vectors)
-    vec4 ssr;            // x = 1: trace reflections, y = noise index, z = 1: denoised (renderer/ssr.h)
+    vec4 ssr;            // x = 1: trace reflections, y = noise index, z = 1: denoised (renderer/ssr.h),
+                         // w = 1: unscale hits by last frame's light splits
     vec4 clusters;       // near, far (along cameraForward), log2(far / near), light cutoff radiance
     uvec4 localLights;   // x: sphere/rect lights, stored after the counts.x distant ones;
                          // y: TAA sample index (noise for soft shadows)

@@ -2,7 +2,9 @@
 `displacement` is a node graph (sin of u, run per vertex) moves the plane,
 the same in the depth prepass and the shading pass; and a height map whose
 texels alternate far finer than the vertices displaces by its mean (a mip
-level as coarse as the vertex spacing), not by whichever texel a vertex hits.
+level as coarse as the vertex spacing), not by whichever texel a vertex hits;
+and two instances of a world-space graph cast traced shadows of their own
+ridges (a displaced BLAS each).
 Run: usdenv.cmd python tests\\test_displacement_graphs.py"""
 import os
 import sys
@@ -166,6 +168,72 @@ on, off = render(flat), render(flat, displacement=False)
 expect(difference(on, off) > 0.05, "the checker map displaces the plane")
 expect(spread(on) < 1.5 * spread(off) + 0.01,
        f"a map finer than the mesh displaces by its mean (luminance spread {spread(on):.4f}, flat {spread(off):.4f})")
+
+# Two instances of a plane displaced by a world-space graph,
+# 0.03 sin(40 x_world): the raster gives each its own ridges. Ray tracing
+# gives each instance a displaced BLAS of its own, so in both halves of
+# the image the traced shadows match the shadow maps' as closely (a shared
+# BLAS would give the second instance the first one's ridges).
+def world_scene():
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+    UsdGeom.Scope.Define(stage, "/proto")
+    mesh = plane(stage, "/proto/plane", 96)
+    material = UsdShade.Material.Define(stage, "/mtl")
+    surface = UsdShade.Shader.Define(stage, "/mtl/surface")
+    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+    material.CreateSurfaceOutput("mtlx").ConnectToSource(surface.ConnectableAPI(), "out")
+    disp = UsdShade.Shader.Define(stage, "/mtl/disp")
+    disp.CreateIdAttr("ND_displacement_float")
+    material.CreateDisplacementOutput("mtlx").ConnectToSource(disp.ConnectableAPI(), "out")
+    position = UsdShade.Shader.Define(stage, "/mtl/graph/position")
+    position.CreateIdAttr("ND_position_vector3")
+    position.CreateInput("space", Sdf.ValueTypeNames.String).Set("world")
+    x = UsdShade.Shader.Define(stage, "/mtl/graph/x")
+    x.CreateIdAttr("ND_extract_vector3")
+    x.CreateInput("in", Sdf.ValueTypeNames.Float3).ConnectToSource(position.ConnectableAPI(), "out")
+    x.CreateInput("index", Sdf.ValueTypeNames.Int).Set(0)
+    scaled = UsdShade.Shader.Define(stage, "/mtl/graph/scaled")
+    scaled.CreateIdAttr("ND_multiply_float")
+    scaled.CreateInput("in1", Sdf.ValueTypeNames.Float).ConnectToSource(x.ConnectableAPI(), "out")
+    scaled.CreateInput("in2", Sdf.ValueTypeNames.Float).Set(40.0)
+    wave = UsdShade.Shader.Define(stage, "/mtl/graph/sin")
+    wave.CreateIdAttr("ND_sin_float")
+    wave.CreateInput("in", Sdf.ValueTypeNames.Float).ConnectToSource(scaled.ConnectableAPI(), "out")
+    disp.CreateInput("displacement", Sdf.ValueTypeNames.Float).ConnectToSource(wave.ConnectableAPI(), "out")
+    disp.CreateInput("scale", Sdf.ValueTypeNames.Float).Set(0.03)
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(material)
+    instancer = UsdGeom.PointInstancer.Define(stage, "/pair")
+    instancer.CreatePrototypesRel().SetTargets(["/proto/plane"])
+    instancer.CreatePositionsAttr(Vt.Vec3fArray([Gf.Vec3f(-0.27, 0, 0), Gf.Vec3f(0.2925, 0, 0)]))
+    instancer.CreateScalesAttr(Vt.Vec3fArray([Gf.Vec3f(0.5, 1, 1)] * 2))
+    instancer.CreateProtoIndicesAttr([0, 0])
+    UsdGeom.Imageable(stage.GetPrimAtPath("/proto")).MakeInvisible()
+    sun = UsdLux.DistantLight.Define(stage, "/sun")
+    sun.AddRotateXYZOp().Set(Gf.Vec3f(-10, -80, 0))  # low, across the ridges
+    return stage
+
+
+def halves(a, b):
+    """Fraction of differing pixels in the left and the right half."""
+    out = []
+    for x0, x1 in ((0, SIZE // 2), (SIZE // 2, SIZE)):
+        differing = 0
+        for y in range(SIZE):
+            for x in range(x0, x1):
+                ca, cb = a.pixelColor(x, y), b.pixelColor(x, y)
+                differing += max(abs(ca.red() - cb.red()), abs(ca.green() - cb.green()), abs(ca.blue() - cb.blue())) > 4
+        out.append(differing / (SIZE * SIZE / 2))
+    return out
+
+
+pair = world_scene()
+maps, traced, rest = render(pair), render(pair, rtShadows=True), render(pair, rtShadows=True, rtDisplacement=False)
+near, far = halves(traced, maps), halves(rest, maps)
+print(f"world-space graph, two instances: traced shadows against the shadow maps, left {near[0]:.4f} "
+      f"right {near[1]:.4f}; with rest BLASes {far[0]:.4f}, {far[1]:.4f}")
+expect(far[0] > 0.01 and far[1] > 0.01, "the rest surface's traced shadows differ from the maps")
+expect(max(near) < 0.5 * min(far), f"each instance's traced shadows follow its own ridges ({near})")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

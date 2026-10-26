@@ -99,17 +99,21 @@ VARIANTS = {"default": ["eldr:rtRefraction=0"], "gi": ["eldr:gi=true", "eldr:rtR
 # Light path intensity: the beauty is the direct splits times the direct
 # intensity plus the indirect ones times the indirect intensity, refracted
 # and subsurface-transmitted light included. The splits themselves stay
-# the unscaled light, so at the spheres' centres they match the run
-# without intensities (BASE): the light glass refracts (screen space too)
-# is scaled once, as indirect, not again by the intensities of what lies
-# behind it.
-# ponytail: centres only; SSR's reflections at the rims reflect the
-# previous frame's colour, which carries the intensities.
+# the unscaled light, so at the spheres' centres and at the sample points
+# (the rims reflect their neighbours by SSR) they match the run without
+# intensities (BASE): the light glass refracts and SSR reflects (both from
+# a colour the intensities scaled) is scaled once, as indirect glossy.
 INTENSITIES = ["eldr:directIntensity=1.6", "eldr:indirectIntensity=0.5"]
 VARIANTS.update({"intensity": ["eldr:rtRefraction=0"] + INTENSITIES,
-                 "intensityRt": ["eldr:rtRefraction=2"] + INTENSITIES})
-BASE = {"intensity": "default", "intensityRt": "rtRefraction"}
-pixels = {}  # (variant, sphere, 0, 0): the EXR's channels at its centre
+                 "intensityRt": ["eldr:rtRefraction=2"] + INTENSITIES,
+                 "intensityDenoise": VARIANTS["ssrDenoise"] + INTENSITIES})
+# Through fog (its light isn't in the splits, so only the splits compare):
+# what refraction copies and SSR reflects is fogged, its splits aren't.
+FOG = ["eldr:rtRefraction=0", "eldr:fog=true", "eldr:fogDensity=0.05"]
+VARIANTS.update({"fog": FOG, "intensityFog": FOG + INTENSITIES})
+BASE = {"intensity": "default", "intensityRt": "rtRefraction", "intensityDenoise": "ssrDenoise",
+        "intensityFog": "fog"}
+pixels = {}  # (variant, sphere, dx, dy): the EXR's channels there
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "emission")
 for variant, settings in VARIANTS.items():
     scale = {"directdiffuse": 1.6, "directglossy": 1.6, "indirectdiffuse": 0.5, "indirectglossy": 0.5,
@@ -121,7 +125,7 @@ for variant, settings in VARIANTS.items():
         centre = (int((x + 6) / 12 * SIZE), int((6 - y) / 12 * SIZE))
         worst, brightest = 0.0, 0.0
         for dx, dy in POINTS:
-            p = pixel(centre[0] + dx, centre[1] + dy)
+            p = pixels[variant, name, dx, dy] = pixel(centre[0] + dx, centre[1] + dy)
             beauty = [p.get(c, 0) for c in "RGB"]
             brightness = max(max(beauty), 1e-3)
             brightest = max(brightest, brightness)
@@ -131,14 +135,16 @@ for variant, settings in VARIANTS.items():
         print(f"{variant:10s} {name:12s} brightest {brightest:.3f} worst residual {worst:+.3f} ")
         expect(brightest > 0.02, f"{variant} {name}: the sphere is lit")
         pixels[variant, name, 0, 0] = pixel(centre[0], centre[1])
-        if name == "transmission":  # what it refracts (traced or not) is indirect glossy
+        fogged = FOG[1] in settings
+        if name == "transmission" and not fogged:  # what it refracts (traced or not) is indirect glossy
             p = pixel(centre[0], centre[1])
             share = scale["indirectglossy"] * p.get("indirectglossy.G", 0) / max(p.get("G", 0), 1e-6)
             expect(share > 0.6, f"{variant} transmission: refracted light in indirect glossy ({share:.2f})")
-        expect(abs(worst) <= TOLERANCE, f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
+        expect(fogged or abs(worst) <= TOLERANCE,
+               f"{variant} {name}: the splits and emission add up to the beauty ({worst:+.3f})")
         if variant in BASE:
             moved, where = 0.0, ""
-            for dx, dy in [(0, 0)]:
+            for dx, dy in [(0, 0)] + POINTS:
                 p, q = pixels[variant, name, dx, dy], pixels[BASE[variant], name, dx, dy]
                 brightness = max(max(q.get(c, 0) for c in "RGB"), 1e-3)
                 for v in SPLITS:

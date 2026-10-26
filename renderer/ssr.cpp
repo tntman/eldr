@@ -26,7 +26,7 @@ struct DenoiseParams {  // mirror of the push block in ssr_denoise.frag
     float prevViewProj[16];
     float eye[4];     // camera position; w: noise index
     float params[4];  // kDimSsrDenoise's value (< 0: none), history valid, 1/width, 1/height
-    float splits[4];  // x: 1 adds the result to the light splits (binding 9)
+    float splits[4];  // x: 1 adds the result to the light splits (binding 9), y: the indirect intensity
 };
 
 VkImageSubresourceRange Color()
@@ -190,7 +190,7 @@ void SsrDenoise::Clear(VkCommandBuffer cmd)
 
 void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float invViewProj[16],
                          const float prevViewProj[16], const float eye[3], uint32_t noise, bool history,
-                         float dimension, VkImageView splits, bool addToSplits)
+                         float dimension, VkImageView splits, bool addToSplits, float indirect)
 {
     StorageBarrier(cmd);  // the shading pass's splits
     const VkDescriptorImageInfo splitsInfo{VK_NULL_HANDLE, splits, VK_IMAGE_LAYOUT_GENERAL};
@@ -219,6 +219,7 @@ void SsrDenoise::Resolve(VkCommandBuffer cmd, VkImageView color, const float inv
     params.params[2] = 1.0f / float(_width);
     params.params[3] = 1.0f / float(_height);
     params.splits[0] = addToSplits ? 1.0f : 0.0f;
+    params.splits[1] = indirect;
 
     auto toTarget = [&](const Image &img) {
         ImageBarrier(cmd, img.image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,

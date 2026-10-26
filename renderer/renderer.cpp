@@ -30,7 +30,7 @@ struct FrameData {
     float envWorldToLocal[16];
     float envRadiance[4];
     float prevViewProj[16];
-    float ssr[4];  // enabled, noise index
+    float ssr[4];  // enabled, noise index, denoised, 1: unscale hits by last frame's splits
     float clusters[4];       // near, far, log2(far / near), light cutoff radiance
     uint32_t localLights[4]; // sphere/rect light count
     uint32_t features[4];    // kFeature* flags, SSR steps, soft shadow samples
@@ -770,8 +770,9 @@ void Renderer::_CreateDescriptors()
         {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
         // Blue noise for the sample dimensions (frame.glsl's SampleNoise).
         {90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting | kRt},
-        // Light splits (aov.h), stored by the shading pass.
+        // Light splits (aov.h), stored by the shading pass; last frame's for SSR.
         {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
+        {76, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Motion blur time samples (shutter.comp): last frame's rigid rows,
         // joints and blend shape weights.
         {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
@@ -1717,6 +1718,9 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, shadowMinLevels, kMaxShadowMinLevels);
     const VkDescriptorImageInfo splits{VK_NULL_HANDLE, _aovs.SplitsView(), VK_IMAGE_LAYOUT_GENERAL};
     write(67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &splits);
+    const VkDescriptorImageInfo prevSplits{_clampSampler, _aovs.PreviousSplitsView(),
+                                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(76, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &prevSplits);
     // Without a probe or planar reflection: placeholders the shaders skip.
     VkDescriptorImageInfo probeInfos[Reflections::kMaxProbes];
     for (uint32_t i = 0; i < Reflections::kMaxProbes; ++i) {
@@ -3207,6 +3211,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (rayTracing) {
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
+        rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
         _rt->Prepare(gpu, rt, _width, _height);
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
@@ -3290,8 +3295,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool lightPath = frame.directIntensity != 1.0f || frame.indirectIntensity != 1.0f;
     // Light splits (aov.h): stored by shading pipelines compiled with them,
     // for the AOVs or for refraction's copy to take the intensities out of.
-    const bool splits = (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || (lightPath && refraction);
-    _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    // SSR (fd.ssr[0]) reflects last frame's colour, which carries the
+    // intensities: last frame's splits take them out at its hits
+    // (fd.ssr[3]), so they are kept too.
+    const bool ssrUnscale = lightPath && fd.ssr[0] > 0.0f;
+    const bool splits =
+        (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || (lightPath && (refraction || ssrUnscale));
+    const bool splitsNew = _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    _keepSplits = splits && ssrUnscale && _splitsStored && !splitsNew;
+    fd.ssr[3] = _keepSplits ? 1.0f : 0.0f;
+    _splitsStored = splits;
     fd.aovs[0] = splits ? 1u : 0u;
     fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
@@ -3741,7 +3754,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _ssr.Clear(_cmd);
     }
     if (splits) {
-        _aovs.ClearSplits(_cmd);
+        _aovs.ClearSplits(_cmd, _keepSplits);
     }
     const Image *colorTargets[3] = {&_color, &_primId, &_instanceId};
     for (const Image *img : colorTargets) {
@@ -3807,7 +3820,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     pass("shading");
     if (ssrDenoise) {
         _ssr.Resolve(_cmd, _color.view, fd.invViewProj, fd.prevViewProj, frame.cameraPos, sample, _ssrHistory,
-                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits);
+                     frame.sampleDimensions ? dims[kDimSsrDenoise] : -1.0f, _aovs.SplitsView(), splits,
+                     fd.lightPath[1]);
         pass("ssrDenoise");
     }
     _ssrHistory = ssrDenoise;

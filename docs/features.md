@@ -539,8 +539,11 @@ quantises the lit intensity relative to the albedo into flat bands with
   far apart as the mesh's vertices, so a map finer than the mesh doesn't
   alias. With `displacementGraphs`, a displacement driven by a shading graph
   (math, noise, several textures) runs that graph per vertex, also for ray
-  tracing's BLASes (`rtDisplacement`; one BLAS per mesh, so a graph reading
-  per-instance inputs displaces every instance as the mesh's first).
+  tracing's BLASes (`rtDisplacement`). A graph reading what differs between
+  a mesh's instances (world-space position or normal, instance primvars)
+  gives the 256 instances largest on screen a displaced BLAS each, rebuilt
+  when they move; the rest share the mesh's (displaced as its first
+  instance).
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also
   weighs normals, uvs and colours, and joint weights for skinned meshes);
@@ -679,8 +682,11 @@ multiplies the same direct and indirect light in the final pixel, not in the lig
 intensities. Refracted light is indirect glossy and scaled once: traced, or from the
 screen-space copy of what is behind, which takes the intensities out again by its light splits
 (stored for it). The sun's light through thin subsurface parts is direct diffuse. Fog and toon
-shading stay unscaled. SSR still reflects the previous frame, which carries the intensities, so
-its reflections are scaled twice. At 1 the shaders compile without it.
+shading stay unscaled. SSR's reflections of the previous frame are scaled once too: last frame's
+splits (kept for it) take the intensities out at the hit (at the hit's pixel, not over a
+rough ray's mip footprint). Both go through the fog in front of what they copy or reflect.
+Translucent surfaces that blend (not refract) keep no splits, so a refraction layer copied
+over them takes out the intensities of the surface behind only. At 1 the shaders compile without it.
 
 **EXR render products** (`renderProducts`): with an active UsdRenderSettings
 prim (`usdrecord --renderSettingsPrimPath`, husk), each raster product becomes

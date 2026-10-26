@@ -171,7 +171,7 @@ Aovs::~Aovs()
 {
     const VkDevice d = _dev.device;
     vkDeviceWaitIdle(d);
-    for (Image *img : {&_normalSt, &_albedo, &_emission, &_splits}) {
+    for (Image *img : {&_normalSt, &_albedo, &_emission, &_splits, &_prevSplits}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_params);
@@ -486,29 +486,58 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 }
 
-void Aovs::EnsureSplits(uint32_t width, uint32_t height)
+bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
 {
     if (_splits.image && width == _splitsWidth && height == _splitsHeight) {
-        return;
+        return false;
     }
     _dev.Destroy(_splits);
+    _dev.Destroy(_prevSplits);
     _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 4, 1,
-                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                               VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    _prevSplits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 4, 1,
+                                   VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                   VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     _splitsWidth = width;
     _splitsHeight = height;
     _dev.Submit([&](VkCommandBuffer cmd) {
         ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        ImageBarrier(cmd, _prevSplits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     });
+    return true;
 }
 
-void Aovs::ClearSplits(VkCommandBuffer cmd)
+void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
 {
     const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
-    ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
-                 VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
+    if (keepPrevious) {
+        // Last frame's writers (shading, SSR, subsurface, AOV reads) are
+        // done; this frame's shading samples the copy.
+        ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                     VK_IMAGE_LAYOUT_GENERAL);
+        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageCopy copy{};
+        copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 4};
+        copy.extent = {_splitsWidth, _splitsHeight, 1};
+        vkCmdCopyImage(cmd, _splits.image, VK_IMAGE_LAYOUT_GENERAL, _prevSplits.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+    ImageBarrier(cmd, _splits.image, all,
+                 keepPrevious ? VK_PIPELINE_STAGE_2_COPY_BIT : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_GENERAL,
+                 VK_IMAGE_LAYOUT_GENERAL);
     const VkClearColorValue zero{};
     vkCmdClearColorImage(cmd, _splits.image, VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &all);
     ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,

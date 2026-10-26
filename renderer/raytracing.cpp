@@ -155,6 +155,7 @@ RayTracing::~RayTracing()
     _dev.Destroy(_giRays);
     _dev.Destroy(_skinnedTable);
     _dev.Destroy(_displacedTable);
+    _dev.Destroy(_instanceBlasBuffer);
     for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _displacePipeline, _giUpdate[0], _giUpdate[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
@@ -170,6 +171,11 @@ void RayTracing::Release()
         _fn->destroyAccelerationStructure(_dev.device, blas.as, nullptr);
     }
     _blas.clear();
+    for (auto &[instance, b] : _instanceBlas) {
+        _fn->destroyAccelerationStructure(_dev.device, b.blas.as, nullptr);
+    }
+    _instanceBlas.clear();
+    _instanceBlasWords.clear();
     for (auto &[instance, s] : _skinned) {
         _fn->destroyAccelerationStructure(_dev.device, s.blas.as, nullptr);
     }
@@ -208,7 +214,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     // once they exist).
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
     const VkShaderStageFlags hits = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    const VkDescriptorSetLayoutBinding bindings[8] = {
+    const VkDescriptorSetLayoutBinding bindings[9] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
@@ -218,17 +224,19 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
         {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
+        // Per instance slot, the BLAS of its own (per-instance displacement).
+        {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
     };
-    VkDescriptorBindingFlags partial[8];
-    std::fill(partial, partial + 8, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    VkDescriptorBindingFlags partial[9];
+    std::fill(partial, partial + 9, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 8;
+    flags.bindingCount = 9;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 8;
+    slci.bindingCount = 9;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -499,7 +507,8 @@ VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertic
 void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 {
     std::unordered_set<uint64_t> used;
-    std::vector<uint32_t> missing, displaced;
+    std::vector<uint32_t> missing;
+    std::vector<DisplacedJob> displaced;
     _displacedBuilds.clear();
     for (uint32_t s = 0; s < gpu.slotGeometry.size(); ++s) {
         const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[s];
@@ -516,7 +525,11 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             _blas.erase(it);
         }
         if (!_blas.count(g.version)) {
-            (displacement != 0.0f ? displaced : missing).push_back(s);
+            if (displacement != 0.0f) {
+                displaced.push_back({s, g.firstInstance, false, 0});
+            } else {
+                missing.push_back(s);
+            }
         }
     }
     for (auto it = _blas.begin(); it != _blas.end();) {
@@ -526,6 +539,37 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         }
         _DestroyBlas(it->second);
         it = _blas.erase(it);
+        _tlasDirty = true;
+    }
+    // Instances displaced one by one: kept while their key (transform,
+    // geometry, displacement) holds.
+    std::unordered_set<uint32_t> own;
+    for (const Scene::DisplacedInstance &d : _work.displacedInstances) {
+        const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[d.slot];
+        if (_work.displacement == 0.0f || g.version == 0 || g.skinned || !g.displaced || g.indexCount < 3) {
+            continue;
+        }
+        uint32_t bits;
+        std::memcpy(&bits, &_work.displacement, sizeof(bits));
+        const uint64_t key = (d.key ^ g.version * 0x9E3779B97F4A7C15ull ^ bits) + (_work.displacementGraphs ? 1 : 0);
+        own.insert(d.instance);
+        const auto it = _instanceBlas.find(d.instance);
+        if (it != _instanceBlas.end() && it->second.key == key) {
+            continue;
+        }
+        if (it != _instanceBlas.end()) {
+            _DestroyBlas(it->second.blas);
+            _instanceBlas.erase(it);
+        }
+        displaced.push_back({d.slot, d.instance, true, key});
+    }
+    for (auto it = _instanceBlas.begin(); it != _instanceBlas.end();) {
+        if (own.count(it->first)) {
+            ++it;
+            continue;
+        }
+        _DestroyBlas(it->second.blas);
+        it = _instanceBlas.erase(it);
         _tlasDirty = true;
     }
     _PrepareDisplaced(gpu, displaced);
@@ -588,17 +632,18 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 // Record from their vertices displaced on the GPU (rt_displace.comp, which
 // needs this frame's uniforms and textures). Reserves their vertices,
 // table and scratch (shared with the skinned and TLAS builds after them).
-void RayTracing::_PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<uint32_t> &slots)
+void RayTracing::_PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<DisplacedJob> &jobs)
 {
     _displacedMostVertices = 0;
-    if (slots.empty()) {
+    if (jobs.empty()) {
         return;
     }
     _tlasDirty = true;
     uint32_t vertices = 0;
     VkDeviceSize scratch = 0;
     std::vector<uint32_t> table;
-    for (uint32_t slot : slots) {
+    for (const DisplacedJob &job : jobs) {
+        const uint32_t slot = job.slot;
         const Scene::Gpu::SlotGeometry &g = gpu.slotGeometry[slot];
         VkAccelerationStructureGeometryKHR geometry = _Triangles(0, 3 * sizeof(float), g.vertexCount, 0);
         VkAccelerationStructureBuildGeometryInfoKHR info{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
@@ -612,9 +657,13 @@ void RayTracing::_PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<uint
         Blas blas = _CreateBlas(sizes.accelerationStructureSize);
         blas.displacement = _work.displacement;
         blas.graphs = _work.displacementGraphs;
-        _blas[g.version] = blas;
+        if (job.perInstance) {
+            _instanceBlas[job.instance] = {blas, job.key};
+        } else {
+            _blas[g.version] = blas;
+        }
         _displacedBuilds.push_back({blas.as, slot, vertices, scratch});
-        table.insert(table.end(), {slot, vertices, g.vertexCount, g.firstInstance});
+        table.insert(table.end(), {slot, vertices, g.vertexCount, job.instance});
         vertices += g.vertexCount;
         scratch += AlignUp(sizes.buildScratchSize, _scratchAlignment);
         _displacedMostVertices = std::max(_displacedMostVertices, g.vertexCount);
@@ -788,6 +837,27 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
         _tlasDirty = true;
     }
     _tlasDirty = _tlasDirty || gpu.version != _tlasVersion || _work.moving;
+    std::vector<uint32_t> own(size_t(std::max(gpu.instanceCapacity, 1u)) * 2, 0);
+    for (const auto &[instance, b] : _instanceBlas) {
+        if (instance < gpu.instanceCapacity) {
+            own[size_t(instance) * 2] = uint32_t(b.blas.address);
+            own[size_t(instance) * 2 + 1] = uint32_t(b.blas.address >> 32);
+        }
+    }
+    if (own != _instanceBlasWords) {
+        _dev.Reserve(_instanceBlasBuffer, own.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        std::memcpy(_instanceBlasBuffer.mapped, own.data(), own.size() * sizeof(uint32_t));
+        _instanceBlasWords = std::move(own);
+        const VkDescriptorBufferInfo info{_instanceBlasBuffer.buffer, 0, VK_WHOLE_SIZE};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = _set;
+        write.dstBinding = 8;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        write.pBufferInfo = &info;
+        vkUpdateDescriptorSets(_dev.device, 1, &write, 0, nullptr);
+        _tlasDirty = true;
+    }
 
     const uint32_t capacity = std::max(gpu.instanceCapacity, 1u) + _work.skinnedCapacity;
     if (capacity <= _tlasCapacity) {

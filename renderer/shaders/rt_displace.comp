@@ -10,16 +10,16 @@
 // rest vertices moved along the normal as mesh.vert moves them
 // (displace.glsl, specialized with kDisplacement; graphs too), object-space
 // positions for their BLASes. x: vertex, y: the job.
-// ponytail: one BLAS per mesh, so a graph reading per-instance inputs
-// (world-space position or normal, instance primvars) displaces every
-// instance as its first.
+// Per mesh, as its first instance; graphs reading per-instance inputs
+// (world-space position or normal, instance primvars) per instance too
+// (RayTracing::Work::displacedInstances).
 
 layout(std430, set = 0, binding = 55) readonly buffer RtVertices { float rtVertices[]; };  // the rest Vertex pool
 struct RtDisplaced {
     uint slot;         // mesh slot
     uint firstVertex;  // in rtDisplacedVertices
     uint vertexCount;
-    uint instance;     // the mesh's first instance slot (graphs' instance inputs)
+    uint instance;     // the instance slot whose inputs graphs read
 };
 layout(std430, set = 1, binding = 6) writeonly buffer RtDisplacedVertices { float rtDisplacedVertices[]; };
 layout(std430, set = 1, binding = 7) readonly buffer RtDisplacedTable { RtDisplaced rtDisplaced[]; };
