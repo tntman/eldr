@@ -12,7 +12,6 @@ DOCS = [
     ("settings.md", "Render settings"),
     ("comparison.md", "Eldr vs EEVEE and Unreal"),
     ("houdini.md", "Houdini"),
-    ("eevee-lardomar.md", "EEVEE study (Swedish)"),
 ]
 
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])

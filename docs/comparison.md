@@ -1,29 +1,16 @@
-# Feature comparison: Eldr, EEVEE and Unreal
+# Eldr vs EEVEE and Unreal
 
-This page shows where Eldr stands against Blender's EEVEE (as of Blender 5.2)
-and Unreal Engine 5. **Yes** means the feature is there and usable in
-production. **Partial** means it exists with real limits, which the note
-describes. **No** means it is missing.
-
-Read it with these limits in mind:
-- The EEVEE and Unreal columns come from their documentation and release notes
-  as Claude knows them, plus the EEVEE study in
-  [eevee-lardomar.md](eevee-lardomar.md). They are not checked against the
-  latest builds, so treat single cells as indicative.
-- Eldr's column is kept current as features are merged. Its "known
-  limitations" are listed in [features.md](features.md#known-limitations).
-- Eldr aims at final frames to EXR for VFX, not games. Rows that matter mostly
-  for interactive or game work are marked *(interactive)*.
+**Yes** = usable in production, **Partial** = real limits (see note), **No** = missing. EEVEE is Blender 5.2; its and Unreal's columns come from their docs and are indicative. *(interactive)* marks rows that matter mostly for games or live work.
 
 ## Rendering core
 
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
-| Native USD / Hydra render delegate | Yes | No | Partial | Unreal imports USD stages; Blender has a separate Hydra Storm add-on. |
-| Converging final frames (sample accumulation) | Yes | Yes | Yes | Eldr's film, EEVEE's film, Unreal's Movie Render Queue. |
+| Native USD / Hydra render delegate | Yes | No | Partial | Unreal imports USD stages; Blender only has a separate Hydra Storm add-on. |
+| Converging final frames (sample accumulation) | Yes | Yes | Yes | Eldr: film. Unreal: Movie Render Queue. |
 | Per-effect low-discrepancy sampling | Yes | Yes | Yes | Eldr: Sobol and blue-noise sample dimensions. |
-| Adaptive sampling | Partial | No | No | Eldr stops when 99.9% of pixels converge; every sample still renders the whole frame. |
-| Path-traced reference mode | No | Yes (Cycles) | Yes | Eldr relies on Karma in Houdini for ground truth. |
+| Adaptive sampling | Partial | No | No | Eldr stops when 99.9% of pixels converged; each sample still renders the whole frame. Not with motion blur time samples. |
+| Path-traced reference mode | No | Yes (Cycles) | Yes | Eldr: use Karma in Houdini for ground truth. |
 | Background shader compile and pipeline cache | Yes | Yes | Yes | |
 
 ## Lights and shadows
@@ -35,13 +22,14 @@ Read it with these limits in mind:
 | IES profiles | No | No | Yes | Planned. |
 | Light linking | No | Yes | Partial | Unreal has lighting channels. Planned for Eldr. |
 | Light functions / gobos | No | No | Yes | |
-| Light shapes visible to the camera | Yes | Yes | Yes | Eldr reads Karma's `renderlightgeo` per light. |
+| Light shapes visible to the camera | Yes | Yes | Yes | Eldr: `eldr:lightShapesVisible`; Karma's `renderlightgeo` hides single lights. |
 | Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample in final quality. |
 | Virtual shadow maps | No | Yes | Yes | Eldr uses cascades and an atlas; ray-traced shadows cover final frames. |
-| Ray-traced shadows | Yes | No | Yes | Final quality: one ray per light and film sample, the sun plus 15 lights, through glass and volumes (`eldr:finalShadows`). |
-| Coloured shadows through glass | Yes | Partial | Yes | With shadow maps and ray-traced shadows alike. |
+| Ray-traced shadows | Yes | No | Yes | Eldr: a final-quality mode (`eldr:finalShadows`) or always (`eldr:rtShadows`); sun plus 15 lights, one ray per light and film sample, exact penumbra. |
+| Ray-traced shadows through glass and volumes | Yes | No | Partial | Eldr: tinted by glass, marched through volumes (`eldr:rtTranslucentShadows`). |
+| Coloured shadows through glass | Yes | Partial | Yes | Eldr: shadow maps and ray-traced shadows alike. |
 | Volumes casting shadows | Yes | Yes | Yes | Eldr: sun and local lights. |
-| Volumes shadowing each other | Yes | Yes | Partial | Eldr: sun, local lights and the dome's light from its pole (`eldr:volumeMutualShadows`). EEVEE's volumes share one froxel grid. |
+| Volumes shadowing each other | Yes | Yes | Partial | Eldr: sun, local lights and the dome's light from its pole (`eldr:volumeMutualShadows`). EEVEE: one shared froxel grid. |
 | Sun extracted from an HDRI dome | Yes | Yes | No | |
 
 ## Global illumination and reflections
@@ -62,9 +50,11 @@ Read it with these limits in mind:
 |---|---|---|---|---|
 | Order-independent transparency | Yes | No | Partial | |
 | Refraction through several layers, back faces, TIR | Yes | Partial | Yes | Screen space interactively; traced in final quality. |
-| Ray-traced refraction (off-screen content) | Yes | No | Partial | Final quality (`rtRefraction`): glass behind glass, materials evaluated at every hit. |
+| Ray-traced refraction (off-screen content) | Yes | No | Partial | Eldr: final quality (`eldr:rtRefraction`); glass behind glass, materials evaluated at every hit. |
+| Ray-traced refraction through displaced glass | Yes | No | No | Eldr: rippled water bends the rays (`eldr:rtRefractionDisplacement`). |
 | Holdouts and mattes | Yes | Yes | Yes | |
-| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | |
+| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX volume materials. |
+| Houdini SOP volumes (no files) | Yes | No | No | Eldr: VDB and Houdini volumes from a SOP Import LOP, in the Houdini build. |
 | Froxel fog | Yes | Yes | Yes | |
 | Physical sky and atmosphere | No | Partial | Yes | EEVEE has a sky texture. |
 | Volumetric clouds | No | No | Yes | |
@@ -78,6 +68,7 @@ Read it with these limits in mind:
 | Subsurface scattering | Yes | Yes | Yes | |
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
+| Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
 | Subdivision surfaces | Yes | Yes | Partial | |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
 | Virtual geometry (Nanite-style) | No | No | Yes | *(interactive)* |
@@ -89,8 +80,8 @@ Read it with these limits in mind:
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | Depth of field from lens samples | Yes | Yes | Yes | Eldr adds a residual post blur at low sample counts. |
-| Motion blur from shutter time samples | Yes | Yes | Yes | |
-| Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | |
+| Motion blur from shutter time samples | Yes | Yes | Yes | Eldr: smooth blur between time samples (`eldr:motionBlurResidual`); not adaptive. |
+| Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | Eldr: skinned joints and blend shapes blur in time samples; skinned motion needs a frame before. |
 | Motion blur on a single frame | Yes | Yes | Yes | Eldr: Hydra transform and point samples. |
 | OpenCV lens distortion | Yes | No | Partial | |
 | Upscaling while interactive | Partial | No | Yes | Eldr has its own TAA upscaler; Unreal has TSR and DLSS. *(interactive)* |
@@ -100,8 +91,9 @@ Read it with these limits in mind:
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | Multi-layer EXR with AOVs | Yes | Yes | Yes | |
-| Light-split AOVs that sum to the beauty | Yes | Yes | Partial | Eldr uses Karma's LPE names. |
+| Light-split AOVs that sum to the beauty | Yes | Yes | Partial | Eldr: Karma's LPE names. |
+| Cryptomatte with soft edges (3 layers, 6 ranks) | Yes | Partial | No | Eldr: coverage from the film's samples, Karma's `<var>00..02` layout. EEVEE: hard edges. |
 | Cryptomatte | Yes | Yes | Yes | |
 | UsdRenderSettings and render products | Yes | No | No | Eldr honours resolution, pixel aspect and data window. |
-| Houdini Solaris | Partial | No | No | Eldr builds for Houdini 22 and renders in hython. The viewport is untested, and husk needs Houdini Indie or above. |
+| Houdini Solaris | Partial | No | No | Eldr: Houdini 22 build renders in hython and husk (husk needs Indie or above); the viewport is untested. |
 | usdview integration | Yes | No | No | |
