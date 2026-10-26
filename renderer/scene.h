@@ -725,6 +725,7 @@ public:
             bool skinned;  // posed per instance (LargestSkinned)
             bool displaced = false;  // its material displaces (Gpu::kDisplaced)
             bool translucent = false;  // blended: only traced shadows that tint see it
+            uint32_t firstInstance = 0;  // its first instance slot (a displacement graph's instance inputs)
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

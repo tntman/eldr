@@ -95,6 +95,19 @@ if rayTracing:
     changed, _ = difference(render(rtShadows=True, displacement=False),
                             render(rtShadows=True, displacement=False, rtDisplacement=False))
     expect(changed < 0.002, f"rtDisplacement without displacement changes nothing ({changed:.4f} differ)")
+    # The displacement graph's plane alone: its BLAS runs the graph too, so
+    # its traced shadows change, towards the shadow maps' (which see the
+    # displaced surface the raster draws).
+    for path in ("/previewPlane", "/inflated"):
+        stage.GetPrimAtPath(path).SetActive(False)
+    traced, rest, maps = render(rtShadows=True), render(rtShadows=True, rtDisplacement=False), render()
+    changed, _ = difference(traced, rest)
+    near, far = difference(traced, maps)[0], difference(rest, maps)[0]
+    print(f"graph-displaced plane: traced shadows with and without rtDisplacement {changed:.4f} differ; "
+          f"against the shadow maps {near:.4f} and {far:.4f}")
+    expect(changed > 0.001 and near < far, f"traced shadows see graph displacement ({changed:.4f}, {near:.4f} < {far:.4f})")
+    for path in ("/previewPlane", "/inflated"):
+        stage.GetPrimAtPath(path).SetActive(True)
 else:
     print("no ray tracing on this GPU: its tests skipped")
 

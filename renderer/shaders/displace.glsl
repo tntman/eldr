@@ -3,8 +3,9 @@
 // shading pass bumps the normal by the height map's slope. Include after
 // frame.glsl and scene.glsl; the fragment stage defines DISPLACE_FRAGMENT
 // and includes material.glsl first (TexRef, Fetch, udimTiles), mesh.vert
-// DISPLACE_VERTEX (Displace, with displacement graphs); ray tracing stages
-// include it after material.glsl (BumpedNormal, the compute Displace).
+// DISPLACE_VERTEX and the ray tracing compute stages DISPLACE_COMPUTE
+// (Displace, with displacement graphs); ray tracing stages include it after
+// material.glsl and program.glsl (BumpedNormal, DisplacementOffset).
 // std430 mirror of GpuDisplacement in scene.cpp.
 
 #if !defined(DISPLACE_FRAGMENT) && !defined(RAY_TRACING)
@@ -34,9 +35,13 @@ float DisplacementReach(DrawInfo d, Instance inst)
     return d.boundsMax.w * abs(frame.geometry.x) * max(length(m[0]), max(length(m[1]), length(m[2])));
 }
 
-#ifdef DISPLACE_VERTEX
+#if defined(DISPLACE_VERTEX) || defined(DISPLACE_COMPUTE)
 // A displacement graph's inputs at this vertex (program.glsl's names; inUv
-// is mesh.vert's), set by Displace.
+// is mesh.vert's), set by DisplacementOffset.
+#ifdef DISPLACE_COMPUTE
+vec2 inUv;
+layout(std430, set = 0, binding = 32) readonly buffer PrimvarVertices { vec4 primvarVertices[]; };
+#endif
 vec3 inColor;
 uint inSlot;
 vec4 inPrimvars;
@@ -45,28 +50,30 @@ mat4 programModel;
 float programDisplacement;
 #define PROGRAM_VERTEX
 #include "program.glsl"
+#endif
 
-// `position` moved along `normal` (object space) by the material's offset
-// at mesh.vert's inUv: its graph's, or its texture's texel, else its
+#ifdef PROGRAM_VERTEX
+// The material's offset along the normal at a vertex (object units, before
+// frame.geometry.x's scale): its graph's (run with the vertex's rest point
+// and normal, instance slot `slot` and its transform, vertex colour, pool
+// index `vertex` for primvars and uv), or its texture's texel, else its
 // constant. Textures are read at the mip whose texels are as far apart as
 // the mesh's vertices (DrawInfo::uvSpacing), so a map finer than the mesh
-// doesn't alias. As it is without displacement or a normal.
+// doesn't alias. Sets program.glsl's inputs (rt_refraction.rgen sets its
+// own after).
 // ponytail: one spacing per mesh (its mean edge), not per vertex.
-vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, uint slot, mat4 model, vec3 vertexColor)
+float DisplacementOffset(Displacement d, DrawInfo draw, uint slot, mat4 model, vec3 position, vec3 normal,
+                         vec3 vertexColor, uint vertex, vec2 uv)
 {
-    if (!kDisplacement || (frame.features.x & kFeatureDisplacement) == 0u || draw.material == 0xFFFFFFFFu ||
-        dot(normal, normal) < 1e-12) {
-        return position;
-    }
-    Displacement d = displacements[draw.material];
     rtUvFootprint = draw.uvSpacing;
-    float offset;
     if (d.program.y > 0u && frame.geometry.w > 0.5) {  // Frame::displacementGraphs
+#ifndef DISPLACE_VERTEX
+        inUv = uv;  // mesh.vert's is its input, the same
+#endif
         inColor = draw.vertexColors != 0u ? vertexColor : draw.color.rgb;
         inSlot = slot;
-        inPrimvars = draw.primvarVertices == kFreeSlot
-                         ? vec4(0.0)
-                         : primvarVertices[draw.primvarVertices + uint(gl_VertexIndex) - draw.vertexBase];
+        inPrimvars = draw.primvarVertices == kFreeSlot ? vec4(0.0)
+                                                       : primvarVertices[draw.primvarVertices + vertex - draw.vertexBase];
         programPosition = position;
         programNormal = normal;
         programModel = model;
@@ -75,26 +82,27 @@ vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, uint slot, mat4 model, 
         float f0 = 0.0, f1 = 0.0, f2 = 0.0, f3 = 0.0;
         bool b = false;
         RunProgram(d.program, c3, e3, f0, f1, f2, t3, b, f3);
-        offset = programDisplacement;
-    } else {
-        offset = Fetch(d.tex, d.params.xxxx, inUv).r;
+        return programDisplacement;
     }
-    return position + normalize(normal) * offset * frame.geometry.x;
+    return Fetch(d.tex, d.params.xxxx, uv).r;
 }
-#elif !defined(DISPLACE_FRAGMENT)
-// Compute stages (rt_displace.comp): the same for texture and constant
-// displacement.
-// ponytail: graphs don't displace there (ray tracing sees their rest
-// surface); running the program needs mesh.vert's inputs.
-vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, vec2 uv)
+#endif
+
+#if defined(DISPLACE_VERTEX) || defined(DISPLACE_COMPUTE)
+// `position` moved along `normal` (object space) by the material's offset
+// (DisplacementOffset): in every raster pass's vertex stage, and for ray
+// tracing's BLASes (rt_displace.comp, rt_skin.comp). As it is without
+// displacement or a normal.
+vec3 Displace(vec3 position, vec3 normal, DrawInfo draw, uint slot, mat4 model, vec3 vertexColor, uint vertex,
+              vec2 uv)
 {
     if (!kDisplacement || (frame.features.x & kFeatureDisplacement) == 0u || draw.material == 0xFFFFFFFFu ||
         dot(normal, normal) < 1e-12) {
         return position;
     }
-    Displacement d = displacements[draw.material];
-    rtUvFootprint = draw.uvSpacing;
-    return position + normalize(normal) * Fetch(d.tex, d.params.xxxx, uv).r * frame.geometry.x;
+    float offset = DisplacementOffset(displacements[draw.material], draw, slot, model, position, normal, vertexColor,
+                                      vertex, uv);
+    return position + normalize(normal) * offset * frame.geometry.x;
 }
 #endif
 // n bumped by a height h over a surface whose position and height change by

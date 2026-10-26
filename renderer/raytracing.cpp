@@ -509,7 +509,9 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         // A displaced mesh's BLAS follows the displacement (scale, on or off).
         const float displacement = g.displaced ? _work.displacement : 0.0f;
         const auto it = _blas.find(g.version);
-        if (it != _blas.end() && it->second.displacement != displacement) {
+        if (it != _blas.end() &&
+            (it->second.displacement != displacement ||
+             (displacement != 0.0f && it->second.graphs != _work.displacementGraphs))) {
             _DestroyBlas(it->second);
             _blas.erase(it);
         }
@@ -609,9 +611,10 @@ void RayTracing::_PrepareDisplaced(const Scene::Gpu &gpu, const std::vector<uint
         _fn->getBuildSizes(_dev.device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &info, &triangles, &sizes);
         Blas blas = _CreateBlas(sizes.accelerationStructureSize);
         blas.displacement = _work.displacement;
+        blas.graphs = _work.displacementGraphs;
         _blas[g.version] = blas;
         _displacedBuilds.push_back({blas.as, slot, vertices, scratch});
-        table.insert(table.end(), {slot, vertices, g.vertexCount, 0u});
+        table.insert(table.end(), {slot, vertices, g.vertexCount, g.firstInstance});
         vertices += g.vertexCount;
         scratch += AlignUp(sizes.buildScratchSize, _scratchAlignment);
         _displacedMostVertices = std::max(_displacedMostVertices, g.vertexCount);

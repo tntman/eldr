@@ -1722,7 +1722,7 @@ void Scene::Commit(bool keepMotion)
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
                                    drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
-                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent};
+                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase};
         drawn[slot] = drawable ? m._instanceCount : 0;
         if (drawable) {
             anyDrawable = true;

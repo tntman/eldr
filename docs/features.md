@@ -403,8 +403,8 @@ the hit. Ray-traced reflections replace the dome's and SSR's up to roughness
   other refracting fragments at the pixel stay screen space. Displaced glass
   (`rtRefractionDisplacement`, with `rtDisplacement`) bends the rays by its
   displaced triangles and its height map's bump, as the shading pass bumps
-  its fragments, so rippled water or hammered glass distorts what is behind
-  it; displacement graphs stay at their rest surface there.
+  its fragments (a displacement graph's by its displaced facets), so rippled
+  water or hammered glass distorts what is behind it.
 - **Translucent shadows** (`translucentShadows`): glass casts a faint, green
   glass a green, shadow.
 - **Holdouts** (`holdouts`): matte objects write black and zero alpha but keep
@@ -532,7 +532,9 @@ quantises the lit intensity relative to the albedo into flat bands with
   by the largest offset. Height maps are read at the mip whose texels are as
   far apart as the mesh's vertices, so a map finer than the mesh doesn't
   alias. With `displacementGraphs`, a displacement driven by a shading graph
-  (math, noise, several textures) runs that graph per vertex.
+  (math, noise, several textures) runs that graph per vertex, also for ray
+  tracing's BLASes (`rtDisplacement`; one BLAS per mesh, so a graph reading
+  per-instance inputs displaces every instance as the mesh's first).
 - **Levels of detail** (`lod`, `lodBias`): meshes of 1000 triangles or more
   get up to three coarser levels (quadric error simplification that also
   weighs normals, uvs and colours, and joint weights for skinned meshes);

@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 #include "frame.glsl"
 #include "scene.glsl"
+#define DISPLACE_COMPUTE
 #include "displace.glsl"
 
 // Ray tracing's skinned instances (RayTracing): their vertices posed as
@@ -53,7 +54,10 @@ void main()
     vec3 position = vec3(rtVertices[rest], rtVertices[rest + 1u], rtVertices[rest + 2u]);
     vec3 normal = vec3(rtVertices[rest + 3u], rtVertices[rest + 4u], rtVertices[rest + 5u]);
     if (job.displaced != 0u) {
-        position = Displace(position, normal, d, vec2(rtVertices[rest + 6u], rtVertices[rest + 7u]));
+        vec3 color = vec3(unpackHalf2x16(floatBitsToUint(rtVertices[rest + 8u])),
+                          unpackHalf2x16(floatBitsToUint(rtVertices[rest + 9u])).x);  // rt.glsl's RtColor
+        position = Displace(position, normal, d, job.instance, InstanceTransform(inst), color, d.vertexBase + v,
+                            vec2(rtVertices[rest + 6u], rtVertices[rest + 7u]));
     }
     uint sv = d.skin + v * (kWideSkin ? 2u : 1u);
     SkinVertex sk = skin[sv];

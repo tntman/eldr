@@ -7,7 +7,6 @@
 #include "lights.glsl"
 #include "scene.glsl"
 #include "material.glsl"
-#include "displace.glsl"
 #include "rt.glsl"
 #include "gi.glsl"
 #include "volume.glsl"
@@ -40,9 +39,10 @@
 // (the app's background: coverage drops), 0 where none was found.
 // Displaced glass (rt.refraction.y: its BLAS is displaced, Work::displacement)
 // bends them by its displaced triangle and the height map's bump, as the
-// shading pass bumps its fragments.
-// ponytail: graphs' displacement isn't traced (rest surface); skinned meshes' programs see posed world space as object
-// space; uniform primvars read face 0.
+// shading pass bumps its fragments; a displacement graph's by the displaced
+// triangle's facet, as the shading pass takes its facet.
+// ponytail: skinned meshes' programs see posed world space as object space;
+// uniform primvars read face 0.
 layout(set = 0, binding = 86, rgba16f) uniform writeonly image2D rtRefractionImage;
 
 // Material programs (program.glsl) at a hit: their inputs, set by Evaluate,
@@ -58,6 +58,7 @@ mat4 programModel;
 float programDisplacement;
 layout(std430, set = 0, binding = 32) readonly buffer PrimvarVertices { vec4 primvarVertices[]; };
 #include "program.glsl"
+#include "displace.glsl"
 
 // A translucent hit's surface, its material as shading sees it.
 struct Surface {
@@ -82,26 +83,31 @@ Surface Evaluate(vec3 dir, float cone)
     mat4 model = mat4(1.0);
     bool skinned = hit.instance >= rt.skinned.x;
     uint posed = skinned ? rtSkinned[hit.instance - rt.skinned.x].firstVertex - d.vertexBase : 0u;
-    inSlot = skinned ? rtSkinned[hit.instance - rt.skinned.x].instance : hit.instance;
+    uint instance = skinned ? rtSkinned[hit.instance - rt.skinned.x].instance : hit.instance;
     if (!skinned) {
-        model = InstanceTransform(instances[inSlot]);
+        model = InstanceTransform(instances[instance]);
     }
-    inPrimvars = vec4(0.0);
-    // Displaced as rt_displace.comp displaces the BLAS's vertices (skinned
-    // ones are posed displaced, rt_skin.comp).
+    // Displaced as rt_displace.comp displaces the BLAS's vertices, graphs
+    // too (skinned ones are posed displaced, rt_skin.comp). First: a graph
+    // sets the program's inputs, which the hit's own program needs below.
     bool displaced = rt.refraction.y != 0u && d.boundsMax.w > 0.0 && d.material != kNoMaterial &&
-                     (frame.features.x & kFeatureDisplacement) != 0u &&
-                     (displacements[d.material].program.y == 0u || frame.geometry.w <= 0.5);
-    for (int k = 0; k < 3; ++k) {
-        p[k] = skinned ? RtSkinnedPosition(posed + v[k]) : RtPosition(v[k]);
-        vec3 vn = skinned ? RtSkinnedNormal(posed + v[k]) : RtNormal(v[k]);
-        objectN += b[k] * vn;
-        uv[k] = RtUv(v[k]);
-        if (displaced && !skinned && dot(vn, vn) > 1e-12) {
-            rtUvFootprint = d.uvSpacing;
-            Displacement dm = displacements[d.material];
-            p[k] += normalize(vn) * Fetch(dm.tex, dm.params.xxxx, uv[k]).r * frame.geometry.x;
+                     (frame.features.x & kFeatureDisplacement) != 0u;
+    bool graph = displaced && displacements[d.material].program.y > 0u && frame.geometry.w > 0.5;
+    vec3 shift[3] = vec3[3](vec3(0.0), vec3(0.0), vec3(0.0));
+    for (int k = 0; k < 3 && displaced && !skinned; ++k) {
+        vec3 vn = RtNormal(v[k]);
+        if (dot(vn, vn) > 1e-12) {
+            float offset = DisplacementOffset(displacements[d.material], d, instance, model, RtPosition(v[k]), vn,
+                                              RtColor(v[k]), v[k], RtUv(v[k]));
+            shift[k] = normalize(vn) * offset * frame.geometry.x;
         }
+    }
+    inSlot = instance;
+    inPrimvars = vec4(0.0);
+    for (int k = 0; k < 3; ++k) {
+        p[k] = (skinned ? RtSkinnedPosition(posed + v[k]) : RtPosition(v[k])) + shift[k];
+        objectN += b[k] * (skinned ? RtSkinnedNormal(posed + v[k]) : RtNormal(v[k]));
+        uv[k] = RtUv(v[k]);
         color += b[k] * RtColor(v[k]);
         if (d.primvarVertices != kFreeSlot) {
             inPrimvars += b[k] * primvarVertices[d.primvarVertices + v[k] - d.vertexBase];
@@ -121,7 +127,9 @@ Surface Evaluate(vec3 dir, float cone)
     float worldArea = length(cross(w1 - w0, w2 - w0));
     float uvDet = e1.x * e2.y - e1.y * e2.x;
     rtUvFootprint = cone * hit.t * sqrt(abs(uvDet) / max(worldArea, 1e-20));
-    if (displaced && displacements[d.material].tex.index >= 0 && abs(uvDet) > 1e-20) {
+    if (graph) {
+        n = dot(ng, n) < 0.0 ? -ng : ng;  // displace.glsl's DisplacedNormal: the facet, on n's side
+    } else if (displaced && displacements[d.material].tex.index >= 0 && abs(uvDet) > 1e-20) {
         // displace.glsl's DisplacedNormal with uv derivatives: the surface
         // and its height (world units) a step along u and along v, on the
         // authored side.

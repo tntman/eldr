@@ -714,11 +714,11 @@ void Renderer::_CreateDescriptors()
         {27, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         // Also displacement programs (displace.glsl) and traced refraction's
         // hits (rt_refraction.rgen).
-        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt},
-        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt},
+        {28, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {29, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {30, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {31, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kVertex | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {32, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         // Deformation blur: point velocities (Scene::Gpu::velocities).
         {33, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Ray tracing: TLAS, traced shadows and reflections (storage
@@ -3041,6 +3041,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
+    rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on

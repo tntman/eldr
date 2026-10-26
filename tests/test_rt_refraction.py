@@ -303,5 +303,45 @@ print(f"edge spread through rippled glass: displaced {bent:.3f}, no displacement
 expect(bent > 0.08, "displaced glass bends the traced refraction (the edge wiggles)")
 expect(flat < 0.02 and rest < 0.02, "flat glass leaves the edge straight")
 
+# The same ripple from a MaterialX displacement graph (0.05 sin(2 pi 4 (u + v)),
+# run per vertex for the BLAS and at the hit): the edge wiggles as well.
+stage, frustum, _ = stage_with_camera()
+graphGlass = mtlx_glass(stage, "/mtl/graphRipple", {"specular_roughness": (F, 0.0)}, {})
+disp = UsdShade.Shader.Define(stage, "/mtl/graphRipple/disp")
+disp.CreateIdAttr("ND_displacement_float")
+graphGlass.CreateDisplacementOutput("mtlx").ConnectToSource(disp.ConnectableAPI(), "out")
+uvNode = UsdShade.Shader.Define(stage, "/mtl/graphRipple/uv")
+uvNode.CreateIdAttr("ND_texcoord_vector2")
+parts = []
+for i in range(2):
+    part = UsdShade.Shader.Define(stage, f"/mtl/graphRipple/c{i}")
+    part.CreateIdAttr("ND_extract_vector2")
+    part.CreateInput("in", Sdf.ValueTypeNames.Float2).ConnectToSource(uvNode.ConnectableAPI(), "out")
+    part.CreateInput("index", Sdf.ValueTypeNames.Int).Set(i)
+    parts.append(part)
+summed = UsdShade.Shader.Define(stage, "/mtl/graphRipple/sum")
+summed.CreateIdAttr("ND_add_float")
+summed.CreateInput("in1", F).ConnectToSource(parts[0].ConnectableAPI(), "out")
+summed.CreateInput("in2", F).ConnectToSource(parts[1].ConnectableAPI(), "out")
+scaled = UsdShade.Shader.Define(stage, "/mtl/graphRipple/scaled")
+scaled.CreateIdAttr("ND_multiply_float")
+scaled.CreateInput("in1", F).ConnectToSource(summed.ConnectableAPI(), "out")
+scaled.CreateInput("in2", F).Set(2 * math.pi * 4)
+wave = UsdShade.Shader.Define(stage, "/mtl/graphRipple/sin")
+wave.CreateIdAttr("ND_sin_float")
+wave.CreateInput("in", F).ConnectToSource(scaled.ConnectableAPI(), "out")
+disp.CreateInput("displacement", F).ConnectToSource(wave.ConnectableAPI(), "out")
+disp.CreateInput("scale", F).Set(0.05)
+sheet = mesh(stage, "/sheet", points, [4] * cells * cells, indices, graphGlass, [(0, 0, 1)] * len(points))
+UsdGeom.PrimvarsAPI(sheet).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray,
+                                         UsdGeom.Tokens.vertex).Set(uvs)
+quad(stage, "/white", -4, -4, 0, 4, -3, material(stage, "/mtl/white", {"diffuseColor": (C, (0, 0, 0)),
+                                                                        "emissiveColor": (C, (1, 1, 1))}))
+quad(stage, "/black", 0, -4, 4, 4, -3, material(stage, "/mtl/black", {"diffuseColor": (C, (0, 0, 0))}))
+bent, rest = wiggle(), wiggle(**{"eldr:displacementGraphs": False})
+print(f"edge spread through graph-rippled glass: displaced {bent:.3f}, graphs off {rest:.3f}")
+expect(bent > 0.08, "a displacement graph bends the traced refraction (the edge wiggles)")
+expect(rest < 0.02, "without the graph the edge stays straight")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
