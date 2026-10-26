@@ -174,7 +174,7 @@ void Transparency::_Unscale(VkCommandBuffer cmd, VkImageView splits, float direc
         ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, m,
                     "main"};
         ci.layout = _unscaleLayout;
-        const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_unscale);
+        const VkResult r = vkCreateComputePipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &_unscale);
         vkDestroyShaderModule(d, m, nullptr);
         Check(r, "vkCreateComputePipelines");
         const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2};

@@ -483,6 +483,23 @@ std::vector<uint8_t> BuildBlueNoise()
 // = 0.1; a still camera accumulates Frame::taaSamples.
 constexpr uint32_t kTaaMoving = 9;
 
+// HDVK_TIMING: startup laps on stderr (the renderer's construction, a
+// first frame's passes over 5 ms: pipelines compile as they are first used).
+struct StartupLaps {
+    bool on = std::getenv("HDVK_TIMING") != nullptr;
+    const char *scope;
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    void operator()(const char *what, double minMs = 0.0)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+        if (on && ms >= minMs) {
+            std::fprintf(stderr, "HdVk %s: %s %.1f ms\n", scope, what, ms);
+        }
+        last = now;
+    }
+};
+
 } // namespace
 
 Renderer::Renderer(Device &device)
@@ -530,9 +547,11 @@ Renderer::Renderer(Device &device)
         Check(vkCreateQueryPool(_dev.device, &qci, nullptr, &_timestamps), "vkCreateQueryPool");
     }
 
+    StartupLaps lap{std::getenv("HDVK_TIMING") != nullptr, "renderer"};
     _dev.Reserve(_frameData, sizeof(FrameData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
     _clusters = _dev.CreateDeviceBuffer(kClusterBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     _CreateDescriptors();
+    lap("descriptors");
     // The shaders here key the device's pipeline cache file.
     // ponytail: other files' shaders aren't in the key; the driver skips
     // their stale entries.
@@ -550,13 +569,19 @@ Renderer::Renderer(Device &device)
         }
     }
     _dev.LoadPipelineCache(hash);
+    lap("pipeline cache file");
     _CreatePipelines();
+    lap("pipelines");
     _fog.CreatePipelines(_layout);
+    lap("fog pipelines");
     _CreateConstantImages();
+    lap("constant images");
     if (_dev.rayTracing) {
         _rt = std::make_unique<RayTracing>(_dev, _setLayout);
     }
+    lap("ray tracing");
     _volumePass = std::make_unique<VolumePass>(_dev, _setLayout);
+    lap("volume pass");
 }
 
 Renderer::~Renderer()
@@ -858,7 +883,7 @@ void Renderer::_CreateDescriptors()
 // other member: Frame::pipelinePrewarm's worker calls it too). Each pass's
 // variants compile in parallel, through `cache` (else the device's).
 void Renderer::_CreatePipelines(bool displaced, uint32_t features, const ShadingTargets *shading,
-                                VkPipelineCache cache)
+                                VkPipelineCache cache, const uint64_t *wanted)
 {
     const VkDevice device = _dev.device;
     const bool first = !displaced && !shading;
@@ -1019,9 +1044,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     std::vector<Job> jobs;
     jobs.reserve(5 * kVariants);  // no reallocation: the infos point into the jobs
     auto queueMesh = [&](const VkGraphicsPipelineCreateInfo &info, VkPipeline *out, uint32_t variants,
-                         uint32_t pass = 0, VkShaderModule programFrag = VK_NULL_HANDLE) {
+                         uint32_t pass = 0, VkShaderModule programFrag = VK_NULL_HANDLE, uint64_t want = ~0ull) {
         for (uint32_t v = 0; v < kVariants; ++v) {
-            if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced) {
+            if ((v & ~variants) || ((v & 8) && !(v & 4)) || bool(v & 32) != displaced || !((want >> v) & 1)) {
                 continue;  // not this pass's or call's; noise comes with a program
             }
             Job &j = jobs.emplace_back();
@@ -1077,7 +1102,8 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     };
     VkResult r = VK_SUCCESS;
     if (shading) {
-        queueMesh(ci, shading->opaque, kVariants - 1);
+        auto want = [&](int pass) { return wanted ? wanted[pass] : ~0ull; };
+        queueMesh(ci, shading->opaque, kVariants - 1, 0, VK_NULL_HANDLE, want(0));
 
         // Translucent: premultiplied blending over the opaque colour (and
         // its coverage alpha); ids are written (picking), motion vectors
@@ -1093,9 +1119,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         overBlend.pAttachments = over;
         VkGraphicsPipelineCreateInfo tci = ci;
         tci.pColorBlendState = &overBlend;
-        queueMesh(tci, shading->translucent, kVariants - 1);
+        queueMesh(tci, shading->translucent, kVariants - 1, 0, VK_NULL_HANDLE, want(1));
         // Refracting meshes' back faces, seen from inside: blended the same.
-        queueMesh(tci, shading->refractBack, kVariants - 1, 3);
+        queueMesh(tci, shading->refractBack, kVariants - 1, 3, VK_NULL_HANDLE, want(2));
 
         // Weighted blended OIT (Transparency): colour and coverage summed,
         // ids as above, location 3 the revealage, multiplied by 1 - coverage.
@@ -1116,7 +1142,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         VkGraphicsPipelineCreateInfo oci = ci;
         oci.pNext = &oitRendering;
         oci.pColorBlendState = &oitBlend;
-        queueMesh(oci, shading->oit, kVariants - 1, 1);
+        queueMesh(oci, shading->oit, kVariants - 1, 1, VK_NULL_HANDLE, want(3));
 
         // Subsurface pass (Subsurface): the subsurface lobe's light and the
         // radii (locations 0 and 1), nothing else written.
@@ -1131,7 +1157,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         VkGraphicsPipelineCreateInfo sci = ci;
         sci.pNext = &sssRendering;
         sci.pColorBlendState = &sssBlend;
-        queueMesh(sci, shading->subsurface, kVariants - 1, 2);
+        queueMesh(sci, shading->subsurface, kVariants - 1, 2, VK_NULL_HANDLE, want(4));
         r = compile();
     }
 
@@ -1255,7 +1281,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
 // frame.glsl features), made when first asked for.
 // ponytail: past kShadingSets - 1 sets every new mask shares one with all
 // of them; evict unused sets if sessions switch features that often.
-uint32_t Renderer::_ShadingSet(uint32_t features)
+uint32_t Renderer::_ShadingSet(uint32_t features, bool lazy)
 {
     auto it = std::find(_shadingSets.begin(), _shadingSets.end(), features);
     if (it == _shadingSets.end() && _shadingSets.size() + 1 >= kShadingSets) {
@@ -1292,6 +1318,9 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
             ++_stats.prewarmedSets;
         }
     }
+    if (!prewarmed && lazy) {
+        return set;  // _EnsureShading compiles what the frames draw with
+    }
     if (!prewarmed) {
         _CreatePipelines(false, features, &targets);
     }
@@ -1302,6 +1331,48 @@ uint32_t Renderer::_ShadingSet(uint32_t features)
         _dev.SavePipelineCache();  // the next run starts with them
     }
     return set;
+}
+
+// Frame::lazyPipelines: the variants of a shading set's passes the scene
+// draws with that aren't compiled yet, now (the opaque pass's variant 0
+// always). A material of a new kind costs a few pipelines' compile then.
+void Renderer::_EnsureShading(const Scene::Gpu &gpu, uint32_t set)
+{
+    uint64_t opaque = 1, translucent = 0, subsurface = 0;
+    for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
+        if ((gpu.chunkKind[i] & (Scene::Gpu::kWide - 1)) != Scene::Gpu::kTranslucent) {
+            opaque |= 1ull << ((gpu.chunkKind[i] >> 2) & (kVariants - 1));
+        }
+    }
+    for (uint8_t v : gpu.translucentVariant) {
+        translucent |= 1ull << (v & (kVariants - 1));
+    }
+    for (uint8_t v : gpu.subsurfaceVariant) {
+        subsurface |= 1ull << (v & (kVariants - 1));
+    }
+    const ShadingTargets t = _SetTargets(set);
+    const VkPipeline *const passes[5] = {t.opaque, t.translucent, t.refractBack, t.oit, t.subsurface};
+    uint64_t wanted[5] = {opaque, translucent, translucent, translucent, subsurface};
+    uint64_t any = 0;
+    for (int p = 0; p < 5; ++p) {
+        for (uint32_t v = 0; v < kVariants; ++v) {
+            wanted[p] &= passes[p][v] ? ~(1ull << v) : ~0ull;
+        }
+        any |= wanted[p];
+    }
+    if (!any) {
+        return;
+    }
+    constexpr uint64_t kDisplacedBits = 0xffffffff00000000ull;  // variant bit 5
+    if (any & ~kDisplacedBits) {
+        _CreatePipelines(false, _shadingSets[set], &t, VK_NULL_HANDLE, wanted);
+    }
+    if (any & kDisplacedBits) {
+        _CreatePipelines(true, _shadingSets[set], &t, VK_NULL_HANDLE, wanted);
+    }
+    if (_savePipelines) {
+        _dev.SavePipelineCache();  // the next run starts with them
+    }
 }
 
 // Frame::pipelinePrewarm: queues the shading sets of `features` with one
@@ -2729,6 +2800,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         return;
     }
     const auto cpuStart = std::chrono::steady_clock::now();
+    static int renders = 0;
+    char lapScope[32];
+    std::snprintf(lapScope, sizeof lapScope, "frame %d", ++renders);
+    StartupLaps lap{renders <= 3 && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
     _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);
@@ -2769,7 +2844,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _savePipelines = frame.pipelineCache;
     if ((gpu.displaced || gpu.facing) && !_displacedPipelines) {  // the first displaced or facing mesh
         _CreatePipelines(true);
-        for (uint32_t set = 0; set < _shadingSets.size(); ++set) {
+        for (uint32_t set = 0; set < _shadingSets.size() && !frame.lazyPipelines; ++set) {
             const ShadingTargets targets = _SetTargets(set);
             _CreatePipelines(true, _shadingSets[set], &targets);
         }
@@ -2798,6 +2873,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else {
         _reflections.reset();
     }
+    lap("resize, shadow map, reflections", 5.0);
 
     FrameData &fd = *static_cast<FrameData *>(_frameData.mapped);
     fd = FrameData{};
@@ -3275,6 +3351,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
     }
+    lap("frame data, ray tracing", 5.0);
     const bool draw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     // Motion blur time samples: room for the capture (shutter.comp) and for
     // this frame's pools, saved while a sample moves them.
@@ -3373,6 +3450,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
     }
+    lap("descriptors", 5.0);
     if (refraction) {
         fd.features[0] |= kFeatureRefraction;
         fd.translucency[0] = float(std::clamp(frame.refractionSamples, 1u, 16u));
@@ -3384,13 +3462,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // code (mesh.frag's kCompiledLightSplits); kFeatureLod (never optional)
     // the levels of detail crossfade's dither (mesh.frag).
     static_assert((kOptionalFeatures & (1u | kFeatureLod)) == 0, "the light splits' and crossfade's key bits");
-    _shadingBase = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
-                               (fd.lodFade[0] > 0 ? kFeatureLod : 0)) *
-                   kVariants;
+    const uint32_t shadingSet = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
+                                                (fd.lodFade[0] > 0 ? kFeatureLod : 0),
+                                            frame.lazyPipelines);
+    _EnsureShading(gpu, shadingSet);  // a set made whole (not lazy, prewarmed) has them all
+    _shadingBase = shadingSet * kVariants;
+    lap("shading pipelines", 5.0);
     if (frame.pipelinePrewarm) {
         // ponytail: prewarms the sets without the light splits' bit only.
         _Prewarm(fd.features[0] & kOptionalFeatures, gpu, frame.pipelineCache);
     }
+    lap("prewarm", 5.0);
     _lastDrawCount = draw ? gpu.drawCount : 0;
 
     Check(vkResetCommandBuffer(_cmd, 0), "vkResetCommandBuffer");
@@ -3404,7 +3486,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdResetQueryPool(_cmd, _timestamps, 0, kMaxTimestamps);
         vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, 0);
     }
+    lap("setup", 5.0);
     auto pass = [&](const char *name) {
+        lap(name, 5.0);
         if (_timestamps && _passes.size() + 1 < kMaxTimestamps) {
             _passes.push_back(name);
             vkCmdWriteTimestamp2(_cmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, _timestamps, uint32_t(_passes.size()));
@@ -4032,6 +4116,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 _taaWarmup = false;
             }
             alpha = 1.0f / float(_taaFrames + 1);
+            _stats.moving = moved;
             // Last sample of a still camera; with the film, which takes over, never.
             _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1 && !(frame.filmAccumulation && !postBlur);
             _taaFrames = std::min(_taaFrames + 1, taaSamples - 1);
@@ -4045,6 +4130,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             _taaValid = false;
             _taaWarmup = false;
             _taaConverged = true;
+            _stats.moving = false;
         }
 
         // Adaptation runs on wall-clock time. The first frame, toggling
@@ -4357,6 +4443,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
+    lap("submit and readback", 5.0);
 }
 
 // The frame in flight done: what Render's stats and convergence take from the GPU.

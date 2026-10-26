@@ -51,7 +51,7 @@ GROUPS = [
      "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "
      "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
     ("Performance and debug", False,
-     "depthPrepass frustumCulling cullPixels shareFrame overlapReadback inPlaceReadback pipelineCache pipelinePrewarm extraAovs "
+     "depthPrepass frustumCulling cullPixels shareFrame overlapReadback inPlaceReadback pipelineCache pipelinePrewarm lazyPipelines extraAovs lazyExtraAovs "
      "renderScale interactiveSamples"),
 ]
 
