@@ -196,10 +196,10 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 
 | Aspect | Support |
 |---|---|
-| Prims | `UsdVolVolume` with `OpenVDBAsset` fields; bound by name: `density`, `temperature`, `Cd` or `color`, `emission`; `fieldIndex` honoured |
+| Prims | `UsdVolVolume` with `OpenVDBAsset` fields, bound by name; `fieldIndex` honoured. Without a volume material only `density` is read, as in Karma; `eldr:volumeDefaultFields` adds `temperature` (blackbody), `Cd`/`color` and `emission` |
 | Rendering | NanoVDB on the GPU, fullscreen march over the shaded image, empty space skipped |
 | Lighting | HG phase, 3-octave multiple scattering of distant lights, sun cascades for opaque occluders, dome SH, local lights as points via atlas tiles; emission from temperature (blackbody) or an emission field |
-| Materials | MaterialX `volume`: absorption/scattering per density, anisotropic vdf, uniform_edf emission, blackbody temperature. `eldr:volumeAnisotropy` for volumes without one. |
+| Materials | MaterialX `volume` (anisotropic_vdf, absorption_vdf, uniform_edf) or Karma's `kma_volume`. Inputs: constants, `geompropvalue` field reads and their products (`constant`, `multiply`, `convert`, `dot`), blackbody of a temperature field. Absorption and scattering are per channel: coloured smoke, coloured transmittance. Coefficients are per unit of density. A colour field scales the scattering; another field times a colour is emission. Any other node: the material is ignored with a warning. `eldr:volumeAnisotropy` for volumes without one. |
 | Houdini SOP volumes | Houdini build only; see the Houdini page |
 
 | Interaction | Setting |
@@ -357,7 +357,7 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | `wrapS/wrapT` | UsdUVTexture | repeat, mirror, clamp, black, useMetadata (default). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
 | `<UDIM>` asset paths | textures | Tiles 1001-1100 found by the resolver, also in usdz |
 | Subdivision tags, GeomSubsets, `displayColor` | meshes | As UsdGeom defines |
-| `fieldName`, `fieldIndex` and a MaterialX `volume` material | UsdVolVolume with OpenVDBAsset | Roles `density`, `temperature`, `Cd`/`color`, `emission` |
+| `fieldName`, `fieldIndex` and a MaterialX `volume` or Karma `kma_volume` material | UsdVolVolume with OpenVDBAsset | Fields by the material's `geompropvalue` names; without a material `density` (`eldr:volumeDefaultFields`: also `temperature`, `Cd`/`color`, `emission`) |
 
 ## Known limitations
 
@@ -378,7 +378,7 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
 | Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
 | Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |
-| Materials | A graph compiles whole or not at all (unsupported nodes, Arnold or RenderMan volume shaders keep the constant). Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
+| Materials | A graph compiles whole or not at all (unsupported nodes, Arnold or RenderMan volume shaders keep the constant). Volume graphs: Karma's Pyro Shader (switches, ramps) and Pyro Preview aren't read; ramps of temperature to emission neither. Volume shadow maps and traced shadows use the mean of coloured extinction; half-resolution volumes keep only the mean transmittance. A constant coefficient (no field read) counts per unit of density; Karma fills the active voxels uniformly. Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
 | Materials | Coat: no coat normal, anisotropy or SSR; no `coat_darkening`. Thin film assumes air above. Hair has no TT lobe; a closed curve's u jumps at its weld. |
 | Materials | With a textured setting off, a material with a textured weight is still drawn in the translucent or subsurface pass (weight 0). |
 | Displacement | Top mip only; vector displacement drops tangential parts; skinning stretch doesn't scale bump; `displacementEnabled` not read. |

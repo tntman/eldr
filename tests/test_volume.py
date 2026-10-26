@@ -149,6 +149,57 @@ glow = color(image, 0, 0)
 expect(glow.greenF() > glow.redF() + 0.15, "a volume material's emission")
 UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
 
+
+def node(path, id, **inputs):
+    """A MaterialX node: inputs (type, value or upstream node) and an `out` output."""
+    n = UsdShade.Shader.Define(stage, path)
+    n.CreateIdAttr(id)
+    for name, (type, value) in inputs.items():
+        if isinstance(value, UsdShade.Shader):
+            n.CreateInput(name, type).ConnectToSource(value.ConnectableAPI(), "out")
+        else:
+            n.CreateInput(name, type).Set(value)
+    n.CreateOutput("out", Sdf.ValueTypeNames.Token)
+    return n
+
+
+# Coloured absorption as Houdini's Material Library writes it: a constant
+# colour node times the density field (geompropvalue). Green and blue are
+# absorbed, red shows through: the cloud is red, over the grey wall. Once
+# the constant node wasn't read (grey 1) and transmittance was grey.
+C3, F, V3, S = (Sdf.ValueTypeNames.Color3f, Sdf.ValueTypeNames.Float, Sdf.ValueTypeNames.Vector3f,
+                Sdf.ValueTypeNames.String)
+tinted = UsdShade.Material.Define(stage, "/tinted")
+density = node("/tinted/density", "ND_geompropvalue_float", geomprop=(S, "density"))
+constant = node("/tinted/constant", "ND_constant_color3", value=(C3, (0.05, 3, 3)))
+product = node("/tinted/product", "ND_multiply_color3FA", in1=(C3, constant), in2=(F, density))
+tintedVdf = node("/tinted/vdf", "ND_anisotropic_vdf", absorption=(V3, product))
+tintedVolume = node("/tinted/volume", "ND_volume", vdf=(Sdf.ValueTypeNames.Token, tintedVdf))
+tinted.CreateOutput("mtlx:volume", Sdf.ValueTypeNames.Token).ConnectToSource(tintedVolume.ConnectableAPI(), "out")
+UsdShade.MaterialBindingAPI.Apply(volume.GetPrim()).Bind(tinted)
+image = render()
+red = color(image, 0, 0)
+expect(red.redF() > 0.5 * wallLevel and red.greenF() < 0.2 * red.redF(),
+       "coloured absorption from a constant colour node (%.2f %.2f %.2f, wall %.2f, cloud %.2f)"
+       % (red.redF(), red.greenF(), red.blueF(), wallLevel, cloudLevel))
+
+# A node volume graphs don't read (a switch, as in Karma's Pyro Shader):
+# the whole material is ignored, the cloud renders as without one.
+product.GetInput("in1").ConnectToSource(node("/tinted/switch", "ND_switch_color3I").ConnectableAPI(), "out")
+image = render()
+expect(abs(brightness(image, 0, 0) - cloudLevel) < 0.05, "an unread volume graph renders as without a material")
+
+# Karma's kma_volume (the kma:volume terminal) with the same coloured absorption.
+product.GetInput("in1").ConnectToSource(constant.ConnectableAPI(), "out")
+karma = UsdShade.Material.Define(stage, "/karma")
+kmaVolume = node("/karma/volume", "kma_volume", absorption=(C3, product))
+karma.CreateOutput("kma:volume", Sdf.ValueTypeNames.Token).ConnectToSource(kmaVolume.ConnectableAPI(), "out")
+UsdShade.MaterialBindingAPI(volume.GetPrim()).Bind(karma)
+image = render()
+red = color(image, 0, 0)
+expect(red.redF() > 0.5 * wallLevel and red.greenF() < 0.2 * red.redF(), "Karma's kma_volume")
+UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
+
 # Half resolution: the same image, near enough, the cloud's edge included.
 full = render()
 engine.SetRendererSetting("eldr:volumeResolution", 2)

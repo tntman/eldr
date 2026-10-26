@@ -219,6 +219,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Shadows<br>`eldr:volumeShadows` | on | Volumes darken surfaces and fog from the sun via the tint maps. | volume.usda sunShadows 1.0 vs 0.07 ms |
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
+| Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
 
 ### Camera and film
 

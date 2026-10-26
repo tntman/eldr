@@ -53,7 +53,7 @@
 | Ray-traced refraction (off-screen content) | Yes | No | Partial | Eldr: final quality (`eldr:rtRefraction`); glass behind glass, materials evaluated at every hit. |
 | Ray-traced refraction through displaced glass | Yes | No | No | Eldr: rippled water bends the rays (`eldr:rtRefractionDisplacement`). |
 | Holdouts and mattes | Yes | Yes | Yes | |
-| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX volume materials. |
+| OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX or `kma_volume` materials, coloured extinction. Not Karma's Pyro Shader graph. |
 | Houdini SOP volumes (no files) | Yes | No | No | Eldr: VDB and Houdini volumes from a SOP Import LOP, in the Houdini build. |
 | Froxel fog | Yes | Yes | Yes | |
 | Physical sky and atmosphere | No | Partial | Yes | EEVEE has a sky texture. |
