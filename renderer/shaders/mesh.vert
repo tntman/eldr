@@ -27,9 +27,11 @@ layout(std430, set = 0, binding = 26) readonly buffer PrevJoints { mat4 prevJoin
 layout(std430, set = 0, binding = 27) readonly buffer Motion { vec4 motionRows[]; };
 // Last frame's blend shape weights (copied after each frame's draws).
 layout(std430, set = 0, binding = 60) readonly buffer PrevBlendWeights { float prevBlendWeights[]; };
-// Motion blur time samples (shutter.comp): rigid rows at the shutter's
-// t = 0, per instance slot (3 each).
+// Motion blur time samples (shutter.comp): rigid rows (3 per instance
+// slot), joints and blend shape weights at the shutter's t = 0.
 layout(std430, set = 0, binding = 69) readonly buffer ShutterRows { vec4 shutterRows[]; };
+layout(std430, set = 0, binding = 70) readonly buffer ShutterJoints { mat4 shutterJoints[]; };
+layout(std430, set = 0, binding = 71) readonly buffer ShutterWeights { float shutterWeights[]; };
 // Deformation blur: point velocities (object units per frame) of rigid
 // meshes whose points move (DrawInfo::velocities).
 layout(std430, set = 0, binding = 33) readonly buffer Velocities { vec4 velocities[]; };
@@ -58,9 +60,20 @@ layout(location = 5) out vec4 outPrimvars;
 #define DISPLACE_VERTEX
 #include "displace.glsl"
 
+// A time sample's motion vectors start from its capture (t = 0).
+bool FromShutterJoints()
+{
+    return frame.deform.z != 0.0 && (uint(frame.deform.w) & 1u) != 0u;
+}
+
+bool FromShutterWeights()
+{
+    return frame.deform.z != 0.0 && (uint(frame.deform.w) & 2u) != 0u;
+}
+
 mat4 Joint(uint i, bool previous)
 {
-    return previous ? prevJoints[i] : joints[i];
+    return !previous ? joints[i] : FromShutterJoints() ? shutterJoints[i] : prevJoints[i];
 }
 
 // Meshes with eight joint influences (two SkinVertex each, the second
@@ -149,10 +162,9 @@ void main()
         uint row = (d.motion + uint(inst.index)) * 3u;
         prevModel = transpose(mat4(motionRows[row], motionRows[row + 1u], motionRows[row + 2u], vec4(0, 0, 0, 1)));
     }
-    // A time sample moved the instances to its time (shutter.comp): their
-    // motion runs from the capture's rows (t = 0), for the residual blur
-    // between time samples. ponytail: skinned meshes keep the joints'
-    // motion vectors (none once the scene stands still).
+    // A time sample moved the instances (and joints, blend shape weights)
+    // to its time (shutter.comp): their motion runs from the capture
+    // (t = 0), for the residual blur between time samples.
     if (frame.deform.z != 0.0 && d.skin == kFreeSlot) {
         uint row = slot * 3u;
         prevModel = transpose(mat4(shutterRows[row], shutterRows[row + 1u], shutterRows[row + 2u], vec4(0, 0, 0, 1)));
@@ -171,13 +183,15 @@ void main()
                 uint weight = weights + min(uint(o.w), d.blendShapes - 1u);
                 position += o.xyz * blendWeights[weight];
 #ifndef DEPTH_ONLY
-                prevPosition += o.xyz * ((pc.motion & 4u) != 0u ? prevBlendWeights[weight] : blendWeights[weight]);
+                prevPosition += o.xyz * (FromShutterWeights()     ? shutterWeights[weight]
+                                         : (pc.motion & 4u) != 0u ? prevBlendWeights[weight]
+                                                                  : blendWeights[weight]);
 #endif
             }
         }
         model = SkinMatrix(s, w, s2, inst.joints, false);
 #ifndef DEPTH_ONLY
-        prevModel = (pc.motion & 3u) == 1u ? SkinMatrix(s, w, s2, inst.joints, true) : model;
+        prevModel = (pc.motion & 3u) == 1u || FromShutterJoints() ? SkinMatrix(s, w, s2, inst.joints, true) : model;
 #endif
         normalMatrix = mat3(model);  // ponytail: no inverse-transpose for scaled joints
     } else {
