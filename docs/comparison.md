@@ -70,7 +70,8 @@
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
 | Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
-| Subdivision surfaces | Yes | Yes | Partial | |
+| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels, per mesh or from the host; no adaptive dicing. |
+| Per-object ray visibility (camera, shadow, reflections) | Partial | Yes | Yes | Eldr: Karma's render visibility; reflections and GI only when ray traced, screen-space effects see what the camera sees. |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
 | Virtual geometry (Nanite-style) | No | No | Yes | *(interactive)* |
 | Texture streaming | No | No | Yes | Needed for very large assets. |

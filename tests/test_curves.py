@@ -136,6 +136,22 @@ print(f"triangles: sphere {oneTube}, disc {sprites}, sprite primvar off {sphere}
 if sprites != oneTube - 12 or sphere != oneTube:
     failures.append("sprites")
     print("FAIL: a disc should draw 8 triangles for a sphere's 20, and the primvar keep the sphere")
+# Karma's Render Curves As (1: rounded) turns a ribbon back into a tube;
+# Render Points As (0: discs) loses to the eldr:sprites primvar above;
+# Width Scale doubles the point's radius.
+UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/linear")).CreatePrimvar(
+    "karma:object:curve_style", Sdf.ValueTypeNames.Int).Set(1)
+pointVars = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/points"))
+pointVars.CreatePrimvar("karma:object:point_style", Sdf.ValueTypeNames.Int).Set(0)
+rounded = start(curveRibbons=True, pointSprites=True)
+print(f"triangles: Karma's rounded curve style on one ribbon {rounded}")
+if not rounded > sphere:
+    failures.append("curve_style")
+    print("FAIL: karma:object:curve_style 1 should draw a tube")
+pointVars.CreatePrimvar("karma:object:width_scale", Sdf.ValueTypeNames.Float).Set(2.0)
+start(curveRibbons=True, pointSprites=True)
+expect(2.55, -3, "/points")           # radius 0.6
+expect(2.7, -3, None)
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

@@ -1,6 +1,7 @@
 """Subdivision surfaces: tests/scenes/subdivision.usda refined with the
 render params' complexity (usdview's Complexity menu), within the
-eldr:subdivision and eldr:maxRefineLevel settings.
+eldr:subdivision and eldr:maxRefineLevel settings, or per mesh by
+primvars:eldr:refineLevel and Karma's primvars:karma:object:dicingdepthmax.
 Run: usdenv.cmd python tests\\test_subdivision.py"""
 import os
 import sys
@@ -9,7 +10,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
-from pxr import Gf, Usd, UsdGeom, UsdImagingGL
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL
 
 SIZE = 64
 
@@ -67,6 +68,18 @@ expect(triangles(1.3) == expected(0), "subdivision off draws the cages")
 engine.SetRendererSetting("eldr:subdivision", True)
 engine.SetRendererSetting("eldr:maxRefineLevel", 3)
 expect(triangles(1.2) == expected(2), "back to the display style's level")
+
+# Per mesh: the loop octahedron (8 triangles) at its own level, at most
+# Karma's dicing depth.
+loop = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/loop"))
+loop.CreatePrimvar("eldr:refineLevel", Sdf.ValueTypeNames.Int).Set(2)
+expect(triangles(1.0) == expected(0) + 8 * (4**2 - 1), "primvars:eldr:refineLevel 2 over complexity's 0")
+loop.CreatePrimvar("karma:object:dicingdepthmax", Sdf.ValueTypeNames.Int).Set(1)
+expect(triangles(1.0) == expected(0) + 8 * (4 - 1), "primvars:karma:object:dicingdepthmax 1 caps it")
+loop.RemovePrimvar("eldr:refineLevel")
+expect(triangles(1.3) == expected(3) - 8 * (4**3 - 4), "the dicing depth caps the display style's level too")
+loop.RemovePrimvar("karma:object:dicingdepthmax")
+expect(triangles(1.3) == expected(3), "both removed")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")

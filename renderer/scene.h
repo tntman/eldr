@@ -378,6 +378,13 @@ struct Mesh {
     // Holdout (matte): drawn black with zero alpha, cut out of the image
     // but still hiding what's behind it and casting shadows.
     bool holdout = false;
+    // Which rays see it (Karma's render visibility): the camera (every
+    // rasterized camera pass, and so the screen-space effects; the primary
+    // ray of ray-traced shadows and reflections), shadows (shadow maps and
+    // shadow rays) and secondary rays (ray-traced reflections, GI probes,
+    // refraction). None: as not visible.
+    enum Rays : uint32_t { kCameraRays = 1, kShadowRays = 2, kSecondaryRays = 4, kAllRays = 7 };
+    uint32_t rays = kAllRays;
     // Planar reflections: make this (flat) mesh the mirror
     // (primvars:eldr:planarReflection), whatever its size and roughness.
     bool planarReflection = false;
@@ -515,7 +522,7 @@ struct DrawInfo {
     float color[4];      // displayColor
     uint32_t material;   // kNoMaterial: color + default material
     int32_t primId;
-    uint32_t visible;
+    uint32_t visible;    // Mesh::rays, 0: not drawn
     uint32_t skin;        // first SkinVertex of the mesh, kNone if rigid
     uint32_t vertexBase;  // the mesh's first vertex in the vertex pool
     uint32_t vertexColors;  // 1: per-vertex displayColor, else `color`
@@ -892,6 +899,7 @@ private:
     std::vector<uint32_t> _keptMotionBase;
     bool _keptMoved = false;
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
+    std::vector<uint32_t> _lastRays;   // per slot: the rays that saw it (Mesh::rays)
     VkImage _envImage = VK_NULL_HANDLE;
     VkDeviceMemory _envMemory = VK_NULL_HANDLE;
     VkImageView _envView = VK_NULL_HANDLE;

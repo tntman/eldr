@@ -120,7 +120,9 @@ void main()
         return;
     }
     Instance inst = instances[i];
-    if (inst.draw == kFreeSlot || inst.draw >= pc.drawCount || draws[inst.draw].visible == 0u) {
+    // List 0 is the camera's, the others shadows'.
+    if (inst.draw == kFreeSlot || inst.draw >= pc.drawCount ||
+        (draws[inst.draw].visible & (pc.listBase == 0u ? kRaysCamera : kRaysShadow)) == 0u) {
         return;
     }
     DrawInfo d = draws[inst.draw];

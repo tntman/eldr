@@ -33,10 +33,38 @@ The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `buil
 | File | Where it shows |
 |---|---|
 | `HdVkRendererPlugin_Global.ds` | Render Settings LOP tab: every `eldr:*` setting, each with Karma's Do Nothing / Set or Create / Block menu |
-| `HdVkRendererPlugin_Geometry.ds` | Render Geometry Settings LOP tab: per-prim primvars (`primvars:eldr:reflectionProbe`, `planarReflection`, `hair`, `ribbons`, `sprites`) |
+| `HdVkRendererPlugin_Geometry.ds` | Render Geometry Settings LOP tab: Eldr's own primvars (`primvars:eldr:reflectionProbe`, `planarReflection`, `hair`, `ribbons`, `sprites`, `refineLevel`) and a note naming the Karma tab's controls Eldr reads |
 | `HdVkRendererPlugin_Viewport.ds` | Viewport Display Options |
 
 Nodes made before Eldr was installed need **Rebuild Renderer-Specific Parameters**.
+
+`UsdRenderers.json` also sets `"complexitymultiplier": 1.3`, as Houdini's own entry for Karma does: the viewport's Level of Detail (1 by default) times 1.3 is Hydra's "very high" complexity, refine level 3. Without it Houdini asks for level 0 and subdivision surfaces show their cage (not checked in the GUI; see below).
+
+## Render Geometry Settings
+
+Per-object controls are primvars on the prim. Eldr reads Karma's own where Karma has one, so they are set on the node's **Karma** tab: Houdini builds the node's tabs from every renderer's `.ds` file and keeps only the first parameter of a name (`loputils.addDialogScriptFolder` drops a second one with a "Duplicate" warning), and Eldr's tab comes before Karma's. A copy on Eldr's tab would take the parameter away from Karma's tab, so Eldr's tab only lists them. A hython check (SOP Import into a Render Geometry Settings LOP, each control set) confirmed the attribute and type each one authors below.
+
+| Control (tab) | Attribute | Karma honours it | Eldr |
+|---|---|---|---|
+| Render Visibility (Karma) | `string primvars:karma:object:rendervisibility` | Yes | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
+| Holdout Mode (Karma) | `int primvars:karma:object:holdoutmode` | Yes | Matte and Background both cut a holdout |
+| Enable Motion Blur (Karma) | `bool primvars:karma:object:mblur` | Yes | Off: no transform or deformation motion of its own; camera motion still blurs it |
+| Render Curves As (Karma) | `int primvars:karma:object:curve_style` | Yes | Flat and Oriented Ribbons: ribbons (camera-facing without normals); Rounded Curves: tubes; USD Default: `eldr:curveRibbons` |
+| Render Points As (Karma) | `int primvars:karma:object:point_style` | Yes | Discs and Oriented Discs: camera-facing discs; Spheres: spheres |
+| Width Scale (Karma) | `float primvars:karma:object:width_scale` | Yes | Multiplies curve and point widths |
+| Dicing Maximum Depth (Karma) | `int primvars:karma:object:dicingdepthmax` | Yes | Caps the refine level (-1: no cap) |
+| Subdivision Level (Eldr) | `int primvars:eldr:refineLevel` | No (Karma dices by screen size) | The mesh's refine level instead of the viewport's or husk's, at most `eldr:maxRefineLevel` |
+| Curves as Ribbons, Points as Discs (Eldr) | `bool primvars:eldr:ribbons`, `primvars:eldr:sprites` | No | Win over Render Curves As and Render Points As |
+| Hair Shading (Eldr) | `bool primvars:eldr:hair` | No | |
+| Reflection Probe, Planar Reflection (Eldr) | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | No | |
+
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples, velocity and acceleration blur (Eldr samples points and transforms through the shutter, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
+
+## Subdivision surfaces
+
+A mesh is a subdivision surface when its `subdivisionScheme` is `catmullClark`, `loop` or `bilinear`. SOP Import authors `none` for polygons unless **Geometry Handling > Treat Polygons as Subdivision Surfaces** is on (optionally for a **Subdivision Group** only), which authors `catmullClark`; a Mesh LOP or an Edit Properties LOP can set `subdivisionScheme` too.
+
+Eldr refines it uniformly with OpenSubdiv to Hydra's refine level, at most the **Subdivision Max Level** render setting (`eldr:maxRefineLevel`, 3), or the **Subdivision Level** on Eldr's tab of a Render Geometry Settings LOP per mesh. husk's `--complexity` defaults to `veryhigh`: level 3; `low` draws the cage (measured with husk: a catmullClark box covered 1024 pixels at `low`, 568 at `medium` to `veryhigh`). The viewport's level is its Level of Detail (Display Options > Geometry) times the `complexitymultiplier` above.
 
 ## Render statistics
 
@@ -155,4 +183,5 @@ Display transforms are separate. Eldr's colour AOV in the viewport is ACES tonem
 ## Not checked
 
 - Interactive Solaris use in the GUI: navigation speed, the outline, Render Settings LOP options.
+- The viewport's refine level with `complexitymultiplier` 1.3 (headless checks reach husk only).
 - The Python ctest suite uses `usdenv.cmd` (USD 26.08) and doesn't apply to this build.
