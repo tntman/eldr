@@ -14,6 +14,8 @@ import subprocess
 import sys
 import tempfile
 
+import exr_info
+
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
@@ -91,7 +93,7 @@ PIXELS_PER_UNIT = SIZE / (2 * 8 * frustum.GetWindow().GetMax()[0])
 
 def red(x, y):
     """The product's red at pixel (x, y), y down."""
-    lines = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    lines = exr_info.lines(exrinfo, exrPath, str(x), str(y))
     return {l.split()[1]: float(l.split()[2]) for l in lines if l.startswith("pixel ")}.get("R", -1.0)
 
 

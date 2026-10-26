@@ -156,7 +156,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 // they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
-    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale);
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed);
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -851,6 +851,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                           std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
     bool collected = false;
     bool shared = false;
+    _failed = false;
     try {
         tCollect = FrameTiming::Clock::now();
         if (frame.deferReadback && (collected = _renderer->Collect(out, frame.width, frame.height))) {
@@ -870,6 +871,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render failed: %s", e.what());
+        _failed = true;  // the renderer's convergence describes a frame that never ran
     }
     vkDelegate->SetFrameShared(shared);
     if (out.inPlace && (!frame.deferReadback || collected)) {
@@ -984,7 +986,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         depthAovOf(collectedDepth)(static_cast<float *>(mapped[1]), size_t(appWidth) * appHeight);
     }
     try {
-        _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
+        if (!_failed) {  // its AOVs were never read back: the products would hold zeros
+            _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
+        }
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());
     }

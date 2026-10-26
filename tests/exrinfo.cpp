@@ -56,5 +56,6 @@ int main(int argc, char **argv)
             std::printf("pixel %s %.9g\n", spec.channelnames[c].c_str(), sum / (double(w) * h));
         }
     }
-    return 0;
+    // Output that never reached the reader is a failure, not an empty image.
+    return std::fflush(stdout) == 0 && !std::ferror(stdout) ? 0 : 3;
 }

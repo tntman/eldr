@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+import exr_info
+
 
 def run(*args, **kwargs):
     """subprocess.run that fails the test after 10 minutes instead of hanging."""
@@ -87,11 +89,7 @@ def expect(ok, what):
 
 
 def pixel(x, y):
-    r = run([exrinfo, exrPath, str(x), str(y)], capture_output=True, text=True, timeout=60)
-    values = {l.split()[1]: float(l.split()[2]) for l in r.stdout.splitlines() if l.startswith("pixel ")}
-    # A failed read is an error, not a black pixel.
-    assert r.returncode == 0 and values, f"exrinfo {x} {y}: rc {r.returncode:#x} {r.stderr.strip()}"
-    return values
+    return exr_info.pixel(exrinfo, exrPath, x, y)
 
 
 # Traced refraction (on in final quality) is noisy per sample: the colour
@@ -121,6 +119,8 @@ SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", 
 for variant, settings in VARIANTS.items():
     scale = {"directdiffuse": 1.6, "directglossy": 1.6, "indirectdiffuse": 0.5, "indirectglossy": 0.5,
              "emission": 1.0} if INTENSITIES[0] in settings else dict.fromkeys(SPLITS, 1.0)
+    if os.path.exists(exrPath):
+        os.remove(exrPath)  # a variant that writes nothing fails, not reads the last one's
     run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                     scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
                    check=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
