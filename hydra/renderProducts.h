@@ -53,7 +53,9 @@ public:
         uint32_t Width() const { return uint32_t(window[2] - window[0]); }
         uint32_t Height() const { return uint32_t(window[3] - window[1]); }
     };
-    static bool GetFraming(const HdRenderSettings *settings, Framing *framing);
+    // `size`, if given, replaces the product's resolution (husk --res: the
+    // buffers' size is the render's; the camera conforms to its aspect).
+    static bool GetFraming(const HdRenderSettings *settings, Framing *framing, const GfVec2i *size = nullptr);
     // Products render at `framing` (null: at the frame's size, as an image
     // of its own).
     void SetFraming(const Framing *framing) { _framing = framing ? *framing : Framing(); }

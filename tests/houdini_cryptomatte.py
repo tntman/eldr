@@ -64,9 +64,9 @@ def read(exr):
     return parts, {a.name: str(a.value) for a in header.extra_attribs if a.name.startswith("cryptomatte/")}
 
 
-def check(label, res):
+def check(label, res, renderer="HdVkRendererPlugin"):
     exr = os.path.join(work, label + ".exr")
-    args = [husk, "-R", "HdVkRendererPlugin", "-f", "1", "-n", "1", "-o", exr, usd]
+    args = [husk, "-R", renderer, "-f", "1", "-n", "1", "-o", exr, usd]
     if res:
         args[1:1] = ["--res", str(res[0]), str(res[1])]
     subprocess.run(args, env=env, check=False)
@@ -114,9 +114,27 @@ def check(label, res):
     return parts
 
 
+def depth(label, res):
+    """The depth of a husk render at --res."""
+    exr = os.path.join(work, label + ".exr")
+    args = [husk, "-R", "BRAY_HdKarma" if label == "karma" else "HdVkRendererPlugin", "-f", "1", "-n", "1", "-o", exr, usd]
+    args[1:1] = ["--res", str(res[0]), str(res[1])]
+    subprocess.run(args, env=env, check=False)
+    return read(exr)[0]["depth"][1][..., 0]
+
+
 native = check("native", None)
 other = check("res", (160, 90))
 # The same scene at another size: the beauty is lit and the ids still cover it.
 assert other["C"][1].shape[:2] == (90, 160), other["C"][1].shape
 assert abs(native["C"][1][..., :3].mean() - other["C"][1][..., :3].mean()) < 0.15 * native["C"][1][..., :3].mean()
 print("sizes ok")
+# --res conforms the camera to the new aspect (the product's policy), as Karma
+# does, not a stretch of the product's framing: the depth images agree (the
+# pillars and the sphere stand where Karma's do, up to silhouette pixels).
+for res in ((160, 90), (90, 160)):
+    ours, karma = depth("eldr_%dx%d" % res, res), depth("karma", res)
+    assert ours.shape == karma.shape == (res[1], res[0]), (ours.shape, karma.shape)
+    wrong = (np.abs(ours - karma) > 0.1 * np.maximum(karma, 1e-3)).mean()
+    print("--res %dx%d: depth differs from Karma's by over 10%% on %.1f%% of pixels" % (res + (100 * wrong,)))
+    assert wrong < 0.04, wrong
