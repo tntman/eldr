@@ -1,5 +1,6 @@
 #include "camera.h"
 #include "renderDelegate.h"
+#include "timing.h"
 
 #include "pxr/base/tf/token.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -10,6 +11,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 
 void HdVkCamera::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam, HdDirtyBits *dirtyBits)
 {
+    HdVkTimedCall timed(HdVkCallTimes::kCameraSync);
     // Before HdCamera::Sync, which cleans the bits.
     if (*dirtyBits & DirtyParams) {
         static const TfToken names[6] = {TfToken("lensDistortion:k3"), TfToken("lensDistortion:k4"),
