@@ -266,9 +266,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // enableInteractive but hands its raster products over as a setting
     // (rasterRenderProducts). Attributes of the settings prim (husk:*) don't
     // tell: the viewport looks through the same prims.
+    // Houdini doesn't always send houdini:viewport (a Render Settings LOP
+    // frame arrives with houdini:renderer = husk), but its viewport always
+    // sends houdini:interactive (normal, tumbling, editing); husk sends
+    // neither, only rasterRenderProducts (a batch frame).
     const VtValue viewportFlag = delegate->GetRenderSetting(TfToken("houdini:viewport"));
     const VtValue viewportBool = VtValue::Cast<bool>(viewportFlag);
-    const bool houdiniViewport = !viewportFlag.IsEmpty() && (viewportBool.IsEmpty() || viewportBool.UncheckedGet<bool>());
+    const bool houdiniViewport = (!viewportFlag.IsEmpty() && (viewportBool.IsEmpty() || viewportBool.UncheckedGet<bool>())) ||
+                                 !delegate->GetRenderSetting(TfToken("houdini:interactive")).IsEmpty();
     const bool batch = !houdiniViewport && !delegate->GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty();
     if (const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings()) {
         for (const auto &[key, value] : prim->GetNamespacedSettings()) {
@@ -532,7 +537,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // hdPrman: enableInteractive false). usdrecord sets neither, but its
     // first frame has no history, so its film starts with the first sample.
     frame.firstFrameFinal = !houdiniViewport;
-    const bool offline = batch || !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true);
+    const bool offline = batch || (!houdiniViewport &&
+                                   !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
     frame.finalQuality = frame.finalQuality || offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
     // unless the render settings prim asks for eldr:autoExposure.
