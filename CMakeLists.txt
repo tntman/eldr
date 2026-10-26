@@ -235,7 +235,7 @@ if(WIN32)
     add_test(NAME selection COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_selection.py)
     set_tests_properties(selection PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     # Houdini's viewport bindings: lazy readback, unread extra AOVs, ids vs the render index.
-    if(TARGET viewportBench)
+    if(TARGET viewportBench)  # not in the Houdini build
         add_test(NAME viewport_bindings COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
                  ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --check --ids)
         set_tests_properties(viewport_bindings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

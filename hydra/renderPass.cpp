@@ -336,6 +336,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
+                                {t2.cryptomatteSoft, &frame.cryptomatteSoft},
                                 {t2.deformationBlur, &frame.deformationBlur},
                                 {t2.dofResidualBlur, &frame.dofResidualBlur},
                                 {t2.productResolution, &frame.productResolution},
@@ -350,7 +351,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // first raster product's resolution, pixel aspect ratio and data window
     // when they aren't the buffers' size (usdrecord sizes them from -w and
     // the camera; husk from the product). The app's colour, depth and ids
-    // then get the frame resampled (nearest); its extra AOVs stay empty.
+    // then get the frame resampled (nearest), the extra AOVs and Cryptomatte too.
     HdVkRenderProducts::Framing framing;
     const bool hasFraming = frame.renderProducts && HdVkRenderProducts::GetFraming(
                                                         static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings(),
@@ -358,12 +359,22 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const bool productSized = hasFraming && frame.productResolution &&
                               (framing.Width() != frame.width || framing.Height() != frame.height);
     const uint32_t appWidth = frame.width, appHeight = frame.height;
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false); debug && productSized) {
+        std::fprintf(stderr, "Eldr: the product's framing %ux%u, the buffers' %ux%u\n", framing.Width(), framing.Height(),
+                     appWidth, appHeight);
+        std::fflush(stderr);
+    }
     _products.SetFraming(hasFraming ? &framing : nullptr);
     if (productSized) {
         frame.width = framing.Width();
         frame.height = framing.Height();
-        std::fill(extra, extra + vkr::Aovs::kCount, nullptr);
     }
+    // The app's pixel p (row major, appWidth wide) in the frame: the same
+    // for a frame of the buffers' size, else the nearest of the product's.
+    auto sourcePixel = [&](size_t p) {
+        const size_t x = p % appWidth, y = p / appWidth;
+        return productSized ? (y * frame.height / appHeight) * frame.width + x * frame.width / appWidth : p;
+    };
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
@@ -554,9 +565,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
     HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
-    // ponytail: at a product's framing husk's ids stay as they are (Int32).
-    std::vector<int32_t> huskIds;
-    if (idForHusk && !productSized &&
+    std::vector<int32_t> huskIds;  // the frame's; the float buffer gets them resampled
+    if (idForHusk &&
         (idForHusk->GetFormat() == HdFormatFloat32 ||
          static_cast<HdVkRenderBuffer *>(idForHusk)->Allocate(GfVec3i(frame.width, frame.height, 1), HdFormatFloat32, false))) {
         huskIds.resize(size_t(frame.width) * frame.height);
@@ -583,7 +593,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     out.primId = static_cast<int32_t *>(target(2));
     out.instanceId = static_cast<int32_t *>(target(3));
     std::vector<GfHalf> colorHalf;
-    if (colorFloat32 && !productSized) {
+    if (colorFloat32) {
         colorHalf.resize(size_t(frame.width) * frame.height * 4);
         out.color = colorHalf.data();
     }
@@ -597,9 +607,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     for (HdRenderBuffer *&b : extra) {
         b = b && moving && !frame.finalQuality && !productSized && !read.count(b) ? nullptr : b;
     }
+    // At a product's framing they are rendered into frame-sized copies and resampled after.
+    float *extraDst[vkr::Aovs::kCount] = {};
+    std::vector<float> extraFrame[vkr::Aovs::kCount];
     for (int k = 0; k < vkr::Aovs::kCount; ++k) {
-        out.aovs[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        extraDst[k] = extra[k] ? static_cast<float *>(extra[k]->Map()) : nullptr;
+        out.aovs[k] = extraDst[k];
         out.aovComponents[k] = extraComponents[k];
+        if (extraDst[k] && productSized) {
+            extraFrame[k].assign(size_t(frame.width) * frame.height * extraComponents[k], 0.0f);
+            out.aovs[k] = extraFrame[k].data();
+        }
     }
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
@@ -642,11 +660,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         static_cast<HdVkRenderDelegate *>(delegate)->SetCryptomatteManifests(objects, materials);
     }
 
-#ifdef HDVK_HOUDINI
-    // husk's Cryptomatte vars: Eldr renders (id, coverage, id, coverage) to
-    // the layer <name>00 husk writes (HdVkRenderBuffer::SetCrypto) and copies
-    // the first components to the var's own buffer after.
+    // husk's Cryptomatte vars: Eldr renders 6 x (id, coverage) and splits them
+    // into the layers <name>00..02 husk writes (HdVkRenderBuffer::SetCrypto),
+    // and copies the first components to the var's own buffer after.
     float *cryptoPrimary[vkr::Aovs::kCount] = {}, *cryptoPlane[vkr::Aovs::kCount] = {};
+    std::vector<float> cryptoFrame[vkr::Aovs::kCount];
+#ifdef HDVK_HOUDINI
     for (uint32_t k : {vkr::Aovs::kCryptoObject, vkr::Aovs::kCryptoMaterial}) {
         if (!extra[k] || huskName[k].empty() || !out.aovs[k]) {
             continue;
@@ -654,13 +673,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         char hash[16];
         std::snprintf(hash, sizeof(hash), "%08x", vkr::CryptomatteHash(huskName[k]));
         const std::string prefix = "cryptomatte/" + std::string(hash, 7) + "/";
-        cryptoPrimary[k] = out.aovs[k];
-        cryptoPlane[k] = out.aovs[k] = static_cast<HdVkRenderBuffer *>(extra[k])->SetCrypto(
+        cryptoPrimary[k] = extraDst[k];
+        cryptoPlane[k] = static_cast<HdVkRenderBuffer *>(extra[k])->SetCrypto(
             huskName[k], {{prefix + "name", huskName[k]},
                           {prefix + "hash", "MurmurHash3_32"},
                           {prefix + "conversion", "uint32_to_float32"},
                           {prefix + "manifest", k == vkr::Aovs::kCryptoObject ? objects : materials}});
-        out.aovComponents[k] = 4;
+        cryptoFrame[k].assign(size_t(frame.width) * frame.height * 12, 0.0f);
+        out.aovs[k] = cryptoFrame[k].data();
+        out.aovComponents[k] = 12;
     }
 #endif
     if (!huskIds.empty()) {
@@ -690,11 +711,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if (!colorHalf.empty()) {
         const HdFormat f = colorFloat32->GetFormat();
         const HdFormat component = HdGetComponentFormat(f);
-        const size_t n = HdGetComponentCount(f), pixels = colorHalf.size() / 4;
+        const size_t n = HdGetComponentCount(f), pixels = size_t(appWidth) * appHeight;
         void *dst = colorFloat32->Map();
         for (size_t p = 0; p < pixels; ++p) {
+            const size_t source = sourcePixel(p);
             for (size_t c = 0; c < n; ++c) {
-                const float v = colorHalf[p * 4 + c];
+                const float v = colorHalf[source * 4 + c];
                 if (component == HdFormatFloat32) {
                     static_cast<float *>(dst)[p * n + c] = v;
                 } else if (component == HdFormatFloat16) {
@@ -711,17 +733,32 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         if (!cryptoPlane[k]) {
             continue;
         }
-        const size_t pixels = size_t(frame.width) * frame.height, n = std::min<size_t>(extraComponents[k], 4);
+        // Layer L holds ranks 2L and 2L+1: floats 4L..4L+3 of the pixel's 12.
+        const size_t pixels = size_t(appWidth) * appHeight, n = std::min<size_t>(extraComponents[k], 4);
         for (size_t p = 0; p < pixels; ++p) {
-            std::copy(cryptoPlane[k] + p * 4, cryptoPlane[k] + p * 4 + n, cryptoPrimary[k] + p * extraComponents[k]);
+            const float *from = cryptoFrame[k].data() + sourcePixel(p) * 12;
+            for (size_t layer = 0; layer < 3; ++layer) {
+                std::copy(from + layer * 4, from + layer * 4 + 4, cryptoPlane[k] + (layer * pixels + p) * 4);
+            }
+            std::copy(from, from + n, cryptoPrimary[k] + p * extraComponents[k]);
         }
     }
 #endif
+    for (int k = 0; k < vkr::Aovs::kCount && productSized; ++k) {
+        if (extraDst[k] && !extraFrame[k].empty() && !cryptoPlane[k]) {
+            const size_t n = extraComponents[k], pixels = size_t(appWidth) * appHeight;
+            for (size_t p = 0; p < pixels; ++p) {
+                std::copy(extraFrame[k].data() + sourcePixel(p) * n, extraFrame[k].data() + sourcePixel(p) * n + n,
+                          extraDst[k] + p * n);
+            }
+        }
+    }
     if (!huskIds.empty()) {
         // 0 is the background, ids count from 1.
         auto *dst = static_cast<float *>(idForHusk->Map());
-        for (size_t p = 0; p < huskIds.size(); ++p) {
-            dst[p] = huskIds[p] < 0 ? 0.0f : float(huskIds[p] + 1);
+        for (size_t p = 0; p < size_t(appWidth) * appHeight; ++p) {
+            const int32_t id = huskIds[sourcePixel(p)];
+            dst[p] = id < 0 ? 0.0f : float(id + 1);
         }
         idForHusk->Unmap();
     }

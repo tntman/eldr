@@ -175,6 +175,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lodFade, "eldr:lodFade")) \
     ((displacementGraphs, "eldr:displacementGraphs")) \
     ((splitDomeDirect, "eldr:splitDomeDirect")) \
+    ((cryptomatteSoft, "eldr:cryptomatteSoft")) \
     ((directIntensity, "eldr:directIntensity")) \
     ((indirectIntensity, "eldr:indirectIntensity")) \
     ((sampledMotion, "eldr:sampledMotion")) \

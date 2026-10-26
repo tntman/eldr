@@ -131,8 +131,8 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
             _aovs[k].clear();
             continue;
         }
-        // Cryptomatte: (id, coverage, id, coverage); the rest as they are.
-        const uint32_t components = IsCryptomatte(k) ? 4 : vkr::Aovs::Components(vkr::Aovs::Kind(k));
+        // Cryptomatte: 6 x (id, coverage), written as 3 layers; the rest as they are.
+        const uint32_t components = vkr::Aovs::Components(vkr::Aovs::Kind(k));
         _aovs[k].assign(size_t(width) * height * components, 0.0f);
         out->aovs[k] = _aovs[k].data();
         out->aovComponents[k] = uint8_t(components);
@@ -204,10 +204,17 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
                 sources.push_back({var.source == Source::PrimId ? primId.data() : instanceId.data(), 2, 1, 0});
             } else if (!_aovs[var.kind].empty()) {
                 const uint32_t components = uint32_t(_aovs[var.kind].size() / pixels);
-                const std::string layer = IsCryptomatte(var.kind) ? var.name + "00" : var.name;
-                for (uint32_t c = 0; c < components; ++c) {
-                    channels.push_back(layer + "." + (components == 1 ? "Z" : rgba[c]));
-                    sources.push_back({_aovs[var.kind].data(), 0, components, c});
+                if (IsCryptomatte(var.kind)) {
+                    // Layer L holds ranks 2L and 2L+1: (id, coverage, id, coverage).
+                    for (uint32_t c = 0; c < components; ++c) {
+                        channels.push_back(var.name + "0" + std::to_string(c / 4) + "." + rgba[c % 4]);
+                        sources.push_back({_aovs[var.kind].data(), 0, components, c});
+                    }
+                } else {
+                    for (uint32_t c = 0; c < components; ++c) {
+                        channels.push_back(var.name + "." + (components == 1 ? "Z" : rgba[c]));
+                        sources.push_back({_aovs[var.kind].data(), 0, components, c});
+                    }
                 }
                 if (IsCryptomatte(var.kind)) {
                     char key[16];

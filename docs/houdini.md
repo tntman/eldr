@@ -200,22 +200,31 @@ another checkout's Eldr beside yours.
   coverage, id, coverage) and, per var, `cryptomatte/<key>/name|hash|
   conversion|manifest`. husk puts the planes in the EXR as parts and the
   metadata in the first part's header, as for Karma, which also keeps the
-  var's own RGB part. `hython tests\houdini_cryptomatte.py <build-h22>`
-  (hython; not in ctest) renders step4 through a Karma Render Settings LOP
-  with both Cryptomatte vars, and checks with OpenImageIO that the layers
-  exist, the manifests parse, and every id drawn is in its manifest.
-  Limits: one layer (ranks 0 and 1) whatever the var's
-  `cryptomatterank`, and edges don't blend (see Aovs in renderer/aov.h);
-  the render stats' `cryptomatte` entry also lands in the header as a
-  plain `cryptomatte` attribute, which readers ignore.
+  var's own RGB part. The planes are `<name>00`, `01`, `02` (ranks 0-5,
+  each (id, coverage, id, coverage)) as Karma writes them; the ranks are the
+  film's soft edges (`eldr:cryptomatteSoft`, see features.md). `hython
+  tests\houdini_cryptomatte.py <build-h22>` (hython; not in ctest) renders
+  step4 through a Karma Render Settings LOP with both Cryptomatte vars, at the
+  product's resolution and with `husk --res 160 90`, and checks with
+  OpenImageIO that the layers exist, the manifests parse, every id drawn is in
+  its manifest, coverages sum to at most 1 and are sorted, the edges are soft,
+  and a decoder (manifest hash to float to the coverage of every rank) gets a
+  soft matte. Limits: always the three layers (6 ranks) whatever the var's
+  `cryptomatterank`; the render stats' `cryptomatte` entry also lands in the
+  header as a plain `cryptomatte` attribute, which readers ignore.
 - **`ray:primid`.** A Karma Prim ID var has `dataType int`, so husk makes
   an Int32 buffer, then writes the EXR channel (`husk:format float`) from
   the int's bits as a float (id 1 reads 1.4e-45, so 0). For a husk-bound id var (the
   binding carries `driver:parameters:aov:husk:name`) the pass reallocates
   the buffer as Float32 and fills it with the id + 1 (0 off objects).
   usdview and usdrecord bind `primId` without husk's settings and keep
-  Int32, which picking needs. With `eldr:productResolution` at a size other
-  than husk's buffer, the ids stay Int32.
+  Int32, which picking needs.
+- **A product size other than husk's buffers.** When the render product's
+  resolution (framing, `eldr:productResolution`) differs from the size of the
+  buffers husk binds (`husk --res`, a product with its own resolution), Eldr
+  renders at the product's framing and resamples (nearest) into the buffers
+  at their size, for all of them: the beauty (Float32 too), depth, the float
+  primid, the ids, the extra AOVs and the Cryptomatte layers.
 - **The beauty is linear, unexposed.** When the settings prim is husk's
   (`husk:*` attributes), Eldr renders the film in final quality, gives husk
   the linear beauty (`eldr:productLinear`) and leaves auto exposure off
@@ -260,7 +269,7 @@ glass (0.99), the lit walls of lights.usda (1.00-1.05), albedo (0.500 against
 | Dome in the camera | not drawn by default | drawn (`domeLightCameraVisibility`, true) | None; Hydra's own setting. |
 | Glossy highlights of small lights on a rough 0.15 floor | Karma's default colour limit (`karma:global:colorlimit` 20) clips the bulb's highlight by 10%; with it off, Karma matches a brute-force GGX integral within 4% | were 1.6-2.3x brighter in total (lights.usda reflections) | Fixed: the energy-conserving representative point (features.md, Lighting); now within 5% of Karma. |
 | `ray:primid` | float id/coverage | float: 0 on the background, Hydra's primId + 1 on objects (no coverage) | Not comparable (Karma's blends ids with coverage); both are 0 only off objects. |
-| Cryptomatte vars | rank layers `<name>00..02` and manifest metadata | `<name>00` (rank 0 and 1, one sample per pixel, so hard edges) and the same manifest metadata: husk's `UT_HUSDExtraAOVResource` (see above) | Matches in layout; one layer, not three. |
+| Cryptomatte vars | rank layers `<name>00..02` and manifest metadata | `<name>00..02` (6 ranks, soft edges from the film's samples) and the same manifest metadata: husk's `UT_HUSDExtraAOVResource` (see above) | Matches in layout. |
 | Volumes | rendered | rendered (OpenVDB files and SOP volumes, see above) | Matches. |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s | |
 

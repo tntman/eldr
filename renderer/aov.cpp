@@ -43,6 +43,15 @@ bool IsColour(uint32_t k)
     return k == Aovs::kAlbedo || k == Aovs::kEmission || (k >= Aovs::kDiffuseAlbedo && k <= Aovs::kCombinedGlossy);
 }
 
+bool IsCrypto(uint32_t k)
+{
+    return k == Aovs::kCryptoObject || k == Aovs::kCryptoMaterial;
+}
+
+// A Cryptomatte pixel's film state in the sums: 6 ids (float bits), their 6
+// weights, the pixel's total weight, the film's sample count (aov.comp).
+constexpr uint32_t kCryptoStride = 14;
+
 VkImageSubresourceRange Range(VkImageAspectFlags aspect)
 {
     return {aspect, 0, 1, 0, 1};
@@ -84,7 +93,7 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 4, 4, 3, 1, 3, 3, 3, 3, 3, 3, 3};
+    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3, 3, 3, 3, 3, 3, 3};
     return components[kind];
 }
 
@@ -307,9 +316,10 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     for (uint32_t k = 0; k < kCount; ++k) {
         _offsets[k] = floats;
         _sumsOffsets[k] = sumFloats;
-        _components[k] = p.components[k] ? std::min<uint32_t>(p.components[k], 4) : Components(Kind(k));
+        _components[k] = p.components[k] ? std::min<uint32_t>(p.components[k], IsCrypto(k) ? 12 : 4) : Components(Kind(k));
         floats += targets[k] ? VkDeviceSize(_components[k]) * width * height : 0;
         sumFloats += targets[k] && IsColour(k) ? VkDeviceSize(_components[k] + 2) * width * height : 0;
+        sumFloats += targets[k] && IsCrypto(k) && p.film && p.cryptoSoft ? VkDeviceSize(kCryptoStride) * width * height : 0;
     }
     // Shader writes to host memory crawl (~30 ms for a 480 x 270 AOV):
     // they go to device memory and are copied over.
@@ -441,9 +451,13 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
             const bool filtered = p.film && IsColour(k);
-            const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds, filtered ? 1.0f : weight,
+            // Cryptomatte without the film's coverage keeps the nearest sample's id
+            // (weight 0: this one isn't), else the latest frame's.
+            const bool crypto = IsCrypto(k) && p.film && p.cryptoSoft;
+            const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds,
+                            filtered ? 1.0f : IsCrypto(k) ? (p.film ? weight : 1.0f) : weight,
                             uint32_t(_sumsOffsets[k]), {p.filmOffset[0], p.filmOffset[1]}, p.filmRadius,
-                            p.film ? (reset ? 2u : 1u) : 0u};
+                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }

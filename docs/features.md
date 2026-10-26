@@ -151,7 +151,7 @@ reference (RMSE): sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004,
 Kitchen_set 0.0068 to 0.0004. Convergence at 64 samples takes 0.2-0.5 s on
 those scenes.
 
-Ids, depth and Cryptomatte are one unfiltered sample's: under the film the
+Ids and depth are one unfiltered sample's (Cryptomatte is not: see Output): under the film the
 one nearest the pixel centre so far (kept while later samples land farther
 out, so id edges don't move with the last sample's jitter; the jitter is
 the same for every pixel), else the frame's (TAA: its jittered sample).
@@ -660,11 +660,22 @@ layout:
 - The first colour render var is the R, G, B, A layer; further ones are
   `<var>.R/G/B/A`; single channels are `<var>.Z`.
 - primId and instanceId are int-valued `<var>.R`.
-- Cryptomatte vars become `<var>00` layers (rank 0 and 1) with the spec's
-  metadata (`cryptomatte/<key>/name`, `hash` MurmurHash3_32,
-  `conversion` uint32_to_float32, `manifest` JSON of name to hex id). The
-  manifests are also in `GetRenderStats()["cryptomatte"]`. Ids take the film
-  sample's nearest the pixel centre; they are not averaged.
+- Cryptomatte vars become `<var>00`, `01` and `02` layers (ranks 0-5, each
+  layer `(id, coverage, id, coverage)` as R, G, B, A, as Karma writes
+  them) with the spec's metadata (`cryptomatte/<key>/name`, `hash`
+  MurmurHash3_32, `conversion` uint32_to_float32, `manifest` JSON of name to
+  hex id). The manifests are also in `GetRenderStats()["cryptomatte"]`.
+  Under the film (`cryptomatteSoft`, on) every pixel sums, over the film's
+  samples, the filter weight of each id (the colour AOVs' Gaussian: the 3x3
+  neighbours' ids at their weights, `aov.comp`), keeps the 6 ids with the most
+  weight and writes each one's coverage, its weight over all the weight
+  (background included), sorted. Pixels on an edge are partly each id, the
+  coverages of an edge between two objects sum to 1, and a decoder (name,
+  manifest hash, float, the coverage of every rank holding it) gets the
+  filtered matte the beauty has. The state is 14 floats per pixel and kind
+  (116 MB at 1920 x 1080 per Cryptomatte AOV), only under the film. Interactive
+  frames (TAA) and `cryptomatteSoft` off keep one id per pixel, the film
+  sample's nearest the pixel centre, at coverage 1 (rank 0 only).
 - Files are zip-compressed float32 EXR. With `productResolution` (on) the
   frame renders at the first raster product's `resolution`, conformed to its
   `pixelAspectRatio` by its `aspectRatioConformPolicy` and cut to its
@@ -673,8 +684,9 @@ layout:
   renders at UsdRenderSettingsBase's fallback 2048 x 1080, as in husk and
   Karma, not at the app's size: the EXR's display window is the
   resolution, its data window the part rendered, with `PixelAspectRatio`.
-  The app's colour, depth and ids get that frame resampled; its other AOVs
-  stay empty. Off: the frame's size.
+  The app's colour, depth, ids and other AOVs (and husk's float primid and
+  Cryptomatte layers) get that frame resampled (nearest), whatever format
+  the app bound. Off: the frame's size.
 
 **husk and the settings prim.** husk binds its render vars by its own channel
 names ("C", "depth") and carries UsdRender's `sourceName`/`sourceType` in the
@@ -774,7 +786,10 @@ Output and Hydra
 - Render products all render at the first raster product's framing; the
   collection is ignored. Vars Eldr cannot
   fill are left out with a warning. No `elementId` AOV (face picking).
-- Cryptomatte has one sample per pixel: edges do not blend.
+- Cryptomatte ranks are the film's samples within the 3x3 filter footprint: ids a
+  sample far from the pixel centre hit with little weight still count, but a
+  thin object between samples can be missed (as in the beauty). Interactive
+  frames have one id per pixel.
 - Volumes are not pickable. A field prim's own transform is ignored (as in
   Storm); only OpenVDB assets.
 - Dome `poleAxis`, portals, shadow colour/distance and IES profiles are
