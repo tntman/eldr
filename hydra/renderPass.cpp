@@ -258,10 +258,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // settings of the scene: applied when the prim's value changes (so a
     // later edit in usdview's menu stands until the prim changes again).
     // Typed like the setting's default; unknown names are ignored.
-    bool batch = false;  // husk sets no enableInteractive, but its settings prim says who renders
+    // Who renders. Houdini's viewport sets houdini:viewport; husk sets no
+    // enableInteractive but hands its raster products over as a setting
+    // (rasterRenderProducts). Attributes of the settings prim (husk:*) don't
+    // tell: the viewport looks through the same prims.
+    const VtValue viewportFlag = delegate->GetRenderSetting(TfToken("houdini:viewport"));
+    const VtValue viewportBool = VtValue::Cast<bool>(viewportFlag);
+    const bool houdiniViewport = !viewportFlag.IsEmpty() && (viewportBool.IsEmpty() || viewportBool.UncheckedGet<bool>());
+    const bool batch = !houdiniViewport && !delegate->GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty();
     if (const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings()) {
         for (const auto &[key, value] : prim->GetNamespacedSettings()) {
-            batch |= key.compare(0, 5, "husk:") == 0;  // HuskRenderSettingsAPI
             if (key.compare(0, 5, "eldr:") != 0) {
                 continue;
             }
@@ -359,7 +365,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // then the resolution (the camera conforms to its aspect by the product's
     // policy), as in Karma. Elsewhere (usdrecord -w) the product's own stands.
     const GfVec2i bufferSize(int(frame.width), int(frame.height));
-    const bool hasFraming = frame.renderProducts && HdVkRenderProducts::GetFraming(
+    // Houdini's viewport frames the settings prim's products itself.
+    const bool hasFraming = frame.renderProducts && !houdiniViewport && HdVkRenderProducts::GetFraming(
                                                         static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings(),
                                                         &framing, batch ? &bufferSize : nullptr);
     const bool productSized = hasFraming && frame.productResolution &&

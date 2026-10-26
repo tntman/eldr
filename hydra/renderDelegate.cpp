@@ -19,6 +19,7 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <exception>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -389,6 +391,12 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens2;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
+    if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
+        debug && changed && !TfStringStartsWith(key.GetString(), "eldr:")) {
+        std::fprintf(stderr, "Eldr setting %s = %s\n", key.GetText(), TfStringify(value).c_str());
+        std::fflush(stderr);
+    }
     // Through the scene: a scene index render index's change tracker can't
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
