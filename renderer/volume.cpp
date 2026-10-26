@@ -153,7 +153,15 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    const VkDevice d = _dev.device;
+}
+
+// When a volume or light shape first draws: a scene without them doesn't
+// compile them (seconds with a cold driver cache).
+void VolumePass::_EnsurePipelines()
+{
+    if (_pipeline) {
+        return;
+    }
     _pipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), Renderer::kColorFormat,
                                          false, true);
     _halfPipeline = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat);
@@ -210,6 +218,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     if (volumeCount == 0) {
         return false;
     }
+    _EnsurePipelines();
     // The shading pass's colour writes land before the blend reads them.
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -248,6 +257,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
 void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,
                                    VkImageView color, uint32_t width, uint32_t height)
 {
+    _EnsurePipelines();
     VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
     b.srcStageMask = b.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
     b.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
@@ -264,6 +274,7 @@ void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uin
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
                               uint32_t mapSize, const Settings &s)
 {
+    _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.cascade = cascade;
     p.mapSize = mapSize;
@@ -276,6 +287,7 @@ void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t
 void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
                                   uint32_t x, uint32_t y, uint32_t size, const Settings &s)
 {
+    _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.part = 1;
     p.cascade = tile;

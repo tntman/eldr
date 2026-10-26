@@ -3,6 +3,8 @@
 #include "scene.h"
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 #include <cstring>
 #include <vector>
 
@@ -162,7 +164,7 @@ Aovs::Aovs(Device &device)
     ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, m,
                 "main"};
     ci.layout = _layout;
-    const VkResult r = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_resolve);
+    const VkResult r = vkCreateComputePipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &_resolve);
     vkDestroyShaderModule(d, m, nullptr);
     Check(r, "vkCreateComputePipelines");
 }
@@ -247,39 +249,50 @@ const VkPipeline *Aovs::Pipelines(VkPipelineLayout layout)
     const VkSpecializationMapEntry proceduralEntry{8, 0, sizeof(VkBool32)};
     const VkBool32 procedural = VK_TRUE;
     const VkSpecializationInfo proceduralSpec{1, &proceduralEntry, sizeof(procedural), &procedural};
-    VkResult r = VK_SUCCESS;
-    for (uint32_t v = 0; v <= kVariants && r == VK_SUCCESS; ++v) {
+    // Each variant on a thread of its own (drivers compile one pipeline on
+    // one core): seconds with a cold driver cache otherwise.
+    std::atomic<VkResult> r{VK_SUCCESS};
+    std::vector<std::thread> threads;
+    for (uint32_t v = 0; v <= kVariants; ++v) {
         if ((v & ~kVariants) || ((v & 8) && !(v & 4))) {
             continue;  // procedurals come with a program
         }
-        const VkBool32 flags[3] = {(v & 1) ? VK_TRUE : VK_FALSE, (v & 2) ? VK_TRUE : VK_FALSE,
-                                   (v & 32) ? VK_TRUE : VK_FALSE};
-        const VkSpecializationInfo spec{3, entries, sizeof(flags), flags};
-        const int graph = v & 4 ? 2 : 0;
-        const VkPipelineShaderStageCreateInfo stages[2] = {
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
-             modules[graph], "main", &spec},
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
-             modules[graph + 1], "main", v & 8 ? &proceduralSpec : nullptr},
-        };
-        VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
-        ci.stageCount = 2;
-        ci.pStages = stages;
-        ci.pVertexInputState = &input;
-        ci.pInputAssemblyState = &assembly;
-        ci.pViewportState = &viewport;
-        ci.pRasterizationState = &raster;
-        ci.pMultisampleState = &multisample;
-        ci.pDepthStencilState = &depth;
-        ci.pColorBlendState = &blend;
-        ci.pDynamicState = &dynamic;
-        ci.layout = layout;
-        r = vkCreateGraphicsPipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &_geometry[v]);
+        threads.emplace_back([&, v] {
+            const VkBool32 flags[3] = {(v & 1) ? VK_TRUE : VK_FALSE, (v & 2) ? VK_TRUE : VK_FALSE,
+                                       (v & 32) ? VK_TRUE : VK_FALSE};
+            const VkSpecializationInfo spec{3, entries, sizeof(flags), flags};
+            const int graph = v & 4 ? 2 : 0;
+            const VkPipelineShaderStageCreateInfo stages[2] = {
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT,
+                 modules[graph], "main", &spec},
+                {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT,
+                 modules[graph + 1], "main", v & 8 ? &proceduralSpec : nullptr},
+            };
+            VkGraphicsPipelineCreateInfo ci{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering};
+            ci.stageCount = 2;
+            ci.pStages = stages;
+            ci.pVertexInputState = &input;
+            ci.pInputAssemblyState = &assembly;
+            ci.pViewportState = &viewport;
+            ci.pRasterizationState = &raster;
+            ci.pMultisampleState = &multisample;
+            ci.pDepthStencilState = &depth;
+            ci.pColorBlendState = &blend;
+            ci.pDynamicState = &dynamic;
+            ci.layout = layout;
+            const VkResult result = vkCreateGraphicsPipelines(d, _dev.pipelineCache, 1, &ci, nullptr, &_geometry[v]);
+            if (result != VK_SUCCESS) {
+                r = result;
+            }
+        });
+    }
+    for (std::thread &t : threads) {
+        t.join();
     }
     for (VkShaderModule m : modules) {
         vkDestroyShaderModule(d, m, nullptr);
     }
-    Check(r, "vkCreateGraphicsPipelines");
+    Check(r.load(), "vkCreateGraphicsPipelines");
     return _geometry;
 }
 

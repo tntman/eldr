@@ -162,7 +162,8 @@ private:
     void _ReserveScratch(VkDeviceSize bytes);
     Image _CreateAtlas(VkFormat format, uint32_t width, uint32_t height);  // storage + sampled, GENERAL, zero
     void _CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers);
-    void _CreatePipelines(VkDescriptorSetLayout sceneLayout);
+    void _CreatePipelines(VkDescriptorSetLayout sceneLayout);  // layouts and the set
+    void _EnsurePipelines();
     void _FitProbes(const Scene::Gpu &gpu);
 
     Device &_dev;

@@ -156,7 +156,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 // they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
-    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending());
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale);
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -413,6 +413,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.multiScatter, &frame.multiScatter},
                                 {t2.overlapReadback, &frame.overlapReadback},
                                 {t2.inPlaceReadback, &frame.inPlaceReadback},
+                                {t2.lazyPipelines, &frame.lazyPipelines},
+                                {t2.lazyExtraAovs, &frame.lazyExtraAovs},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
@@ -736,9 +738,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             moved = edited = 0;
         }
     }
+    // eldr:lazyExtraAovs: a still camera's too until its film converged,
+    // then one more frame renders them (IsConverged waits for it): they cost
+    // a G-buffer pass and readback a frame (4.9 ms GPU at 1866x737).
+    const bool skipUnread = moving || (frame.lazyExtraAovs && !_renderer->IsConverged());
+    bool skipped = false;
     for (HdRenderBuffer *&b : extra) {
-        b = b && moving && !frame.finalQuality && !productSized && !read.count(b) ? nullptr : b;
+        const bool skip = b && skipUnread && !frame.finalQuality && !productSized && !read.count(b);
+        skipped = skipped || skip;
+        b = skip ? nullptr : b;
     }
+    _extraStale = skipped;
     // At a product's framing they are rendered into frame-sized copies and resampled after.
     float *extraDst[vkr::Aovs::kCount] = {};
     std::vector<float> extraFrame[vkr::Aovs::kCount];

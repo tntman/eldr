@@ -54,7 +54,7 @@ void Fog::CreatePipelines(VkPipelineLayout layout)
         cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT,
                      module, "main"};
         cci.layout = layout;
-        const VkResult r = vkCreateComputePipelines(_dev.device, VK_NULL_HANDLE, 1, &cci, nullptr, pipeline);
+        const VkResult r = vkCreateComputePipelines(_dev.device, _dev.pipelineCache, 1, &cci, nullptr, pipeline);
         vkDestroyShaderModule(_dev.device, module, nullptr);
         Check(r, "vkCreateComputePipelines");
     }

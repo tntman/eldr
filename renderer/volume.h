@@ -165,6 +165,7 @@ public:
 private:
     Device &_dev;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
+    void _EnsurePipelines();
     VkPipeline _pipeline = VK_NULL_HANDLE;   // full resolution, blended over the image
     VkPipeline _halfPipeline = VK_NULL_HANDLE, _upsamplePipeline = VK_NULL_HANDLE;
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map

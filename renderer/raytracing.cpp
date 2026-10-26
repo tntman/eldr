@@ -253,7 +253,16 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     lci.setLayoutCount = 2;
     lci.pSetLayouts = layouts;
     Check(vkCreatePipelineLayout(device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
+}
 
+// When a frame first traces (Prepare): a scene that never does doesn't
+// compile them (8 s with a cold driver cache).
+void RayTracing::_EnsurePipelines()
+{
+    if (_pipeline) {
+        return;
+    }
+    const VkDevice device = _dev.device;
     VkResult r = VK_SUCCESS;
     // The displacement, as displace.glsl's displaced pipelines (constant 10;
     // tlas.comp has none).
@@ -278,7 +287,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     VkShaderModule displaceModule = CreateShaderModule(device, kDisplaceComp, sizeof(kDisplaceComp));
     cci.stage.module = displaceModule;
     cci.stage.pSpecializationInfo = &displacedSpec;
-    r = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &cci, nullptr, &_displacePipeline);
+    r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_displacePipeline);
     vkDestroyShaderModule(device, displaceModule, nullptr);
     Check(r, "vkCreateComputePipelines");
     // The probe update, specialized for each atlas's tile interiors.
@@ -970,6 +979,7 @@ void RayTracing::_FitProbes(const Scene::Gpu &gpu)
 
 void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height)
 {
+    _EnsurePipelines();
     if (work.gi && !_work.gi) {
         _giFrames = 0;  // switched on: start over
     }

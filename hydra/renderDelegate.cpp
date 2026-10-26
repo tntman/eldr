@@ -120,7 +120,12 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     , _resourceRegistry(std::make_shared<HdResourceRegistry>())
 {
     try {
+        const auto start = std::chrono::steady_clock::now();
         _device = std::make_unique<vkr::Device>();
+        if (std::getenv("HDVK_TIMING")) {
+            std::fprintf(stderr, "HdVk device: %.1f ms\n",
+                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+        }
         _renderer = std::make_unique<vkr::Renderer>(*_device);
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk: Vulkan init failed, nothing will render: %s", e.what());
@@ -412,6 +417,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},
         {"Read Back in Place (no copy)", t2.inPlaceReadback, VtValue(frame.inPlaceReadback)},
+        {"Compile Pipelines on Demand (fast start)", t2.lazyPipelines, VtValue(frame.lazyPipelines)},
+        {"Unread AOVs Once Converged", t2.lazyExtraAovs, VtValue(frame.lazyExtraAovs)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
@@ -652,10 +659,15 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["pixelsConvergedPercent"] = converged ? 100.0 : pixelsDone;
     {
         char text[160];
-        std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? (frame.filmFinal ? "final" : "film") : "TAA",
-                      frame.taaSamples,
-                      frame.taaTarget,
-                      frame.filmActivePixels ? (", " + std::to_string(int(pixelsDone)) + "% of pixels done").c_str() : "");
+        // Moving, TAA blends each frame's one sample into its history: no count to reach.
+        if (!frame.film && frame.moving) {
+            std::snprintf(text, sizeof text, "TAA interactive (moving)");
+        } else {
+            std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? (frame.filmFinal ? "final" : "film") : "TAA",
+                          frame.taaSamples, frame.taaTarget,
+                          frame.filmActivePixels ? (", " + std::to_string(int(pixelsDone)) + "% of pixels done").c_str()
+                                                 : "");
+        }
         stats["renderProgressAnnotation"] = std::string(text);
         std::snprintf(text, sizeof text, "GPU %.1f ms, %llu triangles, %u draws, %.2f GB", frame.gpuMs,
                       (unsigned long long)frame.triangles, frame.drawCalls, memory.deviceLocal / 1073741824.0);
