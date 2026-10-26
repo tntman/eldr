@@ -894,7 +894,8 @@ public:
             *_uvPrimvar = uv;
             return false;
         }
-        _Emit(P::kOutput, {*v}, target);        return true;
+        _Emit(P::kOutput, {*v}, target);
+        return true;
     }
 
     // Material inputs compiled so far.
