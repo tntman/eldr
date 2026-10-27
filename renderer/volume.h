@@ -148,6 +148,11 @@ public:
         // (colour) and emission fields with VolumeShading's defaults; off:
         // only density, as Karma renders them.
         bool defaultFields = false;
+        // Multiple scattering of distant lights, approximated by octaves of
+        // weaker, less attenuated and less directional single scattering
+        // (Wrenninge 2015). Off: single scattering, as Karma renders with
+        // its default volume limit 0.
+        bool multipleScattering = false;
     };
 
     // Which part of each ray Record marches: all of it, the part behind

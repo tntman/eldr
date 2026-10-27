@@ -43,6 +43,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t originX, originY;
     uint32_t mutual;  // Settings::mutualShadows
     uint32_t defaultFields;  // Settings::defaultFields
+    uint32_t multiple;       // Settings::multipleScattering
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -57,6 +58,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.count = count;
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
+    p.multiple = s.multipleScattering;
     return p;
 }
 

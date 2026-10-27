@@ -186,7 +186,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((motionBlurResidual, "eldr:motionBlurResidual")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
-    ((volumeMutualShadows, "eldr:volumeMutualShadows"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
+    ((volumeMutualShadows, "eldr:volumeMutualShadows")) ((volumeMultipleScattering, "eldr:volumeMultipleScattering"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
     ((multiScatter, "eldr:multiScatter")) \

@@ -409,6 +409,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.localVolumeShadows, &frame.localVolumeShadows},
                                 {t2.volumeMutualShadows, &frame.volume.mutualShadows},
                                 {t2.volumeDefaultFields, &frame.volume.defaultFields},
+                                {t2.volumeMultipleScattering, &frame.volume.multipleScattering},
                                 {t2.lightShapesVisible, &frame.lightShapesVisible},
                                 {t2.domeCameraVisible, &frame.showEnvironment},
                                 {t2.multiScatter, &frame.multiScatter},
@@ -420,6 +421,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    // Karma's Volume Limit (render settings) above 0: volumes scatter more than once there too.
+    {
+        static const TfToken volumeLimit("karma:object:volumelimit");
+        const VtValue v = delegate->GetRenderSetting(volumeLimit);
+        const double limit = v.IsHolding<float>() ? v.UncheckedGet<float>() : v.IsHolding<double>() ? v.UncheckedGet<double>()
+                           : v.IsHolding<int>() ? v.UncheckedGet<int>() : 0.0;
+        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0;
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&

@@ -413,6 +413,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(frame.volume.mutualShadows)},
         {"Volume Default Fields (Cd, temperature without a volume material)", t2.volumeDefaultFields,
          VtValue(frame.volume.defaultFields)},
+        {"Volume Multiple Scattering (octaves; off: single, as Karma's volume limit 0)",
+         t2.volumeMultipleScattering, VtValue(frame.volume.multipleScattering)},
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},

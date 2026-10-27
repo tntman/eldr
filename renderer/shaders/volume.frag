@@ -2,7 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 
 // Heterogeneous volumes (NanoVDB grids) raymarched per pixel over the shaded
-// image, nearest volume first, up to the opaque depth. Single scattering:
+// image, nearest volume first, up to the opaque depth. Single scattering
+// (as Karma's default volume limit 0):
 // the distant lights through a shadow march across the grid (and the sun's
 // cascades for opaque occluders), sphere/rect/disk lights from the
 // clusters (through their atlas tiles), the dome's SH convolved with the phase function
@@ -12,8 +13,8 @@
 // (VolumeShading: scattering and absorption per unit of density, phase,
 // emission), the settings multiply it. Henyey-Greenstein phase. At scale 2
 // each invocation marches a 2 x 2 block's middle into a half resolution
-// target (volume_upsample.frag). Multiple scattering of the distant lights is
-// approximated by octaves of ever weaker, less attenuated and less
+// target (volume_upsample.frag). With params.multiple, multiple scattering
+// of the distant lights is approximated by octaves of ever weaker, less attenuated and less
 // directional single scattering (Wrenninge 2015). Each pixel starts at a
 // different fraction of a step every frame, which TAA averages. Steps skip
 // tiles (and the background) of zero density.
@@ -58,6 +59,7 @@ layout(push_constant) uniform Params {
     uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
     uint mutual;        // 1: volumes shadow each other
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
+    uint multiple;      // 1: multiple scattering octaves of distant lights
 } params;
 
 // Premultiplied: radiance, 1 - the mean transmittance; at full resolution
@@ -430,9 +432,10 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 vec3 l = sun.position.xyz;
                 vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
                                                       params.shadowSteps);
-                // Octave i: light, optical depth and anisotropy times 1/2^i.
+                // Octave i: light, optical depth and anisotropy times 1/2^i
+                // (multiple scattering; else the first only).
                 vec3 scattered = vec3(0.0);
-                for (float a = 1.0; a > 0.2; a *= 0.5) {
+                for (float a = 1.0; a > (params.multiple != 0u ? 0.2 : 0.9); a *= 0.5) {
                     scattered += a * exp(-depth * a) * Phase(dot(dir, l), g * a);
                 }
                 if (k == frame.counts.y) {
