@@ -250,7 +250,7 @@ if(WIN32)
         set_tests_properties(viewport_nav PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         # eldr:overlapReadback: moving frames one late but unchanged, still ones at once.
         add_test(NAME viewport_overlap COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
-                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --aovs color,depth --overlap)
+                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --aovs color,depth,primId --overlap)
         set_tests_properties(viewport_overlap PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
     add_test(NAME purpose COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_purpose.py)

@@ -446,6 +446,30 @@ int main(int argc, char **argv)
                 shows(overlapped[f], sync[f - 1], sync[f], TfStringPrintf("moving frame %d shows frame %d", f, f - 1));
             }
             shows(overlapped[6], sync[6], sync[4], "a still camera's frame is its own");
+            // eldr:staleMovingIds (on): in Houdini's viewport a moving camera's
+            // frames keep the last still frame's ids, mapped each frame as
+            // Houdini does; a still one reads its own.
+            if (HdRenderBuffer *primId = controller.GetRenderOutput(HdAovTokens->primId)) {
+                delegate->SetRenderSetting(TfToken("houdini:viewport"), VtValue(true));
+                auto idsAt = [&](double angle) {
+                    controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,
+                                                     projection);
+                    engine.Execute(index, &tasks);
+                    const auto *p = static_cast<const int32_t *>(primId->Map());
+                    std::vector<int32_t> ids(p, p + size_t(width) * height);
+                    primId->Unmap();
+                    return ids;
+                };
+                idsAt(0.0);
+                const std::vector<int32_t> still = idsAt(0.0);
+                const std::vector<int32_t> moved = idsAt(10.0), moved2 = idsAt(20.0);
+                idsAt(20.0);
+                const std::vector<int32_t> stopped = idsAt(20.0);
+                expect(moved == still && moved2 == still, "moving frames keep the still frame's ids");
+                expect(stopped != still, "a still frame reads its own ids");
+            } else {
+                expect(false, "--overlap needs primId bound (--aovs color,depth,primId)");
+            }
         }
         if (startup) {
             // What each frame took until the film converged: a first still

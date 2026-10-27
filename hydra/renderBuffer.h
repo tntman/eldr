@@ -11,6 +11,7 @@
 #endif
 
 #include <atomic>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
@@ -116,6 +117,16 @@ public:
     // The frame where the renderer read it back (eldr:inPlaceReadback),
     // mapped instead of the CPU copy until the next fetch; null: the copy.
     void SetExternal(void *data) { _external = data; }
+    // Keeps the frame the app reads as is, in its own copy, with nothing
+    // to fetch (eldr:staleMovingIds).
+    void Detach()
+    {
+        if (_external) {
+            std::memcpy(_data.data(), _external, _data.size());
+            _external = nullptr;
+        }
+        _fetch = nullptr;
+    }
 
 protected:
     void _Deallocate() override

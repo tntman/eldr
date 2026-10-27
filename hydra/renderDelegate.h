@@ -192,6 +192,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
     ((inPlaceReadback, "eldr:inPlaceReadback")) \
+    ((staleMovingIds, "eldr:staleMovingIds")) \
     ((lazyPipelines, "eldr:lazyPipelines")) \
     ((lazyExtraAovs, "eldr:lazyExtraAovs")) \
     ((screenBackface, "eldr:screenBackface")) \

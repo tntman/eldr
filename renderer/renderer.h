@@ -163,6 +163,7 @@ public:
         bool deferReadback = false;
         bool overlapReadback = true;  // eldr:overlapReadback: the Hydra layer may set deferReadback
         bool inPlaceReadback = true;  // eldr:inPlaceReadback: the Hydra layer may set Targets::inPlace
+        bool staleMovingIds = true;   // eldr:staleMovingIds: the Hydra layer skips the ids while moving
         // A shading set's pipelines compile when the scene first draws with
         // them (eldr:lazyPipelines), not its 120 variants and passes at once.
         bool lazyPipelines = true;

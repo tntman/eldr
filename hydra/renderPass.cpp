@@ -432,6 +432,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.multiScatter, &frame.multiScatter},
                                 {t2.overlapReadback, &frame.overlapReadback},
                                 {t2.inPlaceReadback, &frame.inPlaceReadback},
+                                {t2.staleMovingIds, &frame.staleMovingIds},
                                 {t2.lazyPipelines, &frame.lazyPipelines},
                                 {t2.lazyExtraAovs, &frame.lazyExtraAovs},
                                 {t2.screenBackface, &frame.screenBackface},
@@ -724,7 +725,22 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     void *mapped[4] = {};
     std::vector<uint8_t> productTargets[4];
     constexpr size_t kTargetBytes[4] = {8, 4, 4, 4};  // RGBA16F, float, int, int
+    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
+    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    // eldr:staleMovingIds: while Houdini's viewport camera moves the ids (its
+    // picking and selection outline, mapped every frame) keep the last still
+    // frame's: nobody picks mid-tumble, it renders on once the camera stops,
+    // and they are 8 of a pixel's 20 bytes read back and uploaded by the
+    // app. Not elsewhere: usdview picks and tests read them right after a
+    // camera change. Detached: the renderer's memory they were mapped in
+    // (eldr:inPlaceReadback) will hold other outputs.
+    const bool staleIds =
+        frame.staleMovingIds && houdiniViewport && moving && !frame.finalQuality && !productSized;
     for (int i = 0; i < 4; ++i) {
+        if (staleIds && i >= 2 && buffers[i]) {
+            buffers[i]->Detach();
+            continue;
+        }
         mapped[i] = buffers[i] && (productSized || read.count(buffers[i])) ? buffers[i]->Map() : nullptr;
         if (productSized && mapped[i]) {
             productTargets[i].resize(size_t(frame.width) * frame.height * kTargetBytes[i]);
@@ -745,8 +761,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // the colour but reads them only when it shows them, and they cost a
     // G-buffer pass and a readback. One mapped then is a frame old once,
     // and rendered from the next frame on; still frames render them all.
-    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
-    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
     // HDVK_DEBUG_AOVS: every 60 frames, what started the film over (a still
     // camera should show none) and the near and far planes the depth AOV
     // (window depth) is under.
@@ -866,7 +880,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // copied them (two buffers in turn) and the app maps them there, no copy
     // (a maximized viewport's four: 27 MB, ~5 ms). Not resampled or converted ones.
     out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty();
-    auto readBuffer = [&](int i) { return uintptr_t(mapped[i] ? buffers[i] : nullptr); };
+    auto readBuffer = [&](int i) { return uintptr_t(mapped[i] || (staleIds && i >= 2) ? buffers[i] : nullptr); };
     const std::array<uintptr_t, 6> readback = {readBuffer(0), readBuffer(1), readBuffer(2), readBuffer(3), frame.width,
                                                frame.height};
     const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
@@ -1024,9 +1038,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         buffers[i]->SetTexture(shared && i == 0 ? interop->Color() : shared && i == 1 ? interop->Depth()
                                                                                     : HgiTextureHandle());
-        if (mapped[i]) {
-            buffers[i]->Unmap();
-            buffers[i]->TakeMapped();  // the pass's own map
+        if (mapped[i] || (staleIds && i >= 2)) {
+            if (mapped[i]) {
+                buffers[i]->Unmap();
+                buffers[i]->TakeMapped();  // the pass's own map
+            }
             buffers[i]->SetFetch(nullptr);
             continue;
         }
