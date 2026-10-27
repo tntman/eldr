@@ -3658,15 +3658,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdPipelineBarrier2(_cmd, &dep);
         pass("cullCamera");
         // Each cascade's ortho box (which spans the scene's whole depth
-        // towards the light, so every caster in it stays); instances under
-        // half a shadow texel are dropped.
-        for (uint32_t c = 0; c < cascades; ++c) {
-            FrustumPlanes(fd.cascadeViewProj[c], cull.planes);
-            cull.orthographic = 1.0f;
-            cull.minRadius = 0.5f;
-            cull.pixelScale = 1.0f / fd.cascadeTexel[c];
-            cull.listBase = (1 + c) * gpu.instanceCapacity;
-            cull.commandBase = (1 + c) * gpu.drawCount;
+        // towards the light, so every caster in it stays), all in one
+        // dispatch (cull.comp's kAllCascades: each instance read once).
+        if (cascades > 0) {
+            cull.listBase = 0xFFFFFFFFu;  // kAllCascades
+            cull.commandBase = cascades;
             vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
             vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
         }

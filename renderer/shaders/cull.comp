@@ -49,6 +49,7 @@ layout(std430, set = 0, binding = 41) buffer LodState { uint lodState[]; };
 // kLodFading, how far, bits 24..29) and the level it fades out of, or 0
 // flags when it isn't fading. Slots past 24 bits never fade.
 uint fadeFrom = 0u;
+uint gListBase = 0u, gCommandBase = 0u;  // the view Place appends to
 uint FadeFlags(uint i, uint epoch)
 {
     uint f = lodState[i * 2u + 1u], age = epoch - (f >> 2u);
@@ -67,7 +68,7 @@ uint FadeFlags(uint i, uint epoch)
 uint LodLevel(Lod l, uint i, float radius)
 {
     uint epoch = uint(frame.geometry.z);  // this frame, as lodState holds it
-    if (pc.listBase != 0u && lodState[i * 2u] >> 2u == epoch) {
+    if (gListBase != 0u && lodState[i * 2u] >> 2u == epoch) {
         return min(lodState[i * 2u] & 3u, l.slots.y);
     }
     float limit = exp2(frame.geometry.y);
@@ -77,7 +78,7 @@ uint LodLevel(Lod l, uint i, float radius)
         level = e <= limit ? k : level;
         strict = e <= 0.8 * limit ? k : strict;
     }
-    if (pc.listBase != 0u) {
+    if (gListBase != 0u) {
         return level;
     }
     uint state = lodState[i * 2u], last = min(state & 3u, l.slots.y);
@@ -99,22 +100,73 @@ uint LodLevel(Lod l, uint i, float radius)
 // `level`'s draw.
 void Emit(uint level, uint i, uint entry, uint draw)
 {
-    uint command = pc.commandBase + lods[draw].slots.z;  // commands are sorted by pipeline
+    uint command = gCommandBase + lods[draw].slots.z;  // commands are sorted by pipeline
     if (level == 0u) {
         uint slot = atomicAdd(commands[command].instanceCount, 1u);
-        visible[pc.listBase + commands[command].firstInstance + slot] = entry;
+        visible[gListBase + commands[command].firstInstance + slot] = entry;
         return;
     }
     Lod l = lods[draw];
-    command = pc.commandBase + l.slots.x + level - 1u;
+    command = gCommandBase + l.slots.x + level - 1u;
     uint n = atomicAdd(commands[command].instanceCount, 1u);
-    visible[pc.listBase + l.regions[level - 1u] + n] = entry;
+    visible[gListBase + l.regions[level - 1u] + n] = entry;
 }
+
+// Tests the instance's world bounds against one view (`planes`) and
+// appends it to that view's list (gListBase, gCommandBase).
+void Place(uint i, Instance inst, vec3 wc, vec3 we, vec4 planes[6], float pixelScale, float nearDistance,
+           float minRadius, bool orthographic)
+{
+    for (int p = 0; p < 6; ++p) {
+        vec4 plane = planes[p];
+        if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
+            return;
+        }
+    }
+    float depth = dot(planes[4].xyz, wc) + planes[4].w + nearDistance;
+    float radius = length(we) * pixelScale / (orthographic ? 1.0 : max(depth, 1e-6));
+    if (radius < minRadius) {
+        return;
+    }
+    // Levels judge their error where the bounds come nearest the camera (a
+    // wall's near end, not its middle).
+    float nearRadius = orthographic ? radius : length(we) * pixelScale / max(depth - length(we), 1e-6);
+    bool lod = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u;
+    uint level = lod ? LodLevel(lods[inst.draw], i, nearRadius) : 0u;
+    // The camera's crossfade: both levels, each with its share of pixels.
+    uint flags = lod && gListBase == 0u ? FadeFlags(i, uint(frame.geometry.z)) : 0u;
+    if (flags != 0u && fadeFrom != level && fadeFrom <= lods[inst.draw].slots.y) {
+        Emit(fadeFrom, i, i | flags | kLodFadingOut, inst.draw);
+        Emit(level, i, i | flags, inst.draw);
+        return;
+    }
+    Emit(level, i, i, inst.draw);
+}
+
+// kAllCascades as listBase: one dispatch culls for every sun cascade
+// (commandBase: how many), each into list and commands 1 + cascade. The
+// instance and its bounds (a skinned one's loop over its joints) are read
+// once instead of once per cascade.
+const uint kAllCascades = 0xFFFFFFFFu;
+// The cascades' planes (as Renderer's FrustumPlanes), per workgroup.
+shared vec4 cascadePlanes[4][6];
 
 layout(local_size_x = 64) in;
 
 void main()
 {
+    bool allCascades = pc.listBase == kAllCascades;
+    uint cascades = allCascades ? min(pc.commandBase, 4u) : 0u;
+    uint k = gl_LocalInvocationIndex;
+    if (k < cascades * 6u) {
+        mat4 m = transpose(frame.cascadeViewProj[k / 6u]);  // rows
+        uint p = k % 6u;
+        vec4 plane = m[3] + ((p & 1u) == 0u ? 1.0 : -1.0) * m[p / 2u];
+        float len = length(plane.xyz);
+        cascadePlanes[k / 6u][p] = plane / (len > 0.0 ? len : 1.0);
+    }
+    barrier();
+
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.instanceCapacity) {
         return;
@@ -158,29 +210,16 @@ void main()
         we = abs(m[0]) * e.x + abs(m[1]) * e.y + abs(m[2]) * e.z;
     }
     we += DisplacementReach(d, inst);
-    for (int p = 0; p < 6; ++p) {
-        vec4 plane = pc.planes[p];
-        if (dot(plane.xyz, wc) + plane.w < -dot(abs(plane.xyz), we)) {
-            return;
-        }
-    }
-    float depth = dot(pc.planes[4].xyz, wc) + pc.planes[4].w + pc.nearDistance;
-    float radius = length(we) * pc.pixelScale / (pc.orthographic > 0.5 ? 1.0 : max(depth, 1e-6));
-    if (radius < pc.minRadius) {
+    if (!allCascades) {
+        gListBase = pc.listBase;
+        gCommandBase = pc.commandBase;
+        Place(i, inst, wc, we, pc.planes, pc.pixelScale, pc.nearDistance, pc.minRadius, pc.orthographic > 0.5);
         return;
     }
-    // Levels judge their error where the bounds come nearest the camera (a
-    // wall's near end, not its middle).
-    float nearRadius = pc.orthographic > 0.5 ? radius
-                                             : length(we) * pc.pixelScale / max(depth - length(we), 1e-6);
-    bool lod = (frame.features.x & kFeatureLod) != 0u && lods[inst.draw].slots.y > 0u;
-    uint level = lod ? LodLevel(lods[inst.draw], i, nearRadius) : 0u;
-    // The camera's crossfade: both levels, each with its share of pixels.
-    uint flags = lod && pc.listBase == 0u ? FadeFlags(i, uint(frame.geometry.z)) : 0u;
-    if (flags != 0u && fadeFrom != level && fadeFrom <= lods[inst.draw].slots.y) {
-        Emit(fadeFrom, i, i | flags | kLodFadingOut, inst.draw);
-        Emit(level, i, i | flags, inst.draw);
-        return;
+    // Instances under half a shadow texel are dropped.
+    for (uint c = 0u; c < cascades; ++c) {
+        gListBase = (1u + c) * pc.instanceCapacity;
+        gCommandBase = (1u + c) * pc.drawCount;
+        Place(i, inst, wc, we, cascadePlanes[c], 1.0 / frame.cascadeTexel[c], 0.0, 0.5, true);
     }
-    Emit(level, i, i, inst.draw);
 }
