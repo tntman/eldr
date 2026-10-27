@@ -35,7 +35,7 @@ layout(push_constant) uniform CullParams {
 
 // Levels of detail (Scene::Gpu::lods), per mesh slot.
 struct Lod {
-    uvec4 slots;    // x: level 1's command slot (2 and 3 follow), y: levels
+    uvec4 slots;    // x: level 1's command slot (2 and 3 follow), y: levels, z: level 0's command
     uvec4 regions;  // where levels 1, 2 and 3 fill their visible range from, room for every instance each
     vec4 errors;    // levels 1..3: how far the surface (or its shading) moved, relative to the bounding radius
 };
@@ -99,7 +99,7 @@ uint LodLevel(Lod l, uint i, float radius)
 // `level`'s draw.
 void Emit(uint level, uint i, uint entry, uint draw)
 {
-    uint command = pc.commandBase + draw;
+    uint command = pc.commandBase + lods[draw].slots.z;  // commands are sorted by pipeline
     if (level == 0u) {
         uint slot = atomicAdd(commands[command].instanceCount, 1u);
         visible[pc.listBase + commands[command].firstInstance + slot] = entry;

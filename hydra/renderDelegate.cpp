@@ -817,8 +817,15 @@ bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
     const auto start = std::chrono::steady_clock::now();
+    // Nothing synced (camera-only frames: cameras note no edit) and no
+    // setting changed since the last commit: the scene can skip its rebuild.
+    const uint64_t edits = _sceneEdits;
+    const unsigned settings = GetRenderSettingsVersion();
+    const bool unchanged = edits == _committedEdits && settings == _committedSettings;
+    _committedEdits = edits;
+    _committedSettings = settings;
     try {
-        _scene->Commit();
+        _scene->Commit(false, unchanged);
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk upload failed: %s", e.what());

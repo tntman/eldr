@@ -646,7 +646,10 @@ public:
 
     // Uploads dirty data. The GPU must be idle. keepMotion: another commit
     // for the frame the last one was for (the motion stays for it).
-    void Commit(bool keepMotion = false);
+    // unchanged: the caller knows nothing outside the meshes' dirty flags
+    // changed since the last commit (no material, light, visibility or
+    // tag edit), so a commit with no dirty mesh returns at once.
+    void Commit(bool keepMotion = false, bool unchanged = false);
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
@@ -722,8 +725,8 @@ public:
         // Per chunk: 1 if it draws levels of detail (a mesh with levels or
         // their commands), whose crossfade needs the alpha-tested prepass.
         std::vector<uint8_t> chunkLevels;
-        // The translucent slots (with their pipeline variants) and their
-        // world bounds' centres (xyz).
+        // The translucent meshes' commands (with their pipeline variants)
+        // and their world bounds' centres (xyz).
         std::vector<uint32_t> translucent;
         std::vector<uint8_t> translucentVariant;
         // Per translucent slot: kRefracts (a material that refracts or
@@ -800,8 +803,8 @@ public:
         // the opaque colour for it.
         bool refraction = false;
         bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
-        // Slots of opaque and cutout meshes with subsurface materials (and
-        // their pipeline variants), shaded again by the subsurface pass.
+        // Commands of opaque and cutout meshes with subsurface materials
+        // (and their pipeline variants), shaded again by the subsurface pass.
         std::vector<uint32_t> subsurface;
         std::vector<uint8_t> subsurfaceVariant;
 

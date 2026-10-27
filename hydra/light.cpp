@@ -2,6 +2,7 @@
 #include "timing.h"
 
 #include "material.h"
+#include "renderDelegate.h"
 #include "scene.h"
 
 #include "pxr/base/gf/color.h"
@@ -77,6 +78,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         *dirtyBits = Clean;
         return;
     }
+    HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     auto param = [&](TfToken const &name, auto fallback) {
         return sceneDelegate->GetLightParamValue(id, name).GetWithDefault(fallback);

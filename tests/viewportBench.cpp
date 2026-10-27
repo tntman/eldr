@@ -67,13 +67,13 @@ int main(int argc, char **argv)
 {
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
-                  "[--share 0|1] [--still] [--ids] [--check] [--nav] [--overlap] [--no-overlap] [--app-ms N]");
+                  "[--share 0|1] [--render-purpose] [--still] [--ids] [--check] [--nav] [--overlap] [--no-overlap] [--app-ms N]");
         return 2;
     }
     int width = 1280, height = 720, frames = 120, share = 0;
     double appMs = 0;
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
-    bool houdini = false, startup = false;
+    bool houdini = false, startup = false, renderPurpose = false;
     std::string csvPath;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
@@ -91,6 +91,8 @@ int main(int argc, char **argv)
             share = std::atoi(next), ++i;
         } else if (a == "--app-ms") {
             appMs = std::atof(next), ++i;
+        } else if (a == "--render-purpose") {
+            renderPurpose = true;
         } else if (a == "--houdini") {
             houdini = true;
             mapped = {"color", "depth", "primId", "instanceId"}, mapAll = false;
@@ -162,6 +164,9 @@ int main(int argc, char **argv)
             outputs.push_back(TfToken(aov));
         }
         controller.SetRenderOutputs(outputs);
+        if (renderPurpose) {  // crowds exported with purpose render (Houdini draws them)
+            controller.SetRenderTags({HdRenderTagTokens->geometry, HdRenderTagTokens->render});
+        }
 
         GfCamera camera = UsdGeomCamera(stage->GetPrimAtPath(SdfPath(argv[2]))).GetCamera(UsdTimeCode::Default());
         camera.SetPerspectiveFromAspectRatioAndFieldOfView(double(width) / height, camera.GetFieldOfView(GfCamera::FOVHorizontal),

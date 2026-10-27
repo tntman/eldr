@@ -340,6 +340,8 @@ private:
     std::unique_ptr<HdVkTextureCache> _textures;
     std::unique_ptr<HdVkMaterialFallbacks> _materialFallbacks;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
+    unsigned _committedSettings = ~0u;  // and the render settings' version
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.

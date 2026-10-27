@@ -4,6 +4,7 @@
 #include "lod.h"
 
 #include <algorithm>
+#include <numeric>
 #include <tuple>
 #include <chrono>
 #include <atomic>
@@ -58,7 +59,7 @@ struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
     uint32_t program[4];  // Material::displacementProgram, as GpuMaterial::program (count 0: none)
 };
 struct GpuLod {           // mirror of Lod in shaders/cull.comp
-    uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels
+    uint32_t slots[4];    // level 1's command slot (2 and 3 follow), levels, the mesh's own command
     uint32_t regions[4];  // where levels 1, 2, 3 fill from (Scene::_ReserveLodInstances)
     float errors[4];      // levels 1..3, relative to the bounding radius
 };
@@ -554,6 +555,7 @@ void Scene::RemoveMesh(Mesh *mesh)
 
 Light *Scene::AddLight()
 {
+    _changed = true;
     _lights.push_back(std::make_unique<Light>());
     _lights.back()->_slot = _lights.size() - 1;
     return _lights.back().get();
@@ -561,11 +563,13 @@ Light *Scene::AddLight()
 
 void Scene::RemoveLight(Light *light)
 {
+    _changed = true;
     _RemoveSlot(_lights, light);
 }
 
 Dome *Scene::AddDome()
 {
+    _changed = true;
     _domes.push_back(std::make_unique<Dome>());
     _domes.back()->_slot = _domes.size() - 1;
     return _domes.back().get();
@@ -573,11 +577,13 @@ Dome *Scene::AddDome()
 
 void Scene::RemoveDome(Dome *dome)
 {
+    _changed = true;
     _RemoveSlot(_domes, dome);
 }
 
 Volume *Scene::AddVolume()
 {
+    _changed = true;
     _volumes.push_back(std::make_unique<Volume>());
     _volumes.back()->_slot = _volumes.size() - 1;
     return _volumes.back().get();
@@ -585,6 +591,7 @@ Volume *Scene::AddVolume()
 
 void Scene::RemoveVolume(Volume *volume)
 {
+    _changed = true;
     _RemoveSlot(_volumes, volume);
 }
 
@@ -1440,9 +1447,21 @@ void Scene::_UpdateEnvironment(const Dome *dome)
     std::memcpy(_gpu.environmentSh, maps.sh, sizeof(maps.sh));
 }
 
-void Scene::Commit(bool keepMotion)
+void Scene::Commit(bool keepMotion, bool unchanged)
 {
     if (!_device) {
+        return;
+    }
+    // Nothing synced since the last commit (a camera-only frame): its tables,
+    // draws and lights stand, and nothing moved. Rebuilding them is O(meshes):
+    // 9000 skinned agents (54k meshes) took 100+ ms a frame.
+    if (unchanged && !_changed && !_keptMoved && _pendingLods.empty() && _vertices.buffer &&
+        std::none_of(_meshes.begin(), _meshes.end(), [](const auto &m) {
+            return m->geometryDirty || m->transformsDirty || m->jointsDirty;
+        })) {
+        _gpu.moved = false;
+        _keptMotion.clear();
+        _keptMotionBase.assign(_meshes.size(), kNone);
         return;
     }
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
@@ -1514,6 +1533,7 @@ void Scene::Commit(bool keepMotion)
         if (joints) {
             _UploadJoints(*m);
         }
+        m->jointsDirty = false;  // also where there was nothing to upload (no joint indices)
         if (transforms || joints) {
             _UpdateWorldBounds(*m);
         }
@@ -1667,6 +1687,7 @@ void Scene::Commit(bool keepMotion)
                      VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
     auto *draws = static_cast<DrawInfo *>(_draws.mapped);
     auto *templates = static_cast<VkDrawIndexedIndirectCommand *>(_commandTemplate.mapped);
+    std::vector<VkDrawIndexedIndirectCommand> commands(commandSlots);  // in slot order, sorted below
     std::vector<uint32_t> drawn(slots);  // instances per slot before culling
     std::vector<uint32_t> rays(slots);   // the rays that see them (the TLAS's masks)
     std::vector<uint32_t> primvarTable;  // uvec4 per program primvar slot
@@ -1784,7 +1805,7 @@ void Scene::Commit(bool keepMotion)
         d.blendShapes = m._weightSlots > 0 ? m.blendShapeCount : 0;
         d.blendPerInstance = m._blendPerInstance ? 1u : 0u;
         // Culling fills in instanceCount.
-        templates[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
+        commands[slot] = {m._indexCount, 0, m._firstIndex, int32_t(m._vertexOffset), m._instanceBase};
         // A displacement graph reading per-instance inputs, with instances
         // to differ: ray tracing displaces each (LargestDisplacedInstances).
         m._displacePerInstance =
@@ -1839,11 +1860,41 @@ void Scene::Commit(bool keepMotion)
         std::copy(firsts, firsts + 3, g.regions);
         for (size_t k = 0; k < m._lods.size(); ++k, ++next) {
             const Mesh::Lod &lod = m._lods[k];
-            templates[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
+            commands[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
             kind[next] = kind[slot];
             weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
             g.errors[k] = lod.error;
         }
+    }
+    // Commands sorted by pipeline (kind, then levels), stable: a chunk is a
+    // run of one kind, so meshes of two kinds in turn (a crowd's agents:
+    // 37k chunks of 78k slots) drew a call each. Levels of a mesh stay
+    // consecutive (same key, adjacent, after all meshes' own commands).
+    std::vector<uint8_t> levelled(commandSlots);
+    for (size_t c = 0; c < commandSlots; ++c) {
+        levelled[c] = c >= slots || lods[c].slots[1] > 0;
+    }
+    std::vector<uint32_t> order(commandSlots);  // sorted position -> slot order
+    std::iota(order.begin(), order.end(), 0u);
+    std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) {
+        return std::tie(kind[a], levelled[a]) < std::tie(kind[b], levelled[b]);
+    });
+    std::vector<uint32_t> commandOf(commandSlots);  // slot order -> command
+    for (size_t c = 0; c < commandSlots; ++c) {
+        commandOf[order[c]] = uint32_t(c);
+        templates[c] = commands[order[c]];
+    }
+    for (size_t slot = 0; slot < slots; ++slot) {
+        lods[slot].slots[2] = commandOf[slot];  // level 0 (cull.comp's Emit)
+        if (lods[slot].slots[0] < commandSlots) {
+            lods[slot].slots[0] = commandOf[lods[slot].slots[0]];
+        }
+    }
+    for (uint32_t &s : _gpu.translucent) {
+        s = commandOf[s];
+    }
+    for (uint32_t &s : _gpu.subsurface) {
+        s = commandOf[s];
     }
     _device->Reserve(_lodTable, lods.size() * sizeof(GpuLod), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(lods.begin(), lods.end(), static_cast<GpuLod *>(_lodTable.mapped));
@@ -1854,25 +1905,26 @@ void Scene::Commit(bool keepMotion)
     _gpu.chunkKind.assign(1, Gpu::kOpaque);
     _gpu.chunkLevels.assign(1, 0);
     _gpu.instanceCount = _gpu.triangleCount = 0;
+    for (size_t slot = 0; slot < slots; ++slot) {
+        _gpu.instanceCount += drawn[slot];
+        _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
+    }
     double triangles = 0;
-    for (size_t slot = 0; slot < commandSlots; ++slot) {
-        const double t = weight[slot];
-        if (slot < slots) {
-            _gpu.instanceCount += drawn[slot];
-            _gpu.triangleCount += uint64_t(drawn[slot]) * (_meshes[slot]->_indexCount / 3);
-        }
+    for (size_t c = 0; c < commandSlots; ++c) {
+        const uint32_t s = order[c];
+        const double t = weight[s];
         if (t == 0) {
             continue;  // draws nothing: fits any chunk
         }
-        const uint8_t levels = slot >= slots || lods[slot].slots[1] > 0;
-        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[slot] != _gpu.chunkKind.back() ||
+        const uint8_t levels = levelled[s];
+        if (triangles > 0 && (triangles + t > kChunkTriangles || kind[s] != _gpu.chunkKind.back() ||
                               levels != _gpu.chunkLevels.back())) {
-            _gpu.drawChunks.push_back(uint32_t(slot));
-            _gpu.chunkKind.push_back(kind[slot]);
+            _gpu.drawChunks.push_back(uint32_t(c));
+            _gpu.chunkKind.push_back(kind[s]);
             _gpu.chunkLevels.push_back(levels);
             triangles = 0;
         }
-        _gpu.chunkKind.back() = kind[slot];
+        _gpu.chunkKind.back() = kind[s];
         _gpu.chunkLevels.back() = levels;
         triangles += t;
     }
