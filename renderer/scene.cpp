@@ -35,7 +35,7 @@ struct GpuMaterial {
     // MaterialProgram: first op (uvec4) in programCode, ops, first constant
     // (vec4) in programConstants, its images' GpuTexRefs (5 vec4 each) there.
     uint32_t program[4];
-    float specular[4];  // Material::specular
+    float specular[4];  // Material::specular, specularWeight
     // Lobes (shaders/brdf.glsl).
     float specularColor[4];  // specular workflow F0, w = 1 when used
     float coat[4];           // weight, roughness, F0
@@ -49,6 +49,7 @@ struct GpuMaterial {
     float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
     float subsurface[4];        // Material::subsurfaceColor, subsurface
     float subsurfaceRadius[4];  // Material::subsurfaceRadius
+    float surface[4];  // Material::model, diffuseRoughness, coatAffectColor, coatAffectRoughness
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
 struct GpuDisplacement {  // mirror of Displacement in shaders/displace.glsl
@@ -1618,6 +1619,11 @@ void Scene::Commit(bool keepMotion)
                 g.tex[i] = texRef(*refs[i]);
             }
             std::copy(m.specular, m.specular + 3, g.specular);
+            g.specular[3] = m.specularWeight;
+            g.surface[0] = float(m.model);
+            g.surface[1] = m.diffuseRoughness;
+            g.surface[2] = m.coatAffectColor;
+            g.surface[3] = m.coatAffectRoughness;
             std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
             g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
             g.coat[0] = m.coat;

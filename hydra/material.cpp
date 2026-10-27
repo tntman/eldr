@@ -159,6 +159,11 @@ TF_DEFINE_PRIVATE_TOKENS(
     (specular)
     (specular_color)
     (specular_weight)
+    (diffuse_roughness)
+    (base_diffuse_roughness)
+    (coat_affect_color)
+    (coat_affect_roughness)
+    (coat_darkening)
     (st)
     (texcoord)
     (rotation)
@@ -528,9 +533,10 @@ const std::vector<SurfaceInputs> &Surfaces()
         return std::vector<SurfaceInputs>{
             preview,
             mtlxPreview,
+            // standard_surface 1.0.1 (MaterialX's default version): base 1, base_color 0.8.
             {_tokens->ND_standard_surface_surfaceshader, _tokens->base_color, _tokens->base,
              _tokens->emission_color, _tokens->emission, _tokens->metalness, _tokens->specular_roughness,
-             TfToken(), _tokens->normal, _tokens->opacity, 1.0f, 0.8f, 1.0f, 0.0f, 0.2f, _tokens->specular,
+             TfToken(), _tokens->normal, _tokens->opacity, 0.8f, 1.0f, 1.0f, 0.0f, 0.2f, _tokens->specular,
              _tokens->specular_color},
             // emission_luminance is in nits, the radiance unit UsdLux uses too.
             {_tokens->ND_open_pbr_surface_surfaceshader, _tokens->base_color, _tokens->base_weight,
@@ -1871,6 +1877,10 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
             m->opacityRefracts = true;
         }
     } else if (id == _tokens->ND_standard_surface_surfaceshader) {
+        m->model = vkr::Material::Model::kStandardSurface;
+        m->diffuseRoughness = ReadOr(p, _tokens->diffuse_roughness, 0.0f);
+        m->coatAffectColor = ReadOr(p, _tokens->coat_affect_color, 0.0f);
+        m->coatAffectRoughness = ReadOr(p, _tokens->coat_affect_roughness, 0.0f);
         m->coat = ReadOr(p, _tokens->coat, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.1f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_IOR, 1.5f));
@@ -1905,9 +1915,9 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->transmission_depth, P::kTransmissionDepth);
         program(_tokens->thin_walled, P::kThinWalled);
     } else if (id == _tokens->ND_open_pbr_surface_surfaceshader) {
-        // ponytail: coat_darkening isn't modelled (the coat's albedo only);
-        // fuzz is standard_surface's sheen (Imageworks, not Zeltner's LTC),
-        // under the coat rather than over it.
+        m->model = vkr::Material::Model::kOpenPbr;
+        m->diffuseRoughness = ReadOr(p, _tokens->base_diffuse_roughness, 0.0f);
+        m->coatAffectColor = ReadOr(p, _tokens->coat_darkening, 1.0f);
         m->coat = ReadOr(p, _tokens->coat_weight, 0.0f);
         m->coatRoughness = ReadOr(p, _tokens->coat_roughness, 0.0f);
         m->coatF0 = IorToF0(ReadOr(p, _tokens->coat_ior, 1.6f));
@@ -2067,9 +2077,8 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
                             GfColorSpace(GfColorSpaceNames->LinearRec709))
                         .GetRGB();
         }
-        for (int i = 0; i < 3; ++i) {
-            m->specular[i] = weight * color[i];
-        }
+        std::copy(color.data(), color.data() + 3, m->specular);
+        m->specularWeight = weight;
     }
     // Transmission: standard_surface and OpenPBR transmit and refract by
     // their own inputs; UsdPreviewSurface refracts what its opacity lets

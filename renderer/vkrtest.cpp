@@ -323,8 +323,10 @@ int main()
             const Image img = Render(renderer, scene);
             Expect(renderer.VisibleInstances() == 1, "inconsistent mesh skipped");
             // Default material (roughness 0.5, f0 0.04) at normal incidence:
-            // diffuse = 1, specular = D*V*F*E = (1/(pi*a^2)) * 0.25 * 0.04 * pi = 0.16.
-            Expect(std::abs(img.At(32, 32, 0) - 1.16f) < 0.02f, "red = albedo + specular");
+            // specular = D*V*F*E = (1/(pi*a^2)) * 0.25 * 0.04 * pi = 0.16; the
+            // diffuse (1) beneath it loses the specular's directional albedo
+            // (0.037, MaterialX's layering): 0.963.
+            Expect(std::abs(img.At(32, 32, 0) - 1.123f) < 0.02f, "red = albedo + specular");
             Expect(std::abs(img.At(32, 32, 1) - 0.16f) < 0.02f, "green = specular only");
             Expect(img.At(0, 0, 0) == 0 && img.At(0, 0, 2) == 1, "corner is clear color");
             Expect(std::abs(img.depth[32 * 64 + 32] - 0.5f) < 0.01f, "center depth 0.5");
@@ -683,10 +685,17 @@ int main()
             Expect(scene.GetGpu().environment != VK_NULL_HANDLE, "dome builds an environment");
             float v = Render(renderer, scene).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white dielectric returns 1");
+            // A metal keeps its energy where the surface model has multiple
+            // scattering (OpenPBR); UsdPreviewSurface is single scattering.
             material->metallic = 1;
+            material->model = vkr::Material::Model::kOpenPbr;
             scene.Commit();
             v = Render(renderer, scene).At(32, 32, 0);
             Expect(std::abs(v - 1.0f) < 0.03f, "furnace: white metal returns 1");
+            material->model = vkr::Material::Model::kPreviewSurface;
+            scene.Commit();
+            v = Render(renderer, scene).At(32, 32, 0);
+            Expect(v > 0.65f && v < 0.75f, "furnace: UsdPreviewSurface's white metal is single scattering (0.70)");
             vkr::Renderer::Frame noIbl = IdentityFrame();
             noIbl.imageBasedLighting = false;
             Expect(Render(renderer, scene, noIbl).At(32, 32, 0) == 0.0f, "Frame::imageBasedLighting off: no dome light");
@@ -2572,7 +2581,7 @@ int main()
         {
             // Specular workflow: F0 is specularColor. A black quad with F0
             // (0.5, 0, 0) under the head-on light reflects 12.5 times the
-            // default material's 0.16 (plus multiple scattering) in red and
+            // default material's 0.16 in red (single scattering) and
             // nothing in green; the setting off falls back to F0 0.04.
             vkr::Scene scene(&device);
             AddLight(scene, 0, 0, -1);
@@ -2586,7 +2595,7 @@ int main()
             const Image on = Render(renderer, scene, frame);
             frame.specularWorkflow = false;
             const Image off = Render(renderer, scene, frame);
-            Expect(on.At(32, 32, 0) > 2.0f && on.At(32, 32, 0) < 2.2f && on.At(32, 32, 1) < 0.001f,
+            Expect(on.At(32, 32, 0) > 1.9f && on.At(32, 32, 0) < 2.1f && on.At(32, 32, 1) < 0.001f,
                    "specular workflow: specularColor is F0");
             Expect(std::abs(off.At(32, 32, 0) - 0.16f) < 0.02f && std::abs(off.At(32, 32, 1) - 0.16f) < 0.02f,
                    "Frame::specularWorkflow off: F0 0.04");
@@ -2646,13 +2655,16 @@ int main()
             auto material = std::make_shared<vkr::Material>();
             std::fill(material->baseColor, material->baseColor + 3, 0.0f);
             material->sheen = 1;
+            material->model = vkr::Material::Model::kStandardSurface;
             strip->material = material;
             scene.Commit();
             vkr::Renderer::Frame frame = IdentityFrame();
             const float on = Render(renderer, scene, frame).At(32, 32, 1);
             frame.sheen = false;
             const float off = Render(renderer, scene, frame).At(32, 32, 1);
-            Expect(on - off > 0.3f && on - off < 0.4f, "sheen brightens grazing angles");
+            // standard_surface's sheen sits under the specular: it loses the
+            // dielectric's albedo towards the viewer (0.14 here), 0.35 -> 0.30.
+            Expect(on - off > 0.26f && on - off < 0.34f, "sheen brightens grazing angles");
 
             vkr::Scene furnace(&device);
             furnace.AddDome();
@@ -3147,8 +3159,8 @@ int main()
             // Glossy reflection of a sphere light against the brute-force integral of GGX (D V F cos, f0 0.04)
             // over the light's cone, per pixel: a black quad tilted 50 degrees (NoV ~0.64), the light 1.5 away
             // along the mirror direction, once larger than the lobe (roughness 0.15) and once about as wide
-            // (0.4). The peak and the highlight's total match within 5% (LightRegion; 0.475 vs 0.457 and 50.6 vs 52.9,
-            // 0.183 vs 0.177 and 40.5 vs 41.3).
+            // (0.4), seen along the orthographic camera's axis. The peak and the highlight's total match within 5% (LightRegion;
+            // 0.443 vs 0.444 and 122 vs 129, 0.169 vs 0.176 and 76.4 vs 76.9).
             const float tilt = 50.0f * 3.14159265f / 180.0f, tanTilt = std::tan(tilt);
             const float nrm[3] = {-std::sin(tilt), 0, -std::cos(tilt)};  // facing the camera
             vkr::Scene scene(&device);
@@ -3177,7 +3189,7 @@ int main()
                         if (p[0] < x0 + 0.02 || p[0] > x1 - 0.02) {
                             continue;  // the quad's edge pixels
                         }
-                        double v[3] = {-p[0], -p[1], -2 - p[2]}, w[3] = {c[0] - p[0], c[1] - p[1], c[2] - p[2]};
+                        double v[3] = {0, 0, -1}, w[3] = {c[0] - p[0], c[1] - p[1], c[2] - p[2]};  // orthographic: v along the axis
                         const double vl = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
                         const double dist = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
                         for (int k = 0; k < 3; ++k) {
@@ -3742,7 +3754,8 @@ int main()
             // above it, where the fog stays dark.
             vkr::Scene scene(&device);
             vkr::Mesh *backdrop = AddEmitter(scene, -10, -10, 10, 10, -4, 1.0f);
-            std::fill(backdrop->material->specular, backdrop->material->specular + 3, 0.0f);  // no highlight
+            backdrop->material->model = vkr::Material::Model::kStandardSurface;  // its specular weight 0: no highlight
+            backdrop->material->specularWeight = 0.0f;
             vkr::Renderer::Frame frame = PerspectiveFrame();
             frame.fog = true;
             frame.fogDensity = 0.2f;
@@ -3872,7 +3885,8 @@ int main()
                 // With one depth per texel the fog above y 0 was unshadowed.
                 vkr::Scene pan(&device);
                 vkr::Mesh *back = AddEmitter(pan, -10, -10, 10, 10, -4, 0.0f);
-                std::fill(back->material->specular, back->material->specular + 3, 0.0f);
+                back->material->model = vkr::Material::Model::kStandardSurface;
+                back->material->specularWeight = 0.0f;
                 vkr::Light *top = AddLight(pan, 0, 1, 0);
                 std::fill(top->irradiance, top->irradiance + 3, 4.0f * 3.14159265f);
                 top->castShadows = true;
@@ -3903,12 +3917,13 @@ int main()
 
         {
             // Reflection probe: a mirror facing the camera (IdentityFrame,
-            // shaded as seen from z = -2) reflects an emitter behind the
-            // camera, out of view, at x -1..-0.2. The probe at the bounds'
-            // centre sees it. The mirror's ray at x reaches it at 2.4 x, so
-            // it shows at x = -0.27 (pixel 23) but not at -0.61 (pixel 12),
-            // where the probe's own ray in that direction would meet it:
-            // parallax correction.
+            // orthographic: every view ray along +z) reflects an emitter
+            // behind the camera, out of view, at x -1..-0.2. The probe at the
+            // bounds' centre (x ~ 0) sees it. Each mirror ray goes straight
+            // back and meets it at its own x, so it shows at x = -0.27 (pixel
+            // 23) and -0.61 (pixel 12) but not at 0.52 (pixel 48); the
+            // probe's own ray from its centre along -z would miss it
+            // everywhere: parallax correction.
             vkr::Scene scene(&device);
             vkr::Mesh *mirror = AddQuad(scene, -1, -1, 1, 1, 0.5f);
             auto chrome = std::make_shared<vkr::Material>();
@@ -3927,7 +3942,7 @@ int main()
             Expect(off.At(23, 32, 0) < 0.01f, "no probe: the mirror shows the black dome");
             Expect(on.At(23, 32, 0) > 1.6f && on.At(48, 32, 0) < 0.1f && renderer.IsConverged(),
                    "reflection probe: the emitter behind the camera");
-            Expect(on.At(12, 32, 0) < 0.1f, "reflection probe: parallax corrected");
+            Expect(on.At(12, 32, 0) > 1.6f, "reflection probe: parallax corrected");
             Expect(renderer.GetStats().passMs.size() > 0 &&
                        std::strcmp(renderer.GetStats().passMs.front().first, "probeCapture") == 0,
                    "reflection probe: its capture is a pass");
