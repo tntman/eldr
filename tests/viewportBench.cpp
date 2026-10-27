@@ -193,6 +193,11 @@ int main(int argc, char **argv)
         HdEngine engine;
         int failures = 0;
         if (check) {
+            // Convergence below counts frames, and auto-exposure adapts on
+            // wall-clock time (0.5 s time constant, ~2 s to settle): ~300
+            // frames under validation, over 400 without (failing since the
+            // check was added, b616182). The check is about the lazy AOVs.
+            delegate->SetRenderSetting(TfToken("eldr:autoExposure"), VtValue(false));
             // Houdini's pattern: colour read every frame, the rest now and then.
             auto frame = [&](double angle) {
                 controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,

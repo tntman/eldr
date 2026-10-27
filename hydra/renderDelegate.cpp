@@ -30,10 +30,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <thread>
+#ifdef _WIN32
+#include <corecrt_startup.h>  // _crt_atexit
+#endif
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -83,6 +87,38 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
 }
 
 namespace {
+
+// Background teardowns (~HdVkRenderDelegate) still running. A process exit
+// must not cut one off: Windows' ExitProcess kills the thread mid Vulkan
+// call and the driver's DLL detach then crashes (ntdll 0xc000070a after a
+// usdrecord or script that deletes its engine just before exiting).
+std::mutex _teardownMutex;
+std::condition_variable _teardownDone;
+int _teardowns = 0;
+bool _exiting = false;
+
+void _WaitForTeardowns()
+{
+    std::unique_lock<std::mutex> lock(_teardownMutex);
+    _exiting = true;  // later deletes tear down on their own thread
+    _teardownDone.wait_for(lock, std::chrono::seconds(30), [] { return _teardowns == 0; });
+}
+
+// Into the exit() sequence before other threads are killed: on Windows a
+// DLL's own atexit runs at DLL_PROCESS_DETACH, after that, so the process'
+// table (_crt_atexit). ponytail: assumes hdVk stays loaded (USD never
+// unloads plugins); pin the module if a host ever does.
+void _WaitForTeardownsAtExit()
+{
+    static std::once_flag once;
+    std::call_once(once, [] {
+#ifdef _WIN32
+        _crt_atexit(_WaitForTeardowns);
+#else
+        std::atexit(_WaitForTeardowns);
+#endif
+    });
+}
 
 #ifdef HDVK_VOLUMES
 // UsdVol's OpenVDB fields (with volumes: built against a USD with OpenVDB).
@@ -164,8 +200,8 @@ HdVkRenderDelegate::~HdVkRenderDelegate()
     // Nothing else uses these any more: Hydra has destroyed the prims, and
     // the next delegate makes its own device. The cache file is saved as sets
     // are compiled, so that one still finds it. HDVK_SYNC_TEARDOWN=1 waits
-    // (validation runs then see the leak check). ponytail: a process exit
-    // does not wait (the cache file is written aside and renamed).
+    // (validation runs then see the leak check). A process exit waits for
+    // it (_WaitForTeardowns, at most 30 s).
     _renderer->StopPrewarm();
     auto teardown = [renderer = std::move(_renderer), scene = std::move(_scene), device = std::move(_device),
                      timing]() mutable {
@@ -178,10 +214,22 @@ HdVkRenderDelegate::~HdVkRenderDelegate()
                          std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
         }
     };
-    if (std::getenv("HDVK_SYNC_TEARDOWN")) {
+    _WaitForTeardownsAtExit();
+    bool background = !std::getenv("HDVK_SYNC_TEARDOWN");
+    {
+        std::lock_guard<std::mutex> lock(_teardownMutex);
+        background = background && !_exiting;
+        _teardowns += background;
+    }
+    if (!background) {
         teardown();
     } else {
-        std::thread(std::move(teardown)).detach();
+        std::thread([teardown = std::move(teardown)]() mutable {
+            teardown();
+            std::lock_guard<std::mutex> lock(_teardownMutex);
+            --_teardowns;
+            _teardownDone.notify_all();
+        }).detach();
     }
     lap("handed off");
 }
