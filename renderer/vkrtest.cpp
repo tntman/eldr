@@ -304,6 +304,31 @@ int main()
         vkr::Renderer renderer(device);
 
         {
+            // Meshes of one content (a crowd's agents) share their pool
+            // geometry; each keeps its own place, and the geometry stays
+            // until its last user goes.
+            vkr::Scene scene(&device);
+            AddLight(scene, 0, 0, -1);
+            auto triangle = [&](float x) {
+                vkr::Mesh *m = scene.AddMesh();
+                m->points = {-0.25f, -0.5f, 0, 0.25f, -0.5f, 0, 0, 0.5f, 0};
+                m->transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1};
+                m->color[0] = 1;
+                return m;
+            };
+            vkr::Mesh *left = triangle(-0.5f);
+            triangle(0.5f);
+            scene.Commit();
+            Image img = Render(renderer, scene);
+            Expect(scene.SharedGeometries() == 1, "two meshes of one content: one geometry");
+            Expect(img.At(16, 20, 0) > 0.5f && img.At(48, 20, 0) > 0.5f, "both shared triangles drawn");
+            scene.RemoveMesh(left);
+            scene.Commit();
+            img = Render(renderer, scene);
+            Expect(scene.SharedGeometries() == 1 && img.At(48, 20, 0) > 0.5f && img.At(16, 20, 0) < 0.5f,
+                   "the other keeps the shared geometry");
+        }
+        {
             vkr::Scene scene(&device);
             AddLight(scene, 0, 0, -1);  // towards the camera
 

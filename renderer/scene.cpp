@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <numeric>
+#include <unordered_set>
 #include <tuple>
 #include <chrono>
 #include <atomic>
@@ -17,6 +18,64 @@
 namespace vkr {
 
 namespace {
+
+// What Scene::_UploadGeometry makes a mesh's pool geometry from: equal
+// content, equal geometry (SharedGeometry).
+uint64_t HashBytes(uint64_t h, const void *data, size_t bytes)
+{
+    const auto *p = static_cast<const unsigned char *>(data);
+    for (; bytes >= 8; bytes -= 8, p += 8) {
+        uint64_t w;
+        std::memcpy(&w, p, 8);
+        h = (h ^ w) * 0x9E3779B97F4A7C15ull;
+        h ^= h >> 29;
+    }
+    for (; bytes > 0; --bytes, ++p) {
+        h = (h ^ *p) * 0x100000001B3ull;
+    }
+    return h;
+}
+
+template <typename T>
+uint64_t HashArray(uint64_t h, const std::vector<T> &v)
+{
+    const uint64_t n = v.size();
+    return HashBytes(HashBytes(h, &n, sizeof(n)), v.data(), v.size() * sizeof(T));
+}
+
+uint64_t GeometryKey(const vkr::Mesh &m)
+{
+    const uint32_t scalars[3] = {m.influences, m.jointCount, uint32_t(m.facing)};
+    uint64_t h = HashBytes(0xCBF29CE484222325ull, scalars, sizeof(scalars));
+    h = HashArray(HashArray(HashArray(HashArray(h, m.points), m.normals), m.uvs), m.colors);
+    h = HashArray(HashArray(HashArray(h, m.indices), m.jointIndices), m.jointWeights);
+    // Primvars: their layout; values only vertex-rate ones' (the pools'
+    // primvar vertices). Others are per mesh (Commit's primvar table).
+    for (const vkr::Primvar &pv : m.primvars) {
+        const uint32_t shape[2] = {uint32_t(pv.rate), pv.components};
+        h = HashBytes(h, shape, sizeof(shape));
+        h = pv.rate == vkr::Primvar::Rate::Vertex ? HashArray(h, pv.values) : h;
+    }
+    return h;
+}
+
+bool SameGeometry(const vkr::Mesh &a, const vkr::Mesh &b)
+{
+    auto samePrimvars = [&] {
+        for (size_t i = 0; i < a.primvars.size(); ++i) {
+            const vkr::Primvar &p = a.primvars[i], &q = b.primvars[i];
+            if (p.rate != q.rate || p.components != q.components ||
+                (p.rate == vkr::Primvar::Rate::Vertex && p.values != q.values)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return a.influences == b.influences && a.jointCount == b.jointCount && a.facing == b.facing &&
+           a.points == b.points && a.normals == b.normals && a.uvs == b.uvs && a.colors == b.colors &&
+           a.indices == b.indices && a.jointIndices == b.jointIndices && a.jointWeights == b.jointWeights &&
+           a.primvars.size() == b.primvars.size() && samePrimvars();
+}
 
 // std430 mirrors of the structs in mesh.frag.
 struct GpuTexRef {
@@ -530,17 +589,10 @@ void Scene::RemoveMesh(Mesh *mesh)
     // Only bookkeeping here; the freed instance slots are invalidated on the
     // GPU at the next Commit.
     if (_device) {
-        _vertexAlloc.Free(mesh->_vertexOffset, mesh->_vertexCount);
-        _indexAlloc.Free(mesh->_firstIndex, mesh->_indexCount);
-        _skinAlloc.Free(mesh->_skinOffset, mesh->_skinCount);
+        _ReleaseGeometry(*mesh);
         _jointAlloc.Free(mesh->_jointBase, mesh->_jointSlots);
         _skinXformAlloc.Free(mesh->_skinXformBase, mesh->_skinXformSlots);
-        _boundsAlloc.Free(mesh->_boundsBase, mesh->_boundsSlots);
-        _blendAlloc.Free(mesh->_blendBase, mesh->_blendSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
-        _primvarVertexAlloc.Free(mesh->_primvarVertexOffset, mesh->_primvarVertexCount);
-        _velocityAlloc.Free(mesh->_velocityOffset, mesh->_velocityCount);
-        _indexAlloc.Free(mesh->_lodFirstIndex, mesh->_lodIndexCount);
         _FreeInstances(*mesh);
         for (PendingLods &p : _pendingLods) {
             p.mesh = p.mesh == mesh ? nullptr : p.mesh;  // finishes, then is dropped
@@ -672,16 +724,43 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
     }
 }
 
+// The mesh no longer draws its pool geometry: freed unless other meshes
+// share it.
+void Scene::_ReleaseGeometry(Mesh &m)
+{
+    SharedGeometry *shared = m._shared;
+    m._shared = nullptr;
+    bool keep = false;
+    if (shared) {
+        shared->users.erase(std::find(shared->users.begin(), shared->users.end(), &m));
+        keep = !shared->users.empty();
+        if (!keep) {
+            for (auto [it, end] = _sharedGeometry.equal_range(shared->key); it != end; ++it) {
+                if (it->second.get() == shared) {
+                    _sharedGeometry.erase(it);
+                    break;
+                }
+            }
+        }
+    }
+    if (!keep) {
+        _vertexAlloc.Free(m._vertexOffset, m._vertexCount);
+        _indexAlloc.Free(m._firstIndex, m._indexCount);
+        _skinAlloc.Free(m._skinOffset, m._skinCount);
+        _boundsAlloc.Free(m._boundsBase, m._boundsSlots);
+        _blendAlloc.Free(m._blendBase, m._blendSlots);
+        _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
+        _velocityAlloc.Free(m._velocityOffset, m._velocityCount);
+        _indexAlloc.Free(m._lodFirstIndex, m._lodIndexCount);
+    }
+    m._vertexCount = m._indexCount = m._skinCount = m._boundsSlots = m._blendSlots = m._primvarVertexCount = 0;
+    m._lodIndexCount = m._velocityCount = 0;
+    m._lods.clear();
+}
+
 void Scene::_UploadGeometry(Mesh &m)
 {
-    _vertexAlloc.Free(m._vertexOffset, m._vertexCount);
-    _indexAlloc.Free(m._firstIndex, m._indexCount);
-    _skinAlloc.Free(m._skinOffset, m._skinCount);
-    _blendAlloc.Free(m._blendBase, m._blendSlots);
-    _primvarVertexAlloc.Free(m._primvarVertexOffset, m._primvarVertexCount);
-    _velocityAlloc.Free(m._velocityOffset, m._velocityCount);
-    _indexAlloc.Free(m._lodFirstIndex, m._lodIndexCount);
-    m._vertexCount = m._indexCount = m._skinCount = m._blendSlots = m._primvarVertexCount = m._lodIndexCount = 0;
+    _ReleaseGeometry(m);
     m._velocityCount = 0;
     m._lods.clear();
     ++m._lodGeneration;  // levels still building for the last upload don't fit
@@ -709,6 +788,36 @@ void Scene::_UploadGeometry(Mesh &m)
         return;
     }
     const bool moving = !skinned && m.velocities.size() == m.points.size();
+    // Moving points and blend shapes change by the frame: their own.
+    // ponytail: a shared mesh whose first user goes before its levels of
+    // detail are built keeps drawing whole.
+    const bool shareable = !moving && m.blendRanges.empty() && m.blendOffsets.empty();
+    const uint64_t key = shareable ? GeometryKey(m) : 0;
+    for (auto [it, end] = _sharedGeometry.equal_range(key); shareable && it != end; ++it) {
+        SharedGeometry &shared = *it->second;
+        const Mesh &s = *shared.users.front();
+        if (!SameGeometry(s, m)) {
+            continue;
+        }
+        m._geometryVersion = s._geometryVersion;
+        m._flat = s._flat;
+        std::copy_n(s._flatTriangle, 9, m._flatTriangle);
+        m._uvSpacing = s._uvSpacing;
+        m._vertexOffset = s._vertexOffset, m._vertexCount = s._vertexCount;
+        m._firstIndex = s._firstIndex, m._indexCount = s._indexCount;
+        m._skinOffset = s._skinOffset, m._skinCount = s._skinCount, m._skinStride = s._skinStride;
+        m._boundsBase = s._boundsBase, m._boundsSlots = s._boundsSlots;
+        m._primvarVertexOffset = s._primvarVertexOffset, m._primvarVertexCount = s._primvarVertexCount;
+        m._primvarComponents = s._primvarComponents;
+        m._jointBounds = s._jointBounds;
+        std::copy_n(s._boundsMin, 3, m._boundsMin);
+        std::copy_n(s._boundsMax, 3, m._boundsMax);
+        m._lods = s._lods;
+        m._lodFirstIndex = s._lodFirstIndex, m._lodIndexCount = s._lodIndexCount;
+        shared.users.push_back(&m);
+        m._shared = &shared;
+        return;
+    }
     // Planar reflections: is the mesh flat? Its first proper triangle,
     // and every point within a thousandth of its size of that plane.
     m._flat = false;
@@ -1010,7 +1119,6 @@ void Scene::_UploadGeometry(Mesh &m)
         m._skinCount = skinCount;
         m._skinStride = m.influences == 8 ? 2 : 1;
 
-        _boundsAlloc.Free(m._boundsBase, m._boundsSlots);
         uint32_t boundsBase;
         while (!_boundsAlloc.Allocate(m.jointCount, &boundsBase)) {
             _EnsureCapacity(_jointBoundsPool, _boundsAlloc, m.jointCount, sizeof(JointBounds),
@@ -1026,6 +1134,13 @@ void Scene::_UploadGeometry(Mesh &m)
                            bounds.size() * sizeof(JointBounds)});
         m._boundsBase = boundsBase;
         m._boundsSlots = m.jointCount;
+    }
+    if (shareable) {
+        auto shared = std::make_unique<SharedGeometry>();
+        shared->key = key;
+        shared->users.push_back(&m);
+        m._shared = shared.get();
+        _sharedGeometry.emplace(key, std::move(shared));
     }
 }
 
@@ -1052,6 +1167,13 @@ void Scene::_StoreLods(Mesh &m, std::vector<LodLevel> levels)
                            indices.size() * sizeof(uint32_t)});
     }
     _ReserveLodInstances(m);
+    for (Mesh *other : m._shared ? m._shared->users : std::vector<Mesh *>{}) {
+        if (other != &m) {  // the meshes sharing its geometry share its levels
+            other->_lods = m._lods;
+            other->_lodFirstIndex = m._lodFirstIndex, other->_lodIndexCount = m._lodIndexCount;
+            _ReserveLodInstances(*other);
+        }
+    }
 }
 
 // Each level of detail fills a range of the visible lists of its own
@@ -1485,12 +1607,23 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // uploaded rather than growing them step by step: a huge instanced scene
     // (tens of millions of instances) cannot afford old and doubled pools
     // side by side.
+    // Geometry several meshes share counts once: kept, by its first user;
+    // about to upload, by a cheap fingerprint (a miss only grows the pool
+    // later).
     uint64_t instancesNeeded = 0, indicesNeeded = 0;
+    std::unordered_set<uint64_t> uploading;
     for (const auto &m : _meshes) {
         instancesNeeded += m->transforms.size() / 16;
-        indicesNeeded += !m->geometryDirty     ? m->_indexCount
-                         : m->indices.empty() ? m->points.size() / 3
-                                              : m->indices.size();
+        if (!m->geometryDirty) {
+            indicesNeeded += !m->_shared || m->_shared->users.front() == m.get() ? m->_indexCount : 0;
+            continue;
+        }
+        const uint64_t sizes[3] = {m->points.size(), m->indices.size(), m->jointCount};
+        const uint64_t print = HashBytes(HashBytes(0, sizes, sizeof(sizes)), m->points.data(),
+                                         std::min<size_t>(m->points.size(), 48) * sizeof(float));
+        if (uploading.insert(print).second) {
+            indicesNeeded += m->indices.empty() ? m->points.size() / 3 : m->indices.size();
+        }
     }
     if (instancesNeeded > _instanceAlloc.Capacity()) {
         _EnsureCapacity(_instances, _instanceAlloc,

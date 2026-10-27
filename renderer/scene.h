@@ -355,6 +355,13 @@ struct Primvar {
 // points) sets `indices` instead: then the per-corner arrays below hold one
 // value per vertex and nothing is merged. Different meshes may be written
 // concurrently (Hydra syncs rprims in parallel); nothing here touches Vulkan.
+struct Mesh;
+// Pool geometry several meshes draw (Scene::_sharedGeometry).
+struct SharedGeometry {
+    uint64_t key = 0;             // content hash
+    std::vector<Mesh *> users;    // users[0]'s arrays are the content
+};
+
 struct Mesh {
     std::vector<float> points;   // xyz per corner
     std::vector<float> normals;  // xyz per corner, or empty (flat shading)
@@ -484,6 +491,9 @@ private:
     uint32_t _lodFirstIndex = 0, _lodIndexCount = 0;
     uint32_t _lodInstanceBase = 0, _lodInstanceCount = 0;
     uint32_t _lodGeneration = 0;  // geometry uploads, to drop stale levels
+    // The pools' geometry it shares with meshes of the same content
+    // (Scene::SharedGeometry; null: its own or none).
+    struct SharedGeometry *_shared = nullptr;
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -652,6 +662,8 @@ public:
     void Commit(bool keepMotion = false, bool unchanged = false);
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
+    // Pool geometries meshes share (_sharedGeometry), each with its users.
+    size_t SharedGeometries() const { return _sharedGeometry.size(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
     // Commit). Returns whether the mask changed.
     bool SetTagMask(uint32_t mask);
@@ -964,6 +976,12 @@ private:
         std::future<std::vector<LodLevel>> levels;
     };
     std::vector<PendingLods> _pendingLods;
+    // Meshes of identical content (a crowd's agents: one body per agent,
+    // each with its own joints) share their rest geometry in the pools:
+    // vertices, indices, skin weights, joint bounds and levels of detail.
+    // The first user's arrays are what later uploads compare against.
+    std::unordered_multimap<uint64_t, std::unique_ptr<SharedGeometry>> _sharedGeometry;
+    void _ReleaseGeometry(Mesh &mesh);
 };
 
 } // namespace vkr

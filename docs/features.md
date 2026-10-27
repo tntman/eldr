@@ -346,7 +346,7 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 
 | Topic | How |
 |---|---|
-| GPU-driven scene | Device-local vertex, index and instance pools; only changed meshes upload. Culling (frustum, small objects, LOD) produces indirect draws, also for shadow cascades and atlas tiles. Draws split at 500M triangles to avoid driver timeouts. |
+| GPU-driven scene | Device-local vertex, index and instance pools; only changed meshes upload. Meshes of identical content (a crowd's agents, each with its own joints) share one copy of their vertices, indices, skin weights and levels of detail: crowd 9k 1.7 GB to 0.57 GB, first frame 14 to 5 s. Culling (frustum, small objects, LOD) produces indirect draws, also for shadow cascades and atlas tiles. Draws split at 500M triangles to avoid driver timeouts. |
 | Zero cost when off | Shading pipelines compile in sets per combination of optional features (`kCompiledFeatures`). A new combination compiles about 96 pipelines (up to 35 s cold on heavy scenes). |
 | Pipeline cache | `eldr:pipelineCache`: `%LOCALAPPDATA%\Eldr\pipelines-<driver uuid>-<shader hash>.bin`; a new shader build starts a new file (delete old ones). Crowd first frame 33.5 to 2.0 s. |
 | Prewarm | `eldr:pipelinePrewarm` (Hydra default): after a feature change, compiles the sets one toggle away (GI, SSGI, fog first) on half the cores. |
