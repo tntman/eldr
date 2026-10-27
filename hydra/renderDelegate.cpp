@@ -467,7 +467,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},
-        {"Multiple Scattering (GGX energy compensation; off matches Karma)", t2.multiScatter,
+        {"Multiple Scattering (where the surface's spec has it: standard_surface, OpenPBR)", t2.multiScatter,
          VtValue(frame.multiScatter)},
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},

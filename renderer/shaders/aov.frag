@@ -71,7 +71,7 @@ void main()
         }
 #endif
     }
-    vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
+    vec3 v = ViewDirection(inWorldPos);
     vec3 ng = normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos)));
     if (dot(ng, v) < 0.0) {
         ng = -ng;

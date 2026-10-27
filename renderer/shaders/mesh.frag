@@ -145,7 +145,9 @@ vec3 F_Schlick(vec3 f0, float VoH)
     return f0 + (1.0 - f0) * pow(1.0 - VoH, 5.0);
 }
 
-// GGX specular times cos for light from direction l.
+// The base's GGX specular (brdf.glsl's BaseFresnel: its metal and
+// dielectric lobes, their weights and multiple scattering) times cos for
+// light from direction l; f0 for hair.
 vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
 #ifdef LAYERS
@@ -157,7 +159,7 @@ vec3 Specular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
     float LoH = max(dot(l, h), 0.0);
-    return D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F_Schlick(f0, LoH) * NoL;
+    return D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * BaseFresnel(LoH) * NoL;
 }
 
 // Illuminance of a sphere of unit radiance with sin^2 of its angular radius
@@ -556,7 +558,7 @@ float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float
 // the form factor vector with Heitz's horizon approximation. Specular:
 // LightRegion's representative point.
 vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, vec3 f0, float a,
-                float NoV, vec3 energyCompensation)
+                float NoV)
 {
     Light light = lights[index];
     vec3 toLight = light.position.xyz - p;
@@ -647,8 +649,11 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             diffuseTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + foot * vec2(-0.5, 0.5), footLod).rgb;
         }
     }
-    vec3 diffuse = diffuseColor / PI * diffuseE * light.halfHeight.w * diffuseTint;
-    vec3 specular = Specular(n, v, l, a, f0, NoV) * StretchRatio(n, v, l, a) * energyCompensation * specularE * norm *
+    // The diffuse lobe (Oren-Nayar) towards the light's centre.
+    vec3 lc = toLight / d;
+    vec3 diffuse = DiffuseLobe(diffuseColor, max(dot(n, lc), 0.0), NoV, dot(lc, v)) / PI * diffuseE *
+                   light.halfHeight.w * diffuseTint;
+    vec3 specular = Specular(n, v, l, a, f0, NoV) * StretchRatio(n, v, l, a) * specularE * norm *
                     light.shaping.w;
     specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
     specular *= specularTint;
@@ -817,7 +822,7 @@ vec3 DepthNormal(vec2 ndc, vec3 p)
         t[i] = dot(a, a) < dot(b, b) ? a : b;
     }
     vec3 n = normalize(cross(t[0], t[1]));
-    return dot(n, frame.cameraPos.xyz - p) < 0.0 ? -n : n;
+    return dot(n, ViewDirection(p)) < 0.0 ? -n : n;
 }
 
 // Screen-space reflection: marches the ray linearly through NDC (where
@@ -1051,7 +1056,6 @@ void main()
     if (inMaterial != kNoMaterial) {
         Material m = materials[inMaterial];
         present = Present(m, inUv);
-        specularTint = m.specular.rgb;
         // Translucent (opacity without a cutout threshold): diffuse light and
         // emission scale with opacity, highlights don't (premultiplied, as
         // glass). Opaque materials have opacity 1.
@@ -1075,7 +1079,7 @@ void main()
     TransmissionBegin(alpha);
     SubsurfaceBegin(baseColor, emissive, metallic, specularTint);
 
-    vec3 v = normalize(frame.cameraPos.xyz - inWorldPos);
+    vec3 v = ViewDirection(inWorldPos);
     // Geometric normal facing the viewer: renders everything double-sided and
     // makes winding/orientation and normal sign irrelevant.
     vec3 ng = normalize(cross(dFdx(inWorldPos), dFdy(inWorldPos)));
@@ -1095,25 +1099,24 @@ void main()
     }
 
     metallic = clamp(metallic, 0.0, 1.0);
+    CoatRoughening(roughness);
+    // ponytail: roughness under 0.045 (alpha 0.002) shades as 0.045, so
+    // point-like lights keep a finite highlight.
     float perceptual = clamp(roughness, 0.045, 1.0);
     float a = perceptual * perceptual;
-    vec3 diffuseColor = baseColor * (1.0 - metallic) * alpha;
     emissive *= alpha;
-    vec3 f0 = mix(vec3(0.04), baseColor, metallic);  // ior 1.5
     float NoV = max(dot(n, v), 1e-4);
 
-    // Split-sum DFG (A, B) and multiple-scattering compensation
-    // (Fdez-Aguera 2019; Filament's energy compensation for direct light).
-    vec2 ab = texture(brdfLut, vec2(NoV, perceptual)).rg;
-    float Ess = ab.x + ab.y;
-    // standard_surface's specular weight and colour scale the dielectric
-    // lobe (and give its energy back to the diffuse one).
-    vec3 tint = mix(specularTint, vec3(1.0), metallic);
-    PrepareLayers(n, NoV, f0, diffuseColor, tint, emissive);
+    // The base by the material's surface model (brdf.glsl's SetupBase),
+    // with the split-sum DFG (A, B, and C for F82) at its roughness; the
+    // lobes on top of it. FssEss: the base's specular albedo towards the
+    // viewer (multiple scattering included where the model has it).
+    vec3 dfg = texture(brdfLut, vec2(NoV, perceptual)).rgb;
+    vec3 diffuseColor = SetupBase(baseColor, metallic, specularTint, NoV, dfg) * alpha;
+    PrepareLayers(n, NoV, diffuseColor, emissive);
     SubsurfaceLayers();
-    vec3 FssEss = (f0 * ab.x + ab.y) * tint;
-    bool multiScatter = (frame.features.x & kFeatureMultiScatter) != 0u;  // always compiled, not a specialization bit
-    vec3 energyCompensation = (multiScatter ? 1.0 + f0 * (1.0 / max(Ess, 1e-4) - 1.0) : vec3(1.0)) * tint;
+    vec3 f0 = base.metalW * base.metalF0 + base.dielW * base.dielF0;  // hair, multi-bounce, toon
+    vec3 FssEss = BaseAlbedo(NoV, dfg);
 
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
@@ -1132,8 +1135,9 @@ void main()
         if (Feature(kFeatureSunRegion) && tanHalf * tanHalf > 4e-3 * NoV * a * a) {
             sunNorm = SphereRegion(n, v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
         }
-        vec3 radiance = (diffuseColor / PI * NoL * light.halfHeight.w +
-                         (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * energyCompensation * sunNorm +
+        vec3 sunDiffuse = DiffuseLobe(diffuseColor, NoL, NoV, dot(l, v));
+        vec3 radiance = (sunDiffuse / PI * NoL * light.halfHeight.w +
+                         (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * sunNorm +
                           LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
                         light.color.rgb;
         if (i == frame.counts.y) {
@@ -1141,7 +1145,7 @@ void main()
         }
         color += radiance;
         if (LightSplits()) {
-            vec3 d = diffuseColor / PI * NoL * light.halfHeight.w * light.color.rgb;
+            vec3 d = sunDiffuse / PI * NoL * light.halfHeight.w * light.color.rgb;
             splitDirectDiffuse += i == frame.counts.y
                 ? d * Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l) : d;
         }
@@ -1155,11 +1159,11 @@ void main()
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
             color += LocalLight(clusterLights[base + 1u + k], inWorldPos, n, ng, v, diffuseColor, f0,
-                                a, NoV, energyCompensation);
+                                a, NoV);
         }
     } else {
         for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
-            color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV, energyCompensation);
+            color += LocalLight(i, inWorldPos, n, ng, v, diffuseColor, f0, a, NoV);
         }
     }
 
@@ -1258,13 +1262,11 @@ void main()
         domeKept *= 1.0 - imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;  // as RtReflection
     }
     specular = RtReflection(specular, inWorldPos, n, perceptual);
-    float Ems = multiScatter ? 1.0 - Ess : 0.0;  // off: no multiple-scattering term
-    vec3 Favg = f0 + (1.0 - f0) / 21.0;
-    vec3 Fms = FssEss * Favg / (1.0 - Ems * Favg);
-    vec3 kd = diffuseColor * (1.0 - FssEss - Fms * Ems);
+    // The diffuse colour already lost what the specular reflects (SetupBase).
+    vec3 kd = DiffuseAlbedo(diffuseColor, NoV);
     // With SSGI the bounces are traced: the visibility hides the rest alone.
     vec3 splitAmbient = color;
-    color += FssEss * specular + (Fms * Ems + kd) * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
+    color += FssEss * specular + kd * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
                                                                                                      : diffuseColor) +
                                                     SsgiDiffuse() * occlusion);
     vec3 splitIndirectGlossy = FssEss * specular;
@@ -1278,7 +1280,7 @@ void main()
     // see less of the dome than the AO does), so the splits still add up.
     vec3 splitDomeGlossy = vec3(0.0);
     if (LightSplits() && frame.aovs.y != 0u) {
-        vec3 domeDirect = min((Fms * Ems + kd) * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        vec3 domeDirect = min(kd * domeDiffuse * diffuseAO, splitIndirectDiffuse);
         splitDirectDiffuse += domeDirect;
         splitDirect += domeDirect;  // layer 2 is splitDirect - splitDirectDiffuse
         splitIndirectDiffuse -= domeDirect;
@@ -1302,7 +1304,7 @@ void main()
         if (LightPathScaled()) {  // the lobes' dome light, one way as above
             color += ((frame.aovs.y != 0u ? frame.lightPath.x : frame.lightPath.y) - 1.0) * (color - splitAmbient);
         }
-        color = ToonShade(color, emissive, diffuseColor + f0);
+        color = ToonShade(color, emissive, BaseToonAlbedo() * alpha);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
     if (LightPathScaled()) {

@@ -5,9 +5,10 @@
 )
 
 # White furnace for eldr:multiScatter (tests/test_furnace.py): a rough white
-# metal sphere (F0 = 1, roughness 0.8) under a uniform white dome of intensity
-# 1. Energy conserving, it reads 1; single scattering loses what the rough
-# lobe's extra bounces would return.
+# OpenPBR metal sphere (F0 = 1, roughness 0.8) under a uniform white dome of
+# intensity 1. Energy conserving, it reads 1; single scattering loses what
+# the rough lobe's extra bounces would return. UsdPreviewSurface is single
+# scattering by its spec (as Storm and Karma), the setting on or off.
 
 def Camera "cam"
 {
@@ -33,14 +34,14 @@ def Scope "mtl"
 {
     def Material "metal"
     {
-        token outputs:surface.connect = </mtl/metal/shader.outputs:surface>
+        token outputs:mtlx:surface.connect = </mtl/metal/shader.outputs:out>
         def Shader "shader"
         {
-            uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor = (1, 1, 1)
-            float inputs:metallic = 1
-            float inputs:roughness = 0.8
-            token outputs:surface
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (1, 1, 1)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.8
+            token outputs:out
         }
     }
 }

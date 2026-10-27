@@ -163,10 +163,10 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Normal Maps<br>`eldr:normalMaps` | on | Applies normal maps. | |
 | Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface `useSpecularWorkflow = 1` uses F0 = `specularColor`. Off: 0.04. | |
 | Clearcoat<br>`eldr:clearcoat` | on | Second GGX lobe: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials with lobes pay |
-| Sheen<br>`eldr:sheen` | on | Charlie lobe: standard_surface `sheen`, OpenPBR `fuzz_*`. | Same |
+| Sheen<br>`eldr:sheen` | on | standard_surface `sheen` (Imageworks microfiber), OpenPBR `fuzz_*` (Zeltner's LTC sheen). | Same |
 | Thin Film Iridescence<br>`eldr:thinFilm` | on | standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. | Same |
 | Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretches highlights along u (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). No uvs: brushed around world up. | Same |
-| Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (Fdez-Aguera, Filament) so rough metals keep their energy. Off: single scattering as Karma's UsdPreviewSurface (darker when rough). | |
+| Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (MaterialX's) where the surface's spec has it: standard_surface and OpenPBR. UsdPreviewSurface is single scattering, as Storm and Karma. Off: single scattering everywhere. | |
 | Hair Shading<br>`eldr:hairShading` | on | BasisCurves shade as hair (Kajiya-Kay), no SSR. `primvars:eldr:hair = 0` opts a prim out. | |
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
