@@ -8,7 +8,7 @@ struct TexRef {
     int index;     // -1: none; with udim the first of its 100 entries in udimTiles
     int channel;   // 0..3, or -1 for all
     int udim;
-    int pad;
+    int pad;       // MaterialX address mode constant: bit 0 on u, 1 on v (outside [0, 1] the constant)
     vec4 scale;
     vec4 bias;
     vec4 uvRow0;  // texture coordinates: (dot(uvRow0.xyz, (u, v, 1)), dot(uvRow1.xyz, ...))
@@ -61,6 +61,10 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     vec2 dx = a * UV_DX(uv), dy = a * UV_DY(uv);
     uv = a * uv + vec2(r.uvRow0.z, r.uvRow1.z);
     vec2 tileUv = uv;
+    if (r.pad != 0 && (((r.pad & 1) != 0 && (uv.x < 0.0 || uv.x > 1.0)) ||
+                       ((r.pad & 2) != 0 && (uv.y < 0.0 || uv.y > 1.0)))) {
+        return constant;
+    }
     if (r.udim != 0) {
         // UDIM: tile 1001 + u + 10 v, sampled with the unwrapped uv's
         // gradients so mips don't jump at tile borders. Missing tiles and uv

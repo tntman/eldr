@@ -487,8 +487,8 @@ void TiledImageMatrix(std::map<TfToken, VtValue> const &p, float m[6])
 // hdSt/materialXFilter.cpp): UsdUVTexture wrapS/wrapT, where "useMetadata"
 // (also unauthored or unknown) is the file's own, else black; MaterialX
 // u/vaddressmode, "periodic" by default.
-// ponytail: MaterialX "constant" reads black outside [0, 1] as in Storm, not
-// the image's `default`; test uv against [0, 1] in Fetch if one is authored.
+// MaterialX "constant" is black at the sampler, and the image's `default`
+// outside [0, 1] where Fetch sees TextureRef::constantWrap.
 void ReadWrap(HdMaterialNode2 const &node, bool preview, vkr::TextureRef *ref)
 {
     for (int axis = 0; axis < 2; ++axis) {
@@ -501,6 +501,7 @@ void ReadWrap(HdMaterialNode2 const &node, bool preview, vkr::TextureRef *ref)
         } else {
             Read(node.parameters, name, &mode);
         }
+        ref->constantWrap |= !preview && mode == "constant" ? 1u << axis : 0u;
         ref->wrap[axis] = mode == "mirror"                        ? vkr::Wrap::Mirror
                           : mode == "clamp"                       ? vkr::Wrap::Clamp
                           : mode == "black" || mode == "constant" ? vkr::Wrap::Black
@@ -539,19 +540,19 @@ bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textu
 // Follows a texture's coordinates (`input` of `node`) to the primvar they
 // come from (a reader's varname; MaterialX texcoord index n -> "st" / "st<n>",
 // or geomprop), composing UsdTransform2d and MaterialX place2d into
-// ref->uvTransform. Unconnected: "st".
-void ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken input,
+// ref->uvTransform. Unconnected: "st". False if they come from anything else.
+bool ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken input,
                   vkr::TextureRef *ref, TfToken *primvar)
 {
     *primvar = _tokens->st;
     for (int depth = 0; depth < 8; ++depth) {
         const auto conn = node->inputConnections.find(input);
         if (conn == node->inputConnections.end() || conn->second.empty()) {
-            return;
+            return true;
         }
         const auto up = net.nodes.find(conn->second[0].upstreamNode);
         if (up == net.nodes.end()) {
-            return;
+            return false;
         }
         node = &up->second;
         const TfToken &type = node->nodeTypeId;
@@ -576,27 +577,30 @@ void ReadTexcoord(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, Tf
             } else if (Read(p, _tokens->varname, &varnameStr) && !varnameStr.empty()) {
                 *primvar = TfToken(varnameStr);
             }
-            return;
+            return true;
         } else if (StartsWith(type, "ND_texcoord_")) {
             const int index = ReadOr(p, _tokens->index, 0);
             *primvar = index == 0 ? _tokens->st : TfToken("st" + std::to_string(index));
-            return;
+            return true;
         } else if (StartsWith(type, "ND_geompropvalue_")) {
             std::string geomprop;
             if (Read(p, _tokens->geomprop, &geomprop) && !geomprop.empty()) {
                 *primvar = TfToken(geomprop);
             }
-            return;
+            return true;
         } else {
-            return;
+            return false;  // some other node: the graph compiler follows it
         }
     }
+    return false;
 }
 
 // Follows the connection of `name` to a texture, through MaterialX nodes
 // that only convert, extract a channel or decode a normal map. A primvar
 // reader of displayColor on the base colour makes the mesh's colour the base.
-// ponytail: MaterialX image defaults are ignored.
+// A float image reads its red channel; constant address modes, which show
+// the image's default, and a vector2 converted to a colour (third component
+// 0) are left to the graph compiler.
 void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfToken name,
                  HdVkTextureCache *textures, vkr::Material *m, vkr::TextureRef *ref, TfToken *primvar)
 {
@@ -616,10 +620,16 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         node = &up->second;
         const TfToken &type = node->nodeTypeId;
         name = _tokens->in;
+        if (StartsWith(type, "ND_convert_") && type.GetString().compare(11, 8, "vector2_") == 0) {
+            return;
+        }
         if (StartsWith(type, "ND_convert_") || StartsWith(type, "ND_dot_")) {
             continue;
         }
         if (StartsWith(type, "ND_normalmap")) {
+            if (ref != &m->normalTex) {
+                return;  // a colour: the graph's world-space normal
+            }
             normalMap = true;
             Read(node->parameters, _tokens->scale, &normalScale);
             continue;
@@ -646,6 +656,13 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         if (!LoadFile(*node, preview, textures, ref)) {
             return;
         }
+        if (ref->constantWrap) {
+            *ref = vkr::TextureRef();
+            return;
+        }
+        if (!preview && channel < 0 && type.GetString().compare(type.GetString().size() - 6, 6, "_float") == 0) {
+            channel = 0;
+        }
         if (preview) {
             const TfToken &out = c.upstreamOutputName;
             channel = out == _tokens->r ? 0 : out == _tokens->g ? 1 : out == _tokens->b ? 2 : out == _tokens->a ? 3 : -1;
@@ -669,7 +686,9 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
         if (StartsWith(type, "ND_tiledimage_")) {
             TiledImageMatrix(node->parameters, ref->uvTransform);
         }
-        ReadTexcoord(net, node, preview ? _tokens->st : _tokens->texcoord, ref, primvar);
+        if (!ReadTexcoord(net, node, preview ? _tokens->st : _tokens->texcoord, ref, primvar)) {
+            *ref = vkr::TextureRef();
+        }
         return;
     }
 }
@@ -758,6 +777,12 @@ public:
         if (v && target == P::kNormal &&
             !(v->op && (_ops[v->index].op == P::kNormalMap || _ops[v->index].op == P::kImage))) {
             v.reset();
+        }
+        // A normalmap is MaterialX's world-space normal, except as the
+        // surface normal (the tangent-space one the shading frame turns).
+        // ponytail: not one an earlier input's graph shares.
+        for (size_t i = ops; v && target != P::kNormal && i < _ops.size(); ++i) {
+            _ops[i].imm0 = _ops[i].op == P::kNormalMap ? 1 : _ops[i].imm0;
         }
         if (v && channel >= 0) {
             v = _Emit(P::kExtract, {*v}, 0, uint32_t(channel));
@@ -1004,21 +1029,62 @@ private:
             {"combine4", {P::kCombine, {"in1", "in2", "in3", "in4"}}},
         };
         if (const auto it = plain.find(k.name); it != plain.end()) {
+            // The boolean ifgreater / ifgreatereq / ifequal compare value1
+            // and value2 only, to 1 or 0.
+            const bool comparison = k.name == "ifgreater" || k.name == "ifgreatereq" || k.name == "ifequal";
+            const bool toBoolean = comparison && k.type.rfind("boolean", 0) == 0;
+            std::vector<const char *> names = it->second.second;
+            if (toBoolean) {
+                names = {"value1", "value2"};
+            }
             std::vector<Value> args;
-            for (const char *name : it->second.second) {
+            for (const char *name : names) {
                 const std::optional<Value> v = in(name);
                 if (!v) {
                     return std::nullopt;
                 }
                 args.push_back(*v);
             }
-            return _Emit(it->second.first, std::move(args));
+            if (toBoolean) {
+                args.push_back(_Const(GfVec4f(1.0f)));
+                args.push_back(_Const(GfVec4f(0.0f)));
+            }
+            uint32_t imm1 = 0;
+            if (k.name == "combine2" || k.name == "combine3" || k.name == "combine4") {
+                // Each input's components: a float each, or CF / VF (colour3
+                // or vector3 and a float), VV (two vector2).
+                const bool wide = k.type.size() > 2 && (k.type.compare(k.type.size() - 2, 2, "CF") == 0 ||
+                                                        k.type.compare(k.type.size() - 2, 2, "VF") == 0);
+                const bool pair = k.type.size() > 2 && k.type.compare(k.type.size() - 2, 2, "VV") == 0;
+                for (size_t i = 0; i < args.size(); ++i) {
+                    imm1 |= (wide ? (i == 0 ? 3u : 1u) : pair ? 2u : 1u) << (3 * i);
+                }
+            } else if (k.name == "dotproduct" || k.name == "normalize") {
+                imm1 = k.type == "vector4" ? 4 : k.type == "vector2" ? 2 : 0;
+            }
+            const Value result = _Emit(it->second.first, std::move(args), 0, imm1);
+            // A vector2 result keeps nothing in z and w: its operands' (a
+            // float operand's splat, pow(0, 0), mod(x, 0)). (Not normalmap,
+            // whose type is its scale's; dotproduct's is its operands'.)
+            return k.type == "vector2" && k.name != "dotproduct" && k.name != "normalmap" ? _Emit(P::kConvert, {result}, 2, 2) : result;
         }
         if (k.name == "constant") {
             return _Const(_Parameter(n, TfToken("value")));
         }
-        if (k.name == "convert" || k.name == "dot") {
+        if (k.name == "dot") {
             return in("in");
+        }
+        if (k.name == "convert") {
+            // ND_convert_<from>_<to>: a float is splat already, a vector2 gets
+            // 0 for its third component, a colour3 or vector3 an alpha of 1.
+            const std::string &id = n.nodeTypeId.GetString();
+            const std::string from = id.substr(11, id.find('_', 11) - 11);
+            const std::optional<Value> v = in("in");
+            if (!v) {
+                return std::nullopt;
+            }
+            const uint32_t fromN = Components(from), toN = Components(k.type);
+            return fromN == 1 || fromN == toN ? v : std::optional<Value>(_Emit(P::kConvert, {*v}, fromN, toN));
         }
         if (k.name == "extract" || k.name.rfind("separate", 0) == 0) {
             // separateN's outputs outr/outx .. outa/outw.
@@ -1076,7 +1142,14 @@ private:
             if (!fallback) {
                 return std::nullopt;
             }
-            return Components(k.type) == 2 ? _Texcoord(name, fallback) : _Primvar(name, *fallback);
+            // A uv set (the mesh's first one read) if it reads a vector2
+            // named like one; any other primvar is its own, its default
+            // where the mesh has none.
+            const std::string &s = name.GetString();
+            const bool uvName = k.name != "geompropvalue" || s == "st" || s == "uv" ||
+                                (s.size() > 2 && (s.rfind("st", 0) == 0 || s.rfind("uv", 0) == 0) &&
+                                 std::all_of(s.begin() + 2, s.end(), [](char c) { return std::isdigit(uint8_t(c)); }));
+            return Components(k.type) == 2 && uvName ? _Texcoord(name, fallback) : _Primvar(name, *fallback);
         }
         if (k.name == "image" || k.name == "tiledimage" || k.name == "UsdUVTexture") {
             const bool preview = k.name == "UsdUVTexture";
@@ -1106,7 +1179,8 @@ private:
                 ref.channel = 0;
             }
             _p.images.push_back(std::move(ref));
-            return _Emit(P::kImage, {*uv, *fallback}, uint32_t(_p.images.size() - 1));
+            const Value image = _Emit(P::kImage, {*uv, *fallback}, uint32_t(_p.images.size() - 1));
+            return k.type == "vector2" ? _Emit(P::kConvert, {image}, 2, 2) : image;
         }
         // MaterialX procedurals (shaders/noise.glsl): the 2d ones at texture
         // coordinates, the 3d ones at a position, the surface point in
@@ -1393,6 +1467,23 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     const auto kind = std::find_if(Surfaces().begin(), Surfaces().end(),
                                    [&](SurfaceInputs const &k) { return k.id == surface.nodeTypeId; });
     if (kind == Surfaces().end()) {
+        // A shader Eldr doesn't read. MaterialX's `surface` node builds a
+        // surface from BSDFs and EDFs, none of which are read: it renders
+        // black; the others keep the default material.
+        static std::mutex mutex;
+        static std::set<std::string> warned;
+        const bool bsdfs = surface.nodeTypeId == "ND_surface";
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (warned.insert(surface.nodeTypeId.GetString()).second) {
+                TF_WARN("HdVk: surface shader '%s' isn't supported; the material renders %s",
+                        surface.nodeTypeId.GetText(), bsdfs ? "black (its BSDFs aren't read)" : "as the default");
+            }
+        }
+        if (bsdfs) {
+            std::fill(m->baseColor, m->baseColor + 3, 0.0f);
+            std::fill(m->specular, m->specular + 3, 0.0f);
+        }
         return;
     }
 
