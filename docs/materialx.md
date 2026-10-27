@@ -8,7 +8,7 @@ TestSuite files mostly hold bare nodegraphs. The harness wraps each unused outpu
 
 ## Result (2026-10-27)
 
-957 materials with a surface. **747 compile whole** (558 on 2026-10-26, before the plan below); the rest bypass at least one node (its pass-through input or default stands in; the render stats count them) or have a surface Eldr doesn't read (a warning). Against Karma the median dE of all 957 went from 3.9 to 1.2 (225 better by more than 1, 49 worse), against Storm from 21.3 to 15.3.
+957 materials with a surface. **747 compile whole** (558 on 2026-10-26, before the plan below); the rest bypass at least one node (its pass-through input or default stands in; the render stats count them) or have a surface Eldr doesn't read (a warning). With the coverage plan and the ten wrong-result fixes below (10-27 run), against Karma: 324 materials better by more than 1 dE, 63 worse; median dE of the TestSuite stdlib graphs 0.26 -> 0.0, of the lit Houdini materials 7.0 -> 2.7 (Ceramic, Leather, Wood, Concrete, Asphalt get their textures back; QuickSurfaceMaterial 0.07), of the Examples unchanged (2.1).
 
 | Group | Materials | Whole (10-26) | Whole |
 |---|---|---|---|
@@ -21,7 +21,7 @@ TestSuite files mostly hold bare nodegraphs. The harness wraps each unused outpu
 
 Houdini's remaining 39 only lack Karma's own VEX nodes (`kma_rampconst`, `kma_color_hextiling`, `kma_voronoinoise3d`: no MaterialX nodedef), which are bypassed or keep the input's constant. What still blocks most of the rest: pbrlib BSDF graphs and other surfaces (glTF PBR, Disney, `surface_unlit`), compositing nodes, `hextiledimage`, `flake2d/3d`, matrix-valued graphs (`transformmatrix` with a connected matrix, `determinant`).
 
-Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `safepower_vector2` (the vector2 conversion bug below), `transformmatrix` with a connected matrix (bypassed). Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
+Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `transformmatrix` with a connected matrix (bypassed). Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) now render black like Storm, where Karma shades them. Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
 
 The 10-26 results:
 
