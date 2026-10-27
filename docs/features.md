@@ -243,7 +243,7 @@ Eldr shades each surface model by its spec: the USD spec for UsdPreviewSurface, 
 | Fuzz (OpenPBR) | Zeltner's LTC sheen over the coat and base | Exact (MaterialX's fits) |
 | Anisotropy | `mx_roughness_anisotropy`, OpenPBR's mapping | Exact; tangent from the uv set's u direction (no tangent primvars) |
 | Thin film | Airy reflectance with polarization, per light | Approximated: unpolarized, at the view angle, standing in for F0 |
-| Transmission | dielectric BTDF | Approximated: refraction of the screen (or traced), Schlick at the interface, roughness as blur |
+| Transmission | dielectric BTDF under the coat (its colour and reflection attenuate it), absorption by `transmission_color` over `transmission_depth` | Approximated: refraction of the screen (or traced), Schlick at the interface, roughness as blur, path length from the depth behind (capped by the object's bounds) |
 | Subsurface | random walk | Approximated: separable screen-space blur of the diffuse light |
 | Constants only | `diffuse_roughness`, `base_diffuse_roughness`, `coat_affect_*`, `coat_darkening` | Textured or graph-driven values keep the constant |
 

@@ -3159,8 +3159,8 @@ int main()
             // Glossy reflection of a sphere light against the brute-force integral of GGX (D V F cos, f0 0.04)
             // over the light's cone, per pixel: a black quad tilted 50 degrees (NoV ~0.64), the light 1.5 away
             // along the mirror direction, once larger than the lobe (roughness 0.15) and once about as wide
-            // (0.4). The peak and the highlight's total match within 5% (LightRegion; 0.475 vs 0.457 and 50.6 vs 52.9,
-            // 0.183 vs 0.177 and 40.5 vs 41.3).
+            // (0.4), seen along the orthographic camera's axis. The peak and the highlight's total match within 5% (LightRegion;
+            // 0.443 vs 0.444 and 122 vs 129, 0.169 vs 0.176 and 76.4 vs 76.9).
             const float tilt = 50.0f * 3.14159265f / 180.0f, tanTilt = std::tan(tilt);
             const float nrm[3] = {-std::sin(tilt), 0, -std::cos(tilt)};  // facing the camera
             vkr::Scene scene(&device);
@@ -3917,12 +3917,13 @@ int main()
 
         {
             // Reflection probe: a mirror facing the camera (IdentityFrame,
-            // shaded as seen from z = -2) reflects an emitter behind the
-            // camera, out of view, at x -1..-0.2. The probe at the bounds'
-            // centre sees it. The mirror's ray at x reaches it at 2.4 x, so
-            // it shows at x = -0.27 (pixel 23) but not at -0.61 (pixel 12),
-            // where the probe's own ray in that direction would meet it:
-            // parallax correction.
+            // orthographic: every view ray along +z) reflects an emitter
+            // behind the camera, out of view, at x -1..-0.2. The probe at the
+            // bounds' centre (x ~ 0) sees it. Each mirror ray goes straight
+            // back and meets it at its own x, so it shows at x = -0.27 (pixel
+            // 23) and -0.61 (pixel 12) but not at 0.52 (pixel 48); the
+            // probe's own ray from its centre along -z would miss it
+            // everywhere: parallax correction.
             vkr::Scene scene(&device);
             vkr::Mesh *mirror = AddQuad(scene, -1, -1, 1, 1, 0.5f);
             auto chrome = std::make_shared<vkr::Material>();
@@ -3941,7 +3942,7 @@ int main()
             Expect(off.At(23, 32, 0) < 0.01f, "no probe: the mirror shows the black dome");
             Expect(on.At(23, 32, 0) > 1.6f && on.At(48, 32, 0) < 0.1f && renderer.IsConverged(),
                    "reflection probe: the emitter behind the camera");
-            Expect(on.At(12, 32, 0) < 0.1f, "reflection probe: parallax corrected");
+            Expect(on.At(12, 32, 0) > 1.6f, "reflection probe: parallax corrected");
             Expect(renderer.GetStats().passMs.size() > 0 &&
                        std::strcmp(renderer.GetStats().passMs.front().first, "probeCapture") == 0,
                    "reflection probe: its capture is a pass");
