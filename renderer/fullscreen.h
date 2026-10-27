@@ -11,10 +11,12 @@ namespace vkr {
 // depth attachment of it, written always (gl_FragDepth). `transmit` (with
 // `over`): the destination's colour times the shader's second output
 // (location 0, index 1) instead of 1 - src alpha: coloured transmittance.
+// `fragSpec`: the fragment shader's specialization constants.
 VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
                                     const uint32_t *frag, size_t fragBytes, VkFormat format,
                                     bool additive = false, bool over = false, bool multiply = false,
-                                    VkFormat depthFormat = VK_FORMAT_UNDEFINED, bool transmit = false);
+                                    VkFormat depthFormat = VK_FORMAT_UNDEFINED, bool transmit = false,
+                                    const VkSpecializationInfo *fragSpec = nullptr);
 
 // One fullscreen triangle into `target` (in COLOR_ATTACHMENT_OPTIMAL).
 void DrawFullscreen(VkCommandBuffer cmd, VkPipeline pipeline, VkPipelineLayout layout,

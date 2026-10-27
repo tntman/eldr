@@ -119,7 +119,9 @@ def compare(name, maps, traced, beam, shade):
 
 
 # Smoke: the beam crosses the cloud's middle; (-3, 3, 0) is out of it.
-smoke = {"eldr:volumeDensity": 0.1}
+# Multiple scattering as the tolerance was set with (single scattering
+# halves the mean, the maps-traced difference, about 0.005, stays).
+smoke = {"eldr:volumeDensity": 0.1, "eldr:volumeMultipleScattering": True}
 compare("smoke", render(**smoke), render(**{"eldr:rtShadows": True, **smoke}), (0, 3, 0), (-3, 3, 0))
 
 # Froxel fog instead of the smoke.

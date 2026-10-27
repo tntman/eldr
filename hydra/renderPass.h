@@ -47,6 +47,7 @@ private:
     std::array<float, 4> _lastDepthConstants = {};
     bool _lastDeferred = false;  // last frame was left to Collect
     bool _extraStale = false;    // unread extra AOVs were left out of the last frame (eldr:lazyExtraAovs)
+    bool _failed = false;        // the last frame's Render threw: not converged, no products
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -28,7 +28,12 @@ const uint kOpOutput = 0u, kOpTexcoord = 1u, kOpDisplayColor = 2u, kOpPrimvar = 
            kOpAffine = 38u, kOpNormalMap = 39u, kOpInvLinear = 40u, kOpUniformRamp = 41u;
 const uint kOpNoise = 42u, kOpFractal = 43u, kOpCellNoise = 44u, kOpWorleyNoise = 45u, kOpPosition = 46u,
            kOpGeomNormal = 47u;
-const uint kProgramRegisters = 8u;
+const uint kOpConvert = 48u;
+const uint kOpHeightToNormal = 49u, kOpFract = 50u, kOpRound = 51u, kOpSign = 52u, kOpTan = 53u, kOpAsin = 54u,
+           kOpAcos = 55u, kOpAtan2 = 56u, kOpMagnitude = 57u, kOpCross = 58u;
+const uint kOpRotate2d = 59u, kOpRotate3d = 60u, kOpAaStep = 61u, kOpTransformMatrix = 62u, kOpSpaceTransform = 63u,
+           kOpTangent = 64u, kOpViewDirection = 65u, kOpTime = 66u, kOpArtisticIor = 67u;
+const uint kProgramRegisters = 16u;
 const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
 // Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
 // others the noise code compiles away and costs nothing.
@@ -166,16 +171,130 @@ vec3 Geometry(bool normal, uint space)
 }
 #endif
 
+// A tangent-space vector in world space, by the frame mesh.frag's
+// CotangentFrame builds (derivatives: not in the vertex or ray stages,
+// where it stays as it is).
+vec3 TangentToWorld(vec3 t)
+{
+#if defined(PROGRAM_VERTEX) || defined(RAY_TRACING)
+    return t;
+#else
+    vec3 dp1 = dFdx(inWorldPos), dp2 = dFdy(inWorldPos);
+    vec3 n = dot(inNormal, inNormal) > 1e-12 ? normalize(inNormal) : normalize(cross(dp1, dp2));
+    vec2 duv1 = dFdx(inUv), duv2 = dFdy(inUv);
+    vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+    vec3 tu = dp2perp * duv1.x + dp1perp * duv2.x, tv = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(max(dot(tu, tu), dot(tv, tv)), 1e-20));
+    return normalize(mat3(tu * invmax, tv * invmax, n) * t);
+#endif
+}
+
 // v as a value of `components` (1: x splat; vector2 and vector3 zero the rest).
 vec4 Components(vec4 v, uint components)
 {
     return components == 1u ? v.xxxx : components == 2u ? vec4(v.xy, 0.0, 0.0) : components == 3u ? vec4(v.xyz, 0.0) : v;
 }
 
-// kOpNoise .. kOpGeomNormal (scene.h has their operands), only in the
-// kProcedurals pipelines.
-vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x)
+// The instance's object to world transform.
+mat4 ProgramModel()
 {
+#ifdef PROGRAM_VERTEX
+    return programModel;
+#else
+    return InstanceTransform(instances[inSlot]);
+#endif
+}
+
+// A world direction in object space (space 0), or as it is.
+vec3 ProgramSpace(vec3 d, uint space)
+{
+    return space == 0u ? normalize(inverse(mat3(ProgramModel())) * d) : d;
+}
+
+// The uv tangent (or bitangent) at the surface point, world space: from
+// screen derivatives (Mikkelsen 2010, as mesh.frag's CotangentFrame); per
+// vertex and where uv doesn't vary, a direction perpendicular to the normal.
+vec3 ProgramTangent(bool bitangent)
+{
+    vec3 n = Geometry(true, 1u), v = vec3(0.0);
+#ifndef PROGRAM_VERTEX
+    vec3 dp1 = dFdx(inWorldPos), dp2 = dFdy(inWorldPos);
+    vec2 duv1 = dFdx(inUv), duv2 = dFdy(inUv);
+    vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+    v = bitangent ? dp2perp * duv1.y + dp1perp * duv2.y : dp2perp * duv1.x + dp1perp * duv2.x;
+#endif
+    if (dot(v, v) < 1e-20) {
+        v = normalize(cross(n, abs(n.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
+        v = bitangent ? cross(n, v) : v;
+    }
+    return normalize(v);
+}
+
+// kOpRotate2d .. kOpArtisticIor, MaterialX's genglsl formulas; c: the
+// program's first constant.
+vec4 GeometryOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
+{
+    if (code == kOpRotate2d) {
+        float r = radians(b.x), s = sin(r), k = cos(r);
+        return vec4(k * a.x + s * a.y, -s * a.x + k * a.y, 0.0, 0.0);
+    }
+    if (code == kOpRotate3d) {
+        vec3 axis = normalize(x.xyz);
+        float r = radians(b.x), s = sin(r), k = cos(r);
+        return vec4(a.xyz * k + cross(a.xyz, axis) * s + axis * dot(axis, a.xyz) * (1.0 - k), 0.0);
+    }
+    if (code == kOpAaStep) {  // mx_aastep(threshold b.x, value a.x)
+#ifdef PROGRAM_VERTEX
+        return vec4(step(b.x, a.x));
+#else
+        float w = length(vec2(dFdx(a.x), dFdy(a.x))) * 0.70710678118654757;
+        return vec4(smoothstep(b.x - w, b.x + w, a.x));
+#endif
+    }
+    if (code == kOpTransformMatrix) {
+        // v * M, M's rows from constant imm0; imm1: v's components | rows << 4
+        // (a 1 appended where M has a row more: vector2M3, vector3M4).
+        uint d = imm1 & 15u, n = imm1 >> 4, base = c + imm0;
+        vec4 h = Components(a, d);
+        h[min(d, 3u)] = d < n ? 1.0 : h[min(d, 3u)];
+        vec4 r = h.x * programConstants[base] + h.y * programConstants[base + 1u] + h.z * programConstants[base + 2u];
+        return Components(n == 4u ? r + h.w * programConstants[base + 3u] : r, d);
+    }
+    if (code == kOpSpaceTransform) {
+        // imm0: 0 point, 1 vector, 2 normal; imm1: 1 object to world, 2 back.
+        mat4 m = ProgramModel();
+        if (imm1 == 0u) {
+            return a;
+        }
+        if (imm0 == 0u) {
+            return vec4(imm1 == 1u ? (m * vec4(a.xyz, 1.0)).xyz : (inverse(m) * vec4(a.xyz, 1.0)).xyz, 0.0);
+        }
+        mat3 l = imm1 == 1u ? mat3(m) : inverse(mat3(m));
+        return vec4(imm0 == 1u ? l * a.xyz : normalize(transpose(inverse(l)) * a.xyz), 0.0);
+    }
+    if (code == kOpTangent) {
+        return vec4(ProgramSpace(ProgramTangent(imm1 != 0u), imm0), 0.0);
+    }
+    if (code == kOpViewDirection) {  // from the camera to the point
+        return vec4(ProgramSpace(normalize(Geometry(false, 1u) - frame.cameraPos.xyz), imm0), 0.0);
+    }
+    if (code == kOpTime) {
+        return vec4(imm0 == 0u ? frame.scene.x : frame.scene.y);
+    }
+    // kOpArtisticIor: Gulbrandsen 2014, imm1 0: ior, 1: extinction.
+    vec3 r = clamp(a.rgb, 0.0, 0.99), q = sqrt(r);
+    vec3 ior = mix((1.0 + q) / (1.0 - q), (1.0 - r) / (1.0 + r), b.rgb);
+    vec3 k2 = max(((ior + 1.0) * (ior + 1.0) * r - (ior - 1.0) * (ior - 1.0)) / (1.0 - r), 0.0);
+    return vec4(imm1 == 0u ? ior : sqrt(k2), 0.0);
+}
+
+// kOpNoise .. kOpGeomNormal and kOpRotate2d on (scene.h has their
+// operands), only in the kProcedurals pipelines.
+vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
+{
+    if (code >= kOpRotate2d) {
+        return GeometryOp(code, imm0, imm1, a, b, x, c);
+    }
     if (code >= kOpPosition) {
         return vec4(Geometry(code == kOpGeomNormal, imm0), 0.0);
     }
@@ -243,7 +362,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpImage: {
             uint t = program.w + 5u * imm0;
             vec4 h = programConstants[t];
-            TexRef ref = TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), 0,
+            TexRef ref = TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), floatBitsToInt(h.w),
                                 programConstants[t + 1u], programConstants[t + 2u], programConstants[t + 3u],
                                 programConstants[t + 4u]);
             r = Fetch(ref, b, a.xy);
@@ -281,10 +400,32 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             break;
         }
         case kOpExtract: r = vec4(a[min(imm1, 3u)]); break;
-        case kOpCombine: r = vec4(a.x, b.x, x.x, y.x); break;
-        case kOpDot: r = vec4(dot(a.xyz, b.xyz)); break;
-        case kOpNormalize: r = vec4(normalize(a.xyz), 0.0); break;
+        case kOpCombine:
+            if (imm1 == 0u) {
+                r = vec4(a.x, b.x, x.x, y.x);
+            } else {
+                // Each input contributes its first (imm1 >> 3 i) & 7 components.
+                vec4 inputs[4] = vec4[4](a, b, x, y);
+                uint n = 0u;
+                for (uint k = 0u; k < 4u; ++k) {
+                    for (uint j = 0u; j < ((imm1 >> (3u * k)) & 7u) && n < 4u; ++j) {
+                        r[n++] = inputs[k][j];
+                    }
+                }
+            }
+            break;
+        case kOpDot: r = vec4(imm1 == 4u ? dot(a, b) : imm1 == 2u ? dot(a.xy, b.xy) : dot(a.xyz, b.xyz)); break;
+        case kOpNormalize: r = imm1 == 4u ? normalize(a) : imm1 == 2u ? vec4(normalize(a.xy), 0.0, 0.0)
+                                                                      : vec4(normalize(a.xyz), 0.0); break;
         case kOpLuminance: r = vec4(dot(a.rgb, b.rgb)); break;
+        case kOpConvert: {
+            // MaterialX convert from imm0 to imm1 components: the common ones
+            // kept, the rest 0, a 4th (alpha) 1 where there was none.
+            uint n = min(imm0, imm1);
+            r = vec4(n > 0u ? a.x : 0.0, n > 1u ? a.y : 0.0, n > 2u ? a.z : 0.0,
+                     n > 3u ? a.w : (imm1 == 4u && imm0 < 4u ? 1.0 : 0.0));
+            break;
+        }
         case kOpIfGreater: r = a.x > b.x ? x : y; break;
         case kOpIfGreaterEq: r = a.x >= b.x ? x : y; break;
         case kOpIfEqual: r = a.x == b.x ? x : y; break;
@@ -297,9 +438,12 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpHsvToRgb: r = vec4(HsvToRgb(a.rgb), a.w); break;
         case kOpAffine: r = vec4(dot(b.xyz, vec3(a.xy, 1.0)), dot(x.xyz, vec3(a.xy, 1.0)), 0.0, 0.0); break;
         case kOpNormalMap: {
-            // MaterialX normalmap: a texel, xy scaled by b.
+            // MaterialX normalmap: a texel, xy scaled by b (a float's splat, or a vector2).
             vec3 n = dot(a.xyz, a.xyz) == 0.0 ? vec3(0.0, 0.0, 1.0) : a.xyz * 2.0 - 1.0;
-            r = vec4(normalize(vec3(n.xy * b.x, n.z)), 0.0);
+            r = vec4(normalize(vec3(n.xy * b.xy, n.z)), 0.0);
+            if (imm0 == 1u) {  // not the surface normal: MaterialX's world-space result
+                r.xyz = TangentToWorld(r.xyz);
+            }
             break;
         }
         case kOpInvLinear: {
@@ -325,12 +469,47 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             r = mix(programConstants[base + k0], programConstants[base + k1], f - k);
             break;
         }
+        case kOpFract: r = fract(a); break;
+        case kOpRound: r = round(a); break;
+        case kOpSign: r = sign(a); break;
+        case kOpTan: r = tan(a); break;
+        case kOpAsin: r = asin(a); break;
+        case kOpAcos: r = acos(a); break;
+        case kOpAtan2: r = atan(a, b); break;  // MaterialX atan2(iny = a, inx = b)
+        case kOpMagnitude: r = vec4(length(Components(a, imm1))); break;
+        case kOpCross: r = vec4(cross(a.xyz, b.xyz), 0.0); break;
+        case kOpHeightToNormal: {
+            // MaterialX's mx_heighttonormal_vector3: a normal map (encoded)
+            // from the height's and uv's screen derivatives, 1/16 for
+            // parity with a Sobel filter. Flat without derivatives.
+            r = vec4(0.5, 0.5, 1.0, 0.0);
+#ifndef PROGRAM_VERTEX
+            if (imm0 == 1u) {
+                // Karma's bump: a.x b.x is a height in scene units along the
+                // normal; its surface gradient (Mikkelsen 2010) in the uv
+                // frame, which mesh.frag's CotangentFrame maps back.
+                // ponytail: that frame isn't orthonormal on skewed uvs.
+                vec3 n = Geometry(true, 1u), dpx = dFdx(inWorldPos), dpy = dFdy(inWorldPos);
+                vec3 r1 = cross(dpy, n), r2 = cross(n, dpx);
+                float det = dot(dpx, r1), hx = dFdx(a.x * b.x), hy = dFdy(a.x * b.x);
+                vec3 g = abs(det) > 1e-30 ? (hx * r1 + hy * r2) / det : vec3(0.0);
+                r = vec4(normalize(vec3(-dot(g, ProgramTangent(false)), -dot(g, ProgramTangent(true)), 1.0)) * 0.5 + 0.5,
+                         0.0);
+                break;
+            }
+            vec2 dh = vec2(dFdx(a.x), dFdy(a.x)) * b.x / 16.0;
+            vec3 n = cross(vec3(dFdx(x.x), dFdx(x.y), dh.x), vec3(dFdy(x.x), dFdy(x.y), dh.y));
+            n = dot(n, n) < 1.4210855e-14 ? vec3(0.0, 0.0, 1.0) : n.z < 0.0 ? -n : n;
+            r = vec4(normalize(n) * 0.5 + 0.5, 0.0);
+#endif
+            break;
+        }
         default:
 #ifdef PROGRAM_VERTEX
-            r = ProceduralOp(code, imm0, imm1, a, b, x);  // displaced pipelines only (kDisplacement)
+            r = ProceduralOp(code, imm0, imm1, a, b, x, c);  // displaced pipelines only (kDisplacement)
 #else
             if (kProcedurals) {
-                r = ProceduralOp(code, imm0, imm1, a, b, x);
+                r = ProceduralOp(code, imm0, imm1, a, b, x, c);
             }
 #endif
             break;

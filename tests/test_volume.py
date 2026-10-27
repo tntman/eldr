@@ -3,6 +3,7 @@ OpenVDB): tests/scenes/volume.vdb's cloud in front of an emissive wall, no
 lights, so it only absorbs. It darkens the wall where it is, the volume's
 transform moves it, fieldIndex 1 picks the file's second "density" grid (a
 small ball), a MaterialX volume material sets its absorption and emission,
+remaps and ramps of the density (MaterialX's and Houdini's) shape them,
 half resolution stays close, eldr:volumes switches volumes off, and the
 render stats count them and their grid memory.
 Run: usdenv.cmd python tests\\test_volume.py"""
@@ -138,7 +139,8 @@ volumeShader.CreateInput("vdf", Sdf.ValueTypeNames.Token).ConnectToSource(vdf.Co
 material.CreateOutput("mtlx:volume", Sdf.ValueTypeNames.Token).ConnectToSource(volumeShader.ConnectableAPI(), "out")
 UsdShade.MaterialBindingAPI.Apply(volume.GetPrim()).Bind(material)
 image = render()
-expect(brightness(image, 0, 0) > cloudLevel + 0.1, "a volume material's absorption")
+absorbed = color(image, 0, 0)
+expect(absorbed.greenF() > cloudLevel + 0.1, "a volume material's absorption")
 edf = UsdShade.Shader.Define(stage, "/smoke/edf")
 edf.CreateIdAttr("ND_uniform_edf")
 edf.CreateInput("color", Sdf.ValueTypeNames.Color3f).Set((0, 0.4, 0.4))
@@ -183,9 +185,9 @@ expect(red.redF() > 0.5 * wallLevel and red.greenF() < 0.2 * red.redF(),
        "coloured absorption from a constant colour node (%.2f %.2f %.2f, wall %.2f, cloud %.2f)"
        % (red.redF(), red.greenF(), red.blueF(), wallLevel, cloudLevel))
 
-# A node volume graphs don't read (a switch, as in Karma's Pyro Shader):
-# the whole material is ignored, the cloud renders as without one.
-product.GetInput("in1").ConnectToSource(node("/tinted/switch", "ND_switch_color3I").ConnectableAPI(), "out")
+# A node volume graphs don't read (noise): the whole material is ignored,
+# the cloud renders as without one.
+product.GetInput("in1").ConnectToSource(node("/tinted/noise", "ND_noise3d_color3").ConnectableAPI(), "out")
 image = render()
 expect(abs(brightness(image, 0, 0) - cloudLevel) < 0.05, "an unread volume graph renders as without a material")
 
@@ -198,6 +200,48 @@ UsdShade.MaterialBindingAPI(volume.GetPrim()).Bind(karma)
 image = render()
 red = color(image, 0, 0)
 expect(red.redF() > 0.5 * wallLevel and red.greenF() < 0.2 * red.redF(), "Karma's kma_volume")
+UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
+
+# Functions of a field (baked into tables over its range, volume.cpp's
+# FieldGraph): a MaterialX remap of the density onto 0..0.1 absorbs as 0.1
+# per unit of density; so does Houdini's ramp as its MtlX Float Ramp VOP
+# writes it (hinvlinear + huniformramp: keys 0, 10, values 0, 1).
+F2, I, C4, T = (Sdf.ValueTypeNames.Float2, Sdf.ValueTypeNames.Int, Sdf.ValueTypeNames.Color4f,
+                Sdf.ValueTypeNames.Token)
+graphs = UsdShade.Material.Define(stage, "/graphs")
+densityRead = node("/graphs/density", "ND_geompropvalue_float", geomprop=(S, "density"))
+remap = node("/graphs/remap", "ND_remap_float", **{"in": (F, densityRead)}, outhigh=(F, 0.1))
+graphVdf = node("/graphs/vdf", "ND_absorption_vdf", absorption=(V3, remap))
+graphVolume = node("/graphs/volume", "ND_volume", vdf=(T, graphVdf))
+graphs.CreateOutput("mtlx:volume", T).ConnectToSource(graphVolume.ConnectableAPI(), "out")
+UsdShade.MaterialBindingAPI(volume.GetPrim()).Bind(graphs)
+image = render()
+expect(abs(brightness(image, 0, 0) - absorbed.greenF()) < 0.03,
+       "a remap of the density (%.3f, absorption 0.1: %.3f)" % (brightness(image, 0, 0), absorbed.greenF()))
+count = node("/graphs/count", "ND_constant_float", value=(F, 2.0))
+keys = node("/graphs/keys", "ND_hinvlinear_float", ramp=(F, densityRead), num=(F, count),
+            **{"key%d" % i: (F, 10.0) for i in range(1, 10)})
+values = node("/graphs/values", "ND_huniformramp_float", ramp=(F, keys), num=(F, count), value1=(F, 1.0))
+graphVdf.GetInput("absorption").ConnectToSource(values.ConnectableAPI(), "out")
+image = render()
+expect(abs(brightness(image, 0, 0) - absorbed.greenF()) < 0.03,
+       "Houdini's ramp of the density (%.3f, absorption 0.1: %.3f)" % (brightness(image, 0, 0), absorbed.greenF()))
+# A fire: MaterialX's ramp (two keys, black to orange by density 0.2) of
+# the density glows orange per unit length, not per unit of density.
+graphVdf.GetInput("absorption").ConnectToSource(remap.ConnectableAPI(), "out")
+texcoord = node("/graphs/texcoord", "ND_combine2_vector2", in1=(F, densityRead))
+ramp = node("/graphs/ramp", "ND_ramp", texcoord=(F2, texcoord), interpolation=(I, 0), interval2=(F, 0.2),
+            color1=(C4, (0, 0, 0, 1)), color2=(C4, (1, 0.3, 0, 1)))
+rgb = node("/graphs/rgb", "ND_convert_color4_color3", **{"in": (C4, ramp)})
+graphEdf = node("/graphs/edf", "ND_uniform_edf", color=(C3, rgb))
+graphVolume.CreateInput("edf", T).ConnectToSource(graphEdf.ConnectableAPI(), "out")
+image = render()
+fire = color(image, 0, 0)
+red, green = fire.redF() - absorbed.redF(), fire.greenF() - absorbed.greenF()
+blue = fire.blueF() - absorbed.blueF()
+expect(red > 0.15 and green < 0.7 * red and blue < 0.7 * green,  # orange, through the tonemapper
+       "a ramp of the density to emission (%.2f %.2f %.2f over %.2f %.2f %.2f)"
+       % (fire.redF(), fire.greenF(), fire.blueF(), absorbed.redF(), absorbed.greenF(), absorbed.blueF()))
 UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
 
 # Half resolution: the same image, near enough, the cloud's edge included.

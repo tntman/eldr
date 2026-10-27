@@ -72,6 +72,9 @@ struct TextureRef {
     float uvTransform[6] = {1, 0, 0, 0, 1, 0};
     // Wrap modes: s, t. UDIM tiles always repeat inside their tile.
     Wrap wrap[2] = {Wrap::Repeat, Wrap::Repeat};
+    // Bit per axis (s, t): outside [0, 1] the constant (MaterialX's
+    // address mode constant: the image's default); wrap is Black there.
+    uint8_t constantWrap = 0;
 };
 
 // Material inputs a shading graph computes per pixel (MaterialX math,
@@ -81,7 +84,7 @@ struct TextureRef {
 // constant byte - kRegisters); imm0. Values are vec4s: floats splat to all
 // four components, vector2 is (x, y, 0, 0).
 struct MaterialProgram {
-    static constexpr uint32_t kRegisters = 8;
+    static constexpr uint32_t kRegisters = 16;
     enum Op : uint8_t {
         kOutput,       // material input imm0 (Program::Input) = a
         kTexcoord,     // the mesh's uv set
@@ -97,9 +100,9 @@ struct MaterialProgram {
         kSmoothstep,   // smoothstep(b, c, a)
         kRemap,        // a from [b, c] to [d, constants[imm0]]
         kExtract,      // channel imm1 of a, splat
-        kCombine,      // (a.x, b.x, c.x, d.x)
-        kDot,          // dot(a.xyz, b.xyz), splat
-        kNormalize,
+        kCombine,      // (a.x, b.x, c.x, d.x); imm1 not 0: the components each takes, 3 bits each (0: unused)
+        kDot,          // dot(a.xyz, b.xyz), splat; imm1 4: all four, 2: xy
+        kNormalize,    // imm1 4: all four, 2: xy
         kLuminance,    // dot(a.rgb, b.rgb), splat
         kIfGreater,    // a.x > b.x ? c : d
         kIfGreaterEq,  // a.x >= b.x ? c : d
@@ -107,7 +110,7 @@ struct MaterialProgram {
         kHsvAdjust,    // a in HSV, hue + b.x, saturation * b.y, value * b.z
         kRgbToHsv, kHsvToRgb,
         kAffine,       // (dot(b.xyz, (a.xy, 1)), dot(c.xyz, (a.xy, 1)), 0, 0)
-        kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
+        kNormalMap,    // normal of a texel a, xy scaled by b: tangent space, or with imm0 1 world space
         kInvLinear,    // Houdini hinvlinear: a among ten keys (constants from imm0, 4 per vec4), b.x = num
         kUniformRamp,  // Houdini huniformramp: ten values (constants from imm0) at a, b.x = num
         // MaterialX procedurals (shaders/noise.glsl) at a, in imm0 = 2 or 3
@@ -118,6 +121,24 @@ struct MaterialProgram {
         kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
+        kConvert,      // MaterialX convert of a from imm0 to imm1 components (not from a float: those are splat already)
+        // MaterialX heighttonormal: height a.x, scale b.x, texcoord c, from
+        // screen derivatives (fragment only; per vertex and at ray hits
+        // flat, (0.5, 0.5, 1)). imm0 1: a.x b.x in scene units (Karma's bump).
+        kHeightToNormal,
+        // MaterialX math, componentwise on a: fract, round, sign, tan, asin,
+        // acos; atan2(a = iny, b = inx); |a| of imm1 components; a x b.
+        kFract, kRound, kSign, kTan, kAsin, kAcos, kAtan2, kMagnitude, kCross,
+        // The rest run in the procedural pipelines (Procedural()):
+        kRotate2d,          // a.xy by b.x degrees
+        kRotate3d,          // a by b.x degrees about c
+        kAaStep,            // MaterialX aastep(threshold b.x, a.x): antialiased step
+        kTransformMatrix,   // a * M, M's rows constants from imm0, imm1 = components | rows << 4
+        kSpaceTransform,    // a as imm0 (0 point, 1 vector, 2 normal), imm1 1: object to world, 2: back
+        kTangent,           // imm1 0: uv tangent, 1: bitangent, imm0: 0 object space, 1 world
+        kViewDirection,     // camera to the point, imm0: 0 object space, 1 world
+        kTime,              // imm0 0: the scene's frame, 1: its time in seconds
+        kArtisticIor,       // Gulbrandsen's ior (imm1 0) or extinction (1) of reflectivity a, edge colour b
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them, then
     // the lobes' (Material's constants of the same names; brdf.glsl reads
@@ -154,7 +175,7 @@ struct MaterialProgram {
     {
         for (size_t i = 0; i < code.size(); i += 4) {
             const uint32_t op = code[i] & 0xFFu;
-            if (op >= kNoise && op <= kGeomNormal) {
+            if ((op >= kNoise && op <= kGeomNormal) || op >= kRotate2d) {
                 return true;
             }
         }
@@ -168,7 +189,8 @@ struct MaterialProgram {
     {
         for (size_t i = 0; i < code.size(); i += 4) {
             const uint32_t op = code[i] & 0xFFu;
-            if (((op == kPosition || op == kGeomNormal) && code[i + 2] == 1) ||
+            if (((op == kPosition || op == kGeomNormal || op == kTangent || op == kViewDirection) && code[i + 2] == 1) ||
+                (op == kSpaceTransform && code[i] >> 16 != 0) ||
                 (op == kPrimvar && instanceRate(code[i + 2]))) {
                 return true;
             }
@@ -808,6 +830,7 @@ public:
         VkBuffer volumes = VK_NULL_HANDLE;
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
+        bool volumeFactors = false;  // a drawn volume reads factor tables (VolumePass::Record)
         uint64_t volumeVersion = 0;  // unique per commit that held volumes (the local lights' cached atlas)
         float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
@@ -923,6 +946,7 @@ private:
     std::vector<std::unique_ptr<Volume>> _volumes;
     Buffer _volumeTable, _volumeGrids;
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> _poolGrids;
+    std::vector<float> _poolLuts;  // the volume factors' tables after the grids (_CommitVolumes)
 
     Gpu _gpu;
     Buffer _displacements;  // Gpu::displacements

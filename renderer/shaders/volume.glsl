@@ -20,10 +20,38 @@ struct Volume {
                            // z: 1 = no volume material
     vec4 emission;         // rgb: radiance per unit length per unit of density
     vec4 fieldEmission;    // rgb: times the emission field
+    uvec4 factorMasks;     // which factors multiply scattering, absorption, emission (bit k: factor k,
+                           // 8: the density); w: roles read (1 blackbody, 2 colour tint, 4 emission field)
+    uvec4 lutOffsets;      // factors' tables (words in the grid pool, kNone: none); w: the extinction's
+    uvec4 lutSlots;        // the grid each factor reads (as grids; 4: none, it reads 0)
+    vec4 lutLow;           // table index = (value - low) * scale
+    vec4 lutScale;
 };
 layout(std430, set = 0, binding = 65) readonly buffer Volumes { Volume volumes[]; };
 
 pnanovdb_buf_t buf;
+
+const uint kVolumeLut = 1024u;  // entries per table (volume.h)
+
+// A factor's table at field value v: linear between entries, clamped.
+vec3 Lut(uint offset, float low, float scale, float v)
+{
+    float f = clamp((v - low) * scale, 0.0, float(kVolumeLut - 1u));
+    uint i = min(uint(f), kVolumeLut - 2u);
+    uint a = offset + i * 4u;
+    vec3 x = uintBitsToFloat(uvec3(pnanovdb_buf_data[a], pnanovdb_buf_data[a + 1u], pnanovdb_buf_data[a + 2u]));
+    vec3 y = uintBitsToFloat(uvec3(pnanovdb_buf_data[a + 4u], pnanovdb_buf_data[a + 5u], pnanovdb_buf_data[a + 6u]));
+    return mix(x, y, f - float(i));
+}
+
+// A volume's extinction table (lutOffsets.w: kVolumeLut floats) at density
+// rho, the nearest entry: the mean extinction there (before the settings'
+// multiplier). Without a table that is rho times medium.x.
+float ExtinctionTable(uint table, float low, float scale, float rho)
+{
+    return uintBitsToFloat(pnanovdb_buf_data[table + uint(clamp((rho - low) * scale + 0.5, 0.0,
+                                                                 float(kVolumeLut - 1u)))]);
+}
 
 vec3 Row3(vec4 r0, vec4 r1, vec4 r2, vec3 p, float w)
 {
@@ -85,11 +113,14 @@ float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, floa
         }
         uint steps = uint(clamp(ceil((span.y - span.x) * length(di) / (2.0 * stepSize)), 1.0, float(kShadowSteps)));
         float ds = (span.y - span.x) / float(steps);
-        float sigma = volumes[i].medium.x * density * ds * len;  // per unit of density
+        uint table = volumes[i].lutOffsets.w;
+        float low = volumes[i].lutLow.w, scale = volumes[i].lutScale.w;
+        float sigma = density * ds * len * (table == 0xFFFFFFFFu ? volumes[i].medium.x : 1.0);
         pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
         for (uint k = 0u; k < steps && tau < kShadowOpaque; ++k) {
             float s = span.x + (float(k) + 0.5) * ds;
-            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0) * sigma;
+            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0);
+            d = (table == 0xFFFFFFFFu ? d : ExtinctionTable(table, low, scale, d)) * sigma;
             tau += d;
             weighted += d * s;
             weighted2 += d * s * s;

@@ -94,6 +94,9 @@ public:
         // move along them in time samples and motion vectors. Off: they
         // are ignored.
         bool deformationBlur = true;
+        // The scene's current frame and that in seconds (material
+        // programs' MaterialX frame and time nodes).
+        float sceneTime[2] = {0.0f, 0.0f};
         // Residual DOF (eldr:dofResidualBlur): with dofJitter the post DOF
         // still runs on each film sample, its circle of confusion scaled
         // by 1/sqrt(filmSamples), to fill the gaps between lens samples

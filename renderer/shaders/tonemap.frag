@@ -64,10 +64,21 @@ void main()
 {
     vec4 hdr = texelFetch(src, ivec2(gl_FragCoord.xy), 0);
     float coverage = clamp(hdr.a, 0.0, 1.0);
-    if (coverage <= 0.0) {
+    // Light without coverage (a volume that emits but absorbs nothing)
+    // goes over the background too: as it is without tonemapping and bloom
+    // (the premultiplied over), else as if it covered the pixel as far as
+    // it is bright.
+    vec3 glow = max(hdr.rgb, 0.0);
+    float bright = min(max(glow.r, max(glow.g, glow.b)), 1.0);
+    if (coverage <= 0.0 && bright <= 0.0) {
         outColor = pc.c;  // background colour passes through exactly
         return;
     }
+    if (int(pc.a.z) == 3 && pc.a.x <= 0.0) {
+        outColor = vec4(glow * exp2(exposure.ev), coverage) + pc.c * (1.0 - coverage);
+        return;
+    }
+    coverage = max(coverage, bright);
     vec3 c = hdr.rgb / coverage;
     if (pc.a.x > 0.0) {
         vec3 b = textureLod(bloom, gl_FragCoord.xy * pc.b.xy, 0.0).rgb / pc.a.y;

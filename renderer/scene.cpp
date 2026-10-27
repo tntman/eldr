@@ -1573,6 +1573,7 @@ void Scene::Commit(bool keepMotion)
             }
         }
         g.channel = r.channel;
+        g.pad = r.constantWrap;
         std::copy(r.scale, r.scale + 4, g.scale);
         std::copy(r.bias, r.bias + 4, g.bias);
         std::copy(r.uvTransform, r.uvTransform + 3, g.uvRows[0]);

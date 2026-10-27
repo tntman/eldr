@@ -68,6 +68,9 @@ STATS = [
                ("Pixels converged", "pixelsConvergedPercent", "%"),
                ("Time to converge", "totalClockTime", "s"),
                ("Exposure", "exposureEV", "EV")]),
+    # Graph nodes Eldr couldn't compile (bypassed or dropped) and unknown surfaces.
+    ("Materials", [("Inputs fallen back", "materialFallbackInputs", "n"),
+                   ("Nodes not compiled", "materialFallbackNodes", "str")]),
     ("Memory", [("Graphics memory (HdVk)", "gpuMemoryUsed", "B"),
                 ("  textures", "textureMemory", "B"),
                 ("  vertices, instances", "primvar", "B"),
