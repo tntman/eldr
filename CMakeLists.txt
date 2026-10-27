@@ -264,6 +264,9 @@ if(WIN32)
     # MaterialX nodes one inline graph each, unlit: pixel = the graph's value.
     add_test(NAME mtlx_ops COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_mtlx_ops.py)
     set_tests_properties(mtlx_ops PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    # Small MaterialX graphs against the values the stdlib gives (found wrong by the corpus audit).
+    add_test(NAME mtlx_graphs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_mtlx_graphs.py)
+    set_tests_properties(mtlx_graphs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     # The MaterialX corpus audit's wrapping and node rule, no rendering (the audit: tests/mtlx_corpus.py --out).
     add_test(NAME mtlx_corpus COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/mtlx_corpus.py --selftest)
     add_test(NAME attributes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_attributes.py)

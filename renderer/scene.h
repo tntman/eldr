@@ -72,6 +72,9 @@ struct TextureRef {
     float uvTransform[6] = {1, 0, 0, 0, 1, 0};
     // Wrap modes: s, t. UDIM tiles always repeat inside their tile.
     Wrap wrap[2] = {Wrap::Repeat, Wrap::Repeat};
+    // Bit per axis (s, t): outside [0, 1] the constant (MaterialX's
+    // address mode constant: the image's default); wrap is Black there.
+    uint8_t constantWrap = 0;
 };
 
 // Material inputs a shading graph computes per pixel (MaterialX math,
@@ -97,9 +100,9 @@ struct MaterialProgram {
         kSmoothstep,   // smoothstep(b, c, a)
         kRemap,        // a from [b, c] to [d, constants[imm0]]
         kExtract,      // channel imm1 of a, splat
-        kCombine,      // (a.x, b.x, c.x, d.x)
-        kDot,          // dot(a.xyz, b.xyz), splat
-        kNormalize,
+        kCombine,      // (a.x, b.x, c.x, d.x); imm1 not 0: the components each takes, 3 bits each (0: unused)
+        kDot,          // dot(a.xyz, b.xyz), splat; imm1 4: all four, 2: xy
+        kNormalize,    // imm1 4: all four, 2: xy
         kLuminance,    // dot(a.rgb, b.rgb), splat
         kIfGreater,    // a.x > b.x ? c : d
         kIfGreaterEq,  // a.x >= b.x ? c : d
@@ -107,7 +110,7 @@ struct MaterialProgram {
         kHsvAdjust,    // a in HSV, hue + b.x, saturation * b.y, value * b.z
         kRgbToHsv, kHsvToRgb,
         kAffine,       // (dot(b.xyz, (a.xy, 1)), dot(c.xyz, (a.xy, 1)), 0, 0)
-        kNormalMap,    // tangent-space normal of a texel a, xy scaled by b
+        kNormalMap,    // normal of a texel a, xy scaled by b: tangent space, or with imm0 1 world space
         kInvLinear,    // Houdini hinvlinear: a among ten keys (constants from imm0, 4 per vec4), b.x = num
         kUniformRamp,  // Houdini huniformramp: ten values (constants from imm0) at a, b.x = num
         // MaterialX procedurals (shaders/noise.glsl) at a, in imm0 = 2 or 3
@@ -118,6 +121,7 @@ struct MaterialProgram {
         kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
+        kConvert,      // MaterialX convert of a from imm0 to imm1 components (not from a float: those are splat already)
         // MaterialX heighttonormal: height a.x, scale b.x, texcoord c, from
         // screen derivatives (fragment only; per vertex and at ray hits
         // flat, (0.5, 0.5, 1)). imm0 1: a.x b.x in scene units (Karma's bump).

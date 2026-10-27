@@ -28,10 +28,11 @@ const uint kOpOutput = 0u, kOpTexcoord = 1u, kOpDisplayColor = 2u, kOpPrimvar = 
            kOpAffine = 38u, kOpNormalMap = 39u, kOpInvLinear = 40u, kOpUniformRamp = 41u;
 const uint kOpNoise = 42u, kOpFractal = 43u, kOpCellNoise = 44u, kOpWorleyNoise = 45u, kOpPosition = 46u,
            kOpGeomNormal = 47u;
-const uint kOpHeightToNormal = 48u, kOpFract = 49u, kOpRound = 50u, kOpSign = 51u, kOpTan = 52u, kOpAsin = 53u,
-           kOpAcos = 54u, kOpAtan2 = 55u, kOpMagnitude = 56u, kOpCross = 57u;
-const uint kOpRotate2d = 58u, kOpRotate3d = 59u, kOpAaStep = 60u, kOpTransformMatrix = 61u, kOpSpaceTransform = 62u,
-           kOpTangent = 63u, kOpViewDirection = 64u, kOpTime = 65u, kOpArtisticIor = 66u;
+const uint kOpConvert = 48u;
+const uint kOpHeightToNormal = 49u, kOpFract = 50u, kOpRound = 51u, kOpSign = 52u, kOpTan = 53u, kOpAsin = 54u,
+           kOpAcos = 55u, kOpAtan2 = 56u, kOpMagnitude = 57u, kOpCross = 58u;
+const uint kOpRotate2d = 59u, kOpRotate3d = 60u, kOpAaStep = 61u, kOpTransformMatrix = 62u, kOpSpaceTransform = 63u,
+           kOpTangent = 64u, kOpViewDirection = 65u, kOpTime = 66u, kOpArtisticIor = 67u;
 const uint kProgramRegisters = 16u;
 const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
 // Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
@@ -169,6 +170,24 @@ vec3 Geometry(bool normal, uint space)
     return normal ? normalize(transpose(mat3(m)) * n) : inverse(mat3(m)) * (inWorldPos - m[3].xyz);
 }
 #endif
+
+// A tangent-space vector in world space, by the frame mesh.frag's
+// CotangentFrame builds (derivatives: not in the vertex or ray stages,
+// where it stays as it is).
+vec3 TangentToWorld(vec3 t)
+{
+#if defined(PROGRAM_VERTEX) || defined(RAY_TRACING)
+    return t;
+#else
+    vec3 dp1 = dFdx(inWorldPos), dp2 = dFdy(inWorldPos);
+    vec3 n = dot(inNormal, inNormal) > 1e-12 ? normalize(inNormal) : normalize(cross(dp1, dp2));
+    vec2 duv1 = dFdx(inUv), duv2 = dFdy(inUv);
+    vec3 dp2perp = cross(dp2, n), dp1perp = cross(n, dp1);
+    vec3 tu = dp2perp * duv1.x + dp1perp * duv2.x, tv = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(max(dot(tu, tu), dot(tv, tv)), 1e-20));
+    return normalize(mat3(tu * invmax, tv * invmax, n) * t);
+#endif
+}
 
 // v as a value of `components` (1: x splat; vector2 and vector3 zero the rest).
 vec4 Components(vec4 v, uint components)
@@ -343,7 +362,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpImage: {
             uint t = program.w + 5u * imm0;
             vec4 h = programConstants[t];
-            TexRef ref = TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), 0,
+            TexRef ref = TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), floatBitsToInt(h.w),
                                 programConstants[t + 1u], programConstants[t + 2u], programConstants[t + 3u],
                                 programConstants[t + 4u]);
             r = Fetch(ref, b, a.xy);
@@ -381,10 +400,32 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             break;
         }
         case kOpExtract: r = vec4(a[min(imm1, 3u)]); break;
-        case kOpCombine: r = vec4(a.x, b.x, x.x, y.x); break;
-        case kOpDot: r = vec4(dot(a.xyz, b.xyz)); break;
-        case kOpNormalize: r = vec4(normalize(a.xyz), 0.0); break;
+        case kOpCombine:
+            if (imm1 == 0u) {
+                r = vec4(a.x, b.x, x.x, y.x);
+            } else {
+                // Each input contributes its first (imm1 >> 3 i) & 7 components.
+                vec4 inputs[4] = vec4[4](a, b, x, y);
+                uint n = 0u;
+                for (uint k = 0u; k < 4u; ++k) {
+                    for (uint j = 0u; j < ((imm1 >> (3u * k)) & 7u) && n < 4u; ++j) {
+                        r[n++] = inputs[k][j];
+                    }
+                }
+            }
+            break;
+        case kOpDot: r = vec4(imm1 == 4u ? dot(a, b) : imm1 == 2u ? dot(a.xy, b.xy) : dot(a.xyz, b.xyz)); break;
+        case kOpNormalize: r = imm1 == 4u ? normalize(a) : imm1 == 2u ? vec4(normalize(a.xy), 0.0, 0.0)
+                                                                      : vec4(normalize(a.xyz), 0.0); break;
         case kOpLuminance: r = vec4(dot(a.rgb, b.rgb)); break;
+        case kOpConvert: {
+            // MaterialX convert from imm0 to imm1 components: the common ones
+            // kept, the rest 0, a 4th (alpha) 1 where there was none.
+            uint n = min(imm0, imm1);
+            r = vec4(n > 0u ? a.x : 0.0, n > 1u ? a.y : 0.0, n > 2u ? a.z : 0.0,
+                     n > 3u ? a.w : (imm1 == 4u && imm0 < 4u ? 1.0 : 0.0));
+            break;
+        }
         case kOpIfGreater: r = a.x > b.x ? x : y; break;
         case kOpIfGreaterEq: r = a.x >= b.x ? x : y; break;
         case kOpIfEqual: r = a.x == b.x ? x : y; break;
@@ -397,9 +438,12 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpHsvToRgb: r = vec4(HsvToRgb(a.rgb), a.w); break;
         case kOpAffine: r = vec4(dot(b.xyz, vec3(a.xy, 1.0)), dot(x.xyz, vec3(a.xy, 1.0)), 0.0, 0.0); break;
         case kOpNormalMap: {
-            // MaterialX normalmap: a texel, xy scaled by b.
+            // MaterialX normalmap: a texel, xy scaled by b (a float's splat, or a vector2).
             vec3 n = dot(a.xyz, a.xyz) == 0.0 ? vec3(0.0, 0.0, 1.0) : a.xyz * 2.0 - 1.0;
-            r = vec4(normalize(vec3(n.xy * b.x, n.z)), 0.0);
+            r = vec4(normalize(vec3(n.xy * b.xy, n.z)), 0.0);
+            if (imm0 == 1u) {  // not the surface normal: MaterialX's world-space result
+                r.xyz = TangentToWorld(r.xyz);
+            }
             break;
         }
         case kOpInvLinear: {

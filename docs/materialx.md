@@ -56,22 +56,26 @@ Blocked = materials using the node. Alone = materials it is the only blocker of.
 
 Most used supported nodes: standard_surface, convert, image, multiply, UsdPreviewSurface, texcoord, mix, constant, extract, normalmap, add, invert, clamp, UsdUVTexture, ifgreater, primvar readers, normal, position, remap, tiledimage, place2d, the noises.
 
-## Wrong results in graphs Eldr compiles whole
+## Wrong results in graphs Eldr compiled whole (fixed 2026-10-26)
 
-Eldr differs where Karma and Storm agree.
+Eldr differed where Karma and Storm agreed. All ten are fixed in the graph compiler (`hydra/material.cpp`) and the interpreter (`renderer/shaders/program.glsl`), and `tests/test_mtlx_graphs.py` (ctest `mtlx_graphs`) asserts each against small inline graphs. Karma dE of the affected TestSuite materials went from 8-100 to 0 (combine, boolean conditionals, vector2 geompropvalue); `normalmap_cm` from 17.7 to 11.1 (the tangent frame is derived from derivatives, MaterialX's from a tangent stream).
 
-| Case | Eldr | MaterialX |
+| Case | Was | Now |
 |---|---|---|
-| vector2 to vector3/color3 (`convert`, `image`/`tiledimage` vector2 outputs, vector2 ops with a float operand) | third component left over | 0 |
-| `combine4` / `combine3` with vector inputs (VV, VF, CF) | one component per input | inputs unpacked |
-| `dotproduct`, `normalize` on vector4 | xyz only | all four |
-| `power_vector2`, `modulo_vector2` | black | per component |
-| `ifgreater`, `ifgreatereq`, `ifequal` with boolean values | 0 | 1 |
-| float `tiledimage` read straight into an input | RGB | red, splat |
-| `geompropvalue` vector2 of a missing primvar | the mesh's uv | its default |
-| `image` address mode `constant` (border colour) | ignored | border colour |
-| `normalmap` output used as a colour | about 2x | |
-| BSDF-only nodegraph with nothing Eldr reads | default grey | black |
+| vector2 to vector3/color3 (`convert`, `image`/`tiledimage` vector2 outputs, vector2 ops with a float operand) | third component left over | 0: `convert` is `kConvert` (from, to components), vector2 results are masked to two |
+| `combine2/3/4` with vector inputs (VV, VF, CF) | one component per input | inputs unpacked (the variant's suffix gives their sizes) |
+| `dotproduct`, `normalize` on vector4 | xyz only | all four (vector2: xy) |
+| `power_vector2`, `modulo_vector2` | black (`pow(0, 0)`, `mod(x, 0)` in the unused components) | per component (the mask clears them) |
+| `ifgreater`, `ifgreatereq`, `ifequal` with boolean results | 0 (their nodedefs have no in1/in2) | 1 or 0 from value1, value2 |
+| float `tiledimage`/`image` read straight into an input | RGB | red, splat |
+| `geompropvalue` vector2 of a missing primvar | the mesh's uv | its default; only `st`, `uv`, `st<n>`, `uv<n>` are uv sets (`UsdPrimvarReader_float2` keeps the first-uv-set rule) |
+| `image` address mode `constant` | ignored (black) | the image's `default` outside [0, 1] (`TextureRef::constantWrap`, tested in `Fetch`); the direct texture path hands such images to the graph compiler |
+| `normalmap` output used as a colour | tangent-space, about 2x | world-space normal (T, B, N from derivatives); only the surface's normal input keeps the tangent-space one |
+| `surface` of BSDFs and EDFs only | default grey | black; every unsupported surface shader warns once (the others keep the default material) |
+
+The TestSuite's `image_addressing` constant cases (`uborder_color`, `vborder_color`) now show the `default` colour outside [0, 1], as the MaterialX spec says; Storm renders it black and Karma grey, so their dE against Eldr is 20+. The other addressing cases (clamp, mirror, decal) now match Storm (dE 0.1-0.3); Karma is darker there.
+
+Also found and fixed: an `image` whose texcoord comes through any node but place2d/texcoord/primvar readers (a `multiply`, a `constant`...) read the mesh's `st` instead; those images now go to the graph compiler.
 
 ## Where Karma differs from MaterialX
 

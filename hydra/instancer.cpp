@@ -1,4 +1,5 @@
 #include "instancer.h"
+#include "timing.h"
 #include "mesh.h"
 #include "renderDelegate.h"
 #include "scene.h"
@@ -107,6 +108,7 @@ HdVkInstancer::HdVkInstancer(HdSceneDelegate *delegate, SdfPath const &id)
 
 void HdVkInstancer::Sync(HdSceneDelegate *delegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
+    HdVkTimedCall timed(HdVkCallTimes::kSync);
     HdVkRenderDelegate::NoteSceneEdit(delegate);
     const SdfPath &id = GetId();
     if (*dirtyBits & HdChangeTracker::DirtyVisibility) {

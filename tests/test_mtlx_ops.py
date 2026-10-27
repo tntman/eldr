@@ -136,6 +136,41 @@ CASES = [
      f("out", "convert", {"in": ("vector3", "@m")}, "color3"), (0.3, 0.5, 0.7)),
 ]
 
+
+
+def karma_bump(stage, path):
+    """A Karma-context material (Houdini's: outputs:kma:surface) whose emission is
+    bump(height = -1.8 u) as a colour: Karma's scene units on a 1.8 wide quad
+    slope 1, so the world normal tilts 45 degrees towards +x."""
+    material = UsdShade.Material.Define(stage, path)
+
+    def shader(name, id_):
+        s = UsdShade.Shader.Define(stage, path + "/" + name)
+        s.CreateIdAttr(id_)
+        return s
+
+    tc = shader("tc", "ND_texcoord_vector2")
+    ex = shader("ex", "ND_extract_vector2")
+    ex.CreateInput("in", Sdf.ValueTypeNames.Float2).ConnectToSource(tc.ConnectableAPI(), "out")
+    ex.CreateInput("index", Sdf.ValueTypeNames.Int).Set(0)
+    h = shader("h", "ND_multiply_float")
+    h.CreateInput("in1", Sdf.ValueTypeNames.Float).ConnectToSource(ex.ConnectableAPI(), "out")
+    h.CreateInput("in2", Sdf.ValueTypeNames.Float).Set(-1.8)
+    bump = shader("bump", "ND_bump_vector3")
+    bump.CreateInput("height", Sdf.ValueTypeNames.Float).ConnectToSource(h.ConnectableAPI(), "out")
+    cv = shader("cv", "ND_convert_vector3_color3")
+    cv.CreateInput("in", Sdf.ValueTypeNames.Vector3f).ConnectToSource(bump.ConnectableAPI(), "out")
+    surf = shader("surf", "ND_standard_surface_surfaceshader")
+    for name, v in (("base", 0.0), ("specular", 0.0), ("emission", 1.0)):
+        surf.CreateInput(name, Sdf.ValueTypeNames.Float).Set(v)
+    surf.CreateInput("emission_color", Sdf.ValueTypeNames.Color3f).ConnectToSource(cv.ConnectableAPI(), "out")
+    material.CreateSurfaceOutput("kma").ConnectToSource(surf.ConnectableAPI(), "out")
+    return material
+
+
+# Cases authored as USD (a function making the material, expected rgb).
+USD_CASES = [("bump in scene units (Karma context)", karma_bump, (0.5 ** 0.5, 0, 0.5 ** 0.5))]
+
 SIZE = 512
 COLS = 8
 CELL = 2.0
@@ -150,12 +185,14 @@ fbo = QOpenGLFramebufferObject(QSize(SIZE, SIZE))
 fbo.bind()
 
 only = set(sys.argv[1:])
-cases = [c for c in CASES if not only or c[0] in only]
+cases = [c for c in CASES + USD_CASES if not only or c[0] in only]
 folder = tempfile.mkdtemp()
 mtlx = os.path.join(folder, "cases.mtlx")
 with open(mtlx, "w") as fh:
     fh.write('<?xml version="1.0"?>\n<materialx version="1.39">\n')
     for i, (label, nodes, _) in enumerate(cases):
+        if callable(nodes):
+            continue
         normal = 'name="nrm"' in nodes
         fh.write('<nodegraph name="g%d">%s<output name="o" type="color3" nodename="out"/>%s</nodegraph>\n'
                  % (i, nodes, '<output name="n" type="vector3" nodename="nrm"/>' if normal else ""))
@@ -189,7 +226,8 @@ for i in range(len(cases)):
     mesh.SetNormalsInterpolation(UsdGeom.Tokens.vertex)
     mesh.CreateSubdivisionSchemeAttr("none")
     UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray, UsdGeom.Tokens.vertex).Set([(0, 0), (1, 0), (1, 1), (0, 1)])
-    material = UsdShade.Material(stage.GetPrimAtPath("/Mtlx/Materials/m%d" % i))
+    material = cases[i][1](stage, "/Usd/m%d" % i) if callable(cases[i][1]) else \
+        UsdShade.Material(stage.GetPrimAtPath("/Mtlx/Materials/m%d" % i))
     assert material, "no material m%d" % i
     UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(material)
 

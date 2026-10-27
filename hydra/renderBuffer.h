@@ -4,6 +4,8 @@
 #include "pxr/imaging/hd/renderBuffer.h"
 #include "pxr/imaging/hgi/texture.h"
 
+#include "timing.h"
+
 #ifdef HDVK_HOUDINI
 #include <UT/UT_HUSDExtraAOVResource.h>
 #endif
@@ -29,6 +31,7 @@ public:
 
     bool Allocate(GfVec3i const &dimensions, HdFormat format, bool) override
     {
+        HdVkTimedCall timed(HdVkCallTimes::kAllocate);
         _Deallocate();
         if (dimensions[0] <= 0 || dimensions[1] <= 0 || dimensions[2] != 1 ||
             format == HdFormatInvalid) {
@@ -53,6 +56,7 @@ public:
 
     void *Map() override
     {
+        HdVkTimedCall timed(HdVkCallTimes::kMap);
         if (_fetch) {
             std::function<void(void *)> fetch = std::move(_fetch);
             _fetch = nullptr;
