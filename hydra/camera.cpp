@@ -2,6 +2,7 @@
 #include "renderDelegate.h"
 #include "timing.h"
 
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
@@ -33,8 +34,13 @@ void HdVkCamera::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam
     const float open = float(GetShutterOpen()), close = float(GetShutterClose());
     delegate->NoteCameraShutter(GetId(), open, close);
     _moving = false;
+    // Houdini's viewport camera (/__HoudiniFreeCamera__) is where the user
+    // looks from, not a shot camera: its samples can come from other frames
+    // than the current one, and blurring the whole view along them smeared
+    // it more with every film sample. Objects still blur under it.
+    const bool viewportCamera = TfStringStartsWith(GetId().GetName(), "__HoudiniFreeCamera");
     float a, b;
-    if (delegate->SampledMotionShutter(&a, &b) && close > open) {
+    if (!viewportCamera && delegate->SampledMotionShutter(&a, &b) && close > open) {
         HdTimeSampleArray<GfMatrix4d, 4> samples;
         sceneDelegate->SampleTransform(GetId(), open, close, &samples);
         if (samples.count > 1) {
