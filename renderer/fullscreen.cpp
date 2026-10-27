@@ -12,7 +12,8 @@ const uint32_t kFullscreenVert[] =
 
 VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
                                     const uint32_t *fragCode, size_t fragBytes, VkFormat format,
-                                    bool additive, bool over, bool multiply, VkFormat depthFormat, bool transmit)
+                                    bool additive, bool over, bool multiply, VkFormat depthFormat, bool transmit,
+                                    const VkSpecializationInfo *fragSpec)
 {
     const VkDevice device = dev.device;
     VkShaderModule vert =CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
@@ -27,7 +28,7 @@ VkPipeline CreateFullscreenPipeline(const Device &dev, VkPipelineLayout layout,
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
          VK_SHADER_STAGE_VERTEX_BIT, vert, "main"},
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
-         VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main"},
+         VK_SHADER_STAGE_FRAGMENT_BIT, frag, "main", fragSpec},
     };
     VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
     VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};

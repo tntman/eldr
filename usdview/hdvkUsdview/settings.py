@@ -45,7 +45,7 @@ GROUPS = [
      "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
      "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
      "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
-     "volumeMutualShadows volumeDefaultFields"),
+     "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
     ("Advanced: Camera and film", False,
      "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
      "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "

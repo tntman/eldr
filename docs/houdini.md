@@ -97,7 +97,7 @@ Houdini reads `GetRenderStats()` through `houdini/UsdRenderers.json` (`statsdata
 | Saved stages (USD ROP) | Volumes go to `<layer>.volumes/N.vdb` and `N.bgeo.sc`; husk renders them |
 
 - Field numbering follows SOP Import: a `HoudiniFieldAsset`'s `fieldIndex` is the primitive number; an `OpenVDBAsset`'s counts VDB primitives named `fieldName`.
-- Eldr binds fields by name. Without a volume material it shades `density` only, as Karma (`eldr:volumeDefaultFields`: also `temperature`, `Cd`, `emission`). Material Library networks of `mtlxvolume`/`anisotropic_vdf` or `kma_volume` with constants, `geompropvalue` and `multiply` are read; the Karma Pyro Shader is not (Eldr renders the volume as without a material and warns). SOP Import names a nameless volume's field `field_0`: give volumes a `name` (Name SOP, Pyro's `density`).
+- Eldr binds fields by name. Without a volume material it shades `density` only, as Karma (`eldr:volumeDefaultFields`: also `temperature`, `Cd`, `emission`). Material Library networks of `mtlxvolume`/`anisotropic_vdf` or `kma_volume` with constants, `geompropvalue` and `multiply` are read, and ramps and remaps of a field: MaterialX's `mtlxremap`, `mtlxrange`, `mtlxramp`, `mtlxramplr`/`tb`, math, and Houdini's MtlX Color/Float Ramp and Cubic Ramp and Karma Ramp Const (see the features page). Feed a ramp's `texcoord` from the field through MtlX Combine2. The Karma Pyro Shader is not read (Eldr renders the volume as without a material and warns). SOP Import names a nameless volume's field `field_0`: give volumes a `name` (Name SOP, Pyro's `density`).
 
 | Limitation | Detail |
 |---|---|

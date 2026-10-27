@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/usd/sdf/path.h"
 #include "pxr/imaging/hd/material.h"
@@ -33,6 +34,10 @@ private:
     std::mutex _mutex;
     std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
 };
+
+// An unconnected input of `node`: authored (colours converted to linear
+// Rec.709), else its node definition's default, else 0; scalars splat.
+GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input);
 
 // What materials' shading graphs fell back from, by material: inputs with a
 // node bypassed or dropped (or an unknown surface: 1), and those nodes as
