@@ -171,7 +171,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
 | Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specularColor, IOR inputs may be textures or graphs. Off reads constants. | Only such materials |
-| MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p |
+| MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p; Houdini's Ceramic 3.5 ms, CarPaintMetallic (205 ops, cell noise) 38 ms |
 | Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes in programs. Off: noise reads 0. | fractal3d 0.74 ms; worleynoise3d 0.5 ms (full screen) |
 | Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Screen-space per-channel Gaussian blur of diffuse light, plus sun through thin parts. | About 0.3 ms, only with subsurface materials |
 | Subsurface Samples<br>`eldr:subsurfaceSamples` | int 15 | Taps per direction (1-64). | |
@@ -222,6 +222,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
 | Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
+| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Distant lights scatter more than once (octaves, Wrenninge 2015). Off: single scattering, as Karma's default Volume Limit 0. On with `karma:object:volumelimit` above 0. | About 1.2x Karma at Volume Limit 16 |
 
 ### Camera and film
 

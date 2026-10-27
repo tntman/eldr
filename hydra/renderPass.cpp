@@ -5,6 +5,7 @@
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
+#include "timing.h"
 
 #include "pxr/base/gf/half.h"
 #include "pxr/base/gf/matrix4f.h"
@@ -20,6 +21,7 @@
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprim.h"
+#include "pxr/imaging/hd/sceneGlobalsSchema.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hd/types.h"
 
@@ -27,6 +29,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -124,7 +127,9 @@ struct FrameTiming {
             }
             std::fprintf(stderr, "Eldr: frame timings to %s\n", path.c_str());
             std::fputs("frame,t_ms,interval_ms,app_ms,commit_ms,setup_ms,collect_ms,wait_ms,render_ms,after_ms,execute_ms,"
-                       "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged\n",
+                       "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged,"
+                       "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
+                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -156,6 +161,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 // they arrive (usdrecord's image has them).
 bool HdVkRenderPass::IsConverged() const
 {
+    HdVkTimedCall timed(HdVkCallTimes::kConverged);
     return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed);
 }
 
@@ -181,6 +187,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
 
     vkr::Renderer::Frame frame;
+    // The scene's time (HdSceneGlobalsSchema; 0 without), for MaterialX's
+    // frame and time nodes.
+    if (HdSceneIndexBaseRefPtr si = GetRenderIndex()->GetTerminalSceneIndex()) {
+        const HdSceneGlobalsSchema globals = HdSceneGlobalsSchema::GetFromSceneIndex(si);
+        const HdDoubleDataSourceHandle current = globals.GetCurrentFrame(), fps = globals.GetTimeCodesPerSecond();
+        // NaN or -DBL_MAX: the default or earliest time code.
+        const float now = current ? float(current->GetTypedValue(0.0f)) : 0.0f;
+        frame.sceneTime[0] = std::isfinite(now) ? float(now) : 0.0f;
+        const double rate = fps ? fps->GetTypedValue(0.0f) : 24.0;
+        frame.sceneTime[1] = frame.sceneTime[0] / float(rate > 0.0 ? rate : 24.0);
+    }
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
     // The depth AOV where nothing was hit (husk binds 0). Only the readback's:
     // the depth buffer itself clears to the far plane.
@@ -409,6 +426,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.localVolumeShadows, &frame.localVolumeShadows},
                                 {t2.volumeMutualShadows, &frame.volume.mutualShadows},
                                 {t2.volumeDefaultFields, &frame.volume.defaultFields},
+                                {t2.volumeMultipleScattering, &frame.volume.multipleScattering},
                                 {t2.lightShapesVisible, &frame.lightShapesVisible},
                                 {t2.domeCameraVisible, &frame.showEnvironment},
                                 {t2.multiScatter, &frame.multiScatter},
@@ -420,6 +438,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    // Karma's Volume Limit (render settings) above 0: volumes scatter more than once there too.
+    {
+        static const TfToken volumeLimit("karma:object:volumelimit");
+        const VtValue v = delegate->GetRenderSetting(volumeLimit);
+        const double limit = v.IsHolding<float>() ? v.UncheckedGet<float>() : v.IsHolding<double>() ? v.UncheckedGet<double>()
+                           : v.IsHolding<int>() ? v.UncheckedGet<int>() : 0.0;
+        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0;
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
@@ -1057,13 +1083,23 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         for (int i = 0; i < 4; ++i) {
             readMask |= buffers[i] && read.count(buffers[i]) ? 1 << i : 0;
         }
-        std::fprintf(timing->csv, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%u,%u,%d\n",
+        std::fprintf(timing->csv, "%d,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%d,%d,%d,%d,%u,%u,%d",
                      timing->frame++, T::Ms(timing->start, tBegin), T::Ms(timing->lastBegin, tBegin),
                      T::Ms(timing->lastEnd, tBegin), vkDelegate->CommitMs(), T::Ms(tBegin, tCollect),
                      T::Ms(tCollect, tRender), stats.waitMs, T::Ms(tRender, tRendered), T::Ms(tRendered, tEnd), T::Ms(tBegin, tEnd),
                      timing->fetchUs.exchange(0) / 1000.0, stats.gpuMs, stats.cpuMs, int(moving),
                      int(frame.deferReadback), int(collected), readMask, appWidth, appHeight,
                      int(_renderer->IsConverged()));
+        // Eldr's entry points the app called since the last execute; the
+        // rest of app_ms is the app's own.
+        HdVkCallTimes &calls = HdVkCallTimes::Get();
+        double eldrMs = 0;
+        for (int e = 0; e < HdVkCallTimes::kCount; ++e) {
+            const double ms = calls.ns[e].exchange(0) / 1e6;
+            eldrMs += ms;
+            std::fprintf(timing->csv, ",%.3f,%lld", ms, (long long)calls.calls[e].exchange(0));
+        }
+        std::fprintf(timing->csv, ",%.3f\n", T::Ms(timing->lastEnd, tBegin) - eldrMs);
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;

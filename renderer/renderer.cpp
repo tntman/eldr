@@ -67,6 +67,7 @@ struct FrameData {
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
+    float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
 };
 
 namespace {
@@ -3443,6 +3444,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _splitsStored = splits;
     fd.aovs[0] = splits ? 1u : 0u;
     fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
+    fd.scene[0] = frame.sceneTime[0];
+    fd.scene[1] = frame.sceneTime[1];
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
     fd.lightPath[1] = std::max(frame.indirectIntensity, 0.0f);
     fd.lightPath[2] = lightPath ? 1.0f : 0.0f;
@@ -3975,7 +3978,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (volumesUnder) {
         _RenderTranslucentDepth(gpu, jitteredViewProj);
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            VolumePass::kBehind);
+                            VolumePass::kBehind, gpu.volumeFactors);
         pass("volumes");
     }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
@@ -4018,7 +4021,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // between two layers of glass go behind both.
     if (frame.volumes &&
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll)) {
+                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll, gpu.volumeFactors)) {
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     // Light shapes: the local lights seen by the camera, in front of the opaque depth.

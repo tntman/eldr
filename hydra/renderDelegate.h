@@ -186,7 +186,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((motionBlurResidual, "eldr:motionBlurResidual")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
-    ((volumeMutualShadows, "eldr:volumeMutualShadows"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
+    ((volumeMutualShadows, "eldr:volumeMutualShadows")) ((volumeMultipleScattering, "eldr:volumeMultipleScattering"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
     ((multiScatter, "eldr:multiScatter")) \
@@ -248,6 +248,7 @@ uint32_t HdVkRenderTagBit(TfToken const &tag);
 void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type = HdPrimTypeTokens->mesh);
 
 class HdVkTextureCache;
+class HdVkMaterialFallbacks;
 class HdVkGLInterop;
 class HdRenderSettings;
 class Hgi;
@@ -336,6 +337,7 @@ private:
     std::unique_ptr<vkr::Scene> _scene;       // always present (CPU mirror)
     std::unique_ptr<vkr::Renderer> _renderer; // null if Vulkan init failed
     std::unique_ptr<HdVkTextureCache> _textures;
+    std::unique_ptr<HdVkMaterialFallbacks> _materialFallbacks;
     double _commitMs = 0;  // the last CommitResources (scene upload)
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
