@@ -21,7 +21,7 @@ TestSuite files mostly hold bare nodegraphs. The harness wraps each unused outpu
 
 Houdini's remaining 39 only lack Karma's own VEX nodes (`kma_rampconst`, `kma_color_hextiling`, `kma_voronoinoise3d`: no MaterialX nodedef), which are bypassed or keep the input's constant. What still blocks most of the rest: pbrlib BSDF graphs and other surfaces (glTF PBR, Disney, `surface_unlit`), compositing nodes, `hextiledimage`, `flake2d/3d`, matrix-valued graphs (`transformmatrix` with a connected matrix, `determinant`).
 
-Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `transformmatrix` with a connected matrix (bypassed). Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) now render black like Storm, where Karma shades them. Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
+Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `transformmatrix` with a connected matrix (bypassed). Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) render the default grey, as before the fixes (black was further from Karma). Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
 
 The 10-26 results:
 
@@ -71,7 +71,7 @@ Eldr differed where Karma and Storm agreed. All ten are fixed in the graph compi
 | `geompropvalue` vector2 of a missing primvar | the mesh's uv | its default; only `st`, `uv`, `st<n>`, `uv<n>` are uv sets (`UsdPrimvarReader_float2` keeps the first-uv-set rule) |
 | `image` address mode `constant` | ignored (black) | the image's `default` outside [0, 1] (`TextureRef::constantWrap`, tested in `Fetch`); the direct texture path hands such images to the graph compiler |
 | `normalmap` output used as a colour | tangent-space, about 2x | world-space normal (T, B, N from derivatives); only the surface's normal input keeps the tangent-space one |
-| `surface` of BSDFs and EDFs only | default grey | black; every unsupported surface shader warns once (the others keep the default material) |
+| `surface` of BSDFs and EDFs only | default grey, a warning once (deliberately: Karma shades them, black is further off; until pbrlib BSDFs compose) | black |
 
 The TestSuite's `image_addressing` constant cases (`uborder_color`, `vborder_color`) now show the `default` colour outside [0, 1], as the MaterialX spec says; Storm renders it black and Karma grey, so their dE against Eldr is 20+. The other addressing cases (clamp, mirror, decal) now match Storm (dE 0.1-0.3); Karma is darker there.
 

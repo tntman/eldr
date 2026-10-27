@@ -2007,22 +2007,15 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
                                    [&](SurfaceInputs const &k) { return k.id == surface.nodeTypeId; });
     if (kind == Surfaces().end()) {
         fallbacks->Add(1, {surfaceIt->first.GetName() + " (" + surface.nodeTypeId.GetString() + ")"});
-        // A shader Eldr doesn't read. MaterialX's `surface` node builds a
-        // surface from BSDFs and EDFs, none of which are read: it renders
-        // black; the others keep the default material.
+        // A shader Eldr doesn't read (MaterialX's `surface` of BSDFs and
+        // EDFs too, until pbrlib BSDFs compose): the default material, as
+        // Karma shades those rather than black.
         static std::mutex mutex;
         static std::set<std::string> warned;
-        const bool bsdfs = surface.nodeTypeId == "ND_surface";
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            if (warned.insert(surface.nodeTypeId.GetString()).second) {
-                TF_WARN("HdVk: surface shader '%s' isn't supported; the material renders %s",
-                        surface.nodeTypeId.GetText(), bsdfs ? "black (its BSDFs aren't read)" : "as the default");
-            }
-        }
-        if (bsdfs) {
-            std::fill(m->baseColor, m->baseColor + 3, 0.0f);
-            std::fill(m->specular, m->specular + 3, 0.0f);
+        std::lock_guard<std::mutex> lock(mutex);
+        if (warned.insert(surface.nodeTypeId.GetString()).second) {
+            TF_WARN("HdVk: surface shader '%s' isn't supported; the material renders as the default",
+                    surface.nodeTypeId.GetText());
         }
         return;
     }

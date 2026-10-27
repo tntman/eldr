@@ -122,7 +122,7 @@ def document(tests):
                    (i, i))
         out.append('<surfacematerial name="m%d" type="material">'
                    '<input name="surfaceshader" type="surfaceshader" nodename="s%d"/></surfacematerial>' % (i, i))
-    # 10. a surface of BSDFs only is black (and Eldr says it doesn't read them).
+    # 10. a surface of BSDFs only renders the default grey (and Eldr says it doesn't read it).
     out.append('<oren_nayar_diffuse_bsdf name="bsdf" type="BSDF"><input name="color" type="color3" '
                'value="0.8, 0.8, 0.8"/></oren_nayar_diffuse_bsdf>')
     out.append('<surface name="sb" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="bsdf"/></surface>')
@@ -163,8 +163,9 @@ def main():
         if not ok:
             failures.append(name)
     mean, px = corpus.cell_stats(got, len(tests), cols)
-    ok = float(px.max()) < 0.01
-    print("%s %-44s expected black, got max %.3f" % ("ok  " if ok else "FAIL", "surface of BSDFs only", px.max()))
+    ok = float(mean.min()) > 0.02 and float(mean.max() - mean.min()) < 0.01  # lit default grey, not black
+    print("%s %-44s expected grey, got %s" % ("ok  " if ok else "FAIL", "surface of BSDFs only",
+                                             tuple(round(float(m), 3) for m in mean)))
     if not ok:
         failures.append("surface of BSDFs only")
     if "surface shader 'ND_surface' isn't supported" not in err:
