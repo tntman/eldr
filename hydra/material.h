@@ -2,6 +2,7 @@
 
 #include "pxr/pxr.h"
 #include "pxr/base/tf/token.h"
+#include "pxr/usd/sdf/path.h"
 #include "pxr/imaging/hd/material.h"
 
 #include <map>
@@ -33,6 +34,22 @@ private:
     std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
 };
 
+// What materials' shading graphs fell back from, by material: inputs with a
+// node bypassed or dropped (or an unknown surface: 1), and those nodes as
+// "node (id)". The render stats' materialFallback* (renderDelegate.cpp).
+class HdVkMaterialFallbacks
+{
+public:
+    void Set(SdfPath const &material, int inputs, std::vector<std::string> nodes);
+    int Inputs() const;
+    // "material: node (id)", comma separated, the first `max` of them.
+    std::string Nodes(size_t max) const;
+
+private:
+    mutable std::mutex _mutex;
+    std::map<SdfPath, std::pair<int, std::vector<std::string>>> _byMaterial;
+};
+
 // Reads a UsdPreviewSurface, MaterialX standard_surface or OpenPBR network
 // into a vkr::Material. The vkr::Material
 // object stays the same for the sprim's lifetime (meshes hold it), so
@@ -40,7 +57,8 @@ private:
 class HdVkMaterial final : public HdMaterial
 {
 public:
-    HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures);
+    HdVkMaterial(SdfPath const &id, HdVkTextureCache *textures, HdVkMaterialFallbacks *fallbacks);
+    ~HdVkMaterial() override;
 
     HdDirtyBits GetInitialDirtyBitsMask() const override { return AllDirty; }
     void Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam,
@@ -57,6 +75,7 @@ public:
 
 private:
     HdVkTextureCache *_textures;
+    HdVkMaterialFallbacks *_fallbacks;
     TfToken _uvPrimvar;
     std::vector<TfToken> _primvars;
     std::shared_ptr<vkr::Material> _material;

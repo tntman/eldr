@@ -21,6 +21,7 @@
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/renderPassState.h"
 #include "pxr/imaging/hd/rprim.h"
+#include "pxr/imaging/hd/sceneGlobalsSchema.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hd/types.h"
 
@@ -28,6 +29,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <cstdio>
@@ -185,6 +187,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
 
     vkr::Renderer::Frame frame;
+    // The scene's time (HdSceneGlobalsSchema; 0 without), for MaterialX's
+    // frame and time nodes.
+    if (HdSceneIndexBaseRefPtr si = GetRenderIndex()->GetTerminalSceneIndex()) {
+        const HdSceneGlobalsSchema globals = HdSceneGlobalsSchema::GetFromSceneIndex(si);
+        const HdDoubleDataSourceHandle current = globals.GetCurrentFrame(), fps = globals.GetTimeCodesPerSecond();
+        // NaN or -DBL_MAX: the default or earliest time code.
+        const float now = current ? float(current->GetTypedValue(0.0f)) : 0.0f;
+        frame.sceneTime[0] = std::isfinite(now) ? float(now) : 0.0f;
+        const double rate = fps ? fps->GetTypedValue(0.0f) : 24.0;
+        frame.sceneTime[1] = frame.sceneTime[0] / float(rate > 0.0 ? rate : 24.0);
+    }
     HdRenderBuffer *color = nullptr, *depth = nullptr, *primId = nullptr, *instanceId = nullptr;
     // The depth AOV where nothing was hit (husk binds 0). Only the readback's:
     // the depth buffer itself clears to the far plane.

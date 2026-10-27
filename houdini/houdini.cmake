@@ -12,7 +12,7 @@ find_package(Houdini REQUIRED)
 
 # HoudiniConfig has no Dep target for garch, hgi and hio: link those import
 # libraries by path.
-set(hdvk_pxr_libs ar cameraUtil garch hd hdsi hgi hio pxOsd sdr usd usdGeom usdImaging)
+set(hdvk_pxr_libs ar cameraUtil garch hd hdMtlx hdsi hgi hio pxOsd sdr usd usdGeom usdImaging)
 foreach(lib ${hdvk_pxr_libs})
     add_library(${lib} INTERFACE)
     if(TARGET Houdini::Dep::pxr_${lib})
@@ -26,6 +26,10 @@ endforeach()
 foreach(lib ${hdvk_pxr_libs})
     target_link_libraries(${lib} INTERFACE Houdini HoudiniThirdParty)
 endforeach()
+# hdMtlx's API hands out MaterialX documents; HoudiniConfig has no target for
+# MaterialX itself.
+target_link_libraries(hdMtlx INTERFACE ${HOUDINI_ROOT}/custom/houdini/dsolib/MaterialXCore.lib
+                      ${HOUDINI_ROOT}/custom/houdini/dsolib/MaterialXFormat.lib)
 set(pxr_DIR ${HOUDINI_ROOT})  # used by CMakeLists.txt for the test environment
 
 # A Houdini package next to the plugin: copy or reference <build>/houdini/eldr.json
