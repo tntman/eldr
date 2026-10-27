@@ -531,6 +531,18 @@ int main(int argc, char **argv)
             }
             std::printf(" ms; %s after %zu frames, %.0f ms from the first frame, %.0f ms from the plugin\n",
                         stage.c_str(), frameMs.size(), Ms(tFirst, Clock::now()), Ms(tStart, Clock::now()));
+            {  // where the memory went
+                const VtDictionary stats = delegate->GetRenderStats();
+                std::printf("  memory MB:");
+                for (const char *key : {"gpuMemoryUsed", "textureMemory", "primvar", "topology", "volumeMemory",
+                                        "accelerationStructureMemory", "hostMemoryUsed", "peakMemory"}) {
+                    const auto it = stats.find(key);
+                    if (it != stats.end() && it->second.IsHolding<size_t>()) {
+                        std::printf(" %s %.0f", key, double(it->second.UncheckedGet<size_t>()) / 1048576.0);
+                    }
+                }
+                std::puts("");
+            }
             std::printf("  depth / primId pixels changed from the frame before:");
             for (size_t i = 1; i < changed.size(); ++i) {
                 if ((i >= 9 && i < 30) || i + 3 > changed.size()) {
