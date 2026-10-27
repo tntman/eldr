@@ -599,6 +599,7 @@ private:
     void _Resize(uint32_t width, uint32_t height);
     void _ResizeScene(uint32_t width, uint32_t height);
     void _CreateShadowMap(uint32_t size);
+    void _CreateShadowAtlas(bool full);
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
     bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLight[3], FrameData *data) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
@@ -764,6 +765,7 @@ private:
     Buffer _lightShadows, _shadowTiles;         // per light: first tile or kNone; per tile: ShadowTile
     // What the atlas holds: redrawn only when the scene or the tiles change.
     uint64_t _atlasVersion = 0;
+    bool _fullShadowAtlas = false;  // _shadowAtlas is kShadowAtlasSize square (_CreateShadowAtlas)
     std::vector<float> _atlasKey;               // the tiles' matrices and rects
     VkImageView _shadowLayers[kCascades] = {};  // per-cascade render targets
     Image _brdfLut;

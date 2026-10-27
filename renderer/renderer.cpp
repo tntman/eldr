@@ -1579,14 +1579,26 @@ void Renderer::_CreateShadowMap(uint32_t size)
     _shadowSize = size;
 }
 
-// The local lights' atlas, BRDF LUT and the no-dome placeholder never change
-// size.
-void Renderer::_CreateConstantImages()
+// The local lights' shadow atlas: kShadowAtlasSize square while a light
+// casts into it (64 MB), else a 4x4 stand-in the shaders never sample. The
+// GPU is idle (Render's resizes).
+void Renderer::_CreateShadowAtlas(bool full)
 {
-    _shadowAtlas = _dev.CreateImage(kDepthFormat, kShadowAtlasSize, kShadowAtlasSize, 1, 1,
+    _dev.Destroy(_shadowAtlas);
+    const uint32_t size = full ? kShadowAtlasSize : 4;
+    _shadowAtlas = _dev.CreateImage(kDepthFormat, size, size, 1, 1,
                                     VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                     VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _fullShadowAtlas = full;
+    _atlasVersion = 0;  // drawn again
+    _atlasKey.clear();
+}
+
+// The BRDF LUT and the no-dome placeholder never change size.
+void Renderer::_CreateConstantImages()
+{
+    _CreateShadowAtlas(false);
     _brdfLut = _dev.CreateImage(VK_FORMAT_R32G32B32A32_SFLOAT, kBrdfLutSize, kBrdfLutSize, 1, 1,
                                 VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                 VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
@@ -2851,9 +2863,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
         _displacedPipelines = true;
     }
-    const uint32_t shadowSize = std::clamp(frame.shadowResolution, 256u, 8192u);
+    // The sun's cascades and the local lights' atlas only where something
+    // casts into them (2048-square cascades and the atlas are 64 MB each).
+    const uint32_t shadowSize =
+        gpu.shadowLight != kNone ? std::clamp(frame.shadowResolution, 256u, 8192u) : 4u;
     if (shadowSize != _shadowSize) {
         _CreateShadowMap(shadowSize);
+    }
+    const bool fullAtlas = frame.localShadows && frame.localLights && !gpu.shadowCasters.empty();
+    if (fullAtlas != _fullShadowAtlas) {
+        _CreateShadowAtlas(fullAtlas);
     }
     const float anisotropy = float(std::clamp(frame.anisotropy, 1u, 16u));
     if (anisotropy != _anisotropy) {
