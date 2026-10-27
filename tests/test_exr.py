@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 
+import exr_info
+
 from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdRender, UsdShade
 
 
@@ -75,7 +77,7 @@ def expect(ok, what):
 
 
 expect(os.path.exists(exrPath), "the product's EXR is written")
-info = run([exrinfo, exrPath, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+info = exr_info.lines(exrinfo, exrPath, "32", "32")
 channels = [l.split(" ", 1)[1] for l in info if l.startswith("channel ")]
 meta = dict(l[5:].split("=", 1) for l in info if l.startswith("meta "))
 pixel = {l.split()[1]: float(l.split()[2]) for l in info if l.startswith("pixel ")}
@@ -137,7 +139,7 @@ def record(name):
 
 def probe(path, x, y):
     """(size, window line, pixel) of `path` at (x, y) of its data window."""
-    out = run([exrinfo, path, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    out = exr_info.lines(exrinfo, path, str(x), str(y))
     size = next((tuple(map(int, l.split()[1:])) for l in out if l.startswith("size ")), None)
     window = next((l.split()[1:] for l in out if l.startswith("window ")), None)
     return size, window, {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
@@ -192,7 +194,7 @@ def beauty(tonemapper, linear):
     run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
                     scenePath, "/Render/settings", "/cam", "eldr:tonemapper=" + tonemapper,
                     "eldr:productLinear=" + linear], check=True)
-    out = run([exrinfo, path, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+    out = exr_info.lines(exrinfo, path, "32", "32")
     return {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
 
 
@@ -236,7 +238,7 @@ edge.GetRootLayer().Save()
 run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPrimPath", "/Render/settings",
      "-w", "64", edgePath, os.path.join(folder, "unused.png")], check=True, shell=True)
 expect(os.path.exists(edgeExr), "the edge scene's EXR is written")
-info = run([exrinfo, edgeExr, "32", "32"], capture_output=True, text=True, timeout=60).stdout.splitlines()
+info = exr_info.lines(exrinfo, edgeExr, "32", "32")
 channels = [l.split(" ", 1)[1] for l in info if l.startswith("channel ")]
 for layer in ("Crypto00", "Crypto01", "Crypto02"):
     expect(all(layer + "." + c in channels for c in "RGBA"), "Cryptomatte layer " + layer)
@@ -260,7 +262,7 @@ def matte(pixel, name):
 soft, worst, ranked = 0, 0.0, True
 for y in (26, 32, 38):
     for x in (20,) + tuple(range(27, 38)) + (44,):
-        out = run([exrinfo, edgeExr, str(x), str(y)], capture_output=True, text=True, timeout=60).stdout.splitlines()
+        out = exr_info.lines(exrinfo, edgeExr, str(x), str(y))
         pixel = {l.split()[1]: float(l.split()[2]) for l in out if l.startswith("pixel ")}
         left, right = matte(pixel, "/pair/left"), matte(pixel, "/pair/right")
         worst = max(worst, abs(left + right - 1.0))
