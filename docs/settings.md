@@ -171,7 +171,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
 | Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specularColor, IOR inputs may be textures or graphs. Off reads constants. | Only such materials |
-| MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p |
+| MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p; Houdini's Ceramic 3.5 ms, CarPaintMetallic (205 ops, cell noise) 38 ms |
 | Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes in programs. Off: noise reads 0. | fractal3d 0.74 ms; worleynoise3d 0.5 ms (full screen) |
 | Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Screen-space per-channel Gaussian blur of diffuse light, plus sun through thin parts. | About 0.3 ms, only with subsurface materials |
 | Subsurface Samples<br>`eldr:subsurfaceSamples` | int 15 | Taps per direction (1-64). | |

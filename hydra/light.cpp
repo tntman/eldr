@@ -1,4 +1,5 @@
 #include "light.h"
+#include "timing.h"
 
 #include "material.h"
 #include "scene.h"
@@ -71,6 +72,7 @@ HdVkLight::~HdVkLight()
 // profiles.
 void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
+    HdVkTimedCall timed(HdVkCallTimes::kSync);
     if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyResource))) {
         *dirtyBits = Clean;
         return;

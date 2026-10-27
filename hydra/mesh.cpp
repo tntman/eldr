@@ -1,4 +1,5 @@
 #include "mesh.h"
+#include "timing.h"
 
 #include "instancer.h"
 #include "material.h"
@@ -233,6 +234,7 @@ void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderP
 void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
+    HdVkTimedCall timed(HdVkCallTimes::kSync);
     HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     vkr::Mesh &m = *_mesh;

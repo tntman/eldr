@@ -134,6 +134,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     }
     _scene = std::make_unique<vkr::Scene>(_device.get());
     _textures = std::make_unique<HdVkTextureCache>();
+    _materialFallbacks = std::make_unique<HdVkMaterialFallbacks>();
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
 }
@@ -522,7 +523,7 @@ HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &s
         return new HdVkCamera(sprimId);
     }
     if (typeId == HdPrimTypeTokens->material) {
-        return new HdVkMaterial(sprimId, _textures.get());
+        return new HdVkMaterial(sprimId, _textures.get(), _materialFallbacks.get());
     }
     if (typeId == HdPrimTypeTokens->distantLight || typeId == HdPrimTypeTokens->domeLight ||
         typeId == HdPrimTypeTokens->sphereLight || typeId == HdPrimTypeTokens->rectLight ||
@@ -598,9 +599,12 @@ const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
 
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
+    HdVkTimedCall timed(HdVkCallTimes::kStats);
     VtDictionary stats;
     stats["rendererName"] = std::string("Eldr");  // plugInfo.json's displayName
-    if (!_device || !_renderer) {
+    // HDVK_NO_STATS=1: the name only (A/B: what the app's stats cost).
+    static const bool none = TfGetenvBool("HDVK_NO_STATS", false);
+    if (!_device || !_renderer || none) {
         return stats;
     }
     // Memory in bytes. gpuMemoryUsed (usdview's "GPU mem") is the graphics
@@ -642,6 +646,10 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["drawCalls"] = size_t(frame.drawCalls);
     stats["volumes"] = size_t(gpu.volumeCount);
     stats["exposureEV"] = frame.exposure > 0 ? std::log2(frame.exposure) : 0.0;
+    // Material inputs whose graphs Eldr couldn't compile whole (bypassed
+    // or dropped nodes, unknown surfaces), and which nodes.
+    stats["materialFallbackInputs"] = size_t(_materialFallbacks->Inputs());
+    stats["materialFallbackNodes"] = _materialFallbacks->Nodes(12);
 
     // Convergence: TAA's average of still frames (usdview's "Samples done").
     const bool converged = _renderer->IsConverged();

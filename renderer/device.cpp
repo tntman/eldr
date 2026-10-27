@@ -317,6 +317,13 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                 VkDeviceMemory memory = VK_NULL_HANDLE;
                 Check(vkAllocateMemory(device, &ai, nullptr, &memory), "vkAllocateMemory");
                 const bool local = mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+                static bool told = false;
+                if ((preferred & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) && !told && std::getenv("HDVK_TIMING")) {
+                    told = true;
+                    std::fprintf(stderr, "HdVk readback memory: type %u, flags 0x%x (host cached %d)\n", i,
+                                 unsigned(mp.memoryTypes[i].propertyFlags),
+                                 int((mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0));
+                }
                 std::lock_guard<std::mutex> lock(_memoryMutex);
                 _allocations[memory] = {req.size, local, texture};
                 (local ? _memory.deviceLocal : _memory.host) += req.size;

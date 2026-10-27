@@ -13,8 +13,8 @@
 //   --no-overlap       eldr:overlapReadback off (each frame waits for its own)
 //   --app-ms N         the app's own work after each frame's maps (busy, N ms:
 //                      Houdini's viewport uploads, composites and draws)
-//   --houdini          Houdini 22's viewport: maps colour, depth and the ids
-//                      every frame, sends houdini:viewport/interactive, and
+//   --houdini          Houdini 22's viewport: maps (and copies) colour, depth
+//                      and the ids every frame, sends houdini:viewport/interactive, and
 //                      moves the scene camera (shutter -0.25..0.25, as its
 //                      free camera) on the stage instead of a free camera
 //   --set name=value   a render setting (bool 0/1, int, float or string)
@@ -522,6 +522,7 @@ int main(int argc, char **argv)
                 camOp = usdCam.AddTransformOp();
                 controller.SetCameraPath(camPath);
             }
+            std::vector<uint8_t> appCopy;
             const auto runStart = Clock::now();
             for (int f = 0; f < warmup + frames; ++f) {
                 // Orbit about the view's centre line: a camera move every frame.
@@ -539,8 +540,14 @@ int main(int argc, char **argv)
                 std::map<std::string, double> frameMaps;
                 for (auto &[name, b] : buffers) {
                     const auto m0 = Clock::now();
-                    const volatile uint8_t *data = static_cast<const uint8_t *>(b->Map());
-                    (void)data[0];
+                    const auto *data = static_cast<const uint8_t *>(b->Map());
+                    if (houdini) {  // Houdini copies what it maps (to upload it): reads all of it
+                        const size_t bytes = size_t(b->GetWidth()) * b->GetHeight() * HdDataSizeOfFormat(b->GetFormat());
+                        appCopy.resize(std::max(appCopy.size(), bytes));
+                        std::memcpy(appCopy.data(), data, bytes);
+                    } else {
+                        (void)*static_cast<const volatile uint8_t *>(data);
+                    }
                     b->Unmap();
                     frameMaps[name] = Ms(m0, Clock::now());
                 }
