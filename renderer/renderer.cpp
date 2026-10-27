@@ -3563,6 +3563,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         jointsBuilt.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
         dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
+        pass("skinning");
 
         // Motion blur time samples (shutter.comp): a motion's rows are
         // captured; a sample saves this frame's pools (put back after the
@@ -3655,6 +3656,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         lodPicked.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
         dep.pMemoryBarriers = &lodPicked;
         vkCmdPipelineBarrier2(_cmd, &dep);
+        pass("cullCamera");
         // Each cascade's ortho box (which spans the scene's whole depth
         // towards the light, so every caster in it stays); instances under
         // half a shadow texel are dropped.
@@ -3678,7 +3680,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                VK_ACCESS_2_HOST_READ_BIT;
         dep.pMemoryBarriers = &toDraw;
         vkCmdPipelineBarrier2(_cmd, &dep);
-        pass("culling");
+        pass("cullShadows");
     }
     if (localLights > 0 && frame.clusteredLights) {
         // Light clusters, read by the shading pass.
@@ -3731,6 +3733,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                        VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
                        _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
             vkCmdEndRendering(_cmd);
+            static const char *const kCascadeNames[] = {"sunCascade0", "sunCascade1", "sunCascade2", "sunCascade3"};
+            pass(kCascadeNames[std::min<uint32_t>(c, 3)]);
         }
         // Volumes and translucent casters into the sun's tint map, cascade
         // by cascade.

@@ -59,11 +59,11 @@ GPU passes in order. Names are the timers in usdview's **Eldr > Render Statistic
 | # | Pass | What it does |
 |---|---|---|
 | 0 | `probeCapture`, `planarReflection` (opt) | Draw the probe cube and mirrored views |
-| 1 | skinning | GPU joint matrices from skeletons (not timed) |
+| 1 | `skinning` | Last frame's joints kept for motion, then GPU joint matrices from skeletons |
 | 2 | `shutter` (opt) | Moves instances, joints, blend shapes, camera to the sample's shutter time |
-| 3 | `culling` | Frustum and size culling, LOD choice, indirect draws |
+| 3 | `cullCamera`, `cullShadows` | Frustum and size culling, LOD choice, indirect draws: the camera's, then the 4 sun cascades' |
 | 4 | `lightClusters` | Local lights into 16x9x24 view clusters |
-| 5 | `sunShadows`, `sunShadowMin` | 4 cascades, min-depth reduction for the soft search; translucent and volume tint maps |
+| 5 | `sunCascade0`..`3`, `sunShadows`, `sunShadowMin` | The 4 cascades' depth, one each; translucent and volume tint maps; min-depth reduction for the soft search |
 | 6 | `depthPrepass` | Depth plus cutout alpha tests |
 | 7 | `accelerationStructures`, `rayTracing` (opt) | BLAS/TLAS; traced shadows, reflections, GI probe updates |
 | 8 | `ssgi` or `ambientOcclusion` | SSGI (replaces AO) or GTAO |
