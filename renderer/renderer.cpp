@@ -3355,7 +3355,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool lastJoints = gpu.joints && gpu.jointsBytes > 0 && _prevJointsSource == gpu.joints &&
                             _prevJoints.size >= gpu.jointsBytes;
     const bool prevJoints = lastJoints || shutterJoints;
-    const VkBuffer prevJointsFrom = shutterJoints ? gpu.shutterJoints : gpu.joints;
     if (gpu.joints && gpu.jointsBytes > _prevJoints.size) {
         // Device-local: only GPU copies fill it, and every skinned vertex
         // reads it in the main pass.
@@ -3574,24 +3573,54 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             _lodInstances = gpu.instances;
             _lodScene = gpu.sceneId;
         }
-        if (prevJoints) {
+        // Sampled motion: this frame's joints (after skin.comp, below) or
+        // weights, with the shutter's poses of the meshes that move through
+        // it copied over them (Gpu::shutterJointRanges, shutterWeightRanges).
+        auto barrier = [&](VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage,
+                           VkAccessFlags2 dstAccess) {
+            VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+            b.srcStageMask = srcStage;
+            b.srcAccessMask = srcAccess;
+            b.dstStageMask = dstStage;
+            b.dstAccessMask = dstAccess;
+            VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+            d.memoryBarrierCount = 1;
+            d.pMemoryBarriers = &b;
+            vkCmdPipelineBarrier2(_cmd, &d);
+        };
+        auto shutterPoses = [&](VkBuffer from, VkDeviceSize bytes, VkBuffer poses,
+                                const std::vector<VkBufferCopy> &ranges, std::initializer_list<VkBuffer> to) {
+            const VkBufferCopy all{0, 0, bytes};
+            for (VkBuffer b : to) {
+                vkCmdCopyBuffer(_cmd, from, b, 1, &all);
+            }
+            barrier(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            for (VkBuffer b : to) {
+                vkCmdCopyBuffer(_cmd, poses, b, uint32_t(ranges.size()), ranges.data());
+            }
+        };
+        if (prevJoints && !shutterJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
-            vkCmdCopyBuffer(_cmd, prevJointsFrom, _prevJoints.buffer, 1, &all);
-        }
-        if (shutterWeights) {  // motion vectors' weights (the capture below reads the scene's)
-            const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
-            vkCmdCopyBuffer(_cmd, gpu.shutterWeights, _prevBlendWeights.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
         }
         // Motion blur time samples: the motion this frame starts from last
-        // frame's joints and blend shape weights.
-        if (shutterCapture && _shutter.joints) {
+        // frame's joints and blend shape weights (sampled motion: the shutter's).
+        if (shutterCapture && _shutter.joints && !shutterJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
-            vkCmdCopyBuffer(_cmd, prevJointsFrom, _shutterJoints.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, gpu.joints, _shutterJoints.buffer, 1, &all);
         }
-        if (shutterCapture && _shutter.weights) {
+        if (shutterWeights) {  // the motion vectors' weights too
+            if (shutterCapture && _shutter.weights) {
+                shutterPoses(gpu.blendWeights, gpu.blendWeightsBytes, gpu.shutterWeights, gpu.shutterWeightRanges,
+                             {_prevBlendWeights.buffer, _shutterWeights.buffer});
+            } else {
+                shutterPoses(gpu.blendWeights, gpu.blendWeightsBytes, gpu.shutterWeights, gpu.shutterWeightRanges,
+                             {_prevBlendWeights.buffer});
+            }
+        } else if (shutterCapture && _shutter.weights) {
             const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
-            vkCmdCopyBuffer(_cmd, shutterWeights ? gpu.shutterWeights : _prevBlendWeights.buffer,
-                            _shutterWeights.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, _prevBlendWeights.buffer, _shutterWeights.buffer, 1, &all);
         }
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toCull.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
@@ -3617,6 +3646,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         jointsBuilt.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
         dep.pMemoryBarriers = &jointsBuilt;
         vkCmdPipelineBarrier2(_cmd, &dep);
+        if (shutterJoints) {
+            barrier(VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            if (shutterCapture && _shutter.joints) {
+                shutterPoses(gpu.joints, gpu.jointsBytes, gpu.shutterJoints, gpu.shutterJointRanges,
+                             {_prevJoints.buffer, _shutterJoints.buffer});
+            } else {
+                shutterPoses(gpu.joints, gpu.jointsBytes, gpu.shutterJoints, gpu.shutterJointRanges,
+                             {_prevJoints.buffer});
+            }
+            barrier(VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
+        }
         pass("skinning");
 
         // Motion blur time samples (shutter.comp): a motion's rows are

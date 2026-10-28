@@ -823,11 +823,13 @@ public:
         // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
         VkDeviceSize blendWeightsBytes = 0;
         // Sampled motion of skinned meshes: the joint matrices and blend
-        // shape weights one frame before as the shutter continues, laid out
-        // as joints and blendWeights (jointsBytes, blendWeightsBytes), or
-        // null when no skinned mesh has any (Mesh::prevSkinningTransforms).
+        // shape weights one frame before as the shutter continues, of the
+        // meshes that move through it (Mesh::prevSkinningTransforms), packed;
+        // the ranges copy them over this frame's joints and blendWeights.
+        // Null when no mesh has any (the others keep this frame's).
         VkBuffer shutterJoints = VK_NULL_HANDLE;
         VkBuffer shutterWeights = VK_NULL_HANDLE;
+        std::vector<VkBufferCopy> shutterJointRanges, shutterWeightRanges;
 
         // Ray tracing (RayTracing builds a BLAS per slot from these, per
         // instance for skinned ones): per mesh slot its vertices and
@@ -943,7 +945,7 @@ private:
     void _UploadJoints(Mesh &mesh);
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
-    void _CommitShutterPoses();
+    void _CommitShutterPoses(const std::vector<Mesh *> &moving);
     void _Upload(Texture &texture);
     int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);

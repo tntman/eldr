@@ -707,8 +707,10 @@ bool SampleShutter(HdSceneDelegate *delegate, SdfPath const &id, TfToken const &
 // renderer's time samples interpolate from these to this frame's pose.
 void HdVkMesh::_SampleShutterPose(HdSceneDelegate *sceneDelegate)
 {
-    _prevSkinning.clear();
-    _prevBlendWeights.clear();
+    // The scene frees them once uploaded.
+    std::vector<float> &prevSkinning = _mesh->prevSkinningTransforms, &prevWeights = _mesh->prevBlendWeights;
+    prevSkinning.clear();
+    prevWeights.clear();
     const SdfPath &id = GetId();
     auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     float open, close;
@@ -727,26 +729,30 @@ void HdVkMesh::_SampleShutterPose(HdSceneDelegate *sceneDelegate)
             sa = la * pa;
             sb = lb * pb;
         }
+        if (xa == xb && sa == sb) {
+            xa = xb = VtMatrix4fArray();  // still through the shutter
+        }
         const GfMatrix4f geomBind(_geomBind), fa(sa), fb(sb), fc(_skelToPrim);
-        _prevSkinning.resize(_skinningXforms.size() * 16);
+        prevSkinning.resize(xa.empty() ? 0 : _skinningXforms.size() * 16);
         bool moves = false;
-        for (size_t s = 0; s < _skinningXforms.size(); ++s) {
+        for (size_t s = 0; s < xa.size(); ++s) {
             const GfMatrix4f a = geomBind * xa[s] * fa, b = geomBind * xb[s] * fb, c = geomBind * _skinningXforms[s] * fc;
             for (int e = 0; e < 16; ++e) {
                 moves = moves || a.data()[e] != b.data()[e];
-                _prevSkinning[s * 16 + e] = c.data()[e] - (b.data()[e] - a.data()[e]) * perFrame;
+                prevSkinning[s * 16 + e] = c.data()[e] - (b.data()[e] - a.data()[e]) * perFrame;
             }
         }
         if (!moves) {
-            _prevSkinning.clear();
+            std::vector<float>().swap(prevSkinning);
         }
     }
     VtFloatArray wa, wb;
-    if (SampleShutter(sceneDelegate, id, HdSkinningInputTokens->blendShapeWeights, open, close, &wa, &wb) &&
+    if (!_blendWeights.empty() &&
+        SampleShutter(sceneDelegate, id, HdSkinningInputTokens->blendShapeWeights, open, close, &wa, &wb) &&
         wa.size() == _blendWeights.size() && wb.size() == wa.size() && wa != wb) {
-        _prevBlendWeights.resize(wa.size());
+        prevWeights.resize(wa.size());
         for (size_t i = 0; i < wa.size(); ++i) {
-            _prevBlendWeights[i] = _blendWeights[i] - (wb[i] - wa[i]) * perFrame;
+            prevWeights[i] = _blendWeights[i] - (wb[i] - wa[i]) * perFrame;
         }
     }
 }
@@ -767,8 +773,6 @@ void HdVkMesh::_UpdateJoints()
         m.prevBlendWeights.clear();
         return;
     }
-    m.prevSkinningTransforms = _prevSkinning;
-    m.prevBlendWeights = _prevBlendWeights;
     m.blendWeights.assign(_blendWeights.cbegin(), _blendWeights.cend());
     m.blendShapeCount = uint32_t(_numBlendShapeWeights > 0 ? _numBlendShapeWeights : int(_blendWeights.size()));
     const GfMatrix4f geomBind(_geomBind), skelToPrim(_skelToPrim);
