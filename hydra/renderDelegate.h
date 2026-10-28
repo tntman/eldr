@@ -344,7 +344,7 @@ private:
     std::unique_ptr<HdVkTextureCache> _textures;
     std::unique_ptr<HdVkMaterialFallbacks> _materialFallbacks;
     double _commitMs = 0;  // the last CommitResources (scene upload)
-    std::mutex _loadMutex;
+    mutable std::mutex _loadMutex;
     double _loadSyncMs = 0;  // CommitResources' time since the last NoteFrame
     std::string _loadLine;   // the last load's summary
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources

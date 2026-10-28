@@ -108,8 +108,8 @@ for heading, entries in hdvkUsdview.STATS:
     if entries == "PASSES":
         entries = [(label, "gpuPassMs." + key, "ms") for key, label in hdvkUsdview.PASSES]
     for label, key, unit in entries:
-        # (passes that did not run, and the card's budget without VK_EXT_memory_budget, are absent)
-        expect(key.startswith("gpuPassMs.") or key.startswith("vram") or hdvkUsdview.Lookup(stats, key) is not None,
+        # (loadLine: only after a load over 0.25 s; passes that did not run, and the card's budget without VK_EXT_memory_budget, are absent)
+        expect(key.startswith("gpuPassMs.") or key.startswith("vram") or key == "loadLine" or hdvkUsdview.Lookup(stats, key) is not None,
                "%s (%s) is reported" % (label, key))
 
 # Ray-traced shadows (where the GPU has ray tracing pipelines) add their pass

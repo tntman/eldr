@@ -741,8 +741,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
         std::lock_guard<std::mutex> lock(_loadMutex);
         if (!_loadLine.empty()) {
             stats["loadLine"] = _loadLine;
-            stats["renderStatsAnnotation"] = stats["renderStatsAnnotation"].Get<std::string>() + "
-" + _loadLine;
+            stats["renderStatsAnnotation"] = stats["renderStatsAnnotation"].Get<std::string>() + std::string("\n") + _loadLine;
         }
     }
     stats["frameSharing"] = std::string(_frameShared ? "OpenGL" : "readback");
@@ -841,8 +840,7 @@ void HdVkRenderDelegate::NoteFrame()
     std::snprintf(text, sizeof text, "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f",
                   total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0);
     _loadLine = text;
-    std::printf("Eldr: %s
-", text);  // husk's log
+    std::printf("Eldr: %s\n", text);  // husk's log
     std::fflush(stdout);
 }
 
