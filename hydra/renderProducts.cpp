@@ -140,7 +140,8 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
 }
 
 void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame,
-                               const std::string &objectManifest, const std::string &materialManifest, bool linear)
+                               const std::string &objectManifest, const std::string &materialManifest, bool linear,
+                               const std::function<std::string()> &statsJson)
 {
     // FNV-1a over what the image shows; a time step of usdrecord or a
     // script can converge in its first frame (the post motion blur's).
@@ -177,6 +178,7 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
     read.instanceId = instanceId.data();
     renderer.Read(read);
 
+    const std::string stats = statsJson ? statsJson() : std::string();  // husk:render_stats for the panel
     for (const Product &product : _products) {
         std::vector<std::string> channels;
         std::vector<std::pair<std::string, std::string>> metadata;
@@ -273,6 +275,9 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
         spec.channelnames = channels;
         spec.alpha_channel = beauty ? 3 : -1;
         spec.attribute("compression", "zip");
+        if (!stats.empty()) {
+            spec.attribute("husk:render_stats", stats);
+        }
         for (const auto &[key, value] : metadata) {
             spec.attribute(key, value);
         }

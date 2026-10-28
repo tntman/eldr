@@ -1054,7 +1054,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     }
     try {
         if (!_failed) {  // its AOVs were never read back: the products would hold zeros
-            _products.Write(*_renderer, frame, objects, materials, frame.linearColor);
+            _products.Write(*_renderer, frame, objects, materials, frame.linearColor,
+                            [vkDelegate] { return vkDelegate->RenderStatsJson(); });
         }
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk render products failed: %s", e.what());

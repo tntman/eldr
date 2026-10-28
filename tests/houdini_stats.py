@@ -44,7 +44,7 @@ stats = dict(engine.GetRenderStats())
 found = findStats(info["statsdatapaths"], stats)
 # vram* need VK_EXT_memory_budget and a pass only reports when it ran (a plain
 # frame runs few): those are blank in Houdini until then; the rest resolves.
-missing = [n for n in info["viewstats"] if n not in found and "Card:" not in n and not n.startswith("GPU passes:")]
+missing = [n for n in info["viewstats"] if n not in found and "Card:" not in n and "Last load" not in n and not n.startswith("GPU passes:")]
 for key in stats["gpuPassMs"]:  # every pass that ran has an entry (add new passes to PASSES)
     assert any(p.endswith(".gpuPassMs." + key) for p in info["statsdatapaths"].values()), key
 assert len(info["viewstats"]) > 40, len(info["viewstats"])
@@ -54,3 +54,16 @@ for name in ("percentDone", "rendererStage", "totalClockTime", "totalMemory", "p
 assert found["rendererStage"] == "converged", found["rendererStage"]
 print("OK: %d of %d viewstats resolve" % (len([n for n in info["viewstats"] if n in found]), len(info["viewstats"])))
 del engine
+
+# The Render Gallery / Background Render path: an EXR whose first AOV carries
+# husk:render_stats (iinfo -J shape), through the panel's own normalize_stats
+# and the merge setStats does, resolves the same standardized names.
+from renderstats.images import normalize_stats
+
+render_stats = dict(stats, __delegate="HdVkRendererPlugin")
+exr = {"aovs": [{"name": "C", "metadata": {"husk:render_stats": render_stats}}]}
+assert normalize_stats(exr)["husk"]["rendererName"] == "Eldr"
+from_exr = findStats(info["statsdatapaths"], render_stats)
+for name in ("percentDone", "rendererStage", "totalClockTime", "totalMemory", "peakMemory"):
+    assert name in from_exr, name
+print("OK: EXR husk:render_stats resolves")

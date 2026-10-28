@@ -6,6 +6,21 @@
         "depthstyle": "linear",
         "complexitymultiplier": 1.3,
         "needsselection": true,
+        "husk.stats_metadata": "",
+        "husk.metadata": {
+            "float OpenEXR:frame": "$frame",
+            "float OpenEXR:FramesPerSecond": "$fps",
+            "string OpenEXR:husk:command": "$command_line",
+            "string OpenEXR:husk:usd_file": "$usdfile",
+            "float OpenEXR:husk:usd_file_load_time": "$usdfile_load_time",
+            "string OpenEXR:husk:usd_file_stats": "$usdfile_stats",
+            "string OpenEXR:husk:render_stats": "$render_stats",
+            "string OpenEXR:Software": "Eldr $husk_version",
+            "float OpenEXR:renderMemory": "${render_stats.peakMemory}",
+            "memory OpenEXR:renderMemory_s": "${render_stats.peakMemory}",
+            "float OpenEXR:renderTime": "${render_stats.totalClockTime}",
+            "time OpenEXR:renderTime_s": "${render_stats.totalClockTime}"
+        },
         "statsdatapaths": {
             "percentDone": "$.percentDone",
             "rendererStage": "$.rendererStage",
