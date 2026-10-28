@@ -308,6 +308,7 @@ public:
         float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        float planarBlur = 1.0f;         // roughness blur of the mirror image, a multiplier (0: sharp)
         uint32_t planarCount = 4;        // mirrors rendered, the largest first (at most 4)
         bool probeNormalize = true;     // probes scaled by local (GI/SSGI) over captured ambient light
         bool authoredProbes = true;     // meshes flagged primvars:eldr:reflectionProbe are the probes (probes.h)

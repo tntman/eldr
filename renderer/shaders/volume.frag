@@ -177,7 +177,7 @@ vec3 LocalIrradiance(uint index, vec3 x, out vec3 l)
     if (window <= 0.0 || d <= 0.0) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * window * window * light.halfHeight.w;
+    vec3 radiance = light.color.rgb * LightTint(light, x) * window * window * light.halfHeight.w;
     float cosOff = dot(-l, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));

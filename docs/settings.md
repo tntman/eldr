@@ -161,6 +161,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Planar Reflections<br>`eldr:planarReflections` | off | Flat glossy mirrors (`primvars:eldr:planarReflection`, else the largest flat glossy opaque mesh) reflect a mirrored render. | Each mirror in view is one extra render; crowd scene 0.1 ms |
 | Planar Reflection Scale<br>`eldr:planarScale` | float 0.5 | Mirror render size as a fraction of the frame (0.1-1). | |
 | Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | Mirrors per frame, largest first (max 4). | One render each |
+| Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | Scales how much a rough mirror blurs its reflection with roughness; 0 = sharp only. | 12 taps on mirror pixels |
 
 ### Materials
 
