@@ -300,6 +300,8 @@ public:
     // and HdVk's stats window (usdview/hdvkUsdview) read it, and Houdini's
     // render stats through houdini/UsdRenderers.json's statsdatapaths.
     VtDictionary GetRenderStats() const override;
+    // GetRenderStats plus husk:productmetadata as JSON: the husk:render_stats metadata of render products.
+    std::string RenderStatsJson() const;
     // Settings the meshes read when they sync (subdivision) re-sync them.
     void SetRenderSetting(TfToken const &key, VtValue const &value) override;
     void SetTerminalSceneIndex(HdSceneIndexBaseRefPtr const &terminalSceneIndex) override;

@@ -732,6 +732,103 @@ const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const
     return nullptr;
 }
 
+namespace {
+void JsonString(std::string &out, const std::string &text)
+{
+    out += '"';
+    for (const unsigned char c : text) {
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += char(c);
+        } else if (c < 0x20) {
+            char hex[8];
+            std::snprintf(hex, sizeof hex, "\\u%04x", c);
+            out += hex;
+        } else {
+            out += char(c);
+        }
+    }
+    out += '"';
+}
+
+// A stats value as JSON (a number, string, dictionary or string array; else null).
+void JsonValue(std::string &out, const VtValue &v)
+{
+    char num[40];
+    if (v.IsHolding<bool>()) {
+        out += v.UncheckedGet<bool>() ? "true" : "false";
+    } else if (v.IsHolding<std::string>()) {
+        JsonString(out, v.UncheckedGet<std::string>());
+    } else if (v.IsHolding<VtDictionary>()) {
+        out += '{';
+        bool first = true;
+        for (const auto &[key, value] : v.UncheckedGet<VtDictionary>()) {
+            out += first ? "" : ",";
+            first = false;
+            JsonString(out, key);
+            out += ':';
+            JsonValue(out, value);
+        }
+        out += '}';
+    } else if (v.IsHolding<VtArray<std::string>>()) {
+        out += '[';
+        bool first = true;
+        for (const std::string &item : v.UncheckedGet<VtArray<std::string>>()) {
+            out += first ? "" : ",";
+            first = false;
+            JsonString(out, item);
+        }
+        out += ']';
+    } else if (v.IsHolding<double>() || v.IsHolding<float>()) {
+        const double d = v.IsHolding<double>() ? v.UncheckedGet<double>() : double(v.UncheckedGet<float>());
+        std::snprintf(num, sizeof num, "%.9g", std::isfinite(d) ? d : 0.0);
+        out += num;
+    } else if (v.IsHolding<int>()) {
+        out += std::to_string(v.UncheckedGet<int>());
+    } else if (v.IsHolding<size_t>()) {
+        out += std::to_string(v.UncheckedGet<size_t>());
+    } else if (v.IsHolding<uint32_t>()) {
+        out += std::to_string(v.UncheckedGet<uint32_t>());
+    } else {
+        out += "null";
+    }
+}
+} // namespace
+
+// The husk:render_stats metadata of a render product (renderProducts.cpp): what
+// husk hands over as husk:productmetadata (a JSON string or a dictionary) with
+// Eldr's own stats over it, the shape Houdini's renderstats panel reads.
+std::string HdVkRenderDelegate::RenderStatsJson() const
+{
+    VtDictionary stats = GetRenderStats();
+    // renderstats/widgets.py picks the renderer's UsdRenderers.json entry by it.
+    stats["__delegate"] = std::string("HdVkRendererPlugin");
+    const VtValue base = GetRenderSetting(TfToken("husk:productmetadata"));
+    std::string out;
+    if (base.IsHolding<std::string>()) {
+        // ponytail: spliced, not parsed; a key in both appears twice and the last (Eldr's) wins.
+        std::string head = TfStringTrim(base.UncheckedGet<std::string>());
+        if (head.size() >= 2 && head.front() == '{' && head.back() == '}') {
+            head = TfStringTrim(head.substr(1, head.size() - 2));
+        } else {
+            head.clear();
+        }
+        std::string ours;
+        JsonValue(ours, VtValue(stats));
+        out = "{" + head + (head.empty() ? "" : ",") + ours.substr(1);
+    } else {
+        if (base.IsHolding<VtDictionary>()) {
+            VtDictionary merged = base.UncheckedGet<VtDictionary>();
+            for (const auto &[key, value] : stats) {
+                merged[key] = value;
+            }
+            stats = merged;
+        }
+        JsonValue(out, VtValue(stats));
+    }
+    return out;
+}
+
 VtDictionary HdVkRenderDelegate::GetRenderStats() const
 {
     HdVkTimedCall timed(HdVkCallTimes::kStats);

@@ -5,6 +5,7 @@
 #include "pxr/pxr.h"
 #include "pxr/imaging/hd/renderSettings.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -70,7 +71,8 @@ public:
     // `frame` (its scene version and camera) shows. `linear`: the beauty is
     // the frame's linear one (Frame::linearColor).
     void Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame, const std::string &objectManifest,
-               const std::string &materialManifest, bool linear);
+               const std::string &materialManifest, bool linear,
+               const std::function<std::string()> &statsJson = {});
 
 private:
     enum class Source { Color, Depth, PrimId, InstanceId, Aov };
