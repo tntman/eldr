@@ -507,32 +507,6 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
             !m.visible || !(m.tag & _tagMask) || m._indexCount == 0 || m._instanceCount == 0 || m._skinCount > 0) {
             continue;
         }
-        if (m._emitterAreaVersion != m._geometryVersion) {
-            // Object-space area of the triangles, per corner or indexed; a
-            // shared geometry's arrays are its first user's, its area kept.
-            // ponytail: a shared geometry whose first user re-flattened
-            // before any emitter needed its area has none (no light).
-            const Mesh &g = m._shared ? *m._shared->users.front() : m;
-            const float kept = m._shared ? m._shared->emitterArea : -1.0f;
-            const bool indexed = !g.indices.empty();
-            const size_t corners = indexed ? g.indices.size() : g.points.size() / 3;
-            double area = 0;
-            for (size_t t = 0; kept < 0.0f && t + 2 < corners; t += 3) {
-                const float *p[3];
-                for (int k = 0; k < 3; ++k) {
-                    p[k] = &g.points[size_t(indexed ? g.indices[t + k] : t + k) * 3];
-                }
-                const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]};
-                const float b[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]};
-                const float c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
-                area += 0.5 * std::sqrt(double(c[0]) * c[0] + double(c[1]) * c[1] + double(c[2]) * c[2]);
-            }
-            m._emitterArea = kept >= 0.0f ? kept : float(area);
-            m._emitterAreaVersion = m._geometryVersion;
-            if (m._shared) {
-                m._shared->emitterArea = m._emitterArea;
-            }
-        }
         float emitted[3];
         for (int k = 0; k < 3; ++k) {
             emitted[k] = mat->emissive[k] * mat->opacity;
@@ -659,7 +633,7 @@ void Scene::RemoveMesh(Mesh *mesh)
         }
     }
     if (_device) {
-        _ReleaseGeometry(*mesh, true);
+        _ReleaseGeometry(*mesh);
         _jointAlloc.Free(mesh->_jointBase, mesh->_jointSlots);
         _skinXformAlloc.Free(mesh->_skinXformBase, mesh->_skinXformSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
@@ -719,6 +693,13 @@ void Scene::RemoveVolume(Volume *volume)
 
 VkDeviceSize Scene::_Stage(const void *data, VkDeviceSize size)
 {
+    // In chunks: a scene's whole geometry staged at once held it twice more
+    // in memory (this vector and the staging buffer). Every caller queues
+    // its copy right after, so what is staged so far can go.
+    constexpr size_t kChunk = size_t(64) << 20;
+    if (!_stagingBytes.empty() && _stagingBytes.size() + size > kChunk) {
+        _Flush();
+    }
     const VkDeviceSize offset = (_stagingBytes.size() + 15) & ~VkDeviceSize(15);
     _stagingBytes.resize(size_t(offset + size));
     std::memcpy(_stagingBytes.data() + offset, data, size_t(size));
@@ -752,6 +733,9 @@ void Scene::_Flush()
                       VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT);
     });
     _stagingBytes.clear();
+    if (_stagingBytes.capacity() > (size_t(128) << 20)) {
+        _stagingBytes.shrink_to_fit();  // one huge array staged alone
+    }
     _copies.clear();
     _fills.clear();
 }
@@ -795,21 +779,15 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
 }
 
 // The mesh no longer draws its pool geometry: freed unless other meshes
-// share it. A removed first user hands its arrays (the content) on; one
-// re-flattened already has new ones, and the geometry then matches no new
-// mesh.
-void Scene::_ReleaseGeometry(Mesh &m, bool removed)
+// share it.
+void Scene::_ReleaseGeometry(Mesh &m)
 {
     SharedGeometry *shared = m._shared;
     m._shared = nullptr;
     bool keep = false;
     if (shared) {
-        const bool first = shared->users.front() == &m;
         shared->users.erase(std::find(shared->users.begin(), shared->users.end(), &m));
         keep = !shared->users.empty();
-        if (keep && first && removed) {
-            MoveArrays(m, *shared->users.front());
-        }
         if (!keep) {
             for (auto [it, end] = _sharedGeometry.equal_range(shared->key); it != end; ++it) {
                 if (it->second.get() == shared) {
@@ -862,6 +840,8 @@ void Scene::_UploadGeometry(Mesh &m)
         std::copy_n(s._boundsMax, 3, m._boundsMax);
         m._lods = s._lods;
         m._lodFirstIndex = s._lodFirstIndex, m._lodIndexCount = s._lodIndexCount;
+        m._emitterArea = s._emitterArea;
+        m._vertexColors = s._vertexColors;
         shared.users.push_back(&m);
         m._shared = &shared;
     };
@@ -907,6 +887,20 @@ void Scene::_UploadGeometry(Mesh &m)
             return;
         }
     }
+    // Emissive lights: the object-space area (the arrays go after Commit).
+    double area = 0;
+    for (size_t t = 0; t + 2 < corners; t += 3) {
+        const float *p[3];
+        for (int k = 0; k < 3; ++k) {
+            p[k] = &m.points[size_t(indexed ? m.indices[t + k] : t + k) * 3];
+        }
+        const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]};
+        const float b[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]};
+        const float c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+        area += 0.5 * std::sqrt(double(c[0]) * c[0] + double(c[1]) * c[1] + double(c[2]) * c[2]);
+    }
+    m._emitterArea = float(area);
+    m._vertexColors = !m.colors.empty();
     // Planar reflections: is the mesh flat? Its first proper triangle,
     // and every point within a thousandth of its size of that plane.
     m._flat = false;
@@ -1743,6 +1737,15 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             }
         }
     }
+    // The pools have it now: the arrays would only take memory (a scene's
+    // whole geometry again, per corner). A new sync refills them; geometry
+    // uploaded by a later Commit no longer finds this to share.
+    for (const auto &m : _meshes) {
+        if (uploaded[m->_slot]) {
+            Mesh none;
+            MoveArrays(*m, none);
+        }
+    }
     for (const auto &m : _meshes) {
         const bool geometry = uploaded[m->_slot], transforms = m->transformsDirty || geometry;
         // Shared geometry has no arrays of its own: its skin tells.
@@ -2029,7 +2032,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.visible = drawable ? m.rays : 0u;  // cull.comp, tlas.comp
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
         d.vertexBase = m._vertexOffset;
-        d.vertexColors = m.colors.empty() ? 0u : 1u;
+        d.vertexColors = m._vertexColors ? 1u : 0u;
         d.jointCount = m._skinCount > 0 ? m.jointCount : 0;
         d.skinXforms = m._skinXformBase;
         d.jointBounds = m._boundsBase;

@@ -354,14 +354,15 @@ struct Primvar {
 // triangle), so any primvar interpolation maps 1:1; Commit deduplicates the
 // corners into indexed vertices. Geometry built already indexed (curves,
 // points) sets `indices` instead: then the per-corner arrays below hold one
-// value per vertex and nothing is merged. Different meshes may be written
+// value per vertex and nothing is merged. Commit empties the arrays it
+// uploaded (points, normals, uvs, colors, indices, joints): set them all
+// again with geometryDirty for a change. Different meshes may be written
 // concurrently (Hydra syncs rprims in parallel); nothing here touches Vulkan.
 struct Mesh;
 // Pool geometry several meshes draw (Scene::_sharedGeometry).
 struct SharedGeometry {
     uint64_t key = 0;             // content hash
-    std::vector<Mesh *> users;    // users[0]'s arrays are the content
-    float emitterArea = -1.0f;    // object-space area, once an emitter needed it
+    std::vector<Mesh *> users;    // users[0]'s arrays are the content (until Commit drops them)
 };
 
 struct Mesh {
@@ -479,9 +480,9 @@ private:
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
     // Ray tracing: unique per geometry upload (a new BLAS when it changes).
     uint64_t _geometryVersion = 0;
-    // Emissive lights: the object-space area of `points`, at this version.
+    // Emissive lights: the object-space area of the uploaded triangles.
     float _emitterArea = 0;
-    uint64_t _emitterAreaVersion = 0;
+    bool _vertexColors = false;  // the uploaded vertices have colors
     // Levels of detail (lod.h), coarser and coarser: their triangles in the
     // index pool after the mesh's own, and instance slots (never valid)
     // reserving levels 2 and 3 their range of the visible lists.
@@ -989,9 +990,10 @@ private:
     // Meshes of identical content (a crowd's agents: one body per agent,
     // each with its own joints) share their rest geometry in the pools:
     // vertices, indices, skin weights, joint bounds and levels of detail.
-    // The first user's arrays are what later uploads compare against.
+    // The first user's arrays are what uploads in the same Commit compare
+    // against (Commit drops every mesh's arrays once uploaded).
     std::unordered_multimap<uint64_t, std::unique_ptr<SharedGeometry>> _sharedGeometry;
-    void _ReleaseGeometry(Mesh &mesh, bool removed = false);
+    void _ReleaseGeometry(Mesh &mesh);
     // Meshes synced since the last Commit whose arrays others share (ShareEarly).
     std::mutex _earlyMutex;
     std::unordered_multimap<uint64_t, Mesh *> _early;

@@ -134,6 +134,26 @@ static vkr::Mesh *AddQuad(vkr::Scene &scene, float x0, float y0, float x1, float
     return quad;
 }
 
+// A mesh's geometry arrays, which Commit empties once uploaded: kept to edit
+// part of them and set geometryDirty again.
+struct Geometry {
+    std::vector<float> points, normals, uvs, colors;
+    std::vector<uint32_t> indices;
+    std::vector<uint16_t> jointIndices;
+    std::vector<float> jointWeights;
+    explicit Geometry(const vkr::Mesh &m)
+        : points(m.points), normals(m.normals), uvs(m.uvs), colors(m.colors), indices(m.indices),
+          jointIndices(m.jointIndices), jointWeights(m.jointWeights)
+    {
+    }
+    void Refill(vkr::Mesh &m) const
+    {
+        m.points = points, m.normals = normals, m.uvs = uvs, m.colors = colors, m.indices = indices;
+        m.jointIndices = jointIndices, m.jointWeights = jointWeights;
+        m.geometryDirty = true;
+    }
+};
+
 // Sphere light of surface radiance L, emitting along +z (towards the
 // quads the tests put behind it).
 static vkr::Light *AddSphereLight(vkr::Scene &scene, float x, float y, float z, float radius, float L)
@@ -480,6 +500,7 @@ int main()
                 return std::vector<float>{scale, 0, 0, 0, 0, scale, 0, 0, 0, 0, scale, 0, x, 0, 0, 1};
             };
             quad->skinningTransforms = pose(0.4f);
+            const Geometry skinned(*quad);
             scene.Commit();
             Image img = Render(renderer, scene);
             // Rows: y = -0.3 + 0.2 (bottom edge) .. 0.5 + 0.4 (top edge).
@@ -583,6 +604,7 @@ int main()
             quad->skinningTransforms = pose(0.0f);
             quad->blendOffsets = {0, 0.4f, 0, 0};
             quad->blendRanges.clear();
+            skinned.Refill(*quad);
             for (size_t c = 0; c < quad->points.size() / 3; ++c) {
                 const bool top = quad->points[c * 3 + 1] > 0;
                 quad->blendRanges.insert(quad->blendRanges.end(), {0u, top ? 1u : 0u});
@@ -1557,6 +1579,7 @@ int main()
             std::fill(white->emissive, white->emissive + 3, 1.0f);
             vkr::Mesh *quad = AddQuad(scene, -1, -1, 0, 1, 0);
             quad->material = white;
+            const Geometry quadGeometry(*quad);
             // sampled: the motion comes with the first frame (Frame::sampledMotion,
             // Mesh::shutterMotion, Frame::prevViewProj), no frame before it.
             auto ramp = [&](bool timeSamples, bool moveCamera, int *frames, bool sampled = false) {
@@ -1580,7 +1603,7 @@ int main()
                     std::copy(frame.viewProj, frame.viewProj + 16, frame.prevViewProj);
                     std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
                     quad->shutterMotion = !moveCamera;
-                    quad->geometryDirty = true;  // as new geometry
+                    quadGeometry.Refill(*quad);  // as new geometry
                 } else {
                     Render(renderer, scene, frame);
                 }
@@ -2256,6 +2279,7 @@ int main()
                 occluder->jointIndices.insert(occluder->jointIndices.end(), {0, 0, 0, 0});
                 occluder->jointWeights.insert(occluder->jointWeights.end(), {1, 0, 0, 0});
             }
+            const Geometry occluderRest(*occluder);
             auto lift = [&](float y) {
                 occluder->skinningTransforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, y, 0, 1};
                 occluder->jointsDirty = true;
@@ -2284,6 +2308,7 @@ int main()
             material->displacement = 0.5f;
             material->displacementBound = 0.5f;
             occluder->material = material;
+            occluderRest.Refill(*occluder);
             occluder->normals.clear();
             for (size_t c = 0; c < occluder->points.size() / 3; ++c) {
                 occluder->normals.insert(occluder->normals.end(), {0, 1, 0});

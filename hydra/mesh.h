@@ -135,9 +135,14 @@ private:
     // Subdivision surfaces (subdivision.cpp): _Flatten for the cage refined
     // to _refineLevel (0: the cage), the refiner kept for animated points.
     int _RefineLevel(HdSceneDelegate *sceneDelegate) const;
+    bool _FlattenIndexed();
     bool _FlattenRefined();
     int _refineLevel = 0;
     std::shared_ptr<HdVkSubdivision> _subdivision;
+    // The points changed after the first sync: keep _subdivision. A still
+    // mesh frees it (its refiner holds every level: Kitchen_set at level 3,
+    // husk's default complexity, took 8 GB).
+    bool _animated = false;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

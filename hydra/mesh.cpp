@@ -268,6 +268,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         VtVec3fArray points = value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>()
                                                               : VtVec3fArray();
         if (points != _points) {
+            _animated = _animated || !_points.empty();
             _points = std::move(points);
             geometryDirty = true;
         }
@@ -757,6 +758,9 @@ void HdVkMesh::_Flatten()
         }
     }
 
+    if (!_Skinned() && _FlattenIndexed()) {
+        return;
+    }
     if (!FlattenPrimvar<GfVec3f>(VtValue(_points), HdInterpolationVertex, util, _triangles,
                                  _primitiveParams, HdTypeFloatVec3, &m.points)) {
         // Indices past the points array: draw nothing rather than garbage.
@@ -848,6 +852,67 @@ void HdVkMesh::_Flatten()
             m.primvars.push_back(std::move(out));
         }
     }
+}
+
+// _Flatten as indexed vertices, the points themselves, when no value differs
+// per corner: authored vertex normals, uvs, colours and the programs'
+// primvars per point (or constant). A third or less of the per-corner
+// arrays (unique geometry in husk held gigabytes of them). False: flatten
+// per corner.
+bool HdVkMesh::_FlattenIndexed()
+{
+    const size_t points = _points.size();
+    const auto perPoint = [&](HdInterpolation interp) {
+        return interp == HdInterpolationVertex || interp == HdInterpolationVarying;
+    };
+    // `value` as floats, n per point; false unless it has one per point.
+    const auto floats = [&](VtValue const &value, uint32_t n, std::vector<float> *out) {
+        uint32_t components = 0;
+        return HdVkToFloats(value, out, &components) && components == n && out->size() == points * n;
+    };
+    vkr::Mesh &m = *_mesh;
+    if (points == 0 || !perPoint(_normalsInterp) || (!_uvs.IsEmpty() && !perPoint(_uvsInterp)) ||
+        (_colorsInterp != HdInterpolationConstant && !perPoint(_colorsInterp)) ||
+        !floats(_normals, 3, &m.normals) || (!_uvs.IsEmpty() && !floats(_uvs, 2, &m.uvs)) ||
+        (_colorsInterp != HdInterpolationConstant && !floats(_colors, 3, &m.colors)) ||
+        std::any_of(_programPrimvars.begin(), _programPrimvars.end(), [&](const ProgramPrimvar &p) {
+            return p.interp != HdInterpolationConstant &&
+                   (!perPoint(p.interp) || p.values.size() != points * p.components);
+        }) ||
+        std::any_of(_triangles.cbegin(), _triangles.cend(), [&](const GfVec3i &t) {
+            return t[0] < 0 || t[1] < 0 || t[2] < 0 || size_t(t[0]) >= points || size_t(t[1]) >= points ||
+                   size_t(t[2]) >= points;
+        })) {
+        return false;
+    }
+    if (_uvs.IsEmpty()) {
+        m.uvs.clear();
+    }
+    if (_colorsInterp == HdInterpolationConstant) {
+        m.colors.clear();
+    }
+    m.points.assign(_points.cdata()->data(), _points.cdata()->data() + points * 3);
+    m.indices.resize(_triangles.size() * 3);
+    for (size_t t = 0; t < _triangles.size(); ++t) {
+        for (int k = 0; k < 3; ++k) {
+            m.indices[t * 3 + k] = uint32_t(_triangles[t][k]);
+        }
+    }
+    m.velocities.clear();
+    if (_velocities.size() == points) {
+        m.velocities.assign(_velocities.cdata()->data(), _velocities.cdata()->data() + points * 3);
+    }
+    for (const ProgramPrimvar &p : _programPrimvars) {
+        const bool constant = p.interp == HdInterpolationConstant;
+        vkr::Primvar out{p.name.GetString(), constant ? vkr::Primvar::Rate::Constant : vkr::Primvar::Rate::Vertex,
+                         p.components};
+        out.values.assign(p.values.begin(), constant ? p.values.begin() + std::min<size_t>(p.components, p.values.size())
+                                                     : p.values.end());
+        if (!out.values.empty()) {
+            m.primvars.push_back(std::move(out));
+        }
+    }
+    return true;
 }
 
 PXR_NAMESPACE_CLOSE_SCOPE

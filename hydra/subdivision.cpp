@@ -629,6 +629,9 @@ bool HdVkMesh::_FlattenRefined()
     _SplitSubsets();
     std::swap(_topology, topology);
     std::swap(_primitiveParams, params);
+    if (!_animated) {
+        _subdivision.reset();  // `sub` is not used past here
+    }
     return true;
 }
 
