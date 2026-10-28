@@ -1010,6 +1010,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowInfo[0] = kRtMaskShadow | (work.shadowColor ? kRtMaskTranslucent : 0);
     d.shadowInfo[1] = work.shadowVolumes;
     d.shadowInfo[2] = perTexel;
+    d.shadowInfo[3] = work.hitShadows ? 1u : 0u;
     d.shadowVolume[0] = work.volumeStep;
     d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;

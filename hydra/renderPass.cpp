@@ -567,6 +567,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // 0 allowed: off.
     frame.rtRefraction =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtRefraction, int(frame.rtRefraction)), 0, 2));
+    frame.rtHitShadows =
+        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtHitShadows, int(frame.rtHitShadows)), 0, 2));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));

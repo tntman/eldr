@@ -371,6 +371,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
+        {"Ray-Traced Hit Shadows (all lights at reflection/refraction hits; 0 off, 1 final quality, 2 always)",
+         t2.rtHitShadows, VtValue(int(frame.rtHitShadows))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
         {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
         {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},

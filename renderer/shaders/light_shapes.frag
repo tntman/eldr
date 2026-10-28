@@ -4,7 +4,7 @@
 // Light shapes seen by the camera (Frame::lightShapesVisible): the nearest
 // sphere, rect, disk or cylinder light along each pixel's ray, in front of
 // the opaque depth, replaces the colour with its emitted radiance. Lights
-// whose color.w is 0 (hidden from the camera: Light::cameraVisible) and
+// whose color.w is even (hidden from the camera: Light::cameraVisible) and
 // point or line lights are skipped.
 // ponytail: no cone or focus shaping, no light texture, no fog or
 // translucency in front of it; rects and disks show from their front only.
@@ -81,7 +81,7 @@ void main()
     vec3 radiance = vec3(0.0);
     for (uint k = params.first; k < params.first + params.count; ++k) {
         Light light = lights[k];
-        if (light.color.w <= 0.0) {
+        if ((uint(light.color.w) & 1u) == 0u) {
             continue;
         }
         float hit = Hit(light, o, d, t);

@@ -18,7 +18,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), w: layer stride (rows)
     uvec4 shadowInfo;    // x: shadow rays' cull mask (kRtMaskTranslucent: through translucent casters),
                          // y: volumes they march (0: none), z: lights per texel of the shadow image
-                         // (4: one channel each; 1: colour, rgb)
+                         // (4: one channel each; 1: colour, rgb), w 1: every light shadowed at
+                         // reflection and refraction hits (ShadeHit)
     vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
     uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
 } rt;
