@@ -26,6 +26,7 @@ struct RayTracingData {
     uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
+    float gather[4];         // final gather: ray length, 1 while on (Work::gather)
 };
 // TLAS instance masks (shaders/gi.glsl).
 constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2, kRtMaskShadow = 4, kRtMaskCamera = 8;
@@ -70,6 +71,15 @@ public:
         uint32_t giRays = 64;       // per probe and frame
         float giHysteresis = 0.97f; // of the probes' running average
         bool giBurst = false;       // fresh probes: all their settling updates in this frame
+        // Probes move out of walls (gi_update.comp), on kGiFixedRays more
+        // rays per probe and frame.
+        bool giRelocation = true;
+        // Final gather (rt_pixels.rgen, with gi): a short cosine ray per
+        // pixel, at least gatherDistance (and a probe spacing) long, shaded
+        // where it lands, or the probes at its end; mesh.frag's diffuse
+        // indirect light instead of the probes and AO.
+        bool gather = false;
+        float gatherDistance = 0.5f;
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
@@ -224,8 +234,10 @@ private:
     Buffer _uniforms;  // RayTracingData
     Image _shadowImage, _reflectionImage;
     Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
+    Image _gatherImage;      // with Work::gather: rt_pixels.rgen's
     uint32_t _width = 0, _height = 0, _shadowLayers = 0;
     Image _giIrradiance, _giVisibility;
+    Image _giOffsets;  // relocation per probe (rgba32f, xyz)
     VkSampler _sampler = VK_NULL_HANDLE;
     VkPipeline _giUpdate[2] = {};  // gi_update.comp for irradiance, visibility
     Buffer _giRays;                // this frame's probe rays

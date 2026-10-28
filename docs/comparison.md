@@ -36,7 +36,7 @@
 
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
-| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes. EEVEE: baked irradiance volumes. Unreal: Lumen. |
+| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes with relocation, plus a per-pixel final gather in final quality. EEVEE: baked irradiance volumes. Unreal: Lumen. |
 | Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask SSGI. |
 | GI at Lumen quality (surface cache, many bounces) | No | No | Yes | |
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |

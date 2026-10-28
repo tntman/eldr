@@ -16,7 +16,8 @@
 // each shaded where it lands with direct light and, for further bounces,
 // the probes' last irradiance; misses see the dome. gi_update.comp blends
 // them into the probe atlases. Rays that hit a back face (the probe is in
-// or behind a wall) store a short negative distance and no light. Emitters
+// or behind a wall) store a short negative distance and no light
+// (gi_update.comp relocates the probe from them). Emitters
 // promoted to lights don't add their emission: their light already does.
 layout(std430, set = 1, binding = 1) writeonly buffer GiRays { vec4 giRays[]; };  // radiance, distance
 
@@ -25,7 +26,7 @@ void main()
     uint ray = gl_LaunchIDEXT.x, probe = gl_LaunchIDEXT.y, rays = gl_LaunchSizeEXT.x;
     uvec3 c = uvec3(probe % rt.giCounts.x, (probe / rt.giCounts.x) % rt.giCounts.y,
                     probe / (rt.giCounts.x * rt.giCounts.y));
-    vec3 origin = rt.giOrigin.xyz + vec3(c) * rt.giOrigin.w;
+    vec3 origin = GiProbePosition(probe, ivec3(c));  // relocated
     vec3 dir = GiRayDirection(ray, rays);
     Trace(origin, dir, 2.0 * sqrt(PI / float(rays)));
     vec4 result;

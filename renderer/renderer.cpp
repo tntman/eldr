@@ -789,10 +789,12 @@ void Renderer::_CreateDescriptors()
         {55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {56, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
-        {58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {59, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         // Traced refraction (RayTracing::Work::refraction), bound while on.
         {86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        // Final gather (RayTracing::Work::gather), bound while on.
+        {87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
         {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
@@ -841,7 +843,7 @@ void Renderer::_CreateDescriptors()
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
-    std::fill(bindingFlags + 33, bindingFlags + 43, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86
+    std::fill(bindingFlags + 33, bindingFlags + 44, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86, 87
     std::fill(bindingFlags + kBindings - 4, bindingFlags + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flags.bindingCount = kBindings;
@@ -3211,6 +3213,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giRays = frame.giRays;
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
+    rt.giRelocation = frame.giRelocation;
+    // Final gather: in final quality (or always), on top of the probes.
+    rt.gather = rt.gi && frame.depthPrepass &&
+                (frame.finalGather >= 2 || (frame.finalGather == 1 && film && _filmFinal));
+    rt.gatherDistance = frame.finalGatherDistance;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;

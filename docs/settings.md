@@ -34,6 +34,7 @@ The settings people change most come first and are open in the UIs; rarely touch
 | Adaptive Sampling Threshold, Final Quality<br>`eldr:adaptiveFinalThreshold` | float 0 (off) | [film] Opt-in noise threshold for final quality, e.g. 0.01; off, a final frame takes every film sample. Pixels touched only now and then can stop too early. | Fewer samples |
 | Final Quality Shadows<br>`eldr:finalShadows` | string maps | [RT][film] `maps`, `raytraced` or `auto`: how final quality shadows lights when `eldr:rtShadows` is off. `raytraced` traces the sun and 15 lights; `auto` traces when the scene is dense enough. Interactive follows `eldr:rtShadows`. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
 | Ray-Traced Refraction<br>`eldr:rtRefraction` | int 1 | [RT][prepass] 0 off, 1 final quality, 2 always. Traces the nearest refracting surface's ray through the glass (back faces, glass behind glass, total internal reflection, absorption), shaded at the hit; rough glass jitters per sample. | glass.usda 8.1-9.7 ms (compute fallback); crowd unchanged |
+| Final Gather<br>`eldr:finalGather` | int 1 | [RT][prepass] 0 off, 1 final quality, 2 always. With GI: one short cosine ray per pixel and sample, shaded at its hit or from the probes at its end, replaces the probes, AO and SSGI on opaque diffuse light. Contact shadows, corners, colour bleeding. | GATHERCOST |
 | Motion Blur<br>`eldr:motionBlur` | on | Blur for an open shutter (`shutter:open`, `shutter:close`). Interactive: post blur. | Post blur 0.2 ms |
 | Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | [film] Each sample renders the whole scene at a shutter time (shadows, rays, refraction included; instances, joints, blend shapes, camera). Off: post blur. | Crowd 1.7-2.1 ms per sample |
 | Depth of Field<br>`eldr:depthOfField` | on | Thin-lens blur from camera `fStop`, `focalLength`, `focusDistance` (perspective cameras; not usdview's free camera). | Post DOF about 1.9 ms at 1080p |
@@ -106,6 +107,8 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | GI Rays per Probe per Frame<br>`eldr:giRaysPerProbe` | int 128 | 16-512. More is faster and cleaner. | Linear |
 | GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | History weight (0-0.99). Higher is smoother, slower to react. Little effect on stills. | |
 | GI Preconverge<br>`eldr:giPreconverge` | on | [film] Waits for fresh probes to settle before averaging. | Cornell: RMSE 0.0128 to 0.0047 |
+| GI Probe Relocation<br>`eldr:giRelocation` | on | Probes inside or just behind walls move out (up to 0.45 spacings) instead of only switching off; light near walls. Off: probes stay on the grid. | 32 more rays per probe and frame |
+| Final Gather Distance<br>`eldr:finalGatherDistance` | float 0.5 | Final gather ray length in world units (at least one probe spacing). 0.5 for metres; scale for other units. | Longer: more hits to shade |
 | SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps per direction and side (1-32). | |
 | SSGI Radius<br>`eldr:ssgiRadius` | float 1 | World-space gather radius; use a fraction of the room size. | |
 | SSGI Resolution Divisor<br>`eldr:ssgiResolution` | int 2 | 1 = full, 2 = half (denoised, depth-aware upsample). | Full is about 2x |

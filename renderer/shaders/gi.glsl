@@ -12,7 +12,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     uvec4 params;        // x: frame (noise), y: shadow rays per light, z: reflection rays, w: light shadowed at hits
     vec4 giOrigin;       // xyz: the first probe, w: probe spacing
     uvec4 giCounts;      // probes along x, y, z; w: probe tiles per atlas row
-    vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range
+    vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range,
+                         // w: of them the fixed rays (kGiFixedRays with relocation, else 0)
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
     uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
     vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), w: layer stride (rows)
@@ -21,6 +22,7 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // (4: one channel each; 1: colour, rgb)
     vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
     uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
+    vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
@@ -33,9 +35,13 @@ const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u, kRtMaskShadow = 4u, kR
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile
 // of irradiance / pi (rgb; a: 1 while the probe sees mostly front faces)
 // and of visibility (mean hit distance and its square, over
-// giParams.z), each with a one-texel border for bilinear filtering.
-layout(set = 0, binding = 58) uniform sampler2D giAtlas[2];
+// giParams.z), each with a one-texel border for bilinear filtering; and a
+// texel per probe of its relocation offset (xyz, world; gi_update.comp).
+layout(set = 0, binding = 58) uniform sampler2D giAtlas[3];
 const int kGiIrradianceTexels = 6, kGiVisibilityTexels = 14;  // tile interiors
+// Rays per probe update with the same directions every frame (unrotated),
+// for relocation; the probes' light blends the others (as RTXGI).
+const uint kGiFixedRays = 32u;
 
 float SignNotZero(float x)
 {
@@ -64,22 +70,39 @@ ivec2 GiTile(uint probe, int texels)
     return ivec2(probe % rt.giCounts.w, probe / rt.giCounts.w) * (texels + 2);
 }
 
-// The ray directions of every probe: a spherical Fibonacci set, rotated
-// randomly each frame.
-vec3 GiRayDirection(uint ray, uint rays)
+vec3 SphericalFibonacci(uint i, uint n)
 {
     float golden = 2.39996323;  // pi (3 - sqrt 5)
-    float z = 1.0 - (2.0 * float(ray) + 1.0) / float(rays);
+    float z = 1.0 - (2.0 * float(i) + 1.0) / float(n);
     float r = sqrt(max(1.0 - z * z, 0.0));
-    float phi = golden * float(ray);
-    return mat3(rt.giRotation) * vec3(r * cos(phi), r * sin(phi), z);
+    float phi = golden * float(i);
+    return vec3(r * cos(phi), r * sin(phi), z);
+}
+
+// The ray directions of every probe: the fixed rays' spherical Fibonacci
+// set (giParams.w of them), then the others', rotated randomly each frame.
+vec3 GiRayDirection(uint ray, uint rays)
+{
+    uint fixedRays = uint(rt.giParams.w);
+    return ray < fixedRays ? SphericalFibonacci(ray, fixedRays)
+                           : mat3(rt.giRotation) * SphericalFibonacci(ray - fixedRays, rays - fixedRays);
+}
+
+// The probe's position: its grid point `c` moved by its relocation.
+vec3 GiProbePosition(uint probe, ivec3 c)
+{
+    ivec2 at = ivec2(probe % rt.giCounts.w, probe / rt.giCounts.w);
+    return rt.giOrigin.xyz + vec3(c) * rt.giOrigin.w + texelFetch(giAtlas[2], at, 0).xyz;
 }
 
 // Irradiance / pi at p with normal n, seen from direction v, from the eight
 // probes around it: trilinear weights, a soft backface weight and the
 // Chebyshev test against each probe's visibility (no light through walls).
-// w: how far the probes apply, from their summed weight (0: none of them
-// sees p, e.g. the outside of a thin wall: the caller's fallback instead).
+// w: how far the probes apply, from their summed weight over that of the
+// active ones (0: none of them sees p, e.g. the outside of a thin wall: the
+// caller's fallback instead). Over the active ones: where the probes on
+// one side are inactive (behind a wall) the ones that see p still light it
+// fully, however small their trilinear share (room edges and corners).
 vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
 {
     float spacing = rt.giOrigin.w;
@@ -96,12 +119,12 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);
     vec2 irradianceSize = vec2(textureSize(giAtlas[0], 0)), visibilitySize = vec2(textureSize(giAtlas[1], 0));
     vec3 sum = vec3(0.0);
-    float weights = 0.0;
+    float weights = 0.0, active = 0.0;
     for (int i = 0; i < 8; ++i) {
         ivec3 offset = ivec3(i, i >> 1, i >> 2) & 1;
         ivec3 c = base + offset;
         uint probe = uint(c.x + counts.x * (c.y + counts.y * c.z));
-        vec3 probePos = rt.giOrigin.xyz + vec3(c) * spacing;
+        vec3 probePos = GiProbePosition(probe, c);
         vec3 toProbe = normalize(probePos - p);
         float wrap = (dot(toProbe, n) + 1.0) * 0.5;
         float w = wrap * wrap + 0.2;
@@ -124,13 +147,15 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         uv = (vec2(GiTile(probe, kGiIrradianceTexels)) + 1.0 +
               (OctEncode(n) * 0.5 + 0.5) * float(kGiIrradianceTexels)) / irradianceSize;
         vec4 irradiance = textureLod(giAtlas[0], uv, 0.0);
-        w *= trilinear.x * trilinear.y * trilinear.z * irradiance.a;
+        float share = trilinear.x * trilinear.y * trilinear.z * irradiance.a;
+        w *= share;
         sum += irradiance.rgb * w;
         weights += w;
+        active += share;
     }
     // Probes the visibility test rejects keep under ~0.005 each after the
-    // crush; a probe that sees p keeps over ~0.2 (times its trilinear share).
-    return weights > 1e-6 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights)) : vec4(0.0);
+    // crush; a probe that sees p keeps over ~0.2 (times its share).
+    return weights > 1e-8 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights / active)) : vec4(0.0);
 }
 
 #ifdef RT_RESULTS
@@ -254,5 +279,21 @@ vec3 GiDiffuse(vec3 p, vec3 n, vec3 v, vec3 fallback)
     }
     vec4 gi = GiIrradiance(p, n, v);
     return mix(fallback, gi.rgb, gi.a);
+}
+
+// Final gather (rt_pixels.rgen): this opaque pixel's diffuse indirect light
+// (irradiance / pi, one cosine sample; the film averages them), which
+// already holds its occlusion. False where there is none.
+layout(set = 0, binding = 87, rgba16f) uniform readonly image2D rtGatherImage;
+
+bool RtGather(out vec3 diffuse)
+{
+    diffuse = vec3(0.0);
+    if (!Feature(kFeatureGi) || rt.gather.y == 0.0 || !RtOpaque()) {
+        return false;
+    }
+    vec4 g = imageLoad(rtGatherImage, ivec2(gl_FragCoord.xy));
+    diffuse = g.rgb;
+    return g.a > 0.0;
 }
 #endif
