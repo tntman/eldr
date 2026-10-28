@@ -137,7 +137,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 | Sun cascades | 4 cascades fit to the scene, texel-snapped, normal offset and slope bias. Soft from the light angle (PCSS, bounded blocker search) or 3x3 PCF. |
 | Local light atlas | 4096x4096 tiles; spots one perspective tile, others six cube faces; nearest lights first. Tiles halve (to 64, about 680 lights) before any light goes unshadowed. Redraws only when scene or tiles change. |
 | Translucent and volume tint | Colour maps beside the shadow maps. |
-| Ray-traced (`eldr:rtShadows`) | Sun + 3 local lights (15 in final quality), soft from light size; skinned instances capped (`eldr:rtSkinnedInstances`). Rays pass translucent casters (taking their colour) and march volumes (`eldr:rtTranslucentShadows`). |
+| Ray-traced (`eldr:rtShadows`) | Sun + 3 local lights (15 in final quality), soft from light size; skinned instances capped (`eldr:rtSkinnedInstances`). Rays pass translucent casters (taking their colour) and march volumes (`eldr:rtTranslucentShadows`). Rays sample only the part of a light above the surface's horizon (the shading clips the rest), and points inside a sphere light are unshadowed as with maps, so an emissive ball resting on the floor lights it brightest at the contact. |
 | Final-quality traced (`eldr:finalShadows`) | `maps`, `raytraced` or `auto`. One ray per light and film sample at the sample dimensions' point of the light: exact penumbra. `auto` traces dense scenes whose skinned instances all block rays. |
 | Jittered maps (`eldr:shadowJitter`) | Maps rendered from a point on the light each film sample: exact penumbra (sun error 0.016 vs PCSS 0.065). |
 

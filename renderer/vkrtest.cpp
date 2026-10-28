@@ -1896,6 +1896,45 @@ int main()
         }
 
         if (device.rayTracing) {
+            // An emissive box (half size 0.1, centered at z = 0.4) resting on
+            // the white wall at z = 0.5: its sphere light (radius 0.17) reaches
+            // through the wall. Beside the box (pixel 35, inside that sphere;
+            // 37, half its cap under the wall's horizon) traced shadows light
+            // the wall as the shadow maps do: no dark ring at the contact.
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *box = AddEmitter(scene, 0, 0, 0, 0, 0, 10.0f);
+            box->points.clear();
+            box->uvs.clear();
+            for (int axis = 0; axis < 3; ++axis) {
+                for (const float side : {-0.1f, 0.1f}) {
+                    const float c[4][2] = {{-0.1f, -0.1f}, {0.1f, -0.1f}, {0.1f, 0.1f}, {-0.1f, 0.1f}};
+                    for (const int k : {0, 1, 2, 0, 2, 3}) {
+                        float p[3];
+                        p[axis] = side;
+                        p[(axis + 1) % 3] = c[k][0];
+                        p[(axis + 2) % 3] = c[k][1];
+                        box->points.insert(box->points.end(), {p[0], p[1], p[2] + 0.4f});
+                        box->uvs.insert(box->uvs.end(), {0.0f, 0.0f});
+                    }
+                }
+            }
+            scene.Commit();
+            const Image maps = Render(renderer, scene);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const Image traced = Render(renderer, scene, frame);
+            std::printf("resting emitter: maps %.3f %.3f, traced %.3f %.3f\n", maps.At(35, 32, 0), maps.At(37, 32, 0),
+                        traced.At(35, 32, 0), traced.At(37, 32, 0));
+            Expect(maps.At(35, 32, 0) > 0.05f && traced.At(35, 32, 0) > 0.95f * maps.At(35, 32, 0) &&
+                       traced.At(37, 32, 0) > 0.95f * maps.At(37, 32, 0),
+                   "a resting emitter's light: traced shadows don't darken the floor beside it");
+        }
+
+        if (device.rayTracing) {
             // Ray-traced sun shadow: the cascade test's scene with a hard sun
             // (angle 0), traced instead of the cascades.
             vkr::Scene scene(&device);

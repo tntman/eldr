@@ -102,7 +102,9 @@ vec3 ConeSample(vec3 axis, float cosMax, vec2 u)
 
 // Direction from p to a random point of the light (u in [0, 1)^2) and how
 // far that point is: the sun's disk (half angle in axis.w), a sphere's
-// visible cap, a rect or a disk.
+// visible cap, a rect or a disk. Inside a sphere dist is 0: nothing to trace
+// (an emissive mesh's light bounds it, and a ray to its center would hit the
+// mesh; the shadow maps' near plane leaves the inside lit too).
 vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
 {
     uint type = uint(light.position.w);
@@ -115,7 +117,7 @@ vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
     if (type == kLightSphere) {
         float r = light.halfWidth.w;  // 0: shaded as a point
         if (r <= 0.0 || d <= r) {
-            dist = d;
+            dist = r > 0.0 ? 0.0 : d;
             return toCenter / max(d, 1e-20);
         }
         vec3 dir = ConeSample(toCenter / d, sqrt(1.0 - r * r / (d * d)), u);
@@ -136,19 +138,34 @@ vec3 SampleLight(Light light, vec3 p, vec2 u, out float dist)
 
 // Fraction of the light reaching p (normal ng) over `samples` rays (its
 // colour through translucent casters and volumes): points u, then R2 steps
-// from it, on the light's shape.
+// from it, on the light's shape. Only of the part above p's horizon: the
+// shading clips the light there already (a sphere light resting on the
+// floor, half under it, would be dimmed twice). Points under the horizon
+// are skipped for the next R2 points, up to 8 tries; a light wholly under
+// it is dark (a bumped surface's terminator).
 vec3 LightVisibility(uint index, vec3 p, vec3 ng, vec2 u, uint samples)
 {
     Light light = lights[index];
     vec3 origin = OffsetRay(p, ng);
     vec3 sum = vec3(0.0);
+    uint taken = 0u;
     for (uint s = 0u; s < samples; ++s) {
-        float dist;
-        vec3 dir = SampleLight(light, p, fract(u + vec2(0.7548776662, 0.5698402910) * float(s)), dist);
-        // Short of the light: its own surface (a rect on a ceiling) is not a blocker.
-        sum += dot(dir, ng) > 0.0 ? TraceShadow(origin, dir, dist * 0.999) : vec3(0.0);
+        for (uint k = 0u; k < 8u; ++k) {
+            float dist;
+            vec3 dir = SampleLight(light, p, fract(u + vec2(0.7548776662, 0.5698402910) * float(s + k * samples)), dist);
+            if (dist <= 0.0) {  // inside a sphere light
+                sum += vec3(1.0);
+            } else if (dot(dir, ng) > 0.0) {
+                // Short of the light: its own surface (a rect on a ceiling) is not a blocker.
+                sum += TraceShadow(origin, dir, dist * 0.999);
+            } else {
+                continue;
+            }
+            ++taken;
+            break;
+        }
     }
-    return sum / float(samples);
+    return taken > 0u ? sum / float(taken) : vec3(0.0);
 }
 
 // The dome's radiance along dir, blurred to `lod`.
