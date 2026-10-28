@@ -24,7 +24,8 @@ GROUPS = [
      "indirectIntensity renderProducts productResolution"),
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
-     "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance ssgiSteps "
+     "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
+     "finalGatherRays finalGatherDenoise ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
      "screenBackface screenBackfaceScale directClamp indirectClamp"),
     ("Advanced: Shadows", False,

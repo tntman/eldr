@@ -523,7 +523,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.indirectIntensity, &frame.indirectIntensity},
                                 {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp},
                                 {t2.screenBackfaceScale, &frame.screenBackfaceScale},
-                                {t2.finalGatherDistance, &frame.finalGatherDistance}}) {
+                                {t2.finalGatherDistance, &frame.finalGatherDistance},
+                                {t2.finalGatherDenoise, &frame.finalGatherDenoise}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -576,6 +577,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtHitShadows, int(frame.rtHitShadows)), 0, 2));
     frame.finalGather =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGather, int(frame.finalGather)), 0, 2));
+    frame.finalGatherRays =
+        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));

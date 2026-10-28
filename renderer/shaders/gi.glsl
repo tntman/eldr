@@ -24,6 +24,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
     uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
     vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
+    vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
+    vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
