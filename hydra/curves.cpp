@@ -376,9 +376,8 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
                       HdChangeTracker::DirtyPrimvar)) {
         const VtVec3fArray points = sceneDelegate->Get(id, HdTokens->points).GetWithDefault(VtVec3fArray());
         Primvar<float> widths(sceneDelegate, id, HdTokens->widths);
-        // Karma's Width Scale.
-        static const TfToken widthScale("karma:object:width_scale");
-        if (const float scale = HdVkPrimvar<float>(sceneDelegate, id, widthScale, 1.0f); scale != 1.0f) {
+        // Width Scale (eldr:object:width_scale, else Karma's).
+        if (const float scale = HdVkObjectPrimvar<float>(sceneDelegate, id, "object:width_scale", 1.0f); scale != 1.0f) {
             if (widths.values.empty()) {
                 widths.values = {1.0f};
                 widths.interp = HdInterpolationConstant;
@@ -400,15 +399,15 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
         HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
         const auto &t2 = *HdVkRenderSettingsTokens2;
-        // Karma's Render Curves As (flat ribbons, rounded curves, oriented
-        // ribbons, USD default) and Render Points As (discs, spheres,
-        // oriented discs); eldr:ribbons and eldr:sprites override them.
+        // Render Curves As (flat ribbons, rounded curves, oriented ribbons,
+        // USD default) and Render Points As (discs, spheres, oriented discs),
+        // eldr:object:curve_style / point_style else Karma's; the older
+        // eldr:ribbons and eldr:sprites override them.
         // ponytail: oriented ribbons without normals, and oriented discs,
         // face the camera.
-        static const TfToken curveStyle("karma:object:curve_style"), pointStyle("karma:object:point_style");
         if constexpr (curves) {
             const Primvar<GfVec3f> normals(sceneDelegate, id, HdTokens->normals);
-            const int style = HdVkPrimvar<int>(sceneDelegate, id, curveStyle, 3);
+            const int style = HdVkObjectPrimvar<int>(sceneDelegate, id, "object:curve_style", 3);
             const bool ribbons = style == 0 || style == 2 ? true
                                  : style == 1 ? false
                                               : delegate->GetRenderSetting<bool>(t2.curveRibbons, kHdVkCurveRibbons);
@@ -417,7 +416,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
             m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
             Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
         } else {
-            const int style = HdVkPrimvar<int>(sceneDelegate, id, pointStyle, -1);
+            const int style = HdVkObjectPrimvar<int>(sceneDelegate, id, "object:point_style", -1);
             const bool discs = style == 0 || style == 2 ? true
                                : style == 1 ? false
                                             : delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites);

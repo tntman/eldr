@@ -3,6 +3,7 @@
 #include "field.h"
 #include "instancer.h"
 #include "material.h"
+#include "mesh.h"
 #include "renderDelegate.h"
 #include "scene.h"
 
@@ -839,7 +840,7 @@ HdDirtyBits HdVkVolume::GetInitialDirtyBitsMask() const
 {
     return HdChangeTracker::InitRepr | HdChangeTracker::DirtyVolumeField | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyMaterialId;
+           HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyPrimvar;
 }
 
 void HdVkVolume::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -885,6 +886,10 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         _UpdateVisibility(sceneDelegate, dirtyBits);
         v.visible = IsVisible();
+    }
+    // Volume Limit (eldr:object:volumelimit, else karma:object:volumelimit).
+    if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        v.multipleScattering = HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", 0.0f) > 0.0f;
     }
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }

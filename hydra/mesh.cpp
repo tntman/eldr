@@ -29,9 +29,6 @@ TF_DEFINE_PRIVATE_TOKENS(
     _tokens,
     (st)
     ((eldrMatte, "eldr:matte"))
-    ((karmaHoldout, "karma:object:holdoutmode"))
-    ((karmaVisibility, "karma:object:rendervisibility"))
-    ((karmaMotionBlur, "karma:object:mblur"))
     ((planarReflection, "eldr:planarReflection"))
     ((reflectionProbe, "eldr:reflectionProbe")));
 
@@ -59,12 +56,10 @@ bool FindPrimvar(HdSceneDelegate *sd, SdfPath const &id, TfToken const &name,
 
 bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
 {
-    for (const TfToken &name : {_tokens->eldrMatte, _tokens->karmaHoldout}) {
-        HdInterpolation interp;
-        if (!FindPrimvar(sceneDelegate, id, name, &interp)) {
-            continue;
-        }
-        const VtValue value = sceneDelegate->Get(id, name);
+    // eldr:matte (the matte scene index's) adds to the object's own mode.
+    HdInterpolation interp;
+    if (FindPrimvar(sceneDelegate, id, _tokens->eldrMatte, &interp)) {
+        const VtValue value = sceneDelegate->Get(id, _tokens->eldrMatte);
         const VtValue scalar = value.IsArrayValued() && value.GetArraySize() > 0
             ? VtValue::Cast<VtIntArray>(value) : VtValue::Cast<int>(value);
         if (scalar.IsHolding<int>() ? scalar.UncheckedGet<int>() != 0
@@ -72,7 +67,7 @@ bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id)
             return true;
         }
     }
-    return false;
+    return HdVkObjectPrimvar<int>(sceneDelegate, id, "object:holdoutmode", 0) != 0;
 }
 
 static uint32_t ParseRays(std::string const &expression)
@@ -104,16 +99,13 @@ static uint32_t ParseRays(std::string const &expression)
 
 uint32_t HdVkRays(HdSceneDelegate *sceneDelegate, SdfPath const &id)
 {
-    const VtValue v = sceneDelegate->Get(id, _tokens->karmaVisibility);
-    if (!v.IsHolding<std::string>() && !v.IsHolding<TfToken>()) {
-        return vkr::Mesh::kAllRays;
-    }
-    return ParseRays(HdVkPrimvar<std::string>(sceneDelegate, id, _tokens->karmaVisibility, "*"));
+    // Not set (or not a string): all rays.
+    return ParseRays(HdVkObjectPrimvar<std::string>(sceneDelegate, id, "object:rendervisibility", "*"));
 }
 
 bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id)
 {
-    return HdVkPrimvar<bool>(sceneDelegate, id, _tokens->karmaMotionBlur, true);
+    return HdVkObjectPrimvar<bool>(sceneDelegate, id, "object:mblur", true);
 }
 
 namespace {
@@ -244,8 +236,22 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // Skinned meshes get points and topology dirtied with every new pose
     // (UsdSkelImaging's own points come from the pose), while HdVk's are
     // the rest points: re-flatten only on a real change.
-    if (HdChangeTracker::IsTopologyDirty(*dirtyBits, id) || (*dirtyBits & HdChangeTracker::DirtySubdivTags)) {
+    // eldr:renderAsSubdivision: a polygon mesh (scheme none) renders as
+    // catmullClark, as if Mesh Edit had set it.
+    const bool topologyDirty = HdChangeTracker::IsTopologyDirty(*dirtyBits, id);
+    bool asSubdivision = _asSubdivision;
+    if (topologyDirty || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
+        static const TfToken renderAsSubdivision("eldr:renderAsSubdivision");
+        asSubdivision = HdVkPrimvar<bool>(sceneDelegate, id, renderAsSubdivision, false);
+    }
+    if (topologyDirty || (*dirtyBits & HdChangeTracker::DirtySubdivTags) || asSubdivision != _asSubdivision) {
         HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
+        if (asSubdivision && topology.GetScheme() == PxOsdOpenSubdivTokens->none) {
+            topology = HdMeshTopology(PxOsdOpenSubdivTokens->catmullClark, topology.GetOrientation(),
+                                      topology.GetFaceVertexCounts(), topology.GetFaceVertexIndices(),
+                                      topology.GetHoleIndices(), 0);
+        }
+        _asSubdivision = asSubdivision;
         topology.SetSubdivTags(GetSubdivTags(sceneDelegate));  // creases, corners, boundary rules
         if (!(topology == _topology)) {
             _topology = topology;

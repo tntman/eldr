@@ -33,7 +33,7 @@ The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `buil
 | File | Where it shows |
 |---|---|
 | `HdVkRendererPlugin_Global.ds` | Render Settings LOP tab: every `eldr:*` setting, each with Karma's Do Nothing / Set or Create / Block menu |
-| `HdVkRendererPlugin_Geometry.ds` | Render Geometry Settings LOP tab: Eldr's own primvars (`primvars:eldr:reflectionProbe`, `planarReflection`, `hair`, `ribbons`, `sprites`, `refineLevel`) and a note naming the Karma tab's controls Eldr reads |
+| `HdVkRendererPlugin_Geometry.ds` | Render Geometry Settings LOP tab: Eldr's own primvars in collapsible sections (Subdivision and dicing, Visibility, Motion, Curves and points, Reflections, Volumes), each with a tooltip, and a line on the order eldr, Karma, default |
 | `HdVkRendererPlugin_Viewport.ds` | Viewport Display Options |
 
 Nodes made before Eldr was installed need **Rebuild Renderer-Specific Parameters**.
@@ -42,21 +42,26 @@ Nodes made before Eldr was installed need **Rebuild Renderer-Specific Parameters
 
 ## Render Geometry Settings
 
-Per-object controls are primvars on the prim. Eldr reads Karma's own where Karma has one, so they are set on the node's **Karma** tab: Houdini builds the node's tabs from every renderer's `.ds` file and keeps only the first parameter of a name (`loputils.addDialogScriptFolder` drops a second one with a "Duplicate" warning), and Eldr's tab comes before Karma's. A copy on Eldr's tab would take the parameter away from Karma's tab, so Eldr's tab only lists them. A hython check (SOP Import into a Render Geometry Settings LOP, each control set) confirmed the attribute and type each one authors below.
+Per-object controls are primvars on the prim. Every Karma control Eldr reads has an `eldr:object:` twin on Eldr's tab: **Eldr's setting wins when set, then Karma's (its tab), then the USD default**. The twins have their own parameter names, so Houdini's rule of keeping only the first parameter of a name (`loputils.addDialogScriptFolder` drops a second one with a "Duplicate" warning) does not apply. Each control authors the attribute below (checked with hython: SOP Import into a Render Geometry Settings LOP).
 
-| Control (tab) | Attribute | Karma honours it | Eldr |
+Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
+
+| Section | Control | Attribute (Karma's twin: `karma:` in place of `eldr:`) | Eldr |
 |---|---|---|---|
-| Render Visibility (Karma) | `string primvars:karma:object:rendervisibility` | Yes | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
-| Holdout Mode (Karma) | `int primvars:karma:object:holdoutmode` | Yes | Matte and Background both cut a holdout |
-| Enable Motion Blur (Karma) | `bool primvars:karma:object:mblur` | Yes | Off: no transform or deformation motion of its own; camera motion still blurs it |
-| Render Curves As (Karma) | `int primvars:karma:object:curve_style` | Yes | Flat and Oriented Ribbons: ribbons (camera-facing without normals); Rounded Curves: tubes; USD Default: `eldr:curveRibbons` |
-| Render Points As (Karma) | `int primvars:karma:object:point_style` | Yes | Discs and Oriented Discs: camera-facing discs; Spheres: spheres |
-| Width Scale (Karma) | `float primvars:karma:object:width_scale` | Yes | Multiplies curve and point widths |
-| Dicing Maximum Depth (Karma) | `int primvars:karma:object:dicingdepthmax` | Yes | Caps the refine level (-1: no cap) |
-| Subdivision Level (Eldr) | `int primvars:eldr:refineLevel` | No (Karma dices by screen size) | The mesh's refine level instead of the viewport's or husk's, at most `eldr:maxRefineLevel` |
-| Curves as Ribbons, Points as Discs (Eldr) | `bool primvars:eldr:ribbons`, `primvars:eldr:sprites` | No | Win over Render Curves As and Render Points As |
-| Hair Shading (Eldr) | `bool primvars:eldr:hair` | No | |
-| Reflection Probe, Planar Reflection (Eldr) | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | No | |
+| Subdivision and dicing | Render as Subdivision | `bool primvars:eldr:renderAsSubdivision` | A polygon mesh renders as Catmull-Clark, as with Mesh Edit; Karma has no such control |
+| | Subdivision Level | `int primvars:eldr:refineLevel` | The refine level instead of the viewport's or husk's, at most `eldr:maxRefineLevel` (Karma dices by screen size) |
+| | Dicing Maximum Depth | `int primvars:eldr:object:dicingdepthmax` | Caps the refine level (-1: no cap) |
+| Visibility | Render Visibility | `string primvars:eldr:object:rendervisibility` | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
+| | Holdout Mode | `int primvars:eldr:object:holdoutmode` | Matte and Background both cut a holdout |
+| Motion | Enable Motion Blur | `bool primvars:eldr:object:mblur` | Off: no transform or deformation motion of its own; camera motion still blurs it |
+| Curves and points | Render Curves As | `int primvars:eldr:object:curve_style` | Flat and Oriented Ribbons: ribbons (camera-facing without normals); Rounded Curves: tubes; USD Default: `eldr:curveRibbons` |
+| | Render Points As | `int primvars:eldr:object:point_style` | Discs and Oriented Discs: camera-facing discs; Spheres: spheres; USD Default: `eldr:pointSprites` |
+| | Width Scale | `float primvars:eldr:object:width_scale` | Multiplies curve and point widths |
+| | Hair Shading | `bool primvars:eldr:hair` | Eldr only |
+| Reflections | Reflection Probe, Planar Reflection | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | Eldr only |
+| Volumes | Volume Limit | `float primvars:eldr:object:volumelimit` | Above 0, the volume scatters more than once |
+
+`primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
 Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples, velocity and acceleration blur (Eldr samples points and transforms through the shutter, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
 

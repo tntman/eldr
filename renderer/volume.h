@@ -79,6 +79,9 @@ struct Volume {
     // One world transform per instance, 16 floats each, USD row-vector order.
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bool visible = true;
+    // Karma's Volume Limit above 0 on this volume (primvars:eldr:object:volumelimit,
+    // else karma:object:volumelimit): the frame scatters more than once.
+    bool multipleScattering = false;
     uint32_t tag = 1;  // render tag bit, as Mesh::tag
 
 private:

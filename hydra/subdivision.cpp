@@ -413,7 +413,7 @@ void HdVkSplitIndexed(vkr::Mesh const &m, std::vector<size_t> const &tris, vkr::
 
 // The display style's refine level (usdview's Complexity, Houdini's
 // Level of Detail), or the mesh's own primvars:eldr:refineLevel, at most
-// Karma's primvars:karma:object:dicingdepthmax (-1: no limit), within the
+// primvars:eldr:object:dicingdepthmax, else Karma's karma:object:dicingdepthmax (-1: no limit), within the
 // render settings' limit; 0 draws the cage.
 int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
 {
@@ -422,9 +422,9 @@ int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
     if (!delegate->GetRenderSetting<bool>(t.subdivision, kHdVkSubdivision)) {
         return 0;
     }
-    static const TfToken own("eldr:refineLevel"), depthMax("karma:object:dicingdepthmax");
+    static const TfToken own("eldr:refineLevel");
     int level = HdVkPrimvar<int>(sceneDelegate, GetId(), own, sceneDelegate->GetDisplayStyle(GetId()).refineLevel);
-    const int karmaMax = HdVkPrimvar<int>(sceneDelegate, GetId(), depthMax, -1);
+    const int karmaMax = HdVkObjectPrimvar<int>(sceneDelegate, GetId(), "object:dicingdepthmax", -1);
     if (karmaMax >= 0) {
         level = std::min(level, karmaMax);
     }

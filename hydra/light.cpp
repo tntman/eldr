@@ -83,6 +83,13 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     auto param = [&](TfToken const &name, auto fallback) {
         return sceneDelegate->GetLightParamValue(id, name).GetWithDefault(fallback);
     };
+    // "Render Light Geometry": inputs:eldr:light:renderlightgeo when authored,
+    // else Karma's inputs:karma:light:renderlightgeo, else shown.
+    auto renderLightGeo = [&] {
+        const VtValue eldr = sceneDelegate->GetLightParamValue(id, TfToken("inputs:eldr:light:renderlightgeo"));
+        return eldr.IsEmpty() ? param(TfToken("inputs:karma:light:renderlightgeo"), true)
+                              : eldr.GetWithDefault(true);
+    };
     const GfMatrix4d xf = sceneDelegate->GetTransform(id);
     GfVec3f color = param(HdLightTokens->color, GfVec3f(1.0f)) * param(HdLightTokens->intensity, 1.0f) *
                     std::exp2(param(HdLightTokens->exposure, 0.0f));
@@ -110,7 +117,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         _dome->visible = visible;
         // Karma's "Render Light Geometry" hides the dome from the camera only.
         // Karma's schema default is off; Eldr shows it unless authored false.
-        _dome->cameraVisible = param(TfToken("inputs:karma:light:renderlightgeo"), true);
+        _dome->cameraVisible = renderLightGeo();
         *dirtyBits = Clean;
         return;
     }
@@ -121,7 +128,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     // bool): false hides the light's shape from the camera. UsdLux has no
     // such attribute. ponytail: it can only hide; the shapes still need
     // eldr:lightShapesVisible.
-    light.cameraVisible = param(TfToken("inputs:karma:light:renderlightgeo"), true);
+    light.cameraVisible = renderLightGeo();
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
     light.specular = param(HdLightTokens->specular, 1.0f);
     if (_type == HdPrimTypeTokens->distantLight) {
