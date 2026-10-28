@@ -47,6 +47,7 @@ public:
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
+        float shadowCullPixels = 0.5f;  // the same in sun shadow texels (radius), per cascade
         // Always worth having, but each costs time: off to compare or to
         // speed up a heavy scene.
         bool depthPrepass = true;        // off: the main pass writes depth (no GTAO, no SSR)

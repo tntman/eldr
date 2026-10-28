@@ -39,6 +39,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((softShadows, "eldr:softShadows"))                      \
     ((taaSamples, "eldr:taaSamples"))                        \
     ((cullPixels, "eldr:cullPixels"))                        \
+    ((shadowCullPixels, "eldr:shadowCullPixels"))            \
     ((depthOfField, "eldr:depthOfField"))                    \
     ((motionBlur, "eldr:motionBlur"))                        \
     ((depthPrepass, "eldr:depthPrepass"))                    \
