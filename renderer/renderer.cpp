@@ -4372,7 +4372,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
 
     // Extra AOVs (aov.h), before the lens bends depth and the ids.
-    if (frame.extraAovs && Aovs::Any(out.aovs)) {
+    _aovsRecorded = frame.extraAovs && Aovs::Any(out.aovs);
+    if (_aovsRecorded) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
@@ -4478,7 +4479,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _deferred.adaptivePixelFraction = frame.adaptivePixelFraction;
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {
-        if (!o.dst) {
+        if (!o.dst || !out.readback) {
             continue;
         }
         o.offset = offset;
@@ -4558,9 +4559,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _deferredOutputs = true;
     } else {
         _WaitInFlight();
-        _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
-        if (frame.extraAovs) {
-            _aovs.Read(out.aovs);
+        if (out.readback) {
+            _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
+            if (frame.extraAovs) {
+                _aovs.Read(out.aovs);
+            }
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
@@ -4715,6 +4718,9 @@ void Renderer::Read(const Targets &out)
         if (outputs[i].second) {
             std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _outWidth * _outHeight);
         }
+    }
+    if (_aovsRecorded) {  // their copy is in the last Render's commands
+        _aovs.Read(out.aovs);
     }
 }
 

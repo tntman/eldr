@@ -534,6 +534,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},
         {"Read Back in Place (no copy)", t2.inPlaceReadback, VtValue(frame.inPlaceReadback)},
+        {"Offline Samples per Execute (seconds; husk, usdrecord; 0: one sample)", t2.offlineBatchSeconds,
+         VtValue(1.0f)},
         {"Keep Ids while Moving (no readback)", t2.staleMovingIds, VtValue(frame.staleMovingIds)},
         {"Compile Pipelines on Demand (fast start)", t2.lazyPipelines, VtValue(frame.lazyPipelines)},
         {"Unread AOVs Once Converged", t2.lazyExtraAovs, VtValue(frame.lazyExtraAovs)},

@@ -512,6 +512,10 @@ public:
         // the renderer's host memory (HostOutput) instead of copying them:
         // their pointers only say which to read back. Not Read's.
         bool inPlace = false;
+        // false: Render records the frame as usual (the extra AOVs still
+        // accumulate) but copies nothing back; Read fetches the last one's,
+        // extra AOVs included. Offline film samples in one execute.
+        bool readback = true;
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -863,6 +867,7 @@ private:
     // renderer would each need their own pair.
     Buffer _frameReadback[2];
     uint32_t _deliveredSlot = 0;
+    bool _aovsRecorded = false;  // the last Render's extra AOVs, for Read
     void *_delivered[5] = {};
     void _Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height, const Targets &out);
     static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);
