@@ -300,6 +300,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
         {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
         {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
+        {"Shadow Small Object Culling (shadow texels)", t.shadowCullPixels, VtValue(frame.shadowCullPixels)},
         {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},

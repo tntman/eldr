@@ -350,7 +350,7 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 | Zero cost when off | Shading pipelines compile in sets per combination of optional features (`kCompiledFeatures`). A new combination compiles about 96 pipelines (up to 35 s cold on heavy scenes). |
 | Pipeline cache | `eldr:pipelineCache`: `%LOCALAPPDATA%\Eldr\pipelines-<driver uuid>-<shader hash>.bin`; a new shader build starts a new file (delete old ones). Crowd first frame 33.5 to 2.0 s. |
 | Prewarm | `eldr:pipelinePrewarm` (Hydra default): after a feature change, compiles the sets one toggle away (GI, SSGI, fog first) on half the cores. |
-| Culling | GPU frustum, small-object (`eldr:cullPixels`), LOD, distance light cut-off. No Hi-Z occlusion. |
+| Culling | GPU frustum, small-object (`eldr:cullPixels`, sun shadows `eldr:shadowCullPixels`), LOD, distance light cut-off. No Hi-Z occlusion. |
 | GPU sharing | With an OpenGL Hgi, colour and depth skip the CPU (1080p 17.4 to 3.2 ms) |
 | Numerics | NaN/Inf cleaned where they enter each history (TAA, SSGI, GI, exposure) |
 

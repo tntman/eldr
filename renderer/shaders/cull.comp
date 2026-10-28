@@ -216,10 +216,10 @@ void main()
         Place(i, inst, wc, we, pc.planes, pc.pixelScale, pc.nearDistance, pc.minRadius, pc.orthographic > 0.5);
         return;
     }
-    // Instances under half a shadow texel are dropped.
+    // Instances under pc.minRadius shadow texels are dropped.
     for (uint c = 0u; c < cascades; ++c) {
         gListBase = (1u + c) * pc.instanceCapacity;
         gCommandBase = (1u + c) * pc.drawCount;
-        Place(i, inst, wc, we, cascadePlanes[c], 1.0 / frame.cascadeTexel[c], 0.0, 0.5, true);
+        Place(i, inst, wc, we, cascadePlanes[c], 1.0 / frame.cascadeTexel[c], 0.0, pc.minRadius, true);
     }
 }

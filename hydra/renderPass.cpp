@@ -485,6 +485,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         return productSized ? (y * frame.height / appHeight) * frame.width + x * frame.width / appWidth : p;
     };
     for (auto [token, value] : {std::pair{t.aoRadius, &frame.aoRadius}, {t.cullPixels, &frame.cullPixels},
+                                {t.shadowCullPixels, &frame.shadowCullPixels},
                                 {t.exposureCompensation, &frame.post.exposureCompensation},
                                 {t.bloomIntensity, &frame.post.bloomIntensity},
                                 {t.giHysteresis, &frame.giHysteresis}, {t.ssgiRadius, &frame.ssgiRadius},

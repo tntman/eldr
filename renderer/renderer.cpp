@@ -3681,6 +3681,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // dispatch (cull.comp's kAllCascades: each instance read once).
         if (cascades > 0) {
             cull.listBase = 0xFFFFFFFFu;  // kAllCascades
+            cull.minRadius = std::max(frame.shadowCullPixels, 0.0f);  // in shadow texels
             cull.commandBase = cascades;
             vkCmdPushConstants(_cmd, _layout, kPushStages, 0, sizeof(cull), &cull);
             vkCmdDispatch(_cmd, (gpu.instanceCapacity + 63) / 64, 1, 1);
