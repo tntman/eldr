@@ -1941,8 +1941,8 @@ int main()
             // ceiling. Beside it (pixel 43, x = 0.36) the wall's form factor
             // (numerically integrated) is 0.025 to the back face and 0.121 to
             // the +x edge: the edges are most of its light there. Traced
-            // shadows: the shadow maps' PCSS halves the light of a big light
-            // this close over an oblique receiver (printed, not checked).
+            // shadows and shadow maps both (PCSS on the oblique wall this
+            // close to the light found the wall itself a blocker: 0.664).
             vkr::Scene scene(&device);
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 1.0f);
@@ -1973,6 +1973,8 @@ int main()
             const float traced = Render(renderer, scene, frame).At(43, 32, 0);
             std::printf("panel edges: traced %.3f, maps %.3f (expected %.3f)\n", traced, maps, expected);
             Expect(std::abs(traced / expected - 1.0f) < 0.15f, "an emissive panel's edges light the wall beside it");
+            Expect(std::abs(maps / expected - 1.0f) < 0.15f,
+                   "shadow maps don't shadow the wall beside a big light with the wall itself");
         }
 
         if (device.rayTracing) {
