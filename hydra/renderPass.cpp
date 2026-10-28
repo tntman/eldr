@@ -84,10 +84,13 @@ std::string BindingText(HdRenderPassAovBinding const &b, const char *key)
                                                  : std::string();
 }
 
-TfToken BoundAov(HdRenderPassAovBinding const &b)
+TfToken BoundAov(HdRenderPassAovBinding const &b, const HdRenderSettings *settings = nullptr)
 {
     const auto text = [&](const char *key) { return BindingText(b, key); };
-    const std::string name = text("sourceName"), type = text("sourceType");
+    std::string name = text("sourceName"), type = text("sourceType");
+    if (name.empty() && settings) {
+        HdVkRenderVarSource(settings, b.aovName, &name, &type);
+    }
     if (name.empty()) {
         return b.aovName;
     }
@@ -210,7 +213,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::string huskName[vkr::Aovs::kCount];
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
-        const TfToken aovName = BoundAov(b);
+        const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->ActiveRenderSettings());
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
             if (aovName == aov.name) {
                 extra[aov.kind] = b.renderBuffer;

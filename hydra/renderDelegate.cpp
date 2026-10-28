@@ -86,6 +86,23 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
     return aovs;
 }
 
+bool HdVkRenderVarSource(const HdRenderSettings *settings, TfToken const &var, std::string *name, std::string *type)
+{
+    if (!settings || var.IsEmpty()) {
+        return false;
+    }
+    for (const HdRenderSettings::RenderProduct &rp : settings->GetRenderProducts()) {
+        for (const HdRenderSettings::RenderProduct::RenderVar &rv : rp.renderVars) {
+            if (!rv.sourceName.empty() && rv.varPath.GetNameToken() == var) {
+                *name = rv.sourceName;
+                *type = rv.sourceType.GetString();
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 namespace {
 
 // Background teardowns (~HdVkRenderDelegate) still running. A process exit
@@ -261,8 +278,17 @@ HdResourceRegistrySharedPtr HdVkRenderDelegate::GetResourceRegistry() const
     return _resourceRegistry;
 }
 
-HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name) const
+HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &requested) const
 {
+    // A render var's own name (Houdini's viewport: "rendervar1") is its source's.
+    std::string source, type;
+    TfToken name = requested;
+    if (HdVkRenderVarSource(ActiveRenderSettings(), requested, &source, &type)) {
+        name = type == "lpe" ? HdAovTokensMakeLpe(TfToken(source)) : TfToken(source);
+        if (name == TfToken("lpe:C.*[LO]")) {
+            name = HdAovTokens->color;
+        }
+    }
     if (name == HdAovTokens->color) {
         // Linear HDR; the app does display transforms (usdview: sRGB).
         return HdAovDescriptor(HdFormatFloat16Vec4, false, VtValue(GfVec4f(0.0f)));
@@ -275,7 +301,6 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
-    // Extra AOVs (vkr::Aovs), rendered only when bound; cleared to 0.
     for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
         if (name == aov.name) {
             const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)

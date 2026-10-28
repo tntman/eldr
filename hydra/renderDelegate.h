@@ -248,6 +248,12 @@ uint32_t HdVkRenderTagBit(TfToken const &tag);
 // (sceneIndexPlugin.cpp).
 void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type = HdPrimTypeTokens->mesh);
 
+class HdRenderSettings;
+// The sourceName/sourceType of the render var named `var` (the prim's name) in
+// the settings prim's products: Houdini's viewport binds a var by that name
+// alone. False when no such var.
+bool HdVkRenderVarSource(const HdRenderSettings *settings, TfToken const &var, std::string *name, std::string *type);
+
 class HdVkTextureCache;
 class HdVkMaterialFallbacks;
 class HdVkGLInterop;
