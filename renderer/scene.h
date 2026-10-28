@@ -971,6 +971,7 @@ private:
     std::vector<float> _keptMotion;            // the last Commit's motion rows (Commit's keepMotion)
     std::vector<uint32_t> _keptMotionBase;
     bool _keptMoved = false;
+    bool _keptShutter = false;  // _keptMotion came from shutter samples
     std::vector<uint32_t> _lastDrawn;  // per slot: instances shadows drew last Commit
     std::vector<uint32_t> _lastRays;   // per slot: the rays that saw it (Mesh::rays)
     VkImage _envImage = VK_NULL_HANDLE;

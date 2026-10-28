@@ -1671,8 +1671,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             return m->geometryDirty || m->transformsDirty || m->jointsDirty;
         })) {
         _gpu.moved = false;
-        _keptMotion.clear();
-        _keptMotionBase.assign(_meshes.size(), kNone);
+        if (!_keptShutter) {  // the shutter's motion stays for a later commit (below)
+            _keptMotion.clear();
+            _keptMotionBase.assign(_meshes.size(), kNone);
+        }
         return;
     }
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
@@ -1727,6 +1729,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // Upload only what changed. Rigid meshes that moved keep their previous
     // transforms for motion vectors (a new or re-flattened mesh has none).
     bool changed = _changed;
+    bool uploads = false;  // a mesh uploaded geometry, transforms or joints
+    bool shutterRows = false;  // motion rows from the shutter's samples (Mesh::shutterMotion)
     _changed = false;
     _gpu.moved = false;
     std::vector<float> motion;
@@ -1759,6 +1763,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         if (transforms && (!geometry || m->shutterMotion) && !skinned && !m->transforms.empty() &&
             m->prevTransforms.size() == m->transforms.size()) {
             motionBase[m->_slot] = uint32_t(motion.size() / 12);
+            shutterRows = shutterRows || m->shutterMotion;
             for (size_t i = 0; i < m->prevTransforms.size(); i += 16) {
                 const float *x = &m->prevTransforms[i];  // as _UploadInstances' rows
                 for (int r = 0; r < 3; ++r) {
@@ -1780,20 +1785,28 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _UpdateWorldBounds(*m);
         }
         changed = changed || geometry || transforms || joints;
+        uploads = uploads || geometry || transforms || joints;
         // New points with velocities (deformation blur) move too.
         _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
     // A second commit for the same frame (keepMotion) keeps the first's
-    // motion when it moved nothing itself.
-    if (keepMotion && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
+    // motion when it moved nothing itself. So does one that uploaded no mesh
+    // while the motion is the shutter's (sampled motion): husk commits again
+    // after its first frame (levels of detail that finished), and the new
+    // scene version (below) restarts the film, which then needs that
+    // motion to capture the shutter again instead of rendering still.
+    const bool keepShutter = !keepMotion && !uploads && _keptShutter;
+    if ((keepMotion || keepShutter) && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
         motion = _keptMotion;
         motionBase = _keptMotionBase;
-        _gpu.moved = _keptMoved;
+        _gpu.moved = keepMotion && _keptMoved;
+        shutterRows = _keptShutter;
     }
     _keptMotion = motion;
     _keptMotionBase = motionBase;
     _keptMoved = _gpu.moved;
+    _keptShutter = shutterRows;
     // Levels of detail that finished building, for meshes they still fit.
     for (auto it = _pendingLods.begin(); it != _pendingLods.end();) {
         if (it->levels.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
@@ -2176,6 +2189,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     if (changed || drawn != _lastDrawn || rays != _lastRays) {
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;
+        _gpu.moved = _gpu.moved || (keepShutter && !motion.empty());  // the film restarts: capture the shutter again
+        _keptMoved = _gpu.moved;
         _lastDrawn = std::move(drawn);
         _lastRays = std::move(rays);
     }
