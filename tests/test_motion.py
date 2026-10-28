@@ -253,9 +253,16 @@ points.CreateWidthsAttr([1.0])
 points.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
 points.CreateVelocitiesAttr([Gf.Vec3f(24, 0, 0)])
 stillPrimvars = UsdGeom.PrimvarsAPI(points)
-sharp = velocityBlur()
-blurred = velocityBlur(eldr=2)
-expect(blurred >= sharp + 8, "eldr:object:vblur 2: points blur by their velocities (%d edge pixels, %d without)"
+# A sphere's shading ramps too: measure how wide it shows instead.
+def covered(row):
+    return sum(red(x, row) > 0.01 for x in range(SIZE))
+
+
+velocityBlur()
+sharp = covered(32)
+velocityBlur(eldr=2)
+blurred = covered(32)
+expect(blurred >= sharp + 6, "eldr:object:vblur 2: points blur by their velocities (%d pixels wide, %d without)"
        % (blurred, sharp))
 # A PointInstancer's instances: instance_vblur.
 points.GetPrim().SetActive(False)
