@@ -119,7 +119,7 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
     vec3 alpha = clamp(grid - vec3(base), 0.0, 1.0);
     vec2 irradianceSize = vec2(textureSize(giAtlas[0], 0)), visibilitySize = vec2(textureSize(giAtlas[1], 0));
     vec3 sum = vec3(0.0);
-    float weights = 0.0, active = 0.0;
+    float weights = 0.0, shares = 0.0;
     for (int i = 0; i < 8; ++i) {
         ivec3 offset = ivec3(i, i >> 1, i >> 2) & 1;
         ivec3 c = base + offset;
@@ -151,11 +151,11 @@ vec4 GiIrradiance(vec3 p, vec3 n, vec3 v)
         w *= share;
         sum += irradiance.rgb * w;
         weights += w;
-        active += share;
+        shares += share;
     }
     // Probes the visibility test rejects keep under ~0.005 each after the
     // crush; a probe that sees p keeps over ~0.2 (times its share).
-    return weights > 1e-8 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights / active)) : vec4(0.0);
+    return weights > 1e-8 ? vec4(sum / weights, smoothstep(0.05, 0.15, weights / shares)) : vec4(0.0);
 }
 
 #ifdef RT_RESULTS
