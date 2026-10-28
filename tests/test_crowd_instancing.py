@@ -1,8 +1,8 @@
-"""Crowd instancing (eldr:crowdInstancing): a Houdini-style crowd (make_crowd.py
+"""Crowd instancing (HD_ENABLE_DEFERRED_SKINNING=1): a Houdini-style crowd (make_crowd.py
 "houdini": an animated Xform per agent above an instanceable SkelRoot whose
 mesh maps its skel:joints) renders as one instanced mesh per prototype, the
-same image as with every agent its own mesh (HD_ENABLE_DEFERRED_SKINNING=0).
-The setting is read once per process, so each mode renders in a child.
+same image as with every agent its own mesh. HD_ENABLE_DEFERRED_SKINNING is
+read once per process, so each mode renders in a child with it set.
 Run: usdenv.cmd python tests\\test_crowd_instancing.py"""
 import os
 import subprocess
@@ -48,9 +48,9 @@ def child(scene, out):
 
 def render(scene, out, deferred):
     env = dict(os.environ)
-    env.pop("HD_ENABLE_DEFERRED_SKINNING", None)
-    if not deferred:
-        env["HD_ENABLE_DEFERRED_SKINNING"] = "0"
+    # UsdImagingGL.Engine starts with Storm, which reads the setting before
+    # Eldr's delegate could turn it on: set it for the process.
+    env["HD_ENABLE_DEFERRED_SKINNING"] = "1" if deferred else "0"
     p = subprocess.run([sys.executable, __file__, "--child", scene, out], env=env, capture_output=True, text=True,
                        timeout=600)
     sys.stderr.write(p.stderr)

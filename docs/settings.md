@@ -88,7 +88,6 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Indirect Light Intensity (final pixel only)<br>`eldr:indirectIntensity` | float 1 | Same for GI, SSGI, probes, reflections. 0 leaves direct light only. | As above |
 | Write Render Products<br>`eldr:renderProducts` | on | Writes the active UsdRenderSettings' EXR products when the frame converged (`usdrecord --renderSettingsPrimPath`, husk). Off writes nothing. | One readback per converged frame |
 | Render Products at their Resolution<br>`eldr:productResolution` | on | Renders at the first raster product's `resolution`, `pixelAspectRatio` and `dataWindowNDC`. No authored `resolution` means 2048x1080 (as husk). The app's own buffers get a nearest resample; extra AOVs stay empty. Off: frame size. | One CPU resample per frame while sizes differ |
-| Crowd Instancing<br>`eldr:crowdInstancing` | on | Instanced skinned agents with their own animations (Houdini crowds) stay one mesh per prototype, skinned per instance on the GPU, not a mesh per agent. Read as the renderer starts; in Houdini only by husk. | CROWDCOST |
 
 ### Lighting
 

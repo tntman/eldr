@@ -14,7 +14,7 @@
 //   HdVkMesh skins on the GPU and per frame only the skinning transforms
 //   change. Authored normals come back the same way (UsdSkelImaging blocks
 //   them on skinned meshes) and are skinned on the GPU too. With deferred
-//   skinning (eldr:crowdInstancing) those primvars come as they are, and
+//   skinning (HD_ENABLE_DEFERRED_SKINNING=1) those primvars come as they are, and
 //   instanced skeletons' per-instance transforms are remapped to the mesh's
 //   own skel:joints here (UsdSkelImaging remaps only the first instance's).
 #include "renderDelegate.h"
