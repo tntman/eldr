@@ -13,10 +13,14 @@
 //   UsdSkelImaging writes itself with HD_ENABLE_DEFERRED_SKINNING), so
 //   HdVkMesh skins on the GPU and per frame only the skinning transforms
 //   change. Authored normals come back the same way (UsdSkelImaging blocks
-//   them on skinned meshes) and are skinned on the GPU too.
+//   them on skinned meshes) and are skinned on the GPU too. With deferred
+//   skinning (HD_ENABLE_DEFERRED_SKINNING=1) those primvars come as they are, and
+//   instanced skeletons' per-instance transforms are remapped to the mesh's
+//   own skel:joints here (UsdSkelImaging remaps only the first instance's).
 #include "renderDelegate.h"
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/matrix4f.h"
 #include "pxr/imaging/hd/extComputationPrimvarsSchema.h"
 #include "pxr/imaging/hd/extComputationSchema.h"
 #include "pxr/imaging/hd/filteringSceneIndex.h"
@@ -63,10 +67,59 @@ TF_DEFINE_PRIVATE_TOKENS(
     (blendShapeOffsetRanges)
     (numBlendShapeOffsetRanges)
     (blendShapeWeights)
+    (skelBinding)
+    (skeleton)
+    (joints)
+    (resolvedSkeleton)
+    (skinningTransforms)
     ((eldrVblur, "eldr:object:vblur"))
     ((karmaVblur, "karma:object:vblur"))
     ((eldrInstanceVblur, "eldr:object:instance_vblur"))
     ((karmaInstanceVblur, "karma:object:instance_vblur")));
+
+// The skinning transforms of every instance of a skeleton (skeleton joint
+// order, instance after instance) in a mesh's skel:joints order: what
+// UsdSkelAnimMapper::RemapTransforms does for one instance, for each. A mesh
+// joint the skeleton lacks gets the identity, as there.
+class _InstanceJointsDataSource final : public HdTypedSampledDataSource<VtMatrix4fArray>
+{
+public:
+    HD_DECLARE_DATASOURCE(_InstanceJointsDataSource);
+
+    VtValue GetValue(Time t) override { return VtValue(GetTypedValue(t)); }
+
+    VtMatrix4fArray GetTypedValue(Time t) override
+    {
+        const VtMatrix4fArray source = _skeleton->GetTypedValue(t);
+        const size_t from = _skelJoints, to = _map.size(), instances = from ? source.size() / from : 0;
+        VtMatrix4fArray result(instances * to, GfMatrix4f(1.0f));
+        GfMatrix4f *out = result.data();
+        for (size_t i = 0; i < instances; ++i) {
+            for (size_t j = 0; j < to; ++j, ++out) {
+                if (_map[j] >= 0) {
+                    *out = source[i * from + size_t(_map[j])];
+                }
+            }
+        }
+        return result;
+    }
+
+    bool GetContributingSampleTimesForInterval(Time start, Time end, std::vector<Time> *times) override
+    {
+        return _skeleton->GetContributingSampleTimesForInterval(start, end, times);
+    }
+
+private:
+    _InstanceJointsDataSource(HdTypedSampledDataSource<VtMatrix4fArray>::Handle skeleton, size_t skelJoints,
+                              std::vector<int> map)
+        : _skeleton(std::move(skeleton)), _skelJoints(skelJoints), _map(std::move(map))
+    {
+    }
+
+    const HdTypedSampledDataSource<VtMatrix4fArray>::Handle _skeleton;
+    const size_t _skelJoints;
+    const std::vector<int> _map;  // skeleton joint of each mesh joint, -1: none
+};
 
 TF_DECLARE_REF_PTRS(_SkinningSceneIndex);
 
@@ -89,7 +142,7 @@ public:
         const HdContainerDataSourceHandle computation =
             _GetInputSceneIndex()->GetPrim(path.AppendChild(_tokens->computation)).dataSource;
         if (!aggregator || !computation) {
-            return prim;
+            return _RemapInstanceJoints(prim);
         }
         const HdSampledDataSourceContainerSchema rest =
             HdExtComputationSchema::GetFromParent(aggregator).GetInputValues();
@@ -234,6 +287,65 @@ protected:
     }
 
 private:
+    // Deferred skinning of an instanced skeleton (hydra:numJoints > 0: the
+    // skinning transforms of all instances, numJoints each) whose mesh names
+    // its own skel:joints: UsdSkelImaging remaps only the first instance's
+    // (its XXX TODO in _SkinningXformsDataSource), the rest would be lost.
+    // Remap every instance's from the resolved skeleton instead.
+    HdSceneIndexPrim _RemapInstanceJoints(HdSceneIndexPrim prim) const
+    {
+        const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+        const HdSampledDataSourceHandle numJoints =
+            primvars.GetPrimvar(HdSkinningInputTokens->numJoints).GetPrimvarValue();
+        if (!numJoints || numJoints->GetValue(0.0f).GetWithDefault<int>(0) <= 0) {
+            return prim;
+        }
+        const HdContainerDataSourceHandle binding = HdContainerDataSource::Cast(prim.dataSource->Get(_tokens->skelBinding));
+        const auto meshJointsDs =
+            binding ? HdTypedSampledDataSource<VtTokenArray>::Cast(binding->Get(_tokens->joints)) : nullptr;
+        const auto skeletonDs =
+            binding ? HdTypedSampledDataSource<SdfPath>::Cast(binding->Get(_tokens->skeleton)) : nullptr;
+        if (!meshJointsDs || !skeletonDs) {
+            return prim;
+        }
+        const HdContainerDataSourceHandle skeleton =
+            _GetInputSceneIndex()->GetPrim(skeletonDs->GetTypedValue(0.0f)).dataSource;
+        const HdContainerDataSourceHandle skelSchema =
+            skeleton ? HdContainerDataSource::Cast(skeleton->Get(_tokens->skeleton)) : nullptr;
+        const HdContainerDataSourceHandle resolved =
+            skeleton ? HdContainerDataSource::Cast(skeleton->Get(_tokens->resolvedSkeleton)) : nullptr;
+        const auto skelJointsDs =
+            skelSchema ? HdTypedSampledDataSource<VtTokenArray>::Cast(skelSchema->Get(_tokens->joints)) : nullptr;
+        const auto transforms = resolved ? HdTypedSampledDataSource<VtMatrix4fArray>::Cast(
+                                               resolved->Get(_tokens->skinningTransforms))
+                                         : nullptr;
+        const VtTokenArray meshJoints = meshJointsDs->GetTypedValue(0.0f);
+        const VtTokenArray skelJoints = skelJointsDs ? skelJointsDs->GetTypedValue(0.0f) : VtTokenArray();
+        if (!transforms || meshJoints.empty() || skelJoints.empty() || meshJoints == skelJoints) {
+            return prim;  // no mapping: UsdSkelImaging's are right
+        }
+        std::vector<int> map(meshJoints.size(), -1);
+        for (size_t j = 0; j < meshJoints.size(); ++j) {
+            const auto it = std::find(skelJoints.begin(), skelJoints.end(), meshJoints[j]);
+            map[j] = it == skelJoints.end() ? -1 : int(it - skelJoints.begin());
+        }
+        auto constant = [](HdDataSourceBaseHandle const &value) {
+            return HdPrimvarSchema::Builder()
+                .SetPrimvarValue(HdSampledDataSource::Cast(value))
+                .SetInterpolation(HdPrimvarSchema::BuildInterpolationDataSource(HdPrimvarSchemaTokens->constant))
+                .Build();
+        };
+        const TfToken names[] = {HdSkinningInputTokens->skinningXforms, HdSkinningInputTokens->numJoints};
+        const HdDataSourceBaseHandle values[] = {
+            constant(_InstanceJointsDataSource::New(transforms, skelJoints.size(), std::move(map))),
+            constant(HdRetainedTypedSampledDataSource<int>::New(int(meshJoints.size())))};
+        prim.dataSource = HdOverlayContainerDataSource::New(
+            HdRetainedContainerDataSource::New(HdPrimvarsSchema::GetSchemaToken(),
+                                               HdRetainedContainerDataSource::New(2, names, values)),
+            prim.dataSource);
+        return prim;
+    }
+
     static bool _IsComputation(SdfPath const &path)
     {
         return path.IsPrimPath() && (path.GetNameToken() == _tokens->aggregator ||
