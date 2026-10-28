@@ -189,6 +189,11 @@ float ShadowDistance(float depth, float n, float f)
 // soft shadows (PCSS, Fernando 2005): the average depth of the blockers
 // around the receiver sets the penumbra width by similar triangles, then
 // Poisson PCF over it, rotated per pixel and frame for TAA to average.
+// Every tap of both compares against the receiver's plane there (window
+// depth is affine in atlas uv on a plane, so the gradient is exact): a
+// tilted receiver near a big light (a wall beside an emissive panel) would
+// otherwise find itself as a blocker, and only things on the light's side
+// of the plane count. The normal offset covers the texels' quantization.
 // ponytail: blockers are searched assuming none closer than a quarter of
 // the way to the receiver, and kernels are clamped to 24 texels and to the
 // tile (cube face seams can show under very soft shadows).
@@ -214,7 +219,8 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float texel = t.params.x * dist;
     vec3 l = -fromLight / max(dist, 1e-8);
     float NoL = clamp(dot(ng, l), 0.0, 1.0);
-    vec4 clip = t.viewProj * vec4(p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5, 1.0);
+    vec3 q = p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5;
+    vec4 clip = t.viewProj * vec4(q, 1.0);
     vec3 ndc = clip.xyz / clip.w;
     vec2 uv = t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw;
     float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
@@ -237,25 +243,36 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float angle = 6.2831853 * SampleNoise(kDimShadow, gl_FragCoord.xy, float(frame.localLights.y));
     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
 
+    // The receiver plane's window depth per atlas uv, from two steps along
+    // it (8 texels: well above float precision, well short of the light).
+    vec3 b1 = normalize(cross(ng, abs(ng.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+    vec4 c1 = t.viewProj * vec4(q + b1 * texel * 8.0, 1.0), c2 = t.viewProj * vec4(q + cross(ng, b1) * texel * 8.0, 1.0);
+    vec3 d1 = c1.xyz / c1.w - ndc, d2 = c2.xyz / c2.w - ndc;
+    mat2 steps = mat2(d1.xy * 0.5 * t.rect.zw, d2.xy * 0.5 * t.rect.zw);  // uv per step
+    float det = determinant(steps);
+    vec2 grad = c1.w > 0.0 && c2.w > 0.0 && abs(det) > 1e-24 ? inverse(transpose(steps)) * (0.5 * vec2(d1.z, d2.z)) : vec2(0.0);
+
     float searchUv = min(size * 3.0 / receiver * uvPerUnit, maxUv);
     int samples = int(frame.features.z);
-    float blockers = 0.0, count = 0.0;
+    float spread = 0.0, count = 0.0;  // sum of 1 / blocker - 1 / receiver
     for (int i = 0; i < samples; ++i) {
         vec2 s = clamp(uv + rotation * kPoisson[i] * searchUv, lo, hi);
         float d = texelFetch(shadowAtlasDepth, ivec2(s * atlasSize), 0).r;
-        if (d < ref) {
-            blockers += d;
+        float plane = ref + dot(grad, s - uv);
+        if (d < plane) {
+            spread += 1.0 / ShadowDistance(d, t.params.y, t.params.z) -
+                      1.0 / ShadowDistance(min(plane, 1.0), t.params.y, t.params.z);
             count += 1.0;
         }
     }
     if (count == 0.0) {
         return 1.0;
     }
-    float blocker = ShadowDistance(blockers / count, t.params.y, t.params.z);
-    float filterUv = clamp(size * (1.0 / blocker - 1.0 / receiver) * uvPerUnit, 1.0 / atlasSize, maxUv);
+    float filterUv = clamp(size * spread / count * uvPerUnit, 1.0 / atlasSize, maxUv);
     float sum = 0.0;
     for (int i = 0; i < samples; ++i) {
-        sum += texture(shadowAtlas, vec3(clamp(uv + rotation * kPoisson[i] * filterUv, lo, hi), ref));
+        vec2 s = clamp(uv + rotation * kPoisson[i] * filterUv, lo, hi);
+        sum += texture(shadowAtlas, vec3(s, ref + dot(grad, s - uv)));
     }
     return sum / float(samples);
 }
