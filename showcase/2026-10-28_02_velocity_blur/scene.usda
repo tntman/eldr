@@ -1,0 +1,90 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/motion_blur.usda@]
+    startTimeCode = 24
+    endTimeCode = 24
+)
+
+# Velocity blur needs vblur > 0. eldr: names win over karma: ones.
+over "mesh_velocitiesOnly"
+{
+    over "mesh"
+    {
+        int primvars:eldr:object:vblur = 1
+    }
+}
+
+over "mesh_velocitiesAccelerations"
+{
+    over "mesh"
+    {
+        int primvars:eldr:object:vblur = 2
+    }
+}
+
+# karma only: Eldr reads it too
+over "pointsVelocities"
+{
+    over "points"
+    {
+        int primvars:karma:object:vblur = 1
+    }
+}
+
+# both: eldr (0, no velocity blur) wins over karma (1)
+over "curvesVelocities"
+{
+    over "curves"
+    {
+        int primvars:karma:object:vblur = 1
+        int primvars:eldr:object:vblur = 0
+    }
+}
+
+over "inst_velocities"
+{
+    over "instancer"
+    {
+        int primvars:eldr:object:instance_vblur = 1
+    }
+}
+
+over "inst_angularVelocities"
+{
+    over "instancer"
+    {
+        int primvars:karma:object:instance_vblur = 1
+    }
+}
+
+def Scope "Render"
+{
+    def RenderSettings "blurOn"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:motionBlur = 1
+    }
+
+    def RenderSettings "blurOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:motionBlur = 0
+    }
+
+    def RenderSettings "blurFinal"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:motionBlurTimeSamples = 1
+    }
+
+    def RenderSettings "cameraBlur"
+    {
+        rel camera = </camMoving>
+        int2 resolution = (480, 270)
+        custom bool eldr:motionBlur = 1
+    }
+}

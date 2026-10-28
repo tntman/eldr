@@ -1,0 +1,17 @@
+# Eldr showcase scenes
+
+Small scenes to try Eldr features yourself. Each folder has a `scene.usda` with several `/Render/*` Render Settings prims (A/B toggles) and a `README.md`.
+
+Every new feature adds a folder here, named `date_NN_name`, so they sort old to new.
+
+| Date | Folder | Feature | Settings |
+|---|---|---|---|
+| 2026-10-28 | `2026-10-28_01_memory_subdivision` | Subdivision refine levels, polygon meshes as subdivision, memory | `eldr:maxRefineLevel`, `eldr:subdivision`, `primvars:eldr:refineLevel`, `renderAsSubdivision` |
+| 2026-10-28 | `2026-10-28_02_velocity_blur` | Velocity and instance blur, eldr over karma | `eldr:motionBlur`, `primvars:eldr:object:vblur`, `instance_vblur` |
+| 2026-10-28 | `2026-10-28_03_emitters_shadows_reflections` | Traced shadows and reflections, emissive lights | `eldr:rtShadows`, `rtReflections`, `rtHitShadows`, `finalShadows`, `emissiveLights` |
+| 2026-10-28 | `2026-10-28_04_gi_final_gather` | GI probes, final gather, SSGI | `eldr:gi`, `ssgi`, `finalGather`, `giRelocation`, `finalGatherDistance` |
+| 2026-10-28 | `2026-10-28_05_houdini_render_vars` | Render Vars in the Houdini viewport and husk | Render Product and Render Var prims, `houdini:viewport` |
+| 2026-10-28 | `2026-10-28_06_eldr_geometry_tab` | Per-object eldr: attributes over karma:, image group | `holdoutmode`, `rendervisibility`, `width_scale`, `curve_style`, `point_style`; `eldr:productLinear`, `bloomIntensity` |
+| 2026-10-28 | `2026-10-28_07_shadow_cull` | Small-object culling in sun shadows | `eldr:shadowCullPixels` |
+
+Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.

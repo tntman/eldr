@@ -1,0 +1,106 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/holdout.usda@]
+)
+
+# holdout.usda: /ball has karma holdoutmode 2 (matte), /box karma 1.
+# /box: eldr 0 wins over karma 1, so it renders normally.
+over "box"
+{
+    int primvars:eldr:object:holdoutmode = 0
+}
+
+# /front: eldr phantom (-primary): unseen, still shadows. Karma says "*".
+over "front"
+{
+    string primvars:karma:object:rendervisibility = "*"
+    string primvars:eldr:object:rendervisibility = "-primary"
+}
+
+# The curves and points scene (no default prim, so each prim is referenced), 200 units behind.
+def Xform "curvesScene"
+{
+    double3 xformOp:translate = (0, 0, -200)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Camera "cam" (references = @../../tests/scenes/curves.usda@</cam>)
+    {
+    }
+
+    # width_scale: eldr 0.4 wins over karma 3
+    def BasisCurves "bezier" (references = @../../tests/scenes/curves.usda@</bezier>)
+    {
+        float primvars:karma:object:width_scale = 3
+        float primvars:eldr:object:width_scale = 0.4
+    }
+
+    # karma only
+    def BasisCurves "bspline" (references = @../../tests/scenes/curves.usda@</bspline>)
+    {
+        float primvars:karma:object:width_scale = 2.5
+    }
+
+    # curve_style: eldr 1 (tubes) wins over karma 0 (ribbons)
+    def BasisCurves "catmullRom" (references = @../../tests/scenes/curves.usda@</catmullRom>)
+    {
+        int primvars:karma:object:curve_style = 0
+        int primvars:eldr:object:curve_style = 1
+    }
+
+    def BasisCurves "polyline" (references = @../../tests/scenes/curves.usda@</polyline>)
+    {
+    }
+
+    def BasisCurves "ribbon" (references = @../../tests/scenes/curves.usda@</ribbon>)
+    {
+    }
+
+    def BasisCurves "loop" (references = @../../tests/scenes/curves.usda@</loop>)
+    {
+    }
+
+    def Points "points" (references = @../../tests/scenes/curves.usda@</points>)
+    {
+        int primvars:eldr:object:point_style = 1
+    }
+}
+
+def Scope "Render"
+{
+    def RenderSettings "holdoutScene"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:holdouts = 1
+    }
+
+    def RenderSettings "holdoutsOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:holdouts = 0
+    }
+
+    def RenderSettings "curves"
+    {
+        rel camera = </curvesScene/cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:productLinear = 1
+    }
+
+    def RenderSettings "curvesTonemapped"
+    {
+        rel camera = </curvesScene/cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:productLinear = 0
+        custom float eldr:bloomIntensity = 0.0
+    }
+
+    def RenderSettings "curvesBloom"
+    {
+        rel camera = </curvesScene/cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:productLinear = 0
+        custom float eldr:bloomIntensity = 1.0
+    }
+}

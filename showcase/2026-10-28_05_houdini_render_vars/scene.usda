@@ -1,0 +1,54 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/cornell.usda@]
+)
+
+def Scope "Render"
+{
+    def RenderSettings "default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:finalQuality = 1
+        rel products = </Render/beauty>
+    }
+
+    def RenderSettings "viewport"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool houdini:viewport = 1
+        rel products = </Render/beauty>
+    }
+
+    def RenderProduct "beauty"
+    {
+        rel orderedVars = [</Render/C>, </Render/rendervar1>, </Render/N>, </Render/depth>]
+        token productName = "renderVars.exr"
+        rel camera = </cam>
+    }
+    def RenderVar "C"
+    {
+        uniform token dataType = "color4f"
+        uniform string sourceName = "C.*[LO]"
+        uniform token sourceType = "lpe"
+    }
+    def RenderVar "rendervar1"
+    {
+        uniform token dataType = "color3f"
+        uniform string sourceName = "CDA"
+        uniform token sourceType = "lpe"
+    }
+    def RenderVar "N"
+    {
+        uniform token dataType = "normal3f"
+        uniform string sourceName = "ray:hitN"
+        uniform token sourceType = "raw"
+    }
+    def RenderVar "depth"
+    {
+        uniform token dataType = "float"
+        uniform string sourceName = "ray:hitPz"
+        uniform token sourceType = "raw"
+    }
+}
