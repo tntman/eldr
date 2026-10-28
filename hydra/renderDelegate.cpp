@@ -283,15 +283,23 @@ HdResourceRegistrySharedPtr HdVkRenderDelegate::GetResourceRegistry() const
 
 HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &requested) const
 {
-    // A render var's own name (Houdini's viewport: "rendervar1") is its source's.
+    // A name Eldr knows is that AOV (husk's "depth" var with source
+    // ray:hitPz stays depth). Another, a render var's own name (Houdini's
+    // viewport: "rendervar1"), is its source's.
+    const HdAovDescriptor known = KnownAovDescriptor(requested);
     std::string source, type;
-    TfToken name = requested;
-    if (HdVkRenderVarSource(ActiveRenderSettings(), requested, &source, &type)) {
-        name = type == "lpe" ? HdAovTokensMakeLpe(TfToken(source)) : TfToken(source);
-        if (name == TfToken("lpe:C.*[LO]")) {
-            name = HdAovTokens->color;
-        }
+    if (known.format != HdFormatInvalid || !HdVkRenderVarSource(ActiveRenderSettings(), requested, &source, &type)) {
+        return known;
     }
+    TfToken name = type == "lpe" ? HdAovTokensMakeLpe(TfToken(source)) : TfToken(source);
+    if (name == TfToken("lpe:C.*[LO]")) {
+        name = HdAovTokens->color;
+    }
+    return KnownAovDescriptor(name);
+}
+
+HdAovDescriptor HdVkRenderDelegate::KnownAovDescriptor(TfToken const &name)
+{
     if (name == HdAovTokens->color) {
         // Linear HDR; the app does display transforms (usdview: sRGB).
         return HdAovDescriptor(HdFormatFloat16Vec4, false, VtValue(GfVec4f(0.0f)));

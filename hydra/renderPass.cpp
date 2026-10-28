@@ -88,7 +88,10 @@ TfToken BoundAov(HdRenderPassAovBinding const &b, const HdRenderSettings *settin
 {
     const auto text = [&](const char *key) { return BindingText(b, key); };
     std::string name = text("sourceName"), type = text("sourceType");
-    if (name.empty() && settings) {
+    // Only a name Eldr doesn't know is a render var's (usdrecord binds Hydra's
+    // "depth" while a product's var of that name reads ray:hitPz).
+    if (name.empty() && settings &&
+        HdVkRenderDelegate::KnownAovDescriptor(b.aovName).format == HdFormatInvalid) {
         HdVkRenderVarSource(settings, b.aovName, &name, &type);
     }
     if (name.empty()) {

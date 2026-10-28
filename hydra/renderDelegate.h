@@ -343,6 +343,9 @@ public:
     static void NoteSceneEdit(HdSceneDelegate *sceneDelegate);
     uint64_t SceneEdits() const { return _sceneEdits; }
 
+    // The descriptor of an AOV Eldr knows by `name`; invalid otherwise.
+    static HdAovDescriptor KnownAovDescriptor(TfToken const &name);
+
 private:
     std::atomic<uint64_t> _sceneEdits{0};  // rprims sync in parallel
     // Fields' grids by path (CreateBprim). ponytail: entries of removed
