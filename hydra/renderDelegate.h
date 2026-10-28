@@ -322,6 +322,9 @@ public:
     void DisableGLInterop();
     // The active render settings prim (UsdRenderSettings), if any.
     const HdRenderSettings *ActiveRenderSettings() const;
+    // The settings prim to look render var `var` up in: the active one, else
+    // (Houdini's viewport marks none active) any whose products have it.
+    const HdRenderSettings *RenderSettingsWithVar(TfToken const &var) const;
     // Whether the last frame went to OpenGL on the GPU (GetRenderStats).
     void SetFrameShared(bool shared) { _frameShared = shared; }
     // Sampled motion (eldr:sampledMotion): the shutter (frame-relative open,

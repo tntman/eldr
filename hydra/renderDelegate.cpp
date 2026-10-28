@@ -288,14 +288,29 @@ HdAovDescriptor HdVkRenderDelegate::GetDefaultAovDescriptor(TfToken const &reque
     // viewport: "rendervar1"), is its source's.
     const HdAovDescriptor known = KnownAovDescriptor(requested);
     std::string source, type;
-    if (known.format != HdFormatInvalid || !HdVkRenderVarSource(ActiveRenderSettings(), requested, &source, &type)) {
+    if (known.format != HdFormatInvalid) {
         return known;
     }
-    TfToken name = type == "lpe" ? HdAovTokensMakeLpe(TfToken(source)) : TfToken(source);
-    if (name == TfToken("lpe:C.*[LO]")) {
-        name = HdAovTokens->color;
+    if (HdVkRenderVarSource(RenderSettingsWithVar(requested), requested, &source, &type)) {
+        TfToken name = type == "lpe" ? HdAovTokensMakeLpe(TfToken(source)) : TfToken(source);
+        if (name == TfToken("lpe:C.*[LO]")) {
+            name = HdAovTokens->color;
+        }
+        const HdAovDescriptor resolved = KnownAovDescriptor(name);
+        if (resolved.format != HdFormatInvalid) {
+            return resolved;
+        }
     }
-    return KnownAovDescriptor(name);
+    // Houdini's viewport asks for its render vars before their settings prim
+    // has synced and binds only what came back valid then: any other name
+    // gets a float buffer, as in Karma; its binding names the source.
+    // Hydra's picking AOVs Eldr doesn't fill stay invalid (the task
+    // controller skips them).
+    if (requested == HdAovTokens->elementId || requested == HdAovTokens->edgeId ||
+        requested == HdAovTokens->pointId) {
+        return known;
+    }
+    return HdAovDescriptor(HdFormatFloat32Vec4, false, VtValue(GfVec4f(0.0f)));
 }
 
 HdAovDescriptor HdVkRenderDelegate::KnownAovDescriptor(TfToken const &name)
@@ -691,6 +706,20 @@ void HdVkRenderDelegate::DestroyBprim(HdBprim *bprim)
 void HdVkRenderDelegate::NoteSceneEdit(HdSceneDelegate *sceneDelegate)
 {
     ++static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate())->_sceneEdits;
+}
+
+const HdRenderSettings *HdVkRenderDelegate::RenderSettingsWithVar(TfToken const &var) const
+{
+    std::string name, type;
+    if (const HdRenderSettings *active = ActiveRenderSettings()) {
+        return active;
+    }
+    for (const HdRenderSettings *settings : _renderSettings) {
+        if (HdVkRenderVarSource(settings, var, &name, &type)) {
+            return settings;
+        }
+    }
+    return nullptr;
 }
 
 const HdRenderSettings *HdVkRenderDelegate::ActiveRenderSettings() const

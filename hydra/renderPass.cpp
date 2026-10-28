@@ -216,7 +216,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::string huskName[vkr::Aovs::kCount];
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
-        const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->ActiveRenderSettings());
+        const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
         for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
             if (aovName == aov.name) {
                 extra[aov.kind] = b.renderBuffer;
