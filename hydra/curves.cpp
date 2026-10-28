@@ -49,13 +49,14 @@ struct Primvar {
 
 // What a curve carries along its length.
 struct Sample {
-    GfVec3f p{0.0f}, color{0.0f}, normal{0.0f};
+    GfVec3f p{0.0f}, color{0.0f}, normal{0.0f}, velocity{0.0f};
     float width = 0.0f;
 };
 
 void Accumulate(Sample *out, float w, Sample const &s)
 {
     out->p += w * s.p;
+    out->velocity += w * s.velocity;
     out->color += w * s.color;
     out->normal += w * s.normal;
     out->width += w * s.width;
@@ -104,10 +105,15 @@ struct Builder {
     vkr::Mesh &m;
     bool colors;  // per vertex; else the mesh's constant colour
     bool uvs;     // per vertex (curves)
+    bool velocities = false;   // per vertex: `velocity` (deformation blur)
+    GfVec3f velocity{0.0f};    // of the vertices added next: their curve point's or point's
 
     uint32_t Vertex(GfVec3f const &p, GfVec3f const &n, GfVec3f const &c, float u = 0.0f, float v = 0.0f)
     {
         m.points.insert(m.points.end(), p.data(), p.data() + 3);
+        if (velocities) {
+            m.velocities.insert(m.velocities.end(), velocity.data(), velocity.data() + 3);
+        }
         m.normals.insert(m.normals.end(), n.data(), n.data() + 3);
         if (colors) {
             m.colors.insert(m.colors.end(), c.data(), c.data() + 3);
@@ -147,6 +153,7 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool facing, bool clo
         tangent = d.GetLength() > 1e-12f ? d.GetNormalized() : tangent;
         const Sample &s = line[i];
         const float r = 0.5f * s.width, u = along[i] / length;
+        out.velocity = s.velocity;  // ponytail: the ring moves with its curve point, not turning with it
         if (facing) {
             out.Vertex(s.p, r * tangent, s.color, u, 0.0f);
             out.Vertex(s.p, r * tangent, s.color, u, 1.0f);
@@ -185,9 +192,9 @@ void Extrude(std::vector<Sample> const &line, bool ribbon, bool facing, bool clo
 // Each curve as a polyline: cubic segments in steps by how they bend, vertex
 // primvars with the same basis, varying ones linearly along each segment
 // (UsdGeomBasisCurves' rules), then extruded.
-void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, Primvar<float> const &widths,
-            Primvar<GfVec3f> const &colors, Primvar<GfVec3f> const &normals, GfVec3f const &color, bool facing,
-            Builder &out)
+void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, VtVec3fArray const &velocities,
+            Primvar<float> const &widths, Primvar<GfVec3f> const &colors, Primvar<GfVec3f> const &normals,
+            GfVec3f const &color, bool facing, Builder &out)
 {
     const TfToken basis = topology.GetCurveBasis();
     const bool linear = topology.GetCurveType() == HdTokens->linear;
@@ -216,6 +223,7 @@ void Curves(HdBasisCurvesTopology const &topology, VtVec3fArray const &points, P
             const size_t point = indices.empty() ? vi : vi < indices.size() ? size_t(std::max(indices[vi], 0)) : 0;
             Sample &s = cv[v];
             s.p = point < points.size() ? points[point] : GfVec3f(0.0f);
+            s.velocity = point < velocities.size() ? velocities[point] : GfVec3f(0.0f);
             s.width = Value(widths, c, point, 1.0f);
             s.color = Value(colors, c, point, color);
             s.normal = Value(normals, c, point, GfVec3f(0, 0, 1));
@@ -299,13 +307,14 @@ constexpr int kIcosahedronFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {
 // Each point as a sphere `widths` across, or `facing` a camera-facing disc
 // (vkr::Mesh::facing): an octagon of 8 triangles around a centre vertex,
 // all on the point, their normals the offsets within the disc.
-void Spheres(VtVec3fArray const &points, Primvar<float> const &widths, Primvar<GfVec3f> const &colors,
-             GfVec3f const &color, bool facing, Builder &out)
+void Spheres(VtVec3fArray const &points, VtVec3fArray const &velocities, Primvar<float> const &widths,
+             Primvar<GfVec3f> const &colors, GfVec3f const &color, bool facing, Builder &out)
 {
     auto at = [](auto const &pv, size_t i, auto const &fallback) {
         return pv.At(pv.interp == HdInterpolationConstant ? 0 : i, fallback);
     };
     for (size_t i = 0; i < points.size(); ++i) {
+        out.velocity = i < velocities.size() ? velocities[i] : GfVec3f(0.0f);
         const float r = 0.5f * at(widths, i, 1.0f);
         const GfVec3f c = at(colors, i, color);
         const uint32_t first = uint32_t(out.m.points.size() / 3);
@@ -395,8 +404,13 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         m.uvs.clear();
         m.colors.clear();
         m.indices.clear();
+        m.velocities.clear();
+        // Deformation blur, as meshes' (velocities resolved into the points'
+        // samples by Velocity Blur too).
+        const VtVec3fArray velocities = HdVkShutterVelocities(sceneDelegate, id, points.size());
         constexpr bool curves = std::is_same_v<Base, HdBasisCurves>;
         Builder out{m, colors.interp != HdInterpolationConstant, curves};
+        out.velocities = !velocities.empty();
         m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
         HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
         const auto &t2 = *HdVkRenderSettingsTokens2;
@@ -415,7 +429,8 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
             // Curves with normals are ribbons already, oriented by them.
             const bool facing = normals.values.empty() && BoolPrimvar(sceneDelegate, id, "eldr:ribbons", ribbons);
             m.facing = facing ? vkr::Mesh::kFacingRibbon : vkr::Mesh::kNotFacing;
-            Curves(this->GetBasisCurvesTopology(sceneDelegate), points, widths, colors, normals, color, facing, out);
+            Curves(this->GetBasisCurvesTopology(sceneDelegate), points, velocities, widths, colors, normals, color,
+                   facing, out);
         } else {
             const int style = HdVkPrimvar<int>(sceneDelegate, id, pointStyle, -1);
             const bool discs = style == 0 || style == 2 ? true
@@ -423,7 +438,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
                                             : delegate->GetRenderSetting<bool>(t2.pointSprites, kHdVkPointSprites);
             const bool facing = BoolPrimvar(sceneDelegate, id, "eldr:sprites", discs);
             m.facing = facing ? vkr::Mesh::kFacingDisc : vkr::Mesh::kNotFacing;
-            Spheres(points, widths, colors, color, facing, out);
+            Spheres(points, velocities, widths, colors, color, facing, out);
         }
         m.geometryDirty = true;
     }

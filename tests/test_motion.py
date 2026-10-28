@@ -8,6 +8,9 @@
   through Hydra's primvar samples.
 - Karma's per-object Enable Motion Blur (primvars:karma:object:mblur) off
   keeps either sharp.
+- A motion blur setting off and on again without a time change blurs again.
+- Velocity blur: velocities blur meshes, points and instances only with
+  Velocity Blur (karma:object:vblur, instance_vblur; eldr:object:* win).
 Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
@@ -97,9 +100,10 @@ def red(x, y):
     return {l.split()[1]: float(l.split()[2]) for l in lines if l.startswith("pixel ")}.get("R", -1.0)
 
 
-def render(times, settings):
+def render(times, settings, toggles=()):
     """Renders the stage through /cam at each time in turn, until converged;
-    the product is written whenever a frame converged."""
+    the product is written whenever a frame converged. Then, at the last
+    time, each of `toggles` (settings) in turn, again until converged."""
     if os.path.exists(exrPath):
         os.remove(exrPath)
     engine = UsdImagingGL.Engine()
@@ -112,6 +116,13 @@ def render(times, settings):
     params = UsdImagingGL.RenderParams()
     for t in times:
         params.frame = Usd.TimeCode(t)
+        for _ in range(300):
+            engine.Render(stage.GetPseudoRoot(), params)
+            if engine.IsConverged():
+                break
+    for toggle in toggles:
+        for key, value in toggle.items():
+            engine.SetRendererSetting(key, value)
         for _ in range(300):
             engine.Render(stage.GetPseudoRoot(), params)
             if engine.IsConverged():
@@ -153,6 +164,11 @@ expect(sharp <= 4, "eldr:sampledMotion off: the first frame is sharp (%d edge pi
 render([2], {"eldr:finalQuality": True})
 blurred = ramp(32)
 expect(blurred >= 12, "a final frame through the engine is motion blurred (%d edge pixels)" % blurred)
+# A blur setting off and on again, the time unchanged: it blurs again at once.
+for key in ("eldr:motionBlur", "eldr:motionBlurTimeSamples", "eldr:sampledMotion"):
+    render([2], {"eldr:finalQuality": True}, [{key: False}, {key: True}])
+    blurred = ramp(32)
+    expect(blurred >= 12, "%s off and on again: the cube blurs again (%d edge pixels)" % (key, blurred))
 UsdGeom.PrimvarsAPI(cube).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
 render([2], {"eldr:finalQuality": True})
 sharp = ramp(32)
@@ -185,10 +201,77 @@ print("deformation blur: %d edge pixels on, %d off" % (blurred, sharp))
 render([2], {"eldr:finalQuality": True})
 blurred = ramp(32)
 expect(blurred >= 12, "a final frame of moving points through the engine is blurred (%d edge pixels)" % blurred)
+for key in ("eldr:deformationBlur", "eldr:motionBlur"):
+    render([2], {"eldr:finalQuality": True}, [{key: False}, {key: True}])
+    blurred = ramp(32)
+    expect(blurred >= 12, "%s off and on again: moving points blur again (%d edge pixels)" % (key, blurred))
 UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
 render([2], {"eldr:finalQuality": True})
 sharp = ramp(32)
 expect(sharp <= 4, "primvars:karma:object:mblur off: moving points stay sharp (%d edge pixels)" % sharp)
+
+# Velocity blur: still points with velocities (24 units a second, a unit a
+# frame as above) blur only where Velocity Blur asks (Karma's default off);
+# Eldr's primvar wins over Karma's.
+mesh.GetPrim().SetActive(False)
+still = UsdGeom.Mesh.Define(stage, "/velocities")
+for attr, value in ((still.CreateFaceVertexCountsAttr(), [4] * 6),
+                    (still.CreateFaceVertexIndicesAttr(), mesh.GetFaceVertexIndicesAttr().Get()),
+                    (still.CreateDisplayColorAttr(), [Gf.Vec3f(1, 1, 1)]),
+                    (still.CreateSubdivisionSchemeAttr(), "none"),
+                    (still.CreatePointsAttr(), corners),
+                    (still.CreateVelocitiesAttr(), [Gf.Vec3f(24, 0, 0)] * 8)):
+    attr.Set(value)
+stillPrimvars = UsdGeom.PrimvarsAPI(still)
+
+
+def velocityBlur(karma=None, eldr=None, instance=False):
+    """Edge pixels of one final frame at time 2 with these vblur primvars on
+    stillPrimvars' prim."""
+    prefix = "instance_vblur" if instance else "vblur"
+    for ns, value in (("karma", karma), ("eldr", eldr)):
+        name = "%s:object:%s" % (ns, prefix)
+        if value is None:
+            stillPrimvars.RemovePrimvar(name)
+        else:
+            stillPrimvars.CreatePrimvar(name, Sdf.ValueTypeNames.Int).Set(value)
+    render([2], {"eldr:finalQuality": True})
+    return ramp(32)
+
+
+edges = velocityBlur()
+expect(edges <= 4, "velocities without Velocity Blur: the mesh is sharp (%d edge pixels)" % edges)
+edges = velocityBlur(karma=1)
+expect(edges >= 12, "karma:object:vblur 1: the mesh blurs by its velocities (%d edge pixels)" % edges)
+edges = velocityBlur(karma=1, eldr=0)
+expect(edges <= 4, "eldr:object:vblur 0 wins over Karma's 1: sharp (%d edge pixels)" % edges)
+# Points (curves share their code): the same velocities.
+still.GetPrim().SetActive(False)
+points = UsdGeom.Points.Define(stage, "/pointsVelocities")
+points.CreatePointsAttr([Gf.Vec3f(0, 0, 0)])
+points.CreateWidthsAttr([1.0])
+points.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
+points.CreateVelocitiesAttr([Gf.Vec3f(24, 0, 0)])
+stillPrimvars = UsdGeom.PrimvarsAPI(points)
+sharp = velocityBlur()
+blurred = velocityBlur(eldr=2)
+expect(blurred >= sharp + 8, "eldr:object:vblur 2: points blur by their velocities (%d edge pixels, %d without)"
+       % (blurred, sharp))
+# A PointInstancer's instances: instance_vblur.
+points.GetPrim().SetActive(False)
+instancer = UsdGeom.PointInstancer.Define(stage, "/instancer")
+proto = UsdGeom.Cube.Define(stage, "/instancer/proto")
+proto.CreateSizeAttr(1.0)
+proto.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
+instancer.CreatePrototypesRel().SetTargets([proto.GetPath()])
+instancer.CreateProtoIndicesAttr([0])
+instancer.CreatePositionsAttr([Gf.Vec3f(0, 0, 0)])
+instancer.CreateVelocitiesAttr([Gf.Vec3f(24, 0, 0)])
+stillPrimvars = UsdGeom.PrimvarsAPI(instancer)
+edges = velocityBlur(instance=True)
+expect(edges <= 4, "instance velocities without Instance Velocity Blur: sharp (%d edge pixels)" % edges)
+edges = velocityBlur(karma=1, instance=True)
+expect(edges >= 12, "karma:object:instance_vblur 1: instances blur by velocities (%d edge pixels)" % edges)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

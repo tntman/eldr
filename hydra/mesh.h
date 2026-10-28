@@ -55,6 +55,14 @@ uint32_t HdVkRays(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 // the gprim keeps no motion of its own (transform or deformation).
 bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 
+// Deformation blur (eldr:deformationBlur, with sampled motion's shutter):
+// a gprim's points' velocity per frame from their samples at shutter open
+// and close (velocities, accelerations resolved into them by Velocity
+// Blur), continued linearly as the camera's and the transforms' are. Empty
+// when they don't move through it or when the point count isn't
+// `pointCount` there.
+VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount);
+
 // Sync() only copies scene data into its vkr::Mesh; no Vulkan here.
 class HdVkMesh final : public HdMesh
 {
@@ -78,7 +86,6 @@ private:
     void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();
     bool _Skinned() const;
-    VtVec3fArray _ShutterVelocities(HdSceneDelegate *sceneDelegate) const;
     std::vector<TfToken> _ProgramPrimvarNames(HdSceneDelegate *sceneDelegate) const;
     void _ApplyInstancePrimvars(vkr::Mesh &mesh) const;
 

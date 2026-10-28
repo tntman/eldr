@@ -354,9 +354,15 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         geometryDirty |= _Skinned() && joints != _mesh->jointCount;
     }
     // Deformation blur: the points' motion through the shutter.
+    // A changed motion blur setting uploads them again: the motion they
+    // give a commit is gone after it.
     if (pointsDirty || geometryDirty) {
-        VtVec3fArray velocities = _ShutterVelocities(sceneDelegate);
-        if (velocities != _velocities) {
+        // Skinned: the joints move the points.
+        VtVec3fArray velocities =
+            _Skinned() ? VtVec3fArray() : HdVkShutterVelocities(sceneDelegate, id, _points.size());
+        if (velocities != _velocities ||
+            (!velocities.empty() && static_cast<HdVkRenderDelegate *>(
+                                        sceneDelegate->GetRenderIndex().GetRenderDelegate())->MotionSettingsChanged())) {
             _velocities = std::move(velocities);
             geometryDirty = true;
         }
@@ -637,28 +643,23 @@ bool HdVkMesh::_Skinned() const
     return _influencesPerPoint > 0 && !_influences.empty() && !_skinningXforms.empty();
 }
 
-// Deformation blur (eldr:deformationBlur, with sampled motion's shutter):
-// the points' velocity per frame from their samples at shutter open and
-// close, continued linearly as the camera's and the transforms' are. Empty
-// when they don't move through it, when skinned (joints move those) or
-// when the point count changes inside it.
-VtVec3fArray HdVkMesh::_ShutterVelocities(HdSceneDelegate *sceneDelegate) const
+VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount)
 {
     auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     float open, close;
-    if (_Skinned() || !vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->deformationBlur, true) ||
-        !HdVkMotionBlur(sceneDelegate, GetId()) ||
+    if (!vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->deformationBlur, true) ||
+        !HdVkMotionBlur(sceneDelegate, id) ||
         !vk->SampledMotionShutter(&open, &close)) {
         return {};
     }
     HdTimeSampleArray<VtValue, 4> boxed;
-    sceneDelegate->SamplePrimvar(GetId(), HdTokens->points, open, close, &boxed);
+    sceneDelegate->SamplePrimvar(id, HdTokens->points, open, close, &boxed);
     HdTimeSampleArray<VtVec3fArray, 4> samples;
     if (boxed.count < 2 || !samples.UnboxFrom(boxed)) {
         return {};
     }
     const VtVec3fArray a = samples.Resample(open), b = samples.Resample(close);
-    if (a.size() != _points.size() || b.size() != a.size() || a == b) {
+    if (a.size() != pointCount || b.size() != a.size() || a == b) {
         return {};
     }
     VtVec3fArray velocities(a.size());

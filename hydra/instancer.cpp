@@ -288,11 +288,13 @@ std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const 
 void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &m)
 {
     std::vector<float> transforms = HdVkWorldTransforms(delegate, id, instancerId);
+    auto *vk = static_cast<HdVkRenderDelegate *>(delegate->GetRenderIndex().GetRenderDelegate());
     // Animated skinned prototypes arrive with their instancer dirty every
     // frame; re-upload thousands of instances only when they moved.
-    // (New geometry may start where the default transform is: it still
-    // needs its motion.)
-    if (transforms == m.transforms && !m.geometryDirty) {
+    // (New geometry may start where the default transform is, and a
+    // changed motion blur setting wants the motion again: they still need
+    // their motion.)
+    if (transforms == m.transforms && !m.geometryDirty && !vk->MotionSettingsChanged()) {
         return;
     }
     m.prevTransforms = std::move(m.transforms);  // motion vectors
@@ -304,7 +306,6 @@ void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath con
         return;
     }
     float open, close;
-    auto *vk = static_cast<HdVkRenderDelegate *>(delegate->GetRenderIndex().GetRenderDelegate());
     if (!vk->SampledMotionShutter(&open, &close)) {
         return;
     }

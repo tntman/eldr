@@ -47,12 +47,19 @@ PRIMVARS = [
     ("primvars:eldr:refineLevel", "Subdivision Level", "int", 2,
      "How often a subdivision surface (subdivisionScheme not none) is refined, instead of the viewport's "
      "Level of Detail or husk's complexity. At most the Subdivision Max Level render setting."),
+    # Motion
+    ("primvars:eldr:object:vblur", "Velocity Blur", "int", 0,
+     "Blur by the points' velocities (and accelerations) instead of their samples: 0 off (velocities "
+     "ignored), 1 velocities, 2 velocities and accelerations. Wins over Karma's Velocity Blur."),
+    ("primvars:eldr:object:instance_vblur", "Instance Velocity Blur", "int", 0,
+     "A point instancer's instances blur by its velocities and angularVelocities (2: and accelerations): "
+     "0 off, 1 velocities, 2 velocities and accelerations. Wins over Karma's Instance Velocity Blur."),
 ]
 
 # Karma's per-object controls Eldr honours: set them on this node's Karma
 # tab (Houdini drops a second parm of the same name, docs/houdini.md).
 KARMA_TAB = ("Eldr also reads, from the Karma tab:",
-             "Render Visibility, Holdout Mode, Enable Motion Blur,",
+             "Render Visibility, Holdout Mode, Enable Motion Blur, Velocity Blur,",
              "Render Curves As, Render Points As, Width Scale, Dicing Maximum Depth")
 
 

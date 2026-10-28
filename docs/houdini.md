@@ -49,6 +49,8 @@ Per-object controls are primvars on the prim. Eldr reads Karma's own where Karma
 | Render Visibility (Karma) | `string primvars:karma:object:rendervisibility` | Yes | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
 | Holdout Mode (Karma) | `int primvars:karma:object:holdoutmode` | Yes | Matte and Background both cut a holdout |
 | Enable Motion Blur (Karma) | `bool primvars:karma:object:mblur` | Yes | Off: no transform or deformation motion of its own; camera motion still blurs it |
+| Velocity Blur, Instance Velocity Blur (Karma) | `int primvars:karma:object:vblur`, `instance_vblur` | Yes | 0 ignores `velocities` (default, as Karma); 1 blurs meshes, curves and points by `velocities`, a PointInstancer's instances by `velocities` and `angularVelocities`; 2 adds `accelerations`. Linear between the shutter's ends: accelerations move the ends, the blur doesn't curve. |
+| Velocity Blur, Instance Velocity Blur (Eldr) | `int primvars:eldr:object:vblur`, `instance_vblur` | No | The same values; win over Karma's |
 | Render Curves As (Karma) | `int primvars:karma:object:curve_style` | Yes | Flat and Oriented Ribbons: ribbons (camera-facing without normals); Rounded Curves: tubes; USD Default: `eldr:curveRibbons` |
 | Render Points As (Karma) | `int primvars:karma:object:point_style` | Yes | Discs and Oriented Discs: camera-facing discs; Spheres: spheres |
 | Width Scale (Karma) | `float primvars:karma:object:width_scale` | Yes | Multiplies curve and point widths |
@@ -58,7 +60,7 @@ Per-object controls are primvars on the prim. Eldr reads Karma's own where Karma
 | Hair Shading (Eldr) | `bool primvars:eldr:hair` | No | |
 | Reflection Probe, Planar Reflection (Eldr) | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | No | |
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples, velocity and acceleration blur (Eldr samples points and transforms through the shutter, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 

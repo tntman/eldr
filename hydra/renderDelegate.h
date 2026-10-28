@@ -5,6 +5,7 @@
 #include "pxr/imaging/hd/renderDelegate.h"
 #include "pxr/imaging/hd/types.h"
 #include "pxr/imaging/hd/sceneIndex.h"
+#include "pxr/imaging/hd/dataSourceLocator.h"
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
@@ -243,10 +244,10 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 // have their own, other tags share one, hidden has none (never drawn).
 uint32_t HdVkRenderTagBit(TfToken const &tag);
 
-// Dirties every mesh's display style (or other `type` prims' primvars) in
-// the scene upstream of `terminal` (a render index's), so they sync again
-// (sceneIndexPlugin.cpp).
-void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type = HdPrimTypeTokens->mesh);
+// Dirties `locators` of every prim of `types` in the scene upstream of
+// `terminal` (a render index's), so they sync again (sceneIndexPlugin.cpp).
+void HdVkDirtyPrims(HdSceneIndexBaseRefPtr const &terminal, TfTokenVector const &types,
+                    HdDataSourceLocatorSet const &locators);
 
 class HdVkTextureCache;
 class HdVkMaterialFallbacks;
@@ -318,6 +319,10 @@ public:
     void NoteCameraShutter(SdfPath const &camera, float open, float close);
     void SetActiveCamera(SdfPath const &camera);
     bool SampledMotionShutter(float *open, float *close);
+    // A motion blur setting changed since the last commit: rprims derive
+    // their motion again (transforms, deformation velocities) even where
+    // nothing moved since their last sync.
+    bool MotionSettingsChanged() const { return _motionSettingsChanged; }
     // What the film starts over on besides the camera and the settings:
     // every sync of geometry, instancers, materials, volumes and fields
     // (lights through the renderer's lighting hash). Not cameras: an app may
@@ -342,6 +347,7 @@ private:
     double _commitMs = 0;  // the last CommitResources (scene upload)
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
+    bool _motionSettingsChanged = false;  // since the last CommitResources
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.
