@@ -75,12 +75,12 @@ public:
         // Probes move out of walls (gi_update.comp), on kGiFixedRays more
         // rays per probe and frame.
         bool giRelocation = true;
-        // Final gather (rt_pixels.rgen, with gi): a short cosine ray per
-        // pixel, at least gatherDistance (and a probe spacing) long, shaded
-        // where it lands, or the probes at its end; mesh.frag's diffuse
-        // indirect light instead of the probes and AO.
+        // Final gather (rt_pixels.rgen, with gi): a cosine ray per pixel,
+        // shaded where it lands; with gatherDistance > 0 at most that (and a
+        // probe spacing) long, else the probes at its end; mesh.frag's
+        // diffuse indirect light instead of the probes and AO.
         bool gather = false;
-        float gatherDistance = 0.5f;
+        float gatherDistance = 0.0f;
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;

@@ -232,18 +232,25 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
         if (NoL <= 0.0 || (type != kLightSphere && type != kLightCylinder && cosLight <= 0.0)) {
             continue;
         }
-        // Intensity towards p: radiance times projected area (a cylinder's
-        // side: 2r x length, foreshortened along its axis).
+        // Irradiance / radiance: a rect's exact form factor (clipped to the
+        // horizon, as mesh.frag); else intensity towards p, radiance times
+        // projected area (a cylinder's side: 2r x length, foreshortened
+        // along its axis), over d^2, a disk's over d^2 + r^2 (exact on its
+        // axis). As points, emissive.usda's panel edges (rects 2 cm tall
+        // under the ceiling) lit it 3 cm beside them 8 times over, 10 cm
+        // beside 3 times, in every traced bounce.
         float h = length(light.halfWidth.xyz);
+        float r2 = length(cross(light.halfWidth.xyz, light.halfHeight.xyz));
         float area = type == kLightSphere   ? PI * light.axis.w * light.axis.w
                    : type == kLightCylinder ? 4.0 * light.axis.w * h * length(cross(light.halfWidth.xyz / max(h, 1e-8), l))
-                                            : (type == kLightRect ? 4.0 : PI) *
-                                                  length(cross(light.halfWidth.xyz, light.halfHeight.xyz)) * cosLight;
+                                            : PI * r2 * cosLight;
+        float formFactor = type == kLightRect ? PI * RectFormFactorClipped(toLight, light.halfWidth.xyz, light.halfHeight.xyz, n)
+                                              : area * NoL / (type == kLightDisk ? d2 + r2 : d2);
         float window = clamp(1.0 - pow(sqrt(d2) / LightRange(light), 4.0), 0.0, 1.0);
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-        vec3 e = light.color.rgb * (area * NoL / d2 * window * window * cone * light.halfHeight.w);
+        vec3 e = light.color.rgb * (formFactor * window * window * cone * light.halfHeight.w);
         if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(e.r, max(e.g, e.b)) > 0.0) {
             e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
             ++traced;
