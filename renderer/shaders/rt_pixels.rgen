@@ -127,7 +127,7 @@ void main()
                 }
                 Trace(reflectOrigin, l, a);
                 reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
-                                              : BrightnessClamp(ShadeHit(l, seed, true, rt.shadowInfo.w != 0u), frame.lightClamp.y);
+                                              : ShadeHit(l, seed, true, rt.shadowInfo.w != 0u);
             }
             reflection.rgb /= float(samples);
             reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual);
@@ -153,7 +153,7 @@ void main()
             vec4 gi = GiIrradiance(o + l * reach, l, -l);
             radiance = mix(DomeDiffuse(l), gi.rgb, gi.a);
         } else if ((hit.flags & kHitBackface) == 0u) {
-            radiance = BrightnessClamp(ShadeHit(l, seed, (hit.flags & kHitEmitter) == 0u, false), frame.lightClamp.y);
+            radiance = ShadeHit(l, seed, (hit.flags & kHitEmitter) == 0u, false);
         }
         imageStore(rtGatherImage, pixel, vec4(radiance, 1.0));
     }

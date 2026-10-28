@@ -463,11 +463,11 @@ bool Scene::SetEmissiveLights(bool on, float threshold)
 }
 
 // An instance of an emissive mesh as lights: a flat one (a panel) as a
-// rect light on each face, of its radiance; any other as a sphere light
-// around it of the same power.
+// rect light on each face, its edges too (unless too thin to matter), of
+// its radiance; any other as a sphere light around it of the same power.
 struct Scene::Emitter {
     const Mesh *mesh;
-    bool flat;
+    bool flat, edges;
     float center[3];
     float radius;                          // sphere
     float thin[3], wide[3], high[3];       // flat: half axes, thin one the faces' normal
@@ -483,7 +483,7 @@ struct Scene::Emitter {
 // at the cap facing the receiver, stay outside), rects lie just off its
 // faces.
 // ponytail: constant emissive colours only (textured and program-driven
-// emission is left to GI), rigid meshes only, panels' edges don't emit,
+// emission is left to GI), rigid meshes only, a panel is its bounding box,
 // and the lights are diffuse (highlights come from reflections of the
 // emitter).
 std::vector<Scene::Emitter> Scene::_FindEmitters()
@@ -542,7 +542,13 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
                 std::copy(axes[thin], axes[thin] + 3, e.thin);
                 std::copy(axes[wide], axes[wide] + 3, e.wide);
                 std::copy(axes[high], axes[high] + 3, e.high);
-                area = 8.0f * length[wide] * length[high];  // both faces
+                // Both faces, and the edges where they are over 1% of that:
+                // beside a panel under a ceiling the edges are most of its
+                // light there (emissive.usda: 4x the top face's).
+                const float edges = 8.0f * length[thin] * (length[wide] + length[high]);
+                area = 8.0f * length[wide] * length[high];
+                e.edges = edges > 0.01f * area;
+                area += e.edges ? edges : 0.0f;
                 std::copy(emitted, emitted + 3, e.radiance);
             } else {
                 // World area: scaled by the transform's area scale (det^(2/3)).
@@ -2312,7 +2318,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     if (hasDomeSun) {
         sceneLights.push_back(&domeSun);
     }
-    _device->Reserve(_lightBuffer, (sceneLights.size() + 2 * emitters.size()) * sizeof(GpuLight),
+    _device->Reserve(_lightBuffer, (sceneLights.size() + 6 * emitters.size()) * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
@@ -2412,10 +2418,13 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // own, shadowed like them.
     std::unordered_map<const Mesh *, uint32_t> promoted;
     for (const Emitter &e : emitters) {
-        for (const float side : {1.0f, -1.0f}) {
-            if (!e.flat && side < 0.0f) {
-                break;
-            }
+        // A flat emitter's rects: its faces (normal from the wide axes: a
+        // quad has no thickness), then its edges, each on both sides.
+        const float *faces[3][3] = {{e.thin, e.wide, e.high}, {e.wide, e.high, e.thin}, {e.high, e.wide, e.thin}};
+        const int rects = !e.flat ? 1 : e.edges ? 6 : 2;
+        for (int r = 0; r < rects; ++r) {
+            const float side = r % 2 ? -1.0f : 1.0f;
+            const float *off = faces[r / 2][0], *hw = faces[r / 2][1], *hh = faces[r / 2][2];
             GpuLight &g = lights[lightCount + localLightCount];
             g = GpuLight{};
             std::copy(e.radiance, e.radiance + 3, g.color);
@@ -2427,27 +2436,23 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             c.coneAngle = 3.14159265f;
             const float peak = std::max({e.radiance[0], e.radiance[1], e.radiance[2]});
             if (e.flat) {
-                // A rect just off this face (its normal from the wide axes:
-                // a quad has no thickness), emitting away from it.
-                const float n[3] = {e.wide[1] * e.high[2] - e.wide[2] * e.high[1],
-                                    e.wide[2] * e.high[0] - e.wide[0] * e.high[2],
-                                    e.wide[0] * e.high[1] - e.wide[1] * e.high[0]};
+                // A rect just off this face, emitting away from it.
+                const float n[3] = {hw[1] * hh[2] - hw[2] * hh[1], hw[2] * hh[0] - hw[0] * hh[2],
+                                    hw[0] * hh[1] - hw[1] * hh[0]};
                 const float nl = std::max(std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]), 1e-30f);
-                const float offset = std::sqrt(e.thin[0] * e.thin[0] + e.thin[1] * e.thin[1] + e.thin[2] * e.thin[2]) +
-                                     1e-3f * e.radius;
+                const float offset = std::sqrt(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]) + 1e-3f * e.radius;
                 for (int k = 0; k < 3; ++k) {
                     g.axis[k] = side * n[k] / nl;
                     g.position[k] = e.center[k] + g.axis[k] * offset;
-                    g.halfWidth[k] = e.wide[k];
-                    g.halfHeight[k] = e.high[k];
-                    c.extent += (e.wide[k] + e.high[k]) * (e.wide[k] + e.high[k]);
+                    g.halfWidth[k] = hw[k];
+                    g.halfHeight[k] = hh[k];
+                    c.extent += (hw[k] + hh[k]) * (hw[k] + hh[k]);
                 }
                 g.position[3] = 2.0f;
                 c.shape = Scene::Gpu::ShadowCaster::Shape::Rect;
-                std::copy(e.wide, e.wide + 3, c.halfWidth);
-                std::copy(e.high, e.high + 3, c.halfHeight);
-                const float area = 4.0f * std::sqrt(e.wide[0] * e.wide[0] + e.wide[1] * e.wide[1] + e.wide[2] * e.wide[2]) *
-                                   std::sqrt(e.high[0] * e.high[0] + e.high[1] * e.high[1] + e.high[2] * e.high[2]);
+                std::copy(hw, hw + 3, c.halfWidth);
+                std::copy(hh, hh + 3, c.halfHeight);
+                const float area = 4.0f * nl;
                 c.rangeIntensity = peak * area / 3.14159265f;  // as for rect lights above
                 c.size = std::sqrt(area / 3.14159265f);
                 c.extent = std::sqrt(c.extent);

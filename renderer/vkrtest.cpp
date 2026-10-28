@@ -1935,6 +1935,47 @@ int main()
         }
 
         if (device.rayTracing) {
+            // An emissive panel's edges light too: a box of half size 0.3 x
+            // 0.3 x 0.02 at z = 0.46 (radiance 10), its back face 0.02 off the
+            // white wall at z = 0.5, as emissive.usda's panel under its
+            // ceiling. Beside it (pixel 43, x = 0.36) the wall's form factor
+            // (numerically integrated) is 0.025 to the back face and 0.121 to
+            // the +x edge: the edges are most of its light there. Traced
+            // shadows: the shadow maps' PCSS halves the light of a big light
+            // this close over an oblique receiver (printed, not checked).
+            vkr::Scene scene(&device);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *box = AddEmitter(scene, 0, 0, 0, 0, 0, 10.0f);
+            box->points.clear();
+            box->uvs.clear();
+            const float half[3] = {0.3f, 0.3f, 0.02f};
+            for (int axis = 0; axis < 3; ++axis) {
+                for (const float side : {-1.0f, 1.0f}) {
+                    const float c[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+                    for (const int k : {0, 1, 2, 0, 2, 3}) {
+                        float p[3];
+                        p[axis] = side * half[axis];
+                        p[(axis + 1) % 3] = c[k][0] * half[(axis + 1) % 3];
+                        p[(axis + 2) % 3] = c[k][1] * half[(axis + 2) % 3];
+                        box->points.insert(box->points.end(), {p[0], p[1], p[2] + 0.46f});
+                        box->uvs.insert(box->uvs.end(), {0.0f, 0.0f});
+                    }
+                }
+            }
+            scene.Commit();
+            const float expected = 10.0f * (0.025f + 0.121f);
+            const float maps = Render(renderer, scene).At(43, 32, 0);
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.rtShadows = true;
+            const float traced = Render(renderer, scene, frame).At(43, 32, 0);
+            std::printf("panel edges: traced %.3f, maps %.3f (expected %.3f)\n", traced, maps, expected);
+            Expect(std::abs(traced / expected - 1.0f) < 0.15f, "an emissive panel's edges light the wall beside it");
+        }
+
+        if (device.rayTracing) {
             // Ray-traced sun shadow: the cascade test's scene with a hard sun
             // (angle 0), traced instead of the cascades.
             vkr::Scene scene(&device);
@@ -2203,6 +2244,42 @@ int main()
                    "GI preconverge: no dark half-filled probes in the film");
             Render(renderer, scene);
             Expect(renderer.IsConverged() && renderer.GetStats().accelerationStructureBytes == 0, "GI off: nothing traced");
+        }
+
+        if (device.rayTracing) {
+            // GI sees emission unclamped: the GI test's panel, emitting 40
+            // instead of lit (not a light: emissiveLights off), lights the
+            // wall the same through an indirect clamp of 10 as without one
+            // (the clamp is for bounced light; emissive.usda's room was lit
+            // at a quarter).
+            vkr::Scene scene(&device);
+            scene.SetEmissiveLights(false, 4.0f);
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 0.5f);
+            white->roughness = 1;
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->points = {-1, -1, 0.5f, 1, 1, 0.5f, 1, -1, 0.5f, -1, -1, 0.5f, -1, 1, 0.5f, 1, 1, 0.5f};
+            wall->material = white;
+            vkr::Mesh *panel = AddEmitter(scene, 0, 0, 0, 0, 0, 40.0f);
+            panel->points = {0, -0.6f, -0.5f, 0, 0.6f, 0.45f, 0, 0.6f, -0.5f,
+                             0, -0.6f, -0.5f, 0, -0.6f, 0.45f, 0, 0.6f, 0.45f};
+            scene.Commit();
+            auto lit = [&](float clamp) {
+                vkr::Renderer r(device);
+                vkr::Renderer::Frame frame = IdentityFrame();
+                frame.gi = true;
+                frame.giProbes = 8;
+                frame.indirectClamp = clamp;
+                Image img;
+                for (int i = 0; i < 40; ++i) {
+                    img = Render(r, scene, frame);
+                }
+                return img.At(28, 32, 0);
+            };
+            const float clamped = lit(10.0f), unclamped = lit(0.0f);
+            std::printf("GI emission: clamp 10 %.3f, off %.3f\n", clamped, unclamped);
+            Expect(unclamped > 0.5f && std::abs(clamped - unclamped) < 0.03f * unclamped,
+                   "the indirect clamp leaves the emission GI rays see");
         }
 
         if (device.rayTracing) {

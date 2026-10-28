@@ -194,7 +194,11 @@ vec3 DomeDiffuse(vec3 n)
 
 // Radiance leaving the hit towards the ray's origin: emission, diffuse
 // direct light, diffuse indirect light (the probes with GI, else the dome)
-// and the dome's reflection for the specular part. rt.params.w's light is
+// and the dome's reflection for the specular part. The reflected light is
+// bounce light, limited by eldr:indirectClamp; the emission is the
+// emitter's direct light, limited by eldr:directClamp (off by default):
+// through the indirect clamp of 10, emissive.usda's panel of 40 lit its
+// room by GI at a third of Karma's. rt.params.w's light is
 // shadowed by a ray; with `shadows` (eldr:rtHitShadows) every distant light
 // and the first kMaxHitShadows local lights reaching p are too, one ray
 // each, the rest unshadowed.
@@ -252,5 +256,6 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
         indirect = mix(indirect, gi.rgb, gi.a);
     }
     vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
-    return emission ? radiance + hit.emissive : radiance;
+    radiance = BrightnessClamp(radiance, frame.lightClamp.y);
+    return emission ? radiance + BrightnessClamp(hit.emissive, frame.lightClamp.x) : radiance;
 }
