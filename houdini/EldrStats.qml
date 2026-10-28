@@ -189,7 +189,7 @@ Item {
         // (graphics memory), not process RAM.
         ExpandingTile {
             width: parent.width - 16
-            label: "Memory (GPU)"
+            label: "Memory"
             visible: root.has("gpuMemoryUsed") || root.has("totalMemory")
             initiallyExpanded: true
 
@@ -212,6 +212,16 @@ Item {
                     label: "Host-visible"
                     visible: root.has("hostMemoryUsed")
                     BriefNumber { number: root.num("hostMemoryUsed"); memory: true; color: Theme.fg; size: Typography.large }
+                }
+                SimpleTile {
+                    label: "RAM (process)"
+                    visible: root.has("processMemory")
+                    BriefNumber { number: root.num("processMemory"); memory: true; color: Theme.fg; size: Typography.large }
+                }
+                SimpleTile {
+                    label: "RAM peak"
+                    visible: root.has("processPeakMemory")
+                    BriefNumber { number: root.num("processPeakMemory"); memory: true; color: Theme.fg; size: Typography.large }
                 }
                 SimpleTile {
                     label: "GPU + host"

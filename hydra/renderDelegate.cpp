@@ -852,6 +852,10 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats[HdTokens->topology.GetString()] = size_t(_scene->IndexBytes());
     stats["volumeMemory"] = size_t(_scene->VolumeBytes());  // NanoVDB grids
     stats["hostMemoryUsed"] = size_t(memory.host);
+    // The whole process's RAM (the app's scene included), now and at its peak.
+    const HdVkProcessMemory ram = HdVkGetProcessMemory();
+    stats["processMemory"] = ram.resident;
+    stats["processPeakMemory"] = ram.peak;
     stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
     stats["rayTracingSupported"] = _device->rayTracing;  // else the eldr:rt* settings are ignored
     stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
