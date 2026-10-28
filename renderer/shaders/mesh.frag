@@ -189,11 +189,13 @@ float ShadowDistance(float depth, float n, float f)
 // soft shadows (PCSS, Fernando 2005): the average depth of the blockers
 // around the receiver sets the penumbra width by similar triangles, then
 // Poisson PCF over it, rotated per pixel and frame for TAA to average.
-// Every tap of both compares against the receiver's plane there (window
-// depth is affine in atlas uv on a plane, so the gradient is exact): a
-// tilted receiver near a big light (a wall beside an emissive panel) would
-// otherwise find itself as a blocker, and only things on the light's side
-// of the plane count. The normal offset covers the texels' quantization.
+// Taps where the receiver's plane comes nearer the light compare against
+// the plane there (window depth is affine in atlas uv on a plane, so the
+// gradient is exact): a tilted receiver near a big light (a wall beside an
+// emissive panel) would otherwise find itself as a blocker. Where it
+// recedes they keep p's depth: what is in front of the plane there but
+// farther from the light than p (the floor in front of a wall) blocks
+// nothing. The normal offset covers the texels' quantization.
 // ponytail: blockers are searched assuming none closer than a quarter of
 // the way to the receiver, and kernels are clamped to 24 texels and to the
 // tile (cube face seams can show under very soft shadows).
@@ -258,10 +260,8 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     for (int i = 0; i < samples; ++i) {
         vec2 s = clamp(uv + rotation * kPoisson[i] * searchUv, lo, hi);
         float d = texelFetch(shadowAtlasDepth, ivec2(s * atlasSize), 0).r;
-        float plane = ref + dot(grad, s - uv);
-        if (d < plane) {
-            spread += 1.0 / ShadowDistance(d, t.params.y, t.params.z) -
-                      1.0 / ShadowDistance(min(plane, 1.0), t.params.y, t.params.z);
+        if (d < ref + min(dot(grad, s - uv), 0.0)) {
+            spread += 1.0 / ShadowDistance(d, t.params.y, t.params.z) - 1.0 / receiver;
             count += 1.0;
         }
     }
@@ -272,7 +272,7 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     float sum = 0.0;
     for (int i = 0; i < samples; ++i) {
         vec2 s = clamp(uv + rotation * kPoisson[i] * filterUv, lo, hi);
-        sum += texture(shadowAtlas, vec3(s, ref + dot(grad, s - uv)));
+        sum += texture(shadowAtlas, vec3(s, ref + min(dot(grad, s - uv), 0.0)));
     }
     return sum / float(samples);
 }
