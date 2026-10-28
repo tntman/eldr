@@ -315,8 +315,8 @@ void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath con
     if (a == b || a.size() != m.transforms.size() || b.size() != a.size()) {
         return;  // still through the shutter: the motion is since the last transforms
     }
-    // ponytail: rigid transforms only; deforming points (and joints) keep
-    // last frame's motion.
+    // Deforming points have their velocities (HdVkShutterVelocities),
+    // skinned meshes their joints' shutter pose (HdVkMesh::_SampleShutterPose).
     m.prevTransforms.resize(a.size());
     for (size_t i = 0; i < a.size(); ++i) {
         m.prevTransforms[i] = m.transforms[i] - (b[i] - a[i]) / (close - open);

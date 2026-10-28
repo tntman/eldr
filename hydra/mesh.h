@@ -106,6 +106,7 @@ private:
     void _SplitSubsets();
     void _SyncSubsets(HdSceneDelegate *sceneDelegate);
     void _UpdateJoints();
+    void _SampleShutterPose(HdSceneDelegate *sceneDelegate);
     bool _Skinned() const;
     std::vector<TfToken> _ProgramPrimvarNames(HdSceneDelegate *sceneDelegate) const;
     void _ApplyInstancePrimvars(vkr::Mesh &mesh) const;
@@ -143,6 +144,11 @@ private:
     VtFloatArray _blendWeights;      // per shape, or per instance and shape
     int _numBlendShapeWeights = 0;   // > 0: _blendWeights holds every instance
     bool _dualQuaternion = false;    // hydra:numSkinningMethod 1
+    // Sampled motion: the joint transforms (as _UpdateJoints composes them)
+    // and blend shape weights one frame before, from the shutter's samples;
+    // empty when they don't move through it (_SampleShutterPose).
+    std::vector<float> _prevSkinning;
+    std::vector<float> _prevBlendWeights;
 
     // Primvars the material programs read (the mesh's material's and its
     // subsets'), as authored on the mesh, and per instance from its instancer.

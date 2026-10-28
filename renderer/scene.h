@@ -421,6 +421,12 @@ struct Mesh {
     std::vector<uint32_t> blendRanges;   // 2 per corner: first offset, count; or empty
     uint32_t blendShapeCount = 0;
     std::vector<float> blendWeights;
+    // Sampled motion: the skinning transforms and blend shape weights one
+    // frame before, as the shutter's samples continue (prevTransforms'
+    // twins; empty: no motion through the shutter). The time samples start
+    // from them instead of the last frame's joints.
+    std::vector<float> prevSkinningTransforms;
+    std::vector<float> prevBlendWeights;
     // Holdout (matte): drawn black with zero alpha, cut out of the image
     // but still hiding what's behind it and casting shadows.
     bool holdout = false;
@@ -475,6 +481,7 @@ private:
     bool _blendPerInstance = false;
     bool _skinPerInstance = false;
     std::vector<float> _jointBounds;             // per joint: rest bounds of the vertices it moves
+    std::vector<float> _shutterTransforms;       // skinned: prevTransforms from the shutter (Commit)
     float _posedMin[3] = {}, _posedMax[3] = {};  // object space, all poses
     float _boundsMin[3] = {}, _boundsMax[3] = {};  // object space
     float _worldMin[3] = {}, _worldMax[3] = {};    // all instances, world space
@@ -815,6 +822,12 @@ public:
         float environmentWorldToLocal[16] = {};
         // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
         VkDeviceSize blendWeightsBytes = 0;
+        // Sampled motion of skinned meshes: the joint matrices and blend
+        // shape weights one frame before as the shutter continues, laid out
+        // as joints and blendWeights (jointsBytes, blendWeightsBytes), or
+        // null when no skinned mesh has any (Mesh::prevSkinningTransforms).
+        VkBuffer shutterJoints = VK_NULL_HANDLE;
+        VkBuffer shutterWeights = VK_NULL_HANDLE;
 
         // Ray tracing (RayTracing builds a BLAS per slot from these, per
         // instance for skinned ones): per mesh slot its vertices and
@@ -930,6 +943,7 @@ private:
     void _UploadJoints(Mesh &mesh);
     void _FreeInstances(Mesh &mesh);
     void _UpdateWorldBounds(Mesh &mesh);
+    void _CommitShutterPoses();
     void _Upload(Texture &texture);
     int32_t _TextureIndex(Texture *t, uint32_t wrap = 0);
     void _UpdateEnvironment(const Dome *dome);
@@ -950,7 +964,7 @@ private:
         _boundsAlloc, _blendAlloc, _weightAlloc, _primvarVertexAlloc, _velocityAlloc;
     // Host-visible per-commit tables.
     Buffer _draws, _commandTemplate, _materials, _udimTiles, _motion, _lightBuffer, _staging, _programCode,
-        _programConstants, _primvarTable, _primvarData;
+        _programConstants, _primvarTable, _primvarData, _shutterJoints, _shutterWeights;
     std::vector<uint8_t> _stagingBytes;
     std::vector<Copy> _copies;
     std::vector<Fill> _fills;

@@ -6,6 +6,7 @@
 - `pointsVelocities`, `inst_angularVelocities`: only `karma:` names (vblur, instance_vblur); Eldr reads them too.
 - `curvesVelocities`: karma vblur 1 but eldr vblur 0. Eldr wins, so it stays sharp.
 - `inst_velocities`: `primvars:eldr:object:instance_vblur = 1`.
+- `skinned`: skel.usda's agent, a tube bent by joints. Sampled motion takes its joints at the shutter's open and close, so it blurs in a single frame (husk, usdrecord) like the rest.
 
 ## What to look at
 
