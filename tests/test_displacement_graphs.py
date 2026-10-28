@@ -301,5 +301,40 @@ print(f"instance primvar edit: traced shadows against the shadow maps left {near
 expect(moved[1] > 0.02 and moved[0] < 0.005, "the edit moves the second instance's ridges only")
 expect(near[1] < 2 * near[0] + 0.005, f"its traced shadows follow the edited primvar ({near})")
 
+# The culling bound of a displacement graph: a constant graph lifts a plane
+# 5 units from below the picture into it; the default bound, |scale| = 1,
+# culls it (the graph is taken as within -1..1), eldr:displacementBound = 5
+# on the displacement shader keeps it.
+def lifted(bound):
+    stage = Usd.Stage.CreateInMemory()
+    UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.y)
+    mesh = plane(stage, "/plane", 16)
+    mesh.AddTranslateOp().Set(Gf.Vec3d(0, -5, 0))
+    material = UsdShade.Material.Define(stage, "/mtl")
+    surface = UsdShade.Shader.Define(stage, "/mtl/surface")
+    surface.CreateIdAttr("ND_standard_surface_surfaceshader")
+    material.CreateSurfaceOutput("mtlx").ConnectToSource(surface.ConnectableAPI(), "out")
+    disp = UsdShade.Shader.Define(stage, "/mtl/disp")
+    disp.CreateIdAttr("ND_displacement_float")
+    material.CreateDisplacementOutput("mtlx").ConnectToSource(disp.ConnectableAPI(), "out")
+    five = UsdShade.Shader.Define(stage, "/mtl/graph/five")
+    five.CreateIdAttr("ND_constant_float")
+    five.CreateInput("value", Sdf.ValueTypeNames.Float).Set(5.0)
+    out = UsdShade.NodeGraph.Define(stage, "/mtl/graph").CreateOutput("out", Sdf.ValueTypeNames.Float)
+    out.ConnectToSource(five.ConnectableAPI(), "out")
+    disp.CreateInput("displacement", Sdf.ValueTypeNames.Float).ConnectToSource(out)
+    disp.CreateInput("scale", Sdf.ValueTypeNames.Float).Set(1.0)
+    if bound:
+        disp.CreateInput("eldr:displacementBound", Sdf.ValueTypeNames.Float).Set(bound)
+    UsdShade.MaterialBindingAPI.Apply(mesh.GetPrim()).Bind(material)
+    sun = UsdLux.DistantLight.Define(stage, "/sun")
+    sun.AddRotateXYZOp().Set(Gf.Vec3f(-45, 60, 0))
+    return stage
+
+
+culled, kept = render(lifted(0)), render(lifted(5.0))
+expect(difference(culled, kept) > 0.05, "eldr:displacementBound keeps a displacement graph the default bound culls")
+expect(difference(kept, render(lifted(5.0), frustumCulling=False)) < 0.002, "the explicit bound shows what no culling shows")
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
