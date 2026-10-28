@@ -876,6 +876,8 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     float lo = 0.0, hi = 0.0;  // the crossing's bracket
+    float lostLo = -1.0, lostHi = 0.0;  // the last surface the ray went behind and wasn't judged to hit
+    bool emerged = false;               // in front of a surface since (not just of the background)
     bool crossed = false;
     for (int i = 0; i < steps && !crossed; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
@@ -961,6 +963,13 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                     crossed = length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
                 }
             }
+            if (!crossed && !wasBehind) {
+                lostLo = lo;
+                lostHi = hi;
+                emerged = false;
+            }
+        } else if (scene < 1.0) {
+            emerged = true;
         }
         wasBehind = behind;
         uPrev = u;
@@ -968,8 +977,20 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     }
     // Resolved after the march, so its code holds no registers in the
     // loop (it went 1 ms faster on the crowd than inside it).
-    if (!crossed) {
+    // Lost behind a surface and never in front of another one again (only
+    // of the background, which a ray under a floor reaches past its edge;
+    // with back-face hits, Frame::screenBackface): it hit something hidden
+    // there, such as the floor behind a small ball on it, which a miss
+    // would leave black in a room without a dome. That surface stands in,
+    // as a back-face hit, over the probe or dome. Rays that leave the scene
+    // never go behind anything.
+    bool lost = !crossed && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
+    if (!crossed && !lost) {
         return 0.0;
+    }
+    if (lost) {
+        lo = lostLo;
+        hi = lostHi;
     }
     for (int k = 0; k < 5; ++k) {
         float mid = 0.5 * (lo + hi);
@@ -1021,7 +1042,9 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // (Frame::screenBackface).
     // A small tolerance: grazing hits (normal from depth across
     // the ray, rounding either way) count as front faces.
-    if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+    if (lost) {
+        hit *= frame.screenTrace.y;  // its coverage too: the probe or dome shows through
+    } else if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
         hit.rgb *= frame.screenTrace.y;
     }
     // Fade towards the screen edges, beyond which the ray is blind.
