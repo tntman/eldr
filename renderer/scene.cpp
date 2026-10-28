@@ -1670,9 +1670,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         std::none_of(_meshes.begin(), _meshes.end(), [](const auto &m) {
             return m->geometryDirty || m->transformsDirty || m->jointsDirty;
         })) {
-        _gpu.moved = false;
-        _keptMotion.clear();
-        _keptMotionBase.assign(_meshes.size(), kNone);
+        _gpu.moved = false;  // the tables keep this frame's motion
         return;
     }
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
@@ -1727,6 +1725,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // Upload only what changed. Rigid meshes that moved keep their previous
     // transforms for motion vectors (a new or re-flattened mesh has none).
     bool changed = _changed;
+    bool uploads = false;  // a mesh uploaded geometry, transforms or joints
     _changed = false;
     _gpu.moved = false;
     std::vector<float> motion;
@@ -1780,16 +1779,23 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _UpdateWorldBounds(*m);
         }
         changed = changed || geometry || transforms || joints;
+        uploads = uploads || geometry || transforms || joints;
         // New points with velocities (deformation blur) move too.
         _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
     _gpu.moved = _gpu.moved || !motion.empty();
+    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
+        fprintf(stderr, "MOTION commit full: moved %d motion rows %zu keep %d\n", int(_gpu.moved), motion.size() / 12, int(keepMotion));
+    }
     // A second commit for the same frame (keepMotion) keeps the first's
-    // motion when it moved nothing itself.
-    if (keepMotion && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
+    // motion when it moved nothing itself; so does one that uploaded no mesh
+    // (a light or dome came or went, as in husk after its first frame): a
+    // new scene version starts the film over, and it captures the shutter's
+    // motion again instead of rendering the rest still.
+    if ((keepMotion || !uploads) && !_gpu.moved && _keptMotionBase.size() == motionBase.size()) {
         motion = _keptMotion;
         motionBase = _keptMotionBase;
-        _gpu.moved = _keptMoved;
+        _gpu.moved = keepMotion ? _keptMoved : changed;  // a still repeat isn't a move
     }
     _keptMotion = motion;
     _keptMotionBase = motionBase;
@@ -2173,6 +2179,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.drawChunks.push_back(uint32_t(commandSlots));
 
     // Visibility edits change what shadows draw without any upload.
+    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
+        fprintf(stderr, "MOTION version: changed %d uploads %d drawn %d rays %d\n", int(changed), int(uploads), int(drawn != _lastDrawn), int(rays != _lastRays));
+    }
     if (changed || drawn != _lastDrawn || rays != _lastRays) {
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;

@@ -715,6 +715,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     static_cast<HdVkRenderDelegate *>(delegate)->SetActiveCamera(camera ? camera->GetId() : SdfPath());
     frame.sampledMotion = frame.shutter > 0.0f &&
                           static_cast<HdVkRenderDelegate *>(delegate)->SampledMotionShutter(&shutterOpen, &shutterClose);
+    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
+        fprintf(stderr, "MOTION frame camera %s shutter %g open %g sampled %d blur %d post %d timeSamples %d final %d\n",
+                camera ? camera->GetId().GetText() : "-", frame.shutter, frame.shutterOpen, int(frame.sampledMotion),
+                int(frame.motionBlur), int(frame.postProcess), int(frame.motionBlurTimeSamples), int(frame.finalQuality));
+    }
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.prevViewProj);
     std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
     GfMatrix4d prevCamera;

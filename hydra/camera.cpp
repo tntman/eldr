@@ -33,6 +33,9 @@ void HdVkCamera::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam
     auto *delegate = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     const float open = float(GetShutterOpen()), close = float(GetShutterClose());
     delegate->NoteCameraShutter(GetId(), open, close);
+    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
+        fprintf(stderr, "MOTION camera %s shutter %g %g\n", GetId().GetText(), open, close);
+    }
     _moving = false;
     // Houdini's viewport camera (/__HoudiniFreeCamera__) is where the user
     // looks from, not a shot camera: its samples can come from other frames
