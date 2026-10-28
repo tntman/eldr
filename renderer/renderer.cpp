@@ -3349,8 +3349,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                      VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     // Last frame's joints exist when the pool is still the buffer they were
     // built in (it is rebuilt by every frame's skin.comp).
-    const bool prevJoints = gpu.joints && gpu.jointsBytes > 0 && _prevJointsSource == gpu.joints &&
+    // Sampled motion: the scene's joints one frame before as the shutter
+    // continues (Gpu::shutterJoints) stand in for them, first frame too.
+    const bool shutterJoints = frame.sampledMotion && gpu.shutterJoints && gpu.joints && gpu.jointsBytes > 0;
+    const bool lastJoints = gpu.joints && gpu.jointsBytes > 0 && _prevJointsSource == gpu.joints &&
                             _prevJoints.size >= gpu.jointsBytes;
+    const bool prevJoints = lastJoints || shutterJoints;
+    const VkBuffer prevJointsFrom = shutterJoints ? gpu.shutterJoints : gpu.joints;
     if (gpu.joints && gpu.jointsBytes > _prevJoints.size) {
         // Device-local: only GPU copies fill it, and every skinned vertex
         // reads it in the main pass.
@@ -3369,8 +3374,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     // Blend shape motion: last frame's weights, kept like the joints.
     const bool blendMotion = frame.objectMotion && frame.blendShapeMotion && gpu.blendWeightsBytes > 0;
-    const bool prevBlend = blendMotion && _prevBlendValid && _prevBlendSource == gpu.blendWeights &&
-                           _prevBlendWeights.size >= gpu.blendWeightsBytes;
+    // Sampled motion: the scene's weights one frame before (Gpu::shutterWeights).
+    const bool shutterWeights = blendMotion && frame.sampledMotion && gpu.shutterWeights;
+    const bool prevBlend = (blendMotion && _prevBlendValid && _prevBlendSource == gpu.blendWeights &&
+                            _prevBlendWeights.size >= gpu.blendWeightsBytes) ||
+                           shutterWeights;
     if (blendMotion && gpu.blendWeightsBytes > _prevBlendWeights.size) {
         _dev.Destroy(_prevBlendWeights);
         _prevBlendWeights = _dev.CreateDeviceBuffer(gpu.blendWeightsBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
@@ -3568,17 +3576,22 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
         if (prevJoints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
-            vkCmdCopyBuffer(_cmd, gpu.joints, _prevJoints.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, prevJointsFrom, _prevJoints.buffer, 1, &all);
+        }
+        if (shutterWeights) {  // motion vectors' weights (the capture below reads the scene's)
+            const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
+            vkCmdCopyBuffer(_cmd, gpu.shutterWeights, _prevBlendWeights.buffer, 1, &all);
         }
         // Motion blur time samples: the motion this frame starts from last
         // frame's joints and blend shape weights.
         if (shutterCapture && _shutter.joints) {
             const VkBufferCopy all{0, 0, gpu.jointsBytes};
-            vkCmdCopyBuffer(_cmd, gpu.joints, _shutterJoints.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, prevJointsFrom, _shutterJoints.buffer, 1, &all);
         }
         if (shutterCapture && _shutter.weights) {
             const VkBufferCopy all{0, 0, gpu.blendWeightsBytes};
-            vkCmdCopyBuffer(_cmd, _prevBlendWeights.buffer, _shutterWeights.buffer, 1, &all);
+            vkCmdCopyBuffer(_cmd, shutterWeights ? gpu.shutterWeights : _prevBlendWeights.buffer,
+                            _shutterWeights.buffer, 1, &all);
         }
         VkMemoryBarrier2 toCull{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
         toCull.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;

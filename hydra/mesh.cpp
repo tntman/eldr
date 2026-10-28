@@ -356,6 +356,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _skelToPrim = get(HdSkinningInputTokens->skelLocalToCommonSpace).GetWithDefault(GfMatrix4d(1.0)) *
                       get(HdSkinningInputTokens->commonSpaceToPrimLocal).GetWithDefault(GfMatrix4d(1.0));
         jointsDirty = true;
+        _SampleShutterPose(sceneDelegate);
         // The joint count is baked into the flattened influences (index range).
         const size_t joints = _numJoints > 0 ? size_t(_numJoints) : _skinningXforms.size();
         geometryDirty |= _Skinned() && joints != _mesh->jointCount;
@@ -595,9 +596,12 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.transforms = m.transforms;
             d.transformsDirty = true;
         }
-        if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights) {
+        if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights ||
+            d.prevSkinningTransforms != m.prevSkinningTransforms || d.prevBlendWeights != m.prevBlendWeights) {
             d.skinningTransforms = m.skinningTransforms;
             d.blendWeights = m.blendWeights;
+            d.prevSkinningTransforms = m.prevSkinningTransforms;
+            d.prevBlendWeights = m.prevBlendWeights;
             d.blendShapeCount = m.blendShapeCount;
             d.jointsDirty = true;
         }
@@ -676,6 +680,77 @@ VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const
     return velocities;
 }
 
+namespace {
+
+// A primvar at the shutter's open and close (frame-relative), from its
+// samples through the shutter.
+template <typename T>
+bool SampleShutter(HdSceneDelegate *delegate, SdfPath const &id, TfToken const &name, float open, float close,
+                   T *atOpen, T *atClose)
+{
+    HdTimeSampleArray<VtValue, 4> boxed;
+    delegate->SamplePrimvar(id, name, open, close, &boxed);
+    HdTimeSampleArray<T, 4> samples;
+    if (boxed.count == 0 || !samples.UnboxFrom(boxed)) {
+        return false;
+    }
+    *atOpen = samples.Resample(open);
+    *atClose = samples.Resample(close);
+    return true;
+}
+
+} // namespace
+
+// Sampled motion of a skinned mesh: its skinning transforms (and blend
+// shape weights) one frame before this one, as the motion through the
+// shutter continues, the way HdVkSetTransforms extrapolates rigid ones. The
+// renderer's time samples interpolate from these to this frame's pose.
+void HdVkMesh::_SampleShutterPose(HdSceneDelegate *sceneDelegate)
+{
+    _prevSkinning.clear();
+    _prevBlendWeights.clear();
+    const SdfPath &id = GetId();
+    auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+    float open, close;
+    if (!_Skinned() || !HdVkMotionBlur(sceneDelegate, id) || !vk->SampledMotionShutter(&open, &close)) {
+        return;
+    }
+    const float perFrame = 1.0f / (close - open);
+    VtMatrix4fArray xa, xb;
+    if (SampleShutter(sceneDelegate, id, HdSkinningInputTokens->skinningXforms, open, close, &xa, &xb) &&
+        xa.size() == _skinningXforms.size() && xb.size() == xa.size()) {
+        // The skeleton's place in the prim (skelLocalToCommonSpace *
+        // commonSpaceToPrimLocal) moves too; this frame's where unsampled.
+        GfMatrix4d sa = _skelToPrim, sb = _skelToPrim, la, lb, pa, pb;
+        if (SampleShutter(sceneDelegate, id, HdSkinningInputTokens->skelLocalToCommonSpace, open, close, &la, &lb) &&
+            SampleShutter(sceneDelegate, id, HdSkinningInputTokens->commonSpaceToPrimLocal, open, close, &pa, &pb)) {
+            sa = la * pa;
+            sb = lb * pb;
+        }
+        const GfMatrix4f geomBind(_geomBind), fa(sa), fb(sb), fc(_skelToPrim);
+        _prevSkinning.resize(_skinningXforms.size() * 16);
+        bool moves = false;
+        for (size_t s = 0; s < _skinningXforms.size(); ++s) {
+            const GfMatrix4f a = geomBind * xa[s] * fa, b = geomBind * xb[s] * fb, c = geomBind * _skinningXforms[s] * fc;
+            for (int e = 0; e < 16; ++e) {
+                moves = moves || a.data()[e] != b.data()[e];
+                _prevSkinning[s * 16 + e] = c.data()[e] - (b.data()[e] - a.data()[e]) * perFrame;
+            }
+        }
+        if (!moves) {
+            _prevSkinning.clear();
+        }
+    }
+    VtFloatArray wa, wb;
+    if (SampleShutter(sceneDelegate, id, HdSkinningInputTokens->blendShapeWeights, open, close, &wa, &wb) &&
+        wa.size() == _blendWeights.size() && wb.size() == wa.size() && wa != wb) {
+        _prevBlendWeights.resize(wa.size());
+        for (size_t i = 0; i < wa.size(); ++i) {
+            _prevBlendWeights[i] = _blendWeights[i] - (wb[i] - wa[i]) * perFrame;
+        }
+    }
+}
+
 // Skinning transform of joint j: a rest point through geomBind, the joint's
 // skinning transform and skeleton to prim space, the chain of
 // UsdSkelImaging's skinning kernel in one matrix (USD row-vector order). The
@@ -688,8 +763,12 @@ void HdVkMesh::_UpdateJoints()
     if (!_Skinned() || m.jointCount == 0) {
         m.skinningTransforms.clear();
         m.blendWeights.clear();
+        m.prevSkinningTransforms.clear();
+        m.prevBlendWeights.clear();
         return;
     }
+    m.prevSkinningTransforms = _prevSkinning;
+    m.prevBlendWeights = _prevBlendWeights;
     m.blendWeights.assign(_blendWeights.cbegin(), _blendWeights.cend());
     m.blendShapeCount = uint32_t(_numBlendShapeWeights > 0 ? _numBlendShapeWeights : int(_blendWeights.size()));
     const GfMatrix4f geomBind(_geomBind), skelToPrim(_skelToPrim);

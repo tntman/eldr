@@ -83,7 +83,7 @@
 |---|---|---|---|---|
 | Depth of field from lens samples | Yes | Yes | Yes | Eldr adds a residual post blur at low sample counts. |
 | Motion blur from shutter time samples | Yes | Yes | Yes | Eldr: smooth blur between time samples (`eldr:motionBlurResidual`); not adaptive. |
-| Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | Eldr: skinned joints and blend shapes blur in time samples; skinned motion needs a frame before. |
+| Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | Eldr: skinned joints and blend shapes blur in time samples, from the shutter's samples in a single frame (sampled motion). |
 | Motion blur on a single frame | Yes | Yes | Yes | Eldr: Hydra transform and point samples. |
 | OpenCV lens distortion | Yes | No | Partial | |
 | Upscaling while interactive | Partial | No | Yes | Eldr has its own TAA upscaler; Unreal has TSR and DLSS. *(interactive)* |

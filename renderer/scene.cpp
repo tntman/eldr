@@ -343,7 +343,7 @@ Scene::~Scene()
                           &_jointBoundsPool, &_blendOffsets, &_blendWeights, &_draws, &_commandTemplate,
                           &_materials, &_udimTiles, &_motion, &_lightBuffer, &_staging, &_primvarVertices, &_velocities,
                           &_programCode, &_programConstants, &_primvarTable, &_primvarData, &_volumeTable,
-                          &_volumeGrids}) {
+                          &_volumeGrids, &_shutterJoints, &_shutterWeights}) {
             _device->Destroy(*b);
         }
         _device->Destroy(_displacements);
@@ -1414,6 +1414,69 @@ void Scene::_UploadJoints(Mesh &m)
     }
 }
 
+// Sampled motion of skinned meshes: the joint matrices (skin.comp's, from
+// the instance and skinning transforms) and blend shape weights one frame
+// before as the shutter continues, in the joints' and weights' layout;
+// this frame's for meshes without motion through the shutter.
+// ponytail: rebuilt whole every commit while any skinned mesh has shutter
+// motion (O(all joints) on the CPU); per-mesh ranges if crowds need it.
+void Scene::_CommitShutterPoses()
+{
+    _gpu.shutterJoints = VK_NULL_HANDLE;
+    _gpu.shutterWeights = VK_NULL_HANDLE;
+    bool joints = false, weights = false;
+    for (const auto &m : _meshes) {
+        if (m->_jointSlots > 0 && m->_skinXformSlots > 0) {
+            joints = joints || !m->prevSkinningTransforms.empty() || !m->_shutterTransforms.empty();
+            weights = weights || (m->_weightSlots > 0 && !m->prevBlendWeights.empty());
+        }
+    }
+    if (joints) {
+        _device->Reserve(_shutterJoints, std::max<VkDeviceSize>(_joints.size, 64),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        float *out = static_cast<float *>(_shutterJoints.mapped);
+        for (const auto &m : _meshes) {
+            if (m->_jointSlots == 0 || m->_skinXformSlots == 0 ||
+                m->_jointSlots != m->_instanceCount * m->jointCount) {
+                continue;
+            }
+            const std::vector<float> &skins = m->prevSkinningTransforms.size() == m->skinningTransforms.size()
+                                                  ? m->prevSkinningTransforms : m->skinningTransforms;
+            const std::vector<float> &places = m->_shutterTransforms.size() == m->transforms.size()
+                                                   ? m->_shutterTransforms : m->transforms;
+            for (uint32_t i = 0; i < m->_instanceCount; ++i) {
+                const float *x = &places[size_t(i) * 16];
+                for (uint32_t j = 0; j < m->jointCount; ++j) {
+                    // skin.comp's InstanceTransform * skinXform: in USD
+                    // row-vector order the skinning transform, then the instance's.
+                    const float *s = &skins[(size_t(m->_skinPerInstance ? i * m->jointCount : 0) + j) * 16];
+                    float *o = out + (size_t(m->_jointBase) + i * m->jointCount + j) * 16;
+                    for (int r = 0; r < 4; ++r) {
+                        for (int c = 0; c < 4; ++c) {
+                            o[r * 4 + c] = s[r * 4] * x[c] + s[r * 4 + 1] * x[4 + c] + s[r * 4 + 2] * x[8 + c] +
+                                           s[r * 4 + 3] * x[12 + c];
+                        }
+                    }
+                }
+            }
+        }
+        _gpu.shutterJoints = _shutterJoints.buffer;
+    }
+    if (weights) {
+        _device->Reserve(_shutterWeights, std::max<VkDeviceSize>(_blendWeights.size, 64),
+                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        float *out = static_cast<float *>(_shutterWeights.mapped);
+        for (const auto &m : _meshes) {
+            if (m->_weightSlots > 0 && m->blendWeights.size() == m->_weightSlots) {
+                const std::vector<float> &w =
+                    m->prevBlendWeights.size() == m->blendWeights.size() ? m->prevBlendWeights : m->blendWeights;
+                std::copy(w.begin(), w.end(), out + m->_weightBase);
+            }
+        }
+        _gpu.shutterWeights = _shutterWeights.buffer;
+    }
+}
+
 void Scene::_UpdateWorldBounds(Mesh &m)
 {
     std::fill(m._worldMin, m._worldMin + 3, std::numeric_limits<float>::max());
@@ -1731,6 +1794,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     bool changed = _changed;
     bool uploads = false;  // a mesh uploaded geometry, transforms or joints
     bool shutterRows = false;  // motion rows from the shutter's samples (Mesh::shutterMotion)
+    bool shutterSkin = false;  // a skinned mesh uploaded its pose with motion through the shutter
     _changed = false;
     _gpu.moved = false;
     std::vector<float> motion;
@@ -1771,9 +1835,18 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 }
             }
         }
+        const bool joints = skinned && (m->jointsDirty || transforms);
+        // Skinned: the instances' shutter motion goes into the joints (below).
+        if (skinned && transforms) {
+            m->_shutterTransforms = m->shutterMotion && m->prevTransforms.size() == m->transforms.size()
+                                        ? m->prevTransforms : std::vector<float>();
+        } else if (joints) {
+            m->_shutterTransforms.clear();  // its transforms don't move through the shutter
+        }
+        shutterSkin = shutterSkin || (joints && (!m->prevSkinningTransforms.empty() ||
+                                                 !m->prevBlendWeights.empty() || !m->_shutterTransforms.empty()));
         m->prevTransforms.clear();
         m->shutterMotion = false;
-        const bool joints = skinned && (m->jointsDirty || transforms);
         if (transforms) {
             _UploadInstances(*m);
         }
@@ -1789,7 +1862,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         // New points with velocities (deformation blur) move too.
         _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
-    _gpu.moved = _gpu.moved || !motion.empty();
+    _gpu.moved = _gpu.moved || !motion.empty() || shutterSkin;
+    shutterRows = shutterRows || shutterSkin;
     // A second commit for the same frame (keepMotion) keeps the first's
     // motion when it moved nothing itself. So does one that uploaded no mesh
     // while the motion is the shutter's (sampled motion): husk commits again
@@ -2189,7 +2263,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     if (changed || drawn != _lastDrawn || rays != _lastRays) {
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;
-        _gpu.moved = _gpu.moved || (keepShutter && !motion.empty());  // the film restarts: capture the shutter again
+        // The film restarts: capture the shutter again.
+        _gpu.moved = _gpu.moved || (keepShutter && (!motion.empty() || _gpu.shutterJoints || _gpu.shutterWeights));
         _keptMoved = _gpu.moved;
         _lastDrawn = std::move(drawn);
         _lastRays = std::move(rays);
@@ -2280,6 +2355,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     std::copy(udimTiles.begin(), udimTiles.end(), static_cast<int32_t *>(_udimTiles.mapped));
     _device->Reserve(_motion, std::max<size_t>(motion.size(), 4) * sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     std::copy(motion.begin(), motion.end(), static_cast<float *>(_motion.mapped));
+    _CommitShutterPoses();
     // ponytail: program primvars are gathered every commit (O(their
     // instances)); keep them per mesh if huge instanced programs show up.
     auto upload = [&](Buffer &b, const auto &v) {

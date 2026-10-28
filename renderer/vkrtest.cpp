@@ -1668,12 +1668,14 @@ int main()
             // the first samples missed them (adaptive sampling). The same
             // edge moved by a joint (skinning) and by a blend shape must
             // blur as smoothly: their motion in a time sample starts from
-            // the shutter's captured joints and weights too.
+            // the shutter's captured joints and weights too, and so must
+            // they with sampled motion in a first frame (no frame before:
+            // Mesh::prevSkinningTransforms, prevBlendWeights).
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 0.0f);
             std::fill(white->emissive, white->emissive + 3, 1.0f);
             enum Mover { kRigid, kJoint, kBlendShape };
-            auto longRamp = [&](uint32_t samples, int *frames, Mover mover = kRigid) {
+            auto longRamp = [&](uint32_t samples, int *frames, Mover mover = kRigid, bool sampled = false) {
                 vkr::Scene scene(&device);
                 // Its left edge stays off the image; a blend shape moves the right one.
                 vkr::Mesh *quad = AddQuad(scene, -4, -1, mover == kBlendShape ? -0.75f : 0.0f, 1, 0);
@@ -1719,8 +1721,20 @@ int main()
                 frame.finalQuality = true;
                 frame.filmSamples = samples;
                 frame.adaptiveFinalThreshold = vkr::Renderer::Frame().adaptiveFinalThreshold;
-                place(-0.75f);
-                Render(renderer, scene, frame);
+                if (sampled) {  // the pose at -0.75 comes with the first commit, as new geometry
+                    frame.sampledMotion = true;
+                    std::copy(frame.viewProj, frame.viewProj + 16, frame.prevViewProj);
+                    std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
+                    if (mover == kJoint) {
+                        quad->prevSkinningTransforms = quad->skinningTransforms;
+                        quad->prevSkinningTransforms[12] = -0.75f;
+                    } else {
+                        quad->prevBlendWeights = {0.0f};
+                    }
+                } else {
+                    place(-0.75f);
+                    Render(renderer, scene, frame);
+                }
                 place(0.75f);
                 Image img;
                 for (*frames = 0; *frames < 300 && (*frames == 0 || !renderer.IsConverged()); ++*frames) {
@@ -1751,8 +1765,9 @@ int main()
             const std::string kept = "long blur: adaptive sampling keeps the faint tail's samples (" +
                                      std::to_string(frames) + " frames, x 55: " + std::to_string(fine[55]) + ")";
             Expect(frames == 64 && tail, kept.c_str());
-            for (const Mover mover : {kJoint, kBlendShape}) {
-                const std::vector<float> skinned = longRamp(16, &frames, mover);
+            for (const auto [mover, sampled] : {std::pair{kJoint, false}, std::pair{kBlendShape, false},
+                                                std::pair{kJoint, true}, std::pair{kBlendShape, true}}) {
+                const std::vector<float> skinned = longRamp(16, &frames, mover, sampled);
                 float off = 0.0f, up = 0.0f;
                 for (int x = 12; x < 52; ++x) {
                     off = std::max(off, std::abs(skinned[x] - (1.0f - (x + 0.5f - 8.0f) / 48.0f)));
@@ -1760,7 +1775,7 @@ int main()
                 }
                 const std::string what = std::string("long blur moved by ") +
                                          (mover == kJoint ? "a joint" : "a blend shape") +
-                                         ", 16 time samples: smooth and monotonic (worst " + std::to_string(off) +
+                                         (sampled ? ", sampled in a first frame" : "") + ", 16 time samples: smooth and monotonic (worst " + std::to_string(off) +
                                          ", rise " + std::to_string(up) + ")";
                 Expect(off < 0.025f && up < 0.01f, what.c_str());
             }
