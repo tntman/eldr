@@ -19,7 +19,9 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/base/gf/vec3f.h"
+#include "pxr/base/arch/systemInfo.h"
 #include "pxr/base/tf/getenv.h"
+#include "pxr/base/tf/setenv.h"
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
@@ -171,10 +173,38 @@ const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer, HdPrimTypeTok
 
 } // namespace
 
+// Crowd instancing (eldr:crowdInstancing): UsdSkelImaging's deferred
+// skinning (HD_ENABLE_DEFERRED_SKINNING) hands skinned meshes their skinning
+// inputs as primvars and moves an instance's skel:animationSource into an
+// instance primvar, so instances of one prototype with different animations
+// stay one instancer, the skinning transforms of all its instances
+// concatenated (hydra:numJoints per instance; HdVkMesh skins them on the GPU).
+// Without it every animated instance becomes its own copy of the prototype:
+// a 9k-agent crowd is 60k meshes. The setting is process-wide and read once,
+// when the first scene index is built, which a renderer's delegate precedes:
+// it applies only if unset (the user's value wins) and not read yet. Houdini's
+// GUI shares the process with Karma and Houdini GL, which don't skin deferred
+// inputs: there only husk turns it on.
+static void _EnableCrowdInstancing(HdRenderSettingsMap const &settings)
+{
+    const auto it = settings.find(HdVkRenderSettingsTokens2->crowdInstancing);
+    if (!TfGetenv("HD_ENABLE_DEFERRED_SKINNING").empty() ||
+        (it != settings.end() && !it->second.GetWithDefault<bool>(true))) {
+        return;
+    }
+#ifdef HDVK_HOUDINI
+    if (!TfStringStartsWith(TfStringToLower(TfGetBaseName(ArchGetExecutablePath())), "husk")) {
+        return;
+    }
+#endif
+    TfSetenv("HD_ENABLE_DEFERRED_SKINNING", "1");
+}
+
 HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     : HdRenderDelegate(settings)
     , _resourceRegistry(std::make_shared<HdResourceRegistry>())
 {
+    _EnableCrowdInstancing(settings);
     try {
         const auto start = std::chrono::steady_clock::now();
         _device = std::make_unique<vkr::Device>();
@@ -535,6 +565,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Unread AOVs Once Converged", t2.lazyExtraAovs, VtValue(frame.lazyExtraAovs)},
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
+        {"Crowd Instancing (skinned instances stay instanced; at renderer start)", t2.crowdInstancing,
+         VtValue(true)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
         {"Linear Beauty (Houdini viewport, husk products: no tonemapper, bloom or auto exposure)", t2.productLinear,

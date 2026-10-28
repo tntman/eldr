@@ -21,7 +21,7 @@ GROUPS = [
     ("Advanced: Geometry and products", False,
      "lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons pointSprites "
      "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
-     "indirectIntensity renderProducts productResolution"),
+     "indirectIntensity renderProducts productResolution crowdInstancing"),
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "

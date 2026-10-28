@@ -4,7 +4,14 @@ quads) walking in place with ten varied, phase-offset walk cycles.
   usdenv python tests\\scenes\\make_crowd.py crowd.usdc 20000
 
 Every agent is an instanceable SkelRoot referencing one agent definition,
-with its own skel:animationSource (the usual layout of exported crowds)."""
+with its own skel:animationSource (the usual layout of exported crowds).
+
+  usdenv python tests\\scenes\\make_crowd.py crowd50.usda 50 houdini
+
+"houdini" writes Houdini's agent export instead: an Xform per agent holding its
+own SkelAnimation (and skel:animationSource) above an instanceable SkelRoot
+"geometry", whose skeleton has a __locomotion__ joint the mesh's skel:joints
+leave out (so the mesh maps its joints)."""
 import math
 import sys
 
@@ -92,14 +99,19 @@ def build_mesh():
     return points, counts, indices, joint_idx, joint_w
 
 
-def define_agent(stage, path):
+def define_agent(stage, path, locomotion=False):
     UsdSkel.Root.Define(stage, path)
     skel = UsdSkel.Skeleton.Define(stage, path.AppendChild("skel"))
-    skel.CreateJointsAttr(joint_paths())
-    skel.CreateBindTransformsAttr(Vt.Matrix4dArray(
-        [Gf.Matrix4d().SetTranslate(Gf.Vec3d(*p)) for _, _, p in JOINTS]))
-    skel.CreateRestTransformsAttr(Vt.Matrix4dArray(
-        [Gf.Matrix4d().SetTranslate(Gf.Vec3d(local_translation(i))) for i in range(len(JOINTS))]))
+    joints = joint_paths()
+    binds = [Gf.Matrix4d().SetTranslate(Gf.Vec3d(*p)) for _, _, p in JOINTS]
+    rests = [Gf.Matrix4d().SetTranslate(Gf.Vec3d(local_translation(i))) for i in range(len(JOINTS))]
+    if locomotion:  # a second root, second in order (as Houdini writes it)
+        joints.insert(1, "__locomotion__")
+        binds.insert(1, Gf.Matrix4d(1))
+        rests.insert(1, Gf.Matrix4d(1))
+    skel.CreateJointsAttr(joints)
+    skel.CreateBindTransformsAttr(Vt.Matrix4dArray(binds))
+    skel.CreateRestTransformsAttr(Vt.Matrix4dArray(rests))
     points, counts, indices, joint_idx, joint_w = build_mesh()
     mesh = UsdGeom.Mesh.Define(stage, path.AppendChild("body"))
     mesh.CreatePointsAttr(points)
@@ -112,6 +124,8 @@ def define_agent(stage, path):
     binding.CreateJointIndicesPrimvar(False, 2).Set(joint_idx)
     binding.CreateJointWeightsPrimvar(False, 2).Set(joint_w)
     binding.CreateGeomBindTransformAttr(Gf.Matrix4d(1))
+    if locomotion:
+        binding.CreateJointsAttr(joint_paths())
     return len(counts)
 
 
@@ -153,6 +167,7 @@ def define_walk(stage, path, k):
 def main():
     out = sys.argv[1]
     count = int(sys.argv[2]) if len(sys.argv) > 2 else 20000
+    houdini = len(sys.argv) > 3 and sys.argv[3] == "houdini"
     columns = int(math.ceil(math.sqrt(count * 2)))  # twice as wide as deep
     rows = int(math.ceil(count / columns))
     spacing = 1.0
@@ -179,10 +194,10 @@ def main():
     floor.CreateFaceVertexCountsAttr([4])
     floor.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
 
-    quads = define_agent(stage, Sdf.Path("/AgentDef"))
+    quads = define_agent(stage, Sdf.Path("/AgentDef"), locomotion=houdini)
     stage.GetPrimAtPath("/AgentDef").SetSpecifier(Sdf.SpecifierClass)
     anims = []
-    for k in range(10):
+    for k in range(0 if houdini else 10):
         p = Sdf.Path(f"/Anims/walk{k}")
         define_walk(stage, p, k)
         anims.append(p)
@@ -190,13 +205,17 @@ def main():
     for i in range(count):
         x = (i % columns - (columns - 1) / 2) * spacing
         z = -(i // columns) * spacing
-        agent = stage.DefinePrim(f"/Crowd/agent{i}", "SkelRoot")
-        agent.GetReferences().AddInternalReference("/AgentDef")
-        agent.SetInstanceable(True)
+        agent = stage.DefinePrim(f"/Crowd/agent{i}", "Xform" if houdini else "SkelRoot")
+        geometry = stage.DefinePrim(agent.GetPath().AppendChild("geometry"), "SkelRoot") if houdini else agent
+        geometry.GetReferences().AddInternalReference("/AgentDef")
+        geometry.SetInstanceable(True)
         xf = UsdGeom.Xformable(agent)
         xf.AddTranslateOp().Set(Gf.Vec3d(x, 0, z))
         xf.AddRotateYOp().Set(float((i * 37) % 60 - 30))
-        UsdSkel.BindingAPI.Apply(agent).CreateAnimationSourceRel().SetTargets([anims[(i * 7) % 10]])
+        anim = anims[(i * 7) % 10] if not houdini else agent.GetPath().AppendChild("animation")
+        if houdini:
+            define_walk(stage, anim, (i * 7) % 10)
+        UsdSkel.BindingAPI.Apply(agent).CreateAnimationSourceRel().SetTargets([anim])
     stage.GetRootLayer().Save()
     print(f"agents: {count}, quads per agent: {quads}, joints: {len(JOINTS)}")
 
