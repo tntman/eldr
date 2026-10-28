@@ -151,7 +151,10 @@ void main()
         uint rays = uint(rt.gatherInfo.x);
         vec2 turn = texelFetch(blueNoise, (pixel + ivec2(5, 59)) & 63, 0).zw;
         vec3 radiance = vec3(0.0);
-        for (uint i = 0u; i < rays; ++i) {
+        for (uint i = 0u; i < 16u; ++i) {
+            if (i >= rays) {
+                break;  // a constant bound with an exit: a loop bounded by the uniform made the driver JIT +1 GB host memory (crowd_9k in husk)
+            }
             vec4 points = rt.gatherSamples[i >> 1u];
             vec2 u = frame.sampleInfo.x != 0u ? fract(turn + ((i & 1u) != 0u ? points.zw : points.xy))
                                                : Random2(seed + uvec3(0u, 0u, 104729u), i);
