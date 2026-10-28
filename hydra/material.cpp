@@ -193,6 +193,9 @@ TF_DEFINE_PRIVATE_TOKENS(
     (geometry_opacity)
     (opacity)
     (opacityThreshold)
+    (opacityMode)
+    ((eldrDisplacementBound, "eldr:displacementBound"))
+    (presence)
     (geomprop)
     (in)
     (index)
@@ -2160,6 +2163,13 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         graph.fallbackNodes.push_back("(registers)");
     }
     fallbacks->Add(graph.fallbackInputs, graph.fallbackNodes);
+    // UsdPreviewSurface opacityMode (interface only; a threshold overrides it): presence scales all light.
+    TfToken opacityMode;
+    if (surface.nodeTypeId == _tokens->UsdPreviewSurface && Read(surface.parameters, _tokens->opacityMode, &opacityMode) &&
+        opacityMode == _tokens->presence) {
+        m->opacityPresence = true;
+        m->opacityRefracts = false;
+    }
     if (!Read(surface.parameters, _tokens->opacityThreshold, &m->opacityThreshold) && m->opacityTex.texture &&
         StartsWith(surface.nodeTypeId, "ND_")) {
         // MaterialX has no threshold: an opacity texture is a cutout, as
@@ -2210,7 +2220,8 @@ float TexelBound(vkr::TextureRef const &ref)
 // texture through what ReadTexture follows, read with the material's uv set,
 // or else a graph compiled into m->displacementProgram (mesh.vert runs it).
 // ponytail: vector displacement drops its tangent components (per-vertex
-// tangents); a graph's bound is |scale| (its value taken as within -1..1).
+// tangents); a graph's bound is |scale| (its value taken as within -1..1)
+// unless eldr:displacementBound sets the largest offset.
 void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr::Material *m,
                       TfToken *uvPrimvar, Fallbacks *fallbacks)
 {
@@ -2261,7 +2272,13 @@ void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures,
                 }
             }
         }
+        // The graph's range is unknown: -1..1 unless the shader says otherwise
+        // (eldr:displacementBound, the largest offset in object units).
         m->displacementBound = std::abs(scale);
+        float bound;
+        if (Read(node.parameters, _tokens->eldrDisplacementBound, &bound) && bound > 0) {
+            m->displacementBound = bound;
+        }
         return;
     }
     if (!ref.texture) {

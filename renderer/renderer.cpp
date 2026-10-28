@@ -66,7 +66,7 @@ struct FrameData {
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
-    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
 };
 
@@ -2926,6 +2926,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.geometry[0] = frame.displacementScale;
         fd.geometry[3] = frame.displacementGraphs ? 1.0f : 0.0f;
     }
+    fd.rtRefraction[1] = frame.opacityMode ? 1u : 0u;
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
@@ -3004,6 +3005,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // fresh history (filmMode 1 without either), stays interactive.
     _filmFinal = film && (filmMode != 0 ? (frame.finalQuality || _freshRun) : _filmFinal);
     _filmRuns += filmMode != 0 ? 1 : 0;
+    // eldr:rtReflections: 2 always, 1 in final quality.
+    const bool tracedReflections = frame.rtReflections >= 2 || (frame.rtReflections == 1 && film && _filmFinal);
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
     // resolves (the camera or the scene moves) a loop of the first
@@ -3167,7 +3170,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
-        if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {
+        if (frame.ssrDenoise && !(tracedReflections && _rt && frame.depthPrepass)) {
             fd.ssr[2] = 1.0f;
             _ssr.Prepare();
         }
@@ -3209,7 +3212,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
                       (frame.finalShadows == FinalShadows::Auto && autoTraced())));
     rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
-    rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
+    rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
     // Traced refraction: in final quality (or always), for scenes with
     // refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
