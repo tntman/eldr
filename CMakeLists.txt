@@ -155,7 +155,7 @@ endif()
 
 # Hydra layer.
 add_library(hdVk SHARED
-    hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/renderPass.cpp
+    hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/processMemory.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
     hydra/camera.cpp hydra/renderProducts.cpp)

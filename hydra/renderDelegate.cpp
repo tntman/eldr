@@ -1,4 +1,5 @@
 #include "renderDelegate.h"
+#include "processMemory.h"
 
 #include "camera.h"
 #include "curves.h"
@@ -1019,9 +1020,16 @@ void HdVkRenderDelegate::NoteFrame()
     if (total < 250.0) {  // an edit or a camera move, not a load
         return;
     }
-    char text[160];
-    std::snprintf(text, sizeof text, "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f",
-                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0);
+    // With the memory it took: the GPU's (Eldr's allocations) and the
+    // process's RAM (the app's scene included), now and at its peak.
+    const HdVkProcessMemory ram = HdVkGetProcessMemory();
+    const double gb = 1024.0 * 1024.0 * 1024.0;
+    char text[256];
+    std::snprintf(text, sizeof text,
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB, RAM %.1f GB (peak %.1f)",
+                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
+                  double(_device ? _device->Memory().deviceLocal : 0) / gb, double(ram.resident) / gb,
+                  double(ram.peak) / gb);
     _loadLine = text;
     std::printf("Eldr: %s\n", text);  // husk's log
     std::fflush(stdout);
