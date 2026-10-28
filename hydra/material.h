@@ -30,8 +30,18 @@ public:
     std::vector<std::shared_ptr<vkr::Texture>> GetUdim(std::string const &path,
                                                        TfToken const &sourceColorSpace);
 
+    // Milliseconds spent decoding since the last call (the load summary).
+    double TakeLoadMs()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const double ms = _loadMs;
+        _loadMs = 0;
+        return ms;
+    }
+
 private:
     std::mutex _mutex;
+    double _loadMs = 0;
     std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
 };
 

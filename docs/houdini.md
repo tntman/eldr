@@ -68,7 +68,13 @@ Eldr refines it uniformly with OpenSubdiv to Hydra's refine level, at most the *
 
 ## Render statistics
 
-Houdini reads `GetRenderStats()` through `houdini/UsdRenderers.json` (`statsdatapaths`) for the viewport text and the Render Statistics pane.
+Houdini reads `GetRenderStats()` through `houdini/UsdRenderers.json` (`statsdatapaths`). Where it shows, from Houdini 22's own files (the GUI itself was not opened to check):
+
+- The viewport's **Show/Hide Render Stats** toolbar button (`renderstatsOn` in the viewer toolbar; `hou.SceneViewer.setShowRenderStats`: "renderer time and progress when viewing LOPs") draws the overlay: renderer name, stage, percentage, progress bar and the two annotation lines.
+- The stats panel (`python3.13libs/renderstats/widgets.py`, `qt/qml/houdini/renderstats/GenericStats.qml`) lists only Houdini's fixed token set: renderer name and stage, progress, **Memory** and **Peak Memory**. It has no per-pass rows; names outside that set (`HUSD_RENDERSTATS_TOKENS` in the QML) are not shown by the generic template.
+- All of Eldr's own numbers (GPU passes, draws, memory by kind, the last load) are in usdview's **Eldr > Render Statistics** and `GetRenderStats()`; the viewport carries the two annotations, which is where the numbers Houdini does not list have to go.
+
+There is no menu entry named "Render Statistics" in Houdini 22. Unverified: which Render Gallery or snapshot view embeds the panel, and whether the overlay draws a newline inside an annotation as a second line.
 
 | Name | Shown as |
 |---|---|
@@ -76,7 +82,7 @@ Houdini reads `GetRenderStats()` through `houdini/UsdRenderers.json` (`statsdata
 | `percentDone` (0-100) | Percentage, progress bar, ETA |
 | `totalClockTime` (s) | Elapsed; frozen at convergence |
 | `totalMemory`, `peakMemory` (bytes) | Memory, Peak Memory |
-| `renderProgressAnnotation`, `renderStatsAnnotation` | Free text lines |
+| `renderProgressAnnotation`, `renderStatsAnnotation` | Free text lines. The stats annotation ends with a second line, the last load's summary ("loaded in 6.1 s: shaders 4.8, textures 0.9, BVH 0.4, sync 0.3"), also `loadLine` and printed to stdout as `Eldr: loaded in ...` (husk's log). Written after a frame that followed over 0.25 s of load work; stays until the next load |
 | `viewstats` entries | Labels like "GPU passes: Shading (ms)"; all of usdview's Render Statistics are included, bytes raw |
 
 | `rendererStage` | Meaning |

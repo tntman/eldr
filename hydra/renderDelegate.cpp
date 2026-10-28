@@ -736,6 +736,15 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
                       (unsigned long long)frame.triangles, frame.drawCalls, memory.deviceLocal / 1073741824.0);
         stats["renderStatsAnnotation"] = std::string(text);
     }
+    {
+        // Its own line under the statistics, whatever the frame is doing.
+        std::lock_guard<std::mutex> lock(_loadMutex);
+        if (!_loadLine.empty()) {
+            stats["loadLine"] = _loadLine;
+            stats["renderStatsAnnotation"] = stats["renderStatsAnnotation"].Get<std::string>() + "
+" + _loadLine;
+        }
+    }
     stats["frameSharing"] = std::string(_frameShared ? "OpenGL" : "readback");
     if (!_cryptomatteObject.empty()) {
         VtDictionary manifests;
@@ -814,6 +823,29 @@ bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)
     return true;
 }
 
+void HdVkRenderDelegate::NoteFrame()
+{
+    if (!_renderer) {
+        return;
+    }
+    const vkr::Renderer::LoadTimes t = _renderer->TakeLoadTimes();
+    const double textures = _textures->TakeLoadMs();
+    std::lock_guard<std::mutex> lock(_loadMutex);
+    const double sync = _loadSyncMs;
+    _loadSyncMs = 0;
+    const double total = t.shadersMs + textures + t.bvhMs + sync;
+    if (total < 250.0) {  // an edit or a camera move, not a load
+        return;
+    }
+    char text[160];
+    std::snprintf(text, sizeof text, "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f",
+                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0);
+    _loadLine = text;
+    std::printf("Eldr: %s
+", text);  // husk's log
+    std::fflush(stdout);
+}
+
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
     const auto start = std::chrono::steady_clock::now();
@@ -827,6 +859,8 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     try {
         _scene->Commit(false, unchanged);
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        std::lock_guard<std::mutex> lock(_loadMutex);
+        _loadSyncMs += _commitMs;
     } catch (const std::exception &e) {
         TF_RUNTIME_ERROR("HdVk upload failed: %s", e.what());
     }

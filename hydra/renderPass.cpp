@@ -905,6 +905,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         tRender = FrameTiming::Clock::now();
         _renderer->Render(_scene, frame, out);
         tRendered = FrameTiming::Clock::now();
+        vkDelegate->NoteFrame();
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();

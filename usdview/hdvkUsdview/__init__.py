@@ -59,6 +59,7 @@ STATS = [
     ("Frame", [("GPU time", "gpuTimeMs", "ms"),
                ("Render call (CPU, waits for GPU)", "renderTimeMs", "ms"),
                ("Scene upload (CPU)", "commitTimeMs", "ms"),
+               ("Last load", "loadLine", "str"),
                ("Frame to the viewport", "frameSharing", "str")]),
     ("GPU passes", "PASSES"),
     ("Drawn (after culling)", [("Triangles drawn", "trianglesDrawn", "n"),

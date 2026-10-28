@@ -571,9 +571,11 @@ Renderer::Renderer(Device &device)
     }
     _dev.LoadPipelineCache(hash);
     lap("pipeline cache file");
+    const auto pipelinesStart = std::chrono::steady_clock::now();
     _CreatePipelines();
     lap("pipelines");
     _fog.CreatePipelines(_layout);
+    _load.shadersMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelinesStart).count();
     lap("fog pipelines");
     _CreateConstantImages();
     lap("constant images");
@@ -3367,7 +3369,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        const auto bvhStart = std::chrono::steady_clock::now();
         _rt->Prepare(gpu, rt, _width, _height);
+        _load.bvhMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bvhStart).count();
     } else if (_rt) {
         _rt->Release();  // nothing traced: no acceleration structures either
     }
@@ -3487,7 +3491,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const uint32_t shadingSet = _ShadingSet((fd.features[0] & kOptionalFeatures) | (splits || lightPath ? 1u : 0u) |
                                                 (fd.lodFade[0] > 0 ? kFeatureLod : 0),
                                             frame.lazyPipelines);
+    const auto shadingStart = std::chrono::steady_clock::now();
     _EnsureShading(gpu, shadingSet);  // a set made whole (not lazy, prewarmed) has them all
+    _load.shadersMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - shadingStart).count();
     _shadingBase = shadingSet * kVariants;
     lap("shading pipelines", 5.0);
     if (frame.pipelinePrewarm) {
