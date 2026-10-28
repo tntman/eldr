@@ -52,6 +52,7 @@ const uint32_t kGiUpdateComp[] =
 // GI probes: at most this many (the grid coarsens until it fits), atlas
 // tiles per row, rays per probe (gi_update.comp's kMaxRays).
 constexpr uint32_t kMaxProbes = 16384, kProbesPerRow = 128, kMaxProbeRays = 512;
+constexpr uint32_t kFixedRays = 32;  // per probe with relocation (gi.glsl's kGiFixedRays)
 constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors, as gi.glsl
 
 
@@ -140,13 +141,15 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     _CreateImages(1, 1, 1);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, 8, 8);
     _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, 16, 16);
+    _giOffsets = _CreateAtlas(VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1);
 }
 
 RayTracing::~RayTracing()
 {
     vkDeviceWaitIdle(_dev.device);
     Release();
-    for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_giIrradiance, &_giVisibility}) {
+    for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_giIrradiance,
+                       &_giVisibility, &_giOffsets}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_uniforms);
@@ -214,7 +217,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     // once they exist).
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
     const VkShaderStageFlags hits = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    const VkDescriptorSetLayoutBinding bindings[9] = {
+    const VkDescriptorSetLayoutBinding bindings[10] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
@@ -226,17 +229,19 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         // Per instance slot, the BLAS of its own (per-instance displacement).
         {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
+        // The probes' relocation offsets (gi_update.comp).
+        {9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
     };
-    VkDescriptorBindingFlags partial[9];
-    std::fill(partial, partial + 9, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    VkDescriptorBindingFlags partial[10];
+    std::fill(partial, partial + 10, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 9;
+    flags.bindingCount = 10;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 9;
+    slci.bindingCount = 10;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 2}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -437,11 +442,15 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _dev.Destroy(_shadowImage);
     _dev.Destroy(_reflectionImage);
     _dev.Destroy(_refractionImage);
+    _dev.Destroy(_gatherImage);
     _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
     _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     if (_work.refraction) {
         _refractionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+    }
+    if (_work.gather) {
+        _gatherImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     }
     _width = width;
     _height = height;
@@ -965,10 +974,12 @@ void RayTracing::_FitProbes(const Scene::Gpu &gpu)
     const uint32_t perRow = std::min(probes, kProbesPerRow), rows = (probes + perRow - 1) / perRow;
     _dev.Destroy(_giIrradiance);
     _dev.Destroy(_giVisibility);
+    _dev.Destroy(_giOffsets);
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, perRow * (kIrradianceTexels + 2),
                                  rows * (kIrradianceTexels + 2));
     _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, perRow * (kVisibilityTexels + 2),
                                  rows * (kVisibilityTexels + 2));
+    _giOffsets = _CreateAtlas(VK_FORMAT_R32G32B32A32_SFLOAT, perRow, rows);
     std::copy(origin, origin + 3, _giOrigin);
     std::copy(counts, counts + 3, _giCounts);
     _giSpacing = spacing;
@@ -984,7 +995,8 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
         _giFrames = 0;  // switched on: start over
     }
     _work = work;
-    _work.giRays = std::clamp(work.giRays, 16u, kMaxProbeRays);
+    const uint32_t fixedRays = work.giRelocation ? kFixedRays : 0;
+    _work.giRays = std::clamp(work.giRays, 16u, kMaxProbeRays - fixedRays) + fixedRays;  // traced
     _BuildBlases(gpu);
     const VkDeviceSize skinnedScratch = _PrepareSkinned(gpu);
     _PrepareTlas(gpu);
@@ -996,9 +1008,10 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     }
     const uint32_t perTexel = work.shadowColor ? 1 : 4;
     const uint32_t layers = std::max((lights + perTexel - 1) / perTexel, std::max(_shadowLayers, 1u));
-    if ((work.shadows || work.reflections || work.refraction) &&
+    if ((work.shadows || work.reflections || work.refraction || work.gather) &&
         (width != _width || height != _height || layers != _shadowLayers ||
-         work.refraction != (_refractionImage.view != VK_NULL_HANDLE))) {
+         work.refraction != (_refractionImage.view != VK_NULL_HANDLE) ||
+         work.gather != (_gatherImage.view != VK_NULL_HANDLE))) {
         _CreateImages(width, height, layers);
     }
     RayTracingData &d = *static_cast<RayTracingData *>(_uniforms.mapped);
@@ -1021,10 +1034,12 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.skinned[1] = uint32_t(_skinnedOrder.size());
     d.refraction[0] = std::clamp(work.refractionBounces, 1u, 16u);
     d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
+    d.gather[1] = work.gather && work.gi ? 1.0f : 0.0f;
     if (!work.gi) {
         return;
     }
     _FitProbes(gpu);
+    d.gather[0] = std::max(work.gatherDistance, _giSpacing);
     const uint32_t probes = _giCounts[0] * _giCounts[1] * _giCounts[2];
     const VkDeviceSize rayBytes = VkDeviceSize(probes) * _work.giRays * 4 * sizeof(float);
     if (_giRays.size < rayBytes) {
@@ -1043,6 +1058,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
         u.giParams[0] = std::min(hysteresis, float(_giFrames) / float(_giFrames + 1));
         u.giParams[1] = float(_work.giRays);
         u.giParams[2] = 2.0f * _giSpacing;
+        u.giParams[3] = float(fixedRays);
         uint32_t seed = _frame * 747796405u + 2891336453u;
         auto random = [&]() {
             seed = seed * 747796405u + 2891336453u;
@@ -1070,19 +1086,20 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     }
 
     const VkDescriptorBufferInfo rays{_giRays.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorImageInfo atlases[2] = {{VK_NULL_HANDLE, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
-                                              {VK_NULL_HANDLE, _giVisibility.view, VK_IMAGE_LAYOUT_GENERAL}};
-    VkWriteDescriptorSet writes[3] = {};
-    for (uint32_t i = 0; i < 3; ++i) {
+    const VkDescriptorImageInfo atlases[3] = {{VK_NULL_HANDLE, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
+                                              {VK_NULL_HANDLE, _giVisibility.view, VK_IMAGE_LAYOUT_GENERAL},
+                                              {VK_NULL_HANDLE, _giOffsets.view, VK_IMAGE_LAYOUT_GENERAL}};
+    VkWriteDescriptorSet writes[4] = {};
+    for (uint32_t i = 0; i < 4; ++i) {
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = _set;
-        writes[i].dstBinding = 1 + i;
+        writes[i].dstBinding = i == 3 ? 9 : 1 + i;
         writes[i].descriptorCount = 1;
         writes[i].descriptorType = i == 0 ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[i].pBufferInfo = i == 0 ? &rays : nullptr;
         writes[i].pImageInfo = i == 0 ? nullptr : &atlases[i - 1];
     }
-    vkUpdateDescriptorSets(_dev.device, 3, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
 }
 
 void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
@@ -1093,11 +1110,13 @@ void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
     const VkDescriptorImageInfo shadow{VK_NULL_HANDLE, _shadowImage.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo reflection{VK_NULL_HANDLE, _reflectionImage.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorImageInfo refraction{VK_NULL_HANDLE, _refractionImage.view, VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo gather{VK_NULL_HANDLE, _gatherImage.view, VK_IMAGE_LAYOUT_GENERAL};
     const VkDescriptorBufferInfo vertices{gpu.vertices, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo indices{gpu.indices, 0, VK_WHOLE_SIZE};
     const VkDescriptorBufferInfo slots{_slots.buffer, 0, VK_WHOLE_SIZE};
-    const VkDescriptorImageInfo atlases[2] = {{_sampler, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
-                                              {_sampler, _giVisibility.view, VK_IMAGE_LAYOUT_GENERAL}};
+    const VkDescriptorImageInfo atlases[3] = {{_sampler, _giIrradiance.view, VK_IMAGE_LAYOUT_GENERAL},
+                                              {_sampler, _giVisibility.view, VK_IMAGE_LAYOUT_GENERAL},
+                                              {_sampler, _giOffsets.view, VK_IMAGE_LAYOUT_GENERAL}};
     const VkDescriptorBufferInfo uniforms{_uniforms.buffer, 0, sizeof(RayTracingData)};
     std::vector<VkWriteDescriptorSet> writes;
     auto write = [&](uint32_t binding, VkDescriptorType type, const VkDescriptorBufferInfo *buffer,
@@ -1120,12 +1139,15 @@ void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
     if (_refractionImage.view) {
         write(86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &refraction);  // partially bound
     }
+    if (_gatherImage.view) {
+        write(87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &gather);  // partially bound
+    }
     if (gpu.vertices && gpu.indices) {
         write(55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &vertices, nullptr);
         write(56, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &indices, nullptr);
     }
     write(57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &slots, nullptr);
-    write(58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, atlases, 2);
+    write(58, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, atlases, 3);
     write(59, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, &uniforms, nullptr);
     vkUpdateDescriptorSets(_dev.device, uint32_t(writes.size()), writes.data(), 0, nullptr);
 }
@@ -1272,7 +1294,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         pass("giProbes");
     }
-    if (_work.shadows || _work.reflections || _work.refraction) {
+    if (_work.shadows || _work.reflections || _work.refraction || _work.gather) {
         // Last frame's shading pass is done reading the images; this
         // frame's prepass depth is written.
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
@@ -1281,7 +1303,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
-        if (_work.shadows || _work.reflections) {
+        if (_work.shadows || _work.reflections || _work.gather) {
             _fn->cmdTraceRays(cmd, &_raygen, &_miss, &_hit, &_callable, _width, _height, 1);
         }
         if (_work.refraction) {

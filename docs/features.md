@@ -148,7 +148,8 @@ Traced shadows cover opaque pixels only. With volumes, fog, translucent surfaces
 | Layer | Setting | Needs | What it gives |
 |---|---|---|---|
 | Dome light + AO | `eldr:imageBasedLighting`, `eldr:ambientOcclusion` | prepass | Unoccluded sky light darkened by GTAO |
-| DDGI probes | `eldr:gi` | ray tracing | Probe grid (`eldr:giProbes`, `eldr:giRaysPerProbe`); octahedral irradiance and visibility atlases blended by `eldr:giHysteresis`; Chebyshev visibility prevents leaks; probes in geometry drop out; hits shaded with direct light, emission and probe bounces; dome fallback |
+| DDGI probes | `eldr:gi` | ray tracing | Probe grid (`eldr:giProbes`, `eldr:giRaysPerProbe`); octahedral irradiance and visibility atlases blended by `eldr:giHysteresis`; Chebyshev visibility prevents leaks; probes in or just behind walls move out (`eldr:giRelocation`, RTXGI's relocation), those that can't drop out; hits shaded with direct light, emission and probe bounces; dome fallback |
+| Final gather | `eldr:finalGather` | GI, prepass | On in final quality. One short cosine ray per pixel and sample (`eldr:finalGatherDistance`, at least a probe spacing), shaded at its hit with direct light and probe bounces, or the probes at its end; replaces the probes, AO and SSGI on opaque diffuse light: contact shadows, corners, colour bleeding |
 | SSGI | `eldr:ssgi` | prepass | Near-field indirect light from the screen (GTAO horizon scan, last frame's lighting) at half resolution, denoised. Replaces AO. |
 
 - `eldr:ssgiBitmask`: 32-sector bitmask, light passes behind thin objects (occluder thickness `eldr:ssgiBitmaskThickness`).

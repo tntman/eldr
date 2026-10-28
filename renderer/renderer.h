@@ -227,6 +227,17 @@ public:
         uint32_t giProbes = 16;      // along the scene's longest side (2..64; at most 16384 in all)
         uint32_t giRays = 128;       // per probe and frame (16..512)
         float giHysteresis = 0.97f;  // weight of the probes' history (0..0.99): smoother, but slower to react
+        // Probes inside or just behind walls move out (up to 0.45 spacings)
+        // instead of only switching off; 32 more rays per probe and frame.
+        bool giRelocation = true;
+        // Final gather (with gi and the depth prepass): per pixel and frame
+        // a cosine ray at least finalGatherDistance (world units) and a
+        // probe spacing long, shaded where it lands or from the probes at
+        // its end: the diffuse indirect light (contact shadows, corners,
+        // colour bleeding) instead of the probes', AO and SSGI. 0 off, 1 in
+        // final quality (film runs started fresh), 2 always.
+        uint32_t finalGather = 1;
+        float finalGatherDistance = 0.5f;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.

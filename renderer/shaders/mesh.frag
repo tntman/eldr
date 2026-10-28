@@ -1216,12 +1216,21 @@ void main()
     vec3 domeSpecular = specular, domeDiffuse = Lavg;  // the dome's alone (light splits)
     Lavg = GiDiffuse(inWorldPos, n, v, Lavg);
     float diffuseAO = min(occlusion, texelFetch(ambientOcclusion, ivec2(gl_FragCoord.xy), 0).r);
+    // Final gather: traced, so occluded already; neither AO nor SSGI on it.
+    vec3 gathered;
+    const bool finalGather = RtGather(gathered);
+    if (finalGather) {
+        Lavg = gathered;
+    }
+    const vec3 indirectDiffuse = finalGather ? Lavg * occlusion
+                                        : Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0) : diffuseColor) +
+                                              SsgiDiffuse() * occlusion;
     int mirrorIndex = OnMirror(instances[inSlot].draw, inWorldPos);
     bool mirror = mirrorIndex >= 0;
     if (Feature(kFeatureProbe) && !mirror) {
         // The local ambient light probes are normalized by (GI or SSGI's).
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
-                                 Lavg * diffuseAO + SsgiDiffuse());
+                                 finalGather ? Lavg * occlusion : Lavg * diffuseAO + SsgiDiffuse());
     }
     float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
     specular *= MultiBounce(specularAO, f0);
@@ -1289,9 +1298,7 @@ void main()
     vec3 kd = DiffuseAlbedo(diffuseColor, NoV);
     // With SSGI the bounces are traced: the visibility hides the rest alone.
     vec3 splitAmbient = color;
-    color += FssEss * specular + kd * (Lavg * MultiBounce(diffuseAO, Feature(kFeatureSsgi) ? vec3(0.0)
-                                                                                                     : diffuseColor) +
-                                                    SsgiDiffuse() * occlusion);
+    color += FssEss * specular + kd * indirectDiffuse;
     vec3 splitIndirectGlossy = FssEss * specular;
     vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
     // Karma's convention (frame.aovs.y): the dome's light that reaches the
