@@ -3,7 +3,11 @@
 // - turns implicit prims (UsdGeomCube, Sphere, Cone, Cylinder, Capsule,
 //   Plane) into meshes, same as hdEmbree does;
 // - lets the render delegate re-sync every mesh when a render setting
-//   that shapes them (subdivision) changes (HdVkDirtyMeshes);
+//   that shapes them (subdivision, motion blur) changes (HdVkDirtyPrims);
+// - resolves velocities, accelerations and angularVelocities into sampled
+//   points and instance positions and rotations (HdsiVelocityMotion-
+//   ResolvingSceneIndex) where Velocity Blur asks for it
+//   (_VelocityModeSceneIndex);
 // - skips UsdSkelImaging's CPU skinning: for a skinned mesh it hands the
 //   ExtComputation inputs over as primvars (the same hydra:* primvars
 //   UsdSkelImaging writes itself with HD_ENABLE_DEFERRED_SKINNING), so
@@ -27,7 +31,9 @@
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hdsi/implicitSurfaceSceneIndex.h"
 #include "pxr/imaging/hdsi/renderSettingsFilteringSceneIndex.h"
+#include "pxr/imaging/hdsi/velocityMotionResolvingSceneIndex.h"
 
+#include <algorithm>
 #include <set>
 #include <vector>
 
@@ -56,7 +62,11 @@ TF_DEFINE_PRIVATE_TOKENS(
     (blendShapeOffsets)
     (blendShapeOffsetRanges)
     (numBlendShapeOffsetRanges)
-    (blendShapeWeights));
+    (blendShapeWeights)
+    ((eldrVblur, "eldr:object:vblur"))
+    ((karmaVblur, "karma:object:vblur"))
+    ((eldrInstanceVblur, "eldr:object:instance_vblur"))
+    ((karmaInstanceVblur, "karma:object:instance_vblur")));
 
 TF_DECLARE_REF_PTRS(_SkinningSceneIndex);
 
@@ -232,10 +242,102 @@ private:
     }
 };
 
+TF_DECLARE_REF_PTRS(_VelocityModeSceneIndex);
+
+// Karma's Velocity Blur as HdsiVelocityMotionResolvingSceneIndex's
+// __velocityMotionMode: primvars eldr:object:vblur, else karma:object:vblur
+// (on a PointInstancer their instance_vblur twins). 0 or unauthored ignores
+// velocities (Karma's default), 1 uses them without accelerations, 2 with.
+class _VelocityModeSceneIndex final : public HdSingleInputFilteringSceneIndexBase
+{
+public:
+    static _VelocityModeSceneIndexRefPtr New(HdSceneIndexBaseRefPtr const &input)
+    {
+        return TfCreateRefPtr(new _VelocityModeSceneIndex(input));
+    }
+
+    HdSceneIndexPrim GetPrim(SdfPath const &path) const override
+    {
+        HdSceneIndexPrim prim = _GetInputSceneIndex()->GetPrim(path);
+        if (!prim.dataSource ||
+            !HdsiVelocityMotionResolvingSceneIndex::PrimTypeSupportsVelocityMotion(prim.primType)) {
+            return prim;
+        }
+        const TfTokenVector names = prim.primType == HdPrimTypeTokens->instancer
+                                        ? TfTokenVector{_tokens->eldrInstanceVblur, _tokens->karmaInstanceVblur}
+                                        : TfTokenVector{_tokens->eldrVblur, _tokens->karmaVblur};
+        const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+        int mode = 0;
+        for (const TfToken &name : names) {
+            const HdSampledDataSourceHandle ds = primvars.GetPrimvar(name).GetPrimvarValue();
+            VtValue v = ds ? ds->GetValue(0.0f) : VtValue();
+            if (v.IsArrayValued()) {
+                v = VtValue::Cast<VtIntArray>(v);
+                v = v.IsHolding<VtIntArray>() && !v.UncheckedGet<VtIntArray>().empty()
+                        ? VtValue(v.UncheckedGet<VtIntArray>()[0]) : VtValue();
+            }
+            v = VtValue::Cast<int>(v);
+            if (v.IsHolding<int>()) {
+                mode = v.UncheckedGet<int>();
+                break;
+            }
+        }
+        const auto &t = *HdsiVelocityMotionResolvingSceneIndexTokens;
+        prim.dataSource = HdOverlayContainerDataSource::New(
+            HdRetainedContainerDataSource::New(
+                t.velocityMotionMode,
+                HdRetainedTypedSampledDataSource<TfToken>::New(mode >= 2   ? t.enable
+                                                               : mode == 1 ? t.noAcceleration
+                                                                           : t.ignore)),
+            prim.dataSource);
+        return prim;
+    }
+
+    SdfPathVector GetChildPrimPaths(SdfPath const &path) const override
+    {
+        return _GetInputSceneIndex()->GetChildPrimPaths(path);
+    }
+
+private:
+    explicit _VelocityModeSceneIndex(HdSceneIndexBaseRefPtr const &input)
+        : HdSingleInputFilteringSceneIndexBase(input)
+    {
+    }
+
+    void _PrimsAdded(HdSceneIndexBase const &, HdSceneIndexObserver::AddedPrimEntries const &entries) override
+    {
+        _SendPrimsAdded(entries);
+    }
+    void _PrimsRemoved(HdSceneIndexBase const &, HdSceneIndexObserver::RemovedPrimEntries const &entries) override
+    {
+        _SendPrimsRemoved(entries);
+    }
+    // An edited vblur primvar is an edited mode.
+    void _PrimsDirtied(HdSceneIndexBase const &, HdSceneIndexObserver::DirtiedPrimEntries const &entries) override
+    {
+        static const HdDataSourceLocator mode(HdsiVelocityMotionResolvingSceneIndexTokens->velocityMotionMode);
+        static const HdDataSourceLocatorSet vblur = [] {
+            HdDataSourceLocatorSet set;
+            for (const TfToken &name : {_tokens->eldrVblur, _tokens->karmaVblur, _tokens->eldrInstanceVblur,
+                                        _tokens->karmaInstanceVblur}) {
+                set.insert(HdPrimvarsSchema::GetDefaultLocator().Append(name));
+            }
+            return set;
+        }();
+        HdSceneIndexObserver::DirtiedPrimEntries dirtied = entries;
+        for (auto &e : dirtied) {
+            if (e.dirtyLocators.Intersects(vblur)) {
+                e.dirtyLocators.insert(mode);
+            }
+        }
+        _SendPrimsDirtied(dirtied);
+    }
+};
+
 TF_DECLARE_REF_PTRS(_SettingsSceneIndex);
 
-// Passes the scene through; DirtyMeshes dirties every mesh's display style
-// so the meshes sync again and re-read the render settings.
+// Passes the scene through; Dirty dirties prims of some types so they sync
+// again and re-read the render settings.
 class _SettingsSceneIndex final : public HdSingleInputFilteringSceneIndexBase
 {
 public:
@@ -250,15 +352,13 @@ public:
         return _GetInputSceneIndex()->GetChildPrimPaths(path);
     }
 
-    void DirtyMeshes(TfToken const &type)
+    void Dirty(TfTokenVector const &types, HdDataSourceLocatorSet const &locators)
     {
-        const HdDataSourceLocator &locator = type == HdPrimTypeTokens->mesh
-                                                 ? HdLegacyDisplayStyleSchema::GetDefaultLocator()
-                                                 : HdPrimvarsSchema::GetDefaultLocator();
         HdSceneIndexObserver::DirtiedPrimEntries entries;
         for (const SdfPath &path : HdSceneIndexPrimView(_GetInputSceneIndex())) {
-            if (_GetInputSceneIndex()->GetPrim(path).primType == type) {
-                entries.emplace_back(path, locator);
+            const TfToken type = _GetInputSceneIndex()->GetPrim(path).primType;
+            if (std::find(types.begin(), types.end(), type) != types.end()) {
+                entries.emplace_back(path, locators);
             }
         }
         _SendPrimsDirtied(entries);
@@ -286,7 +386,8 @@ private:
 
 } // namespace
 
-void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type)
+void HdVkDirtyPrims(HdSceneIndexBaseRefPtr const &terminal, TfTokenVector const &types,
+                    HdDataSourceLocatorSet const &locators)
 {
     // Find this renderer's _SettingsSceneIndex upstream of the terminal.
     std::vector<HdSceneIndexBaseRefPtr> todo = {terminal};
@@ -298,7 +399,7 @@ void HdVkDirtyMeshes(HdSceneIndexBaseRefPtr const &terminal, TfToken const &type
             continue;
         }
         if (auto *settings = dynamic_cast<_SettingsSceneIndex *>(sceneIndex)) {
-            settings->DirtyMeshes(type);
+            settings->Dirty(types, locators);
             return;
         }
         if (auto *filtering = dynamic_cast<HdFilteringSceneIndexBase *>(sceneIndex)) {
@@ -321,15 +422,19 @@ protected:
                 HdsiImplicitSurfaceSceneIndexTokens->toMesh);
         // The active render settings prim (the scene globals') is marked
         // active, so the render products are written (renderProducts.h).
-        return _SettingsSceneIndex::New(HdsiImplicitSurfaceSceneIndex::New(
-            _SkinningSceneIndex::New(HdsiRenderSettingsFilteringSceneIndex::New(inputScene, nullptr)),
-            HdRetainedContainerDataSource::New(
-                HdPrimTypeTokens->sphere, toMesh,
-                HdPrimTypeTokens->cube, toMesh,
-                HdPrimTypeTokens->cone, toMesh,
-                HdPrimTypeTokens->cylinder, toMesh,
-                HdPrimTypeTokens->capsule, toMesh,
-                HdPrimTypeTokens->plane, toMesh)));
+        // Velocities resolve into the points and instance samples that
+        // sampled motion and deformation blur read (after the implicit
+        // surfaces, as Storm's).
+        return _SettingsSceneIndex::New(HdsiVelocityMotionResolvingSceneIndex::New(_VelocityModeSceneIndex::New(
+            HdsiImplicitSurfaceSceneIndex::New(
+                _SkinningSceneIndex::New(HdsiRenderSettingsFilteringSceneIndex::New(inputScene, nullptr)),
+                HdRetainedContainerDataSource::New(
+                    HdPrimTypeTokens->sphere, toMesh,
+                    HdPrimTypeTokens->cube, toMesh,
+                    HdPrimTypeTokens->cone, toMesh,
+                    HdPrimTypeTokens->cylinder, toMesh,
+                    HdPrimTypeTokens->capsule, toMesh,
+                    HdPrimTypeTokens->plane, toMesh)))));
     }
 };
 

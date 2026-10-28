@@ -63,7 +63,12 @@ SECTIONS = [
         ("primvars:eldr:object:mblur", "Enable Motion Blur", "bool", True,
          "Off: no transform or deformation motion blur of its own (camera motion still blurs it). Eldr's wins "
          "over Karma's.", None),
-        # Velocity Blur (eldr:object:vblur, eldr:object:instance_vblur) is added here by the motion blur work.
+        ("primvars:eldr:object:vblur", "Velocity Blur", "int", 0,
+         "Blur by the points' velocities (and accelerations) instead of their samples: off ignores velocities "
+         "(as Karma). Eldr's wins over Karma's.", [(0, "Off"), (1, "Velocity"), (2, "Velocity and Acceleration")]),
+        ("primvars:eldr:object:instance_vblur", "Instance Velocity Blur", "int", 0,
+         "A point instancer's instances blur by its velocities and angularVelocities (and accelerations). "
+         "Eldr's wins over Karma's.", [(0, "Off"), (1, "Velocity"), (2, "Velocity and Acceleration")]),
     ]),
     ("Curves and points", False, [
         ("primvars:eldr:object:curve_style", "Render Curves As", "int", 3,

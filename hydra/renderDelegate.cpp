@@ -23,6 +23,9 @@
 #include "pxr/base/tf/stringUtils.h"
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
+#include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
+#include "pxr/imaging/hd/primvarsSchema.h"
+#include "pxr/imaging/hd/xformSchema.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hgi/hgi.h"
@@ -544,12 +547,24 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     // Through the scene: a scene index render index's change tracker can't
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
+        const HdSceneIndexBaseRefPtr terminal(_terminalSceneIndex);
         if (key == t.subdivision || key == t.maxRefineLevel) {
-            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex));
+            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
         } else if (key == t2.curveRibbons) {
-            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->basisCurves);
+            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t2.pointSprites) {
-            HdVkDirtyMeshes(HdSceneIndexBaseRefPtr(_terminalSceneIndex), HdPrimTypeTokens->points);
+            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
+        } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||
+                   key == t2.sampledMotion || key == t.postProcess) {
+            // The motion a commit hands the renderer is gone after it (the
+            // renderer keeps it while the blur is on): the prims and the
+            // camera sample their motion again, moved or not
+            // (MotionSettingsChanged), so the blur comes back at once.
+            _motionSettingsChanged = true;
+            HdVkDirtyPrims(terminal,
+                           {HdPrimTypeTokens->mesh, HdPrimTypeTokens->basisCurves, HdPrimTypeTokens->points,
+                            HdPrimTypeTokens->volume, HdPrimTypeTokens->camera},
+                           {HdPrimvarsSchema::GetPointsLocator(), HdXformSchema::GetDefaultLocator()});
         }
     }
 }
@@ -881,6 +896,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     const bool unchanged = edits == _committedEdits && settings == _committedSettings;
     _committedEdits = edits;
     _committedSettings = settings;
+    _motionSettingsChanged = false;  // the prims synced for it
     try {
         _scene->Commit(false, unchanged);
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

@@ -54,6 +54,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 | Visibility | Render Visibility | `string primvars:eldr:object:rendervisibility` | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
 | | Holdout Mode | `int primvars:eldr:object:holdoutmode` | Matte and Background both cut a holdout |
 | Motion | Enable Motion Blur | `bool primvars:eldr:object:mblur` | Off: no transform or deformation motion of its own; camera motion still blurs it |
+| | Velocity Blur, Instance Velocity Blur | `int primvars:eldr:object:vblur`, `instance_vblur` | 0 ignores `velocities` (default, as Karma); 1 blurs meshes, curves and points by `velocities`, a PointInstancer's instances by `velocities` and `angularVelocities`; 2 adds `accelerations`. Linear between the shutter's ends: accelerations move the ends, the blur doesn't curve. |
 | Curves and points | Render Curves As | `int primvars:eldr:object:curve_style` | Flat and Oriented Ribbons: ribbons (camera-facing without normals); Rounded Curves: tubes; USD Default: `eldr:curveRibbons` |
 | | Render Points As | `int primvars:eldr:object:point_style` | Discs and Oriented Discs: camera-facing discs; Spheres: spheres; USD Default: `eldr:pointSprites` |
 | | Width Scale | `float primvars:eldr:object:width_scale` | Multiplies curve and point widths |
@@ -63,7 +64,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples, velocity and acceleration blur (Eldr samples points and transforms through the shutter, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 
