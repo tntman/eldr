@@ -550,6 +550,17 @@ public:
         uint32_t renderWidth = 0, renderHeight = 0;  // the scene's size (Frame::renderScale), else the frame's
     };
     const Stats &GetStats() const { return _stats; }
+    // Time in shading pipeline compiles and acceleration structure builds
+    // since the last call (the render delegate's load summary).
+    struct LoadTimes {
+        double shadersMs = 0, bvhMs = 0;
+    };
+    LoadTimes TakeLoadTimes()
+    {
+        const LoadTimes t = _load;
+        _load = {};
+        return t;
+    }
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
     void WaitForPrewarm();
     // Tells the worker to stop after the pipelines it is compiling, and writes
@@ -746,6 +757,7 @@ private:
     double _timestampMs = 0;                   // milliseconds per tick
     std::vector<const char *> _passes;         // the pass each timestamp after the first closes
     Stats _stats;
+    LoadTimes _load;
     Image _color, _primId, _instanceId, _depth;
     Image _velocity;  // motion vectors (RG16F, uv), read by TAA
     // Film: primId, instanceId and depth of the sample nearest the pixel

@@ -300,6 +300,10 @@ public:
     // to hex id), reported in GetRenderStats()["cryptomatte"].
     void SetCryptomatteManifests(std::string object, std::string material);
     double CommitMs() const { return _commitMs; }  // the last CommitResources
+    // After a frame rendered: when it followed a load (new scene, new
+    // shaders: over 0.25 s of work since the last frame), sums the load's
+    // times into the one-line summary (stats "loadLine") and prints it.
+    void NoteFrame();
 
     // GPU sharing: the app's Hgi comes as a driver (HgiTokens->renderDriver).
     void SetDrivers(HdDriverVector const &drivers) override;
@@ -341,6 +345,9 @@ private:
     std::unique_ptr<HdVkTextureCache> _textures;
     std::unique_ptr<HdVkMaterialFallbacks> _materialFallbacks;
     double _commitMs = 0;  // the last CommitResources (scene upload)
+    mutable std::mutex _loadMutex;
+    double _loadSyncMs = 0;  // CommitResources' time since the last NoteFrame
+    std::string _loadLine;   // the last load's summary
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
     HdSceneIndexBasePtr _terminalSceneIndex;

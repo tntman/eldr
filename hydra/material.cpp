@@ -38,6 +38,7 @@
 #include <MaterialXFormat/Util.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -2291,7 +2292,9 @@ std::shared_ptr<vkr::Texture> HdVkTextureCache::Get(std::string const &path,
     std::weak_ptr<vkr::Texture> &slot = _textures[{path, sourceColorSpace}];
     std::shared_ptr<vkr::Texture> texture = slot.lock();
     if (!texture) {
+        const auto start = std::chrono::steady_clock::now();
         texture = LoadTexture(path, sourceColorSpace);
+        _loadMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         slot = texture;
     }
     return texture;
