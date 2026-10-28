@@ -305,20 +305,13 @@ void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath con
         m.shutterMotion = true;
         return;
     }
-    float open = 0, close = 0;
-    const bool sampled = vk->SampledMotionShutter(&open, &close);
-    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
-        fprintf(stderr, "MOTION %s sampled %d open %g close %g\n", id.GetText(), int(sampled), open, close);
-    }
-    if (!sampled) {
+    float open, close;
+    if (!vk->SampledMotionShutter(&open, &close)) {
         return;
     }
     const HdVkShutterTime atOpen{open, open, close}, atClose{close, open, close};
     const std::vector<float> a = HdVkWorldTransforms(delegate, id, instancerId, &atOpen);
     const std::vector<float> b = HdVkWorldTransforms(delegate, id, instancerId, &atClose);
-    if (getenv("HDVK_DEBUG_MOTION")) {  // TEMP
-        fprintf(stderr, "MOTION %s same %d n %zu\n", id.GetText(), int(a == b), a.size());
-    }
     if (a == b || a.size() != m.transforms.size() || b.size() != a.size()) {
         return;  // still through the shutter: the motion is since the last transforms
     }
