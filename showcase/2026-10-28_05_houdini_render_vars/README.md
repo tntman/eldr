@@ -15,3 +15,5 @@ The Cornell box with a product on the settings prims: `beauty` with the vars `C`
 - husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_05_houdini_render_vars/scene.usda`
 
 Settings prims: `/Render/default`, `/Render/viewport`.
+
+Note: Houdini's Render Outputs menu lists render vars that carry Houdini's own authoring (`HuskRenderVarAPI`, `driver:parameters:aov:husk:name` / `format`), as the Render Var LOP writes them; plain UsdRender vars render (husk, usdrecord) but may not show in the menu. This scene authors both, and sets `renderSettingsPrimPath`.
