@@ -11,7 +11,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
-from pxr import Gf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdShade
+from pxr import Gf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdRender, UsdShade
 
 SIZE = 64
 
@@ -89,6 +89,21 @@ objects = json.loads(manifests.get("CryptoObject", "{}"))
 materials = json.loads(manifests.get("CryptoMaterial", "{}"))
 expect(objects.get("/front") == "%08x" % Murmur3("/front"), "Cryptomatte manifest: the cube's id")
 expect(materials.get("/look") == "%08x" % Murmur3("/look"), "Cryptomatte manifest: its material's id")
+
+# Houdini's viewport binds a render var by its prim's name alone (no
+# sourceName/sourceType): Eldr takes the source from the settings prim's var.
+settings = UsdRender.Settings.Define(stage, "/Render/Settings")
+product = UsdRender.Product.Define(stage, "/Render/Product")
+var = UsdRender.Var.Define(stage, "/Render/Vars/rendervar1")
+var.CreateSourceNameAttr("ray:hitN")
+var.CreateSourceTypeAttr("raw")
+var.CreateDataTypeAttr("float3")
+product.GetOrderedVarsRel().AddTarget(var.GetPath())
+settings.GetProductsRel().AddTarget(product.GetPath())
+engine.SetActiveRenderSettingsPrimPath(settings.GetPath())
+Render("normal")  # the settings prim syncs
+c = Render("rendervar1")
+expect(c.redF() < 0.03 and c.greenF() < 0.03 and c.blueF() > 0.97, "a render var bound by its prim's name: its source (ray:hitN)")
 
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
