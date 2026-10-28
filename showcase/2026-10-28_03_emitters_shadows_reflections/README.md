@@ -3,9 +3,9 @@
 `tests/scenes/emissive.usda`: the Cornell box lit only by a glowing panel under the ceiling and a small bulb on the floor, with a chrome ball.
 
 - `/Render/default`: the defaults (shadow maps, emissive lights on).
-- `/Render/rtShadows`: `eldr:rtShadows` on. Look under the ball: no dark spot.
+- `/Render/rtShadows`: `eldr:rtShadows` on. Look under the ball and the box: the difference is subtle (contact shadows without the map's bias).
 - `/Render/rtReflectionsHitShadows2` vs `...0`: `eldr:rtReflections` with `eldr:rtHitShadows` 2 (always) or 0. The floor seen in the chrome ball is shadowed with 2.
-- `/Render/shadowMapsOnly`: shadow maps only; the shadow near the panel is soft.
+- `/Render/shadowMapsOnly`: shadow maps only (the default, so it equals `default`); the shadow near the panel is soft.
 - `/Render/emissiveLightsOff` vs `...On`: `eldr:emissiveLights`; with it the panel's edges light the ceiling.
 
 Ray tracing runs on a compute fallback on GPUs without RT cores, so the traced settings cost more there.

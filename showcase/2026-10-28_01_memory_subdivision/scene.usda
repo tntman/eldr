@@ -6,8 +6,10 @@
 
 def Camera "cam"
 {
-    float focalLength = 24
-    double3 xformOp:translate = (0, 2.2, 11)
+    float focalLength = 18
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    double3 xformOp:translate = (0, 2.2, 14)
     float xformOp:rotateX = -8
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }

@@ -10,7 +10,7 @@
 ## What to look at
 
 - `/Render/blurOn` vs `/Render/blurOff`: `eldr:motionBlur` now toggles without changing the frame. Time-sampled objects blur from their samples; velocity-only ones from vblur.
-- `/Render/blurFinal`: final quality with time samples (exact blur, takes longer).
+- `/Render/blurFinal`: final quality with time samples. usdrecord already renders final quality, so it looks like `blurOn` there; in usdview it converges over film samples.
 - `/Render/cameraBlur`: the panning camera.
 
 ## Open

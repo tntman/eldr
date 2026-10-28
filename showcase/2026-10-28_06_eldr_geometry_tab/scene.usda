@@ -17,10 +17,10 @@ over "front"
     string primvars:eldr:object:rendervisibility = "-primary"
 }
 
-# The curves and points scene (no default prim, so each prim is referenced), 200 units behind.
+# The curves and points scene (no default prim, so each prim is referenced), 600 units to the side.
 def Xform "curvesScene"
 {
-    double3 xformOp:translate = (0, 0, -200)
+    double3 xformOp:translate = (600, 0, 0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 
     def Camera "cam" (references = @../../tests/scenes/curves.usda@</cam>)

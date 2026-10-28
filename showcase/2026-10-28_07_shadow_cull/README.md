@@ -4,7 +4,7 @@ A ground plane and 1600 small posts (a PointInstancer) far from the camera, unde
 
 - `/Render/cull05`: `eldr:shadowCullPixels` 0.5 (default).
 - `/Render/cull8`: 8: more posts lose their shadows in the far cascades. Look at the distant rows.
-- `/Render/cullOff`: 0, nothing culled (slowest, all shadows).
+- `/Render/cullOff`: 0, nothing culled (slowest). At the default the picture is the same as with culling off here; 8 is where the far rows change.
 
 Frame time shows the difference better than the picture; use usdview's frame time or husk's log. The effect is biggest in dense crowd scenes: the crowd scenes in `E:\usd-testscenes` show it best (that folder is not part of the repo).
 
