@@ -41,6 +41,7 @@ private:
     float _lastViewProj[16] = {};  // the last frame's camera: moving or still
     GfMatrix4d _lastView, _lastProjection;  // the last real camera's (a missing camera keeps it)
     bool _hasLastCamera = false;
+    SdfPath _lastCameraId;  // the camera the last frame looked through (a switch: no camera motion)
     // eldr:overlapReadback: the buffers (colour, depth, ids) and size last
     // frame read back into, and its depth AOV's constants.
     std::array<uintptr_t, 6> _lastReadback = {};

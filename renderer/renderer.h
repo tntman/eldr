@@ -90,6 +90,10 @@ public:
         // prevTransforms (Mesh::shutterMotion); the camera one frame before
         // is here (viewProj and cameraPos when it doesn't move).
         bool sampledMotion = false;
+        // Without sampled motion: the camera has no motion from the frame
+        // before (an app's viewport camera, or a switch to another camera),
+        // so the blur never runs from another camera's pose to this one.
+        bool stillCamera = false;
         // Deformation blur (eldr:deformationBlur): meshes with
         // Mesh::velocities (point caches, sampled through the shutter)
         // move along them in time samples and motion vectors. Off: they
@@ -837,6 +841,7 @@ private:
         uint32_t instanceCapacity = 0;
         float viewProj[16] = {};
         float cameraPos[3] = {};
+        float endViewProj[16] = {};  // the camera the motion ended at: the shutter's only while it stays
     } _shutter;
     Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
     bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time

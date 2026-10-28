@@ -717,6 +717,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                           static_cast<HdVkRenderDelegate *>(delegate)->SampledMotionShutter(&shutterOpen, &shutterClose);
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.prevViewProj);
     std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
+    // Without sampled motion the camera's motion is the last frame's pose:
+    // none for Houdini's viewport camera, nor across a switch of cameras.
+    const SdfPath cameraId = camera ? camera->GetId() : SdfPath();
+    frame.stillCamera = cameraId != _lastCameraId || HdVkCamera::IsViewportCamera(cameraId);
+    _lastCameraId = cameraId;
     GfMatrix4d prevCamera;
     if (const auto *vkCamera = dynamic_cast<const HdVkCamera *>(camera);
         frame.sampledMotion && vkCamera && vkCamera->GetPrevTransform(&prevCamera)) {
