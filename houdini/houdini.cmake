@@ -42,10 +42,15 @@ file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/eldr.json CONTENT
     \"env\": [
         {\"PXR_PLUGINPATH_NAME\": {\"method\": \"append\", \"value\": \"$<TARGET_FILE_DIR:hdVk>\"}},
         {\"PXR_AR_DEFAULT_SEARCH_PATH\": {\"method\": \"append\", \"value\": \"$HFS/bin/usd_plugins/hdx/resources/textures\"}},
-        {\"ELDR_HUSK\": \"$<TARGET_FILE_DIR:hdVk>/houdini/bin/eldr_husk.cmd\"}
+        {\"ELDR_HUSK\": \"$<TARGET_FILE_DIR:hdVk>/houdini/bin/eldr_husk.cmd\"},
+        {\"ELDR_HOUDINI\": \"$<TARGET_FILE_DIR:hdVk>/houdini\"}
     ]
 }
 ")
+
+# Eldr's render statistics panel: UsdRenderers.json's qmlTemplate is
+# $ELDR_HOUDINI/qml/EldrStats.qml (the fallback is $HFS/qt/qml/houdini/renderstats/GenericStats.qml).
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/qml/EldrStats.qml INPUT ${CMAKE_CURRENT_LIST_DIR}/EldrStats.qml)
 
 # husk for Eldr renders of instanced crowds (a USD Render ROP's Render Command:
 # $ELDR_HUSK). USD reads HD_ENABLE_DEFERRED_SKINNING once at startup, before

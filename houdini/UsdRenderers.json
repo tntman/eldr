@@ -21,7 +21,7 @@
             "float OpenEXR:renderTime": "${render_stats.totalClockTime}",
             "time OpenEXR:renderTime_s": "${render_stats.totalClockTime}"
         },
-        "qmlTemplate": "$HFS/qt/qml/houdini/renderstats/GenericStats.qml",
+        "qmlTemplate": "$ELDR_HOUDINI/qml/EldrStats.qml",
         "statsdatapaths": {
             "percentDone": "$.percentDone",
             "rendererStage": "$.rendererStage",
