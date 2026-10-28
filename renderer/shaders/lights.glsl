@@ -11,7 +11,8 @@ const uint kLightSphere = 1u, kLightRect = 2u, kLightDisk = 3u, kLightCylinder =
 
 struct Light {
     vec4 position;    // distant: direction to the light; else center. w: type
-    vec4 color;       // distant: irradiance; else radiance of the emitting surface
+    vec4 color;       // distant: irradiance; else radiance of the emitting surface. w: 1 drawn (light_shapes.frag),
+                      // + 2 casts shadows
     vec4 axis;        // emission axis (light -Z); w: sphere/cylinder radius, distant: half its angle (radians)
     vec4 halfWidth;   // rect: center to the +X edge, disk: radius along X, cylinder: center to the +X end;
                       // w: sphere/cylinder shading radius (0 = point/line)

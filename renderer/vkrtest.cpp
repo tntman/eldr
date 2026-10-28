@@ -2065,6 +2065,32 @@ int main()
             frame.rtReflections = true;
             const float on = Render(renderer, scene, frame).At(32, 41, 1);
             Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
+
+            // Hit shadows (Frame::rtHitShadows): the emitter's place taken by
+            // a white panel a sphere light lights from 0.4 off it, a card
+            // halfway between. The mirror sees the panel's shadowed spot.
+            vkr::Scene shadowed(&device);
+            vkr::Mesh *mirror2 = AddQuad(shadowed, 0, 0, 0, 0, 0);
+            mirror2->points = {-0.8f, 0, 0, 0.8f, 0, 0, 0.8f, 0.8f, -0.8f,
+                               -0.8f, 0, 0, 0.8f, 0.8f, -0.8f, -0.8f, 0.8f, -0.8f};  // as above (Commit emptied them)
+            mirror2->material = chrome;
+            auto white = std::make_shared<vkr::Material>();
+            std::fill(white->baseColor, white->baseColor + 3, 1.0f);
+            white->roughness = 1;
+            vkr::Mesh *panel = AddQuad(shadowed, 0, 0, 0, 0, 0);
+            panel->points = {-0.8f, -0.8f, -0.6f, 0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f,
+                             -0.8f, -0.8f, -0.6f, 0.8f, -0.1f, 0.1f, -0.8f, -0.1f, 0.1f};
+            panel->material = white;
+            vkr::Mesh *card = AddQuad(shadowed, 0, 0, 0, 0, 0);
+            card->points = {-0.3f, -0.412f, -0.495f, 0.3f, -0.412f, -0.495f, 0.3f, -0.298f, -0.381f,
+                            -0.3f, -0.412f, -0.495f, 0.3f, -0.298f, -0.381f, -0.3f, -0.298f, -0.381f};
+            AddSphereLight(shadowed, 0, -0.214f, -0.58f, 0.02f, 400.0f)->castShadows = true;
+            shadowed.Commit();
+            frame.rtHitShadows = 0;
+            const float lit = Render(renderer, shadowed, frame).At(32, 41, 1);
+            frame.rtHitShadows = 2;
+            const float dark = Render(renderer, shadowed, frame).At(32, 41, 1);
+            Expect(lit > 0.5f && dark < 0.1f * lit, "ray-traced reflection hits are shadowed from local lights");
         }
 
         if (device.rayTracing) {

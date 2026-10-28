@@ -170,7 +170,7 @@ Each pixel takes the best source for its roughness.
 | SSR denoiser | `eldr:ssrDenoise` (off) | One GGX ray per pixel, 9-ray spatial filter, temporal reprojection, bilateral filter; roughness up to 0.8. Crowd shading 11.7 to 20.4 ms. Not with ray-traced reflections. |
 | Reflection probes | `eldr:reflectionProbe` | Captured cube with parallax correction. One automatic probe, or up to 8 authored (`primvars:eldr:reflectionProbe`; smallest box wins, soft edges). `eldr:probeNormalize` needs GI or SSGI. |
 | Planar reflections | `eldr:planarReflections` | Mirrors (`primvars:eldr:planarReflection`, else largest flat glossy opaque mesh) render the scene mirrored with an oblique near plane; `eldr:planarCount` (4) at `eldr:planarScale` (0.5). |
-| Ray-traced reflections | `eldr:rtReflections` | GGX rays shaded at hits, up to roughness 0.7, replace dome and SSR; rough ones averaged over up to 12 pixels. Sees displacement (`eldr:rtDisplacement`) and skinned instances up to the cap. |
+| Ray-traced reflections | `eldr:rtReflections` | GGX rays shaded at hits (shadowed by every light in final quality, `eldr:rtHitShadows`), up to roughness 0.7, replace dome and SSR; rough ones averaged over up to 12 pixels. Sees displacement (`eldr:rtDisplacement`) and skinned instances up to the cap. |
 
 Mirror pixels take the planar reflection; others use the probe (if on) or the dome as the base, with SSR where the screen has the hit.
 

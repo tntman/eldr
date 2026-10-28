@@ -193,12 +193,16 @@ vec3 DomeDiffuse(vec3 n)
 }
 
 // Radiance leaving the hit towards the ray's origin: emission, diffuse
-// direct light (rt.params.w's light shadowed by a ray, the rest not),
-// diffuse indirect light (the probes with GI, else the dome) and the
-// dome's reflection for the specular part.
-// ponytail: local lights are unshadowed at hits and shaded as points, and
-// hits have no specular highlights.
-vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
+// direct light, diffuse indirect light (the probes with GI, else the dome)
+// and the dome's reflection for the specular part. rt.params.w's light is
+// shadowed by a ray; with `shadows` (eldr:rtHitShadows) every distant light
+// and the first kMaxHitShadows local lights reaching p are too, one ray
+// each, the rest unshadowed.
+// ponytail: local lights are shaded as points and hits have no specular
+// highlights; lights past the cap stay unshadowed (most important first if
+// scenes with many lights at one hit show it).
+const uint kMaxHitShadows = 16u;
+vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
 {
     vec3 p = hit.position, n = hit.normal;
     vec3 albedo = hit.baseColor * (1.0 - hit.metallic);
@@ -208,10 +212,11 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
         Light light = lights[i];
         float NoL = dot(n, light.position.xyz);
         if (NoL > 0.0) {
-            vec3 shadow = i == rt.params.w ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : vec3(1.0);
+            vec3 shadow = i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u) ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : vec3(1.0);
             irradiance += light.color.rgb * (NoL * light.halfHeight.w * shadow);
         }
     }
+    uint traced = 0u;
     for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {
         Light light = lights[i];
         vec3 toLight = light.position.xyz - p;
@@ -234,7 +239,12 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission)
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-        irradiance += light.color.rgb * (area * NoL / d2 * window * window * cone * light.halfHeight.w);
+        vec3 e = light.color.rgb * (area * NoL / d2 * window * window * cone * light.halfHeight.w);
+        if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(e.r, max(e.g, e.b)) > 0.0) {
+            e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
+            ++traced;
+        }
+        irradiance += e;
     }
     vec3 indirect = DomeDiffuse(n);
     if ((frame.features.x & kFeatureGi) != 0u) {

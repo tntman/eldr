@@ -230,7 +230,7 @@ void main()
         // diffuse surface, by its fractions.
         bool straight = bounce > 0u && u.x < s.straight;
         if (bounce > 0u && !straight && u.x >= s.straight + s.refracted) {
-            vec3 shaded = BrightnessClamp(ShadeHit(dir, seed, true), frame.lightClamp.y);
+            vec3 shaded = BrightnessClamp(ShadeHit(dir, seed, true, rt.shadowInfo.w != 0u), frame.lightClamp.y);
             imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
             return;
         }
@@ -276,7 +276,7 @@ void main()
             return;
         }
         if ((hit.flags & kHitTranslucent) == 0u) {
-            vec3 shaded = BrightnessClamp(ShadeHit(dir, seed, true), frame.lightClamp.y);
+            vec3 shaded = BrightnessClamp(ShadeHit(dir, seed, true, rt.shadowInfo.w != 0u), frame.lightClamp.y);
             imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
             return;
         }

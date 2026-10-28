@@ -32,7 +32,7 @@ GROUPS = [
      "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
      "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples reflectionProbe probeResolution "
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount"),
     ("Advanced: Materials", False,
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "

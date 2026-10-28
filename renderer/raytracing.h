@@ -23,7 +23,7 @@ struct RayTracingData {
     float giRotation[16];
     uint32_t skinned[4];  // the TLAS's first skinned instance, how many
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
-    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel
+    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel, 1: lights shadowed at hits
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
 };
@@ -65,6 +65,7 @@ public:
         float volumeStep = 1.0f, volumeDensity = 1.0f;
         uint32_t shadowSamples = 1, reflectionSamples = 1;          // rays per light / pixel
         uint32_t sun = kNone;  // the distant light shadowed at hits
+        bool hitShadows = false;  // all lights shadowed at reflection and refraction hits (rt_shade.glsl)
         bool gi = false;            // global illumination probes
         uint32_t giProbes = 16;     // along the scene's longest side
         uint32_t giRays = 64;       // per probe and frame

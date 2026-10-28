@@ -142,7 +142,7 @@ struct GpuLod {           // mirror of Lod in shaders/cull.comp
 };
 struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float position[4];   // distant: direction to the light; else center. w: type
-    float color[4];      // distant: irradiance; else surface radiance
+    float color[4];      // distant: irradiance; else surface radiance. w: 1 drawn, + 2 casts shadows
     float axis[4];       // emission axis; w: sphere/cylinder radius, distant: tan of the sun's angular radius
     float halfWidth[4];  // rect; w: sphere shading radius (0 = point)
     float halfHeight[4]; // rect; w: diffuse multiplier
@@ -2328,7 +2328,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             GpuLight &g = lights[lightCount + localLightCount];
             g = GpuLight{};
             g.halfHeight[3] = l->diffuse;
-            g.color[3] = l->cameraVisible ? 1.0f : 0.0f;  // light_shapes.frag (the colour is copied over rgb)
+            // Bit 1: light_shapes.frag draws it; bit 2: it casts shadows (rt_shade.glsl's ShadeHit).
+            g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f);
             g.shaping[3] = l->specular;
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
@@ -2418,6 +2419,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             GpuLight &g = lights[lightCount + localLightCount];
             g = GpuLight{};
             std::copy(e.radiance, e.radiance + 3, g.color);
+            g.color[3] = 2.0f;  // casts shadows; the mesh draws itself
             g.halfHeight[3] = 1.0f;
             g.shaping[0] = g.shaping[1] = 3.14159265f;  // no cone; specular multiplier 0
             Scene::Gpu::ShadowCaster c{};

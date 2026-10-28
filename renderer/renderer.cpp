@@ -3194,6 +3194,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
                     (frame.rtRefraction >= 2 || (frame.rtRefraction == 1 && film && _filmFinal));
     rt.refractionBounces = frame.rtRefractionBounces;
+    rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
