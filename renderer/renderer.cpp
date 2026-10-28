@@ -392,7 +392,8 @@ uint32_t NestedUniformScramble(uint32_t x, uint32_t seed)
 // a (0, 2)-sequence: a disc's or sphere's projections converge about twice
 // as fast as through the sample dimensions' unscrambled pairs (measured on
 // 128 samples: 0.02-0.03 worst error in a slab's share, not 0.06-0.08).
-constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4, kSeedRtShadow = 5;
+constexpr uint32_t kSeedLightShape = 1, kSeedLens = 2, kSeedShutter = 3, kSeedSsrGgx = 4, kSeedRtShadow = 5,
+                   kSeedRtGather = 6;
 void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
 {
     index = NestedUniformScramble(index, HashU32(seed));
@@ -758,7 +759,7 @@ void Renderer::_CreateDescriptors()
         {10, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt},
+        {13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kLighting},
         {15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kGeometry},
@@ -796,7 +797,7 @@ void Renderer::_CreateDescriptors()
         // Traced refraction (RayTracing::Work::refraction), bound while on.
         {86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
         // Final gather (RayTracing::Work::gather), bound while on.
-        {87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        {87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},  // and its denoise
         {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
@@ -3221,6 +3222,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.gather = rt.gi && frame.depthPrepass &&
                 (frame.finalGather >= 2 || (frame.finalGather == 1 && film && _filmFinal));
     rt.gatherDistance = frame.finalGatherDistance;
+    // Its rays: this sample's next points of one scrambled Sobol sequence
+    // (rays per sample in a row), so the film's directions stratify.
+    rt.gatherRays = std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays);
+    for (uint32_t i = 0; i < rt.gatherRays; ++i) {
+        ScrambledSobol(sobolIndex * rt.gatherRays + i, kSeedRtGather, rt.gatherSamples[i], 2);
+    }
+    rt.gatherDenoise = frame.finalGatherDenoise;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;

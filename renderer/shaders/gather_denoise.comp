@@ -1,0 +1,95 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
+#include "gi.glsl"
+
+// Final gather denoise (Frame::finalGatherDenoise): two a-trous passes
+// (Dammertz et al. 2010: the B3 spline's 5 x 5 taps at steps 1 and 2, 13
+// pixels across) over the gathered irradiance / pi, before mesh.frag
+// multiplies it by the albedo, so textures stay sharp. A neighbour counts
+// less the farther it lies off the centre's plane (geometric normal, in
+// pixel footprints: corners and silhouettes stay apart), the more its
+// shading normal differs, and in the second pass the more its luminance
+// differs (relative; keeps contact shadows). Light per frame: the film
+// averages the rest. Pass 0: rtGatherImage to gatherTemp; pass 1 back,
+// mixed with the raw sample by the strength (rt.gatherInfo.y).
+layout(constant_id = 0) const int kPass = 0;
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 13) uniform sampler2D sceneDepth;  // the prepass depth, window [0, 1]
+layout(set = 0, binding = 87, rgba16f) uniform image2D rtGatherImage;
+layout(set = 1, binding = 10, rgba16f) uniform image2D gatherTemp;
+layout(set = 1, binding = 11, rgba16f) uniform readonly image2D gatherGuide;  // octahedral geometric (xy), shading normal (zw)
+
+vec3 Point(vec2 pixel, float depth, vec2 size)
+{
+    vec4 p = frame.invViewProj * vec4((pixel + 0.5) / size * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    return p.xyz / p.w;
+}
+
+vec4 Load(ivec2 q)
+{
+    return kPass == 0 ? imageLoad(rtGatherImage, q) : imageLoad(gatherTemp, q);
+}
+
+float Luma(vec3 c)
+{
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy), size = imageSize(rtGatherImage);
+    if (any(greaterThanEqual(p, size))) {
+        return;
+    }
+    vec4 c = Load(p);
+    if (c.a <= 0.0) {  // no gather here
+        if (kPass == 0) {
+            imageStore(gatherTemp, p, c);
+        }
+        return;
+    }
+    vec2 fsize = vec2(size);
+    float depth = texelFetch(sceneDepth, p, 0).r;
+    vec3 pc = Point(vec2(p), depth, fsize);
+    float footprint = max(distance(pc, Point(vec2(p) + vec2(1.0, 0.0), depth, fsize)), 1e-6);
+    vec4 guide = imageLoad(gatherGuide, p);
+    vec3 ngc = OctDecode(guide.xy), nc = OctDecode(guide.zw);
+    float lc = Luma(c.rgb);
+    const float kB3[3] = float[3](0.375, 0.25, 0.0625);
+    int step = 1 << kPass;
+    vec3 sum = vec3(0.0);
+    float weights = 0.0;
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            ivec2 q = p + ivec2(x, y) * step;
+            if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) {
+                continue;
+            }
+            vec4 s = Load(q);
+            if (s.a <= 0.0) {
+                continue;
+            }
+            float w = kB3[abs(x)] * kB3[abs(y)];
+            if (x != 0 || y != 0) {
+                vec3 pq = Point(vec2(q), texelFetch(sceneDepth, q, 0).r, fsize);
+                w *= exp(-abs(dot(ngc, pq - pc)) / footprint);
+                w *= pow(max(dot(nc, OctDecode(imageLoad(gatherGuide, q).zw)), 0.0), 32.0);
+                if (kPass == 1) {
+                    float lq = Luma(s.rgb);
+                    w *= exp(-abs(lc - lq) / (lc + lq + 1e-4));
+                }
+            }
+            sum += s.rgb * w;
+            weights += w;
+        }
+    }
+    vec3 filtered = sum / weights;  // the centre's weight is never 0
+    if (kPass == 0) {
+        imageStore(gatherTemp, p, vec4(filtered, c.a));
+    } else {
+        vec4 raw = imageLoad(rtGatherImage, p);
+        imageStore(rtGatherImage, p, vec4(mix(raw.rgb, filtered, rt.gatherInfo.y), raw.a));
+    }
+}

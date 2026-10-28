@@ -2219,6 +2219,9 @@ int main()
                 f.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
                 f.filmSamples = 8;
                 f.giPreconverge = preconverge;
+                // The probes' light, not the final gather's (which sees
+                // them only past its first bounce, under its own noise).
+                f.finalGather = 0;
                 int n = 0;
                 do {
                     *out = Render(r, scene, f);

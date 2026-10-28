@@ -27,7 +27,10 @@ struct RayTracingData {
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
+    float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
+    float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
 };
+constexpr uint32_t kMaxGatherRays = 16;
 // TLAS instance masks (shaders/gi.glsl).
 constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2, kRtMaskShadow = 4, kRtMaskCamera = 8;
 
@@ -81,6 +84,12 @@ public:
         // diffuse indirect light instead of the probes and AO.
         bool gather = false;
         float gatherDistance = 0.0f;
+        // Rays per pixel (1..kMaxGatherRays), their points in [0, 1)^2 (each
+        // pixel turns them by blue noise), and the denoise strength
+        // (gather_denoise.comp; 0: off).
+        uint32_t gatherRays = 1;
+        float gatherSamples[kMaxGatherRays][2] = {};
+        float gatherDenoise = 1.0f;
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
@@ -236,6 +245,10 @@ private:
     Image _shadowImage, _reflectionImage;
     Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
     Image _gatherImage;      // with Work::gather: rt_pixels.rgen's
+    // With Work::gather: gather_denoise.comp's first pass, and the normals
+    // it weighs by (octahedral geometric, shading; rt_pixels.rgen's).
+    Image _gatherTemp, _gatherGuide;
+    VkPipeline _gatherDenoise[2] = {};
     uint32_t _width = 0, _height = 0, _shadowLayers = 0;
     Image _giIrradiance, _giVisibility;
     Image _giOffsets;  // relocation per probe (rgba32f, xyz)

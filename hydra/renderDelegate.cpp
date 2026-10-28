@@ -354,6 +354,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Probe Relocation (out of walls)", t2.giRelocation, VtValue(frame.giRelocation)},
         {"Final Gather (0 off, 1 final quality, 2 always)", t2.finalGather, VtValue(int(frame.finalGather))},
         {"Final Gather Distance (world units)", t2.finalGatherDistance, VtValue(frame.finalGatherDistance)},
+        {"Final Gather Rays per Pixel (1-16)", t2.finalGatherRays, VtValue(int(frame.finalGatherRays))},
+        {"Final Gather Denoise (0-1)", t2.finalGatherDenoise, VtValue(frame.finalGatherDenoise)},
         {"Screen-Space GI (replaces AO)", t.ssgi, VtValue(frame.ssgi)},
         {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
