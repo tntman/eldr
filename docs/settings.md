@@ -121,9 +121,9 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray hitting a surface from behind takes `eldr:screenBackfaceScale` of its light: less leaking through objects. An SSR ray lost behind a surface (e.g. floor hidden behind a ball) takes that share of it instead of missing. | SSR 0.27 ms on crowd; SSGI horizon 0.60 to 0.76 ms; bitmask free |
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
-| Indirect Light Clamp<br>`eldr:indirectClamp` | float 20 (0 = off) | Karma's indirect colour limit: caps every bounce (SSGI, SSR and traced hits, GI rays) and emission those rays see. Wins over `eldr:colorLimit` and Karma's. The dome is not clamped. | |
-| Color Limit<br>`eldr:colorLimit` | float 20 | Karma's `karma:global:colorlimit` (this wins): the indirect clamp unless `eldr:colorLimitShared` is off. Lower it to darken emitters seen by bounces, like Karma. | |
-| Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | on | Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
+| Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps every bounce (SSGI, SSR and traced hits, GI rays) and emission those rays see. Wins over `eldr:colorLimit` and Karma's. The dome is not clamped. | |
+| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): the indirect clamp unless `eldr:colorLimitShared` is off. Lower it to darken emitters seen by bounces, like Karma. | |
+| Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | 0 off, 1 on. Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
 
 ### Shadows
 

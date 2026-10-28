@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.rtReflections = 0;    // tests turn traced reflections on themselves (the default is final quality)
     frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;

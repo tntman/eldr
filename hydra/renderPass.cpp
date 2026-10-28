@@ -582,12 +582,17 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                    : v.IsHolding<float>() ? v.UncheckedGet<float>()
                    : v.IsHolding<int>()   ? float(v.UncheckedGet<int>()) : fallback;
         };
-        const float shared = std::max(number(t2.colorLimit, number(karmaLimit, 20.0f)), 0.0f);
-        const bool linked = !delegate->GetRenderSetting(t2.colorLimitShared).IsEmpty()
-                                ? delegate->GetRenderSetting<bool>(t2.colorLimitShared, true)
-                                : delegate->GetRenderSetting<bool>(karmaLinked, true);
-        const float indirect = linked ? shared : number(karmaIndirect, shared);
-        frame.indirectClamp = std::max(number(t2.indirectClamp, indirect), 0.0f);
+        // The settings' descriptors default to -1: not set, so Karma's apply.
+        auto set = [&](const TfToken &token, float fallback) {
+            const float v = number(token, -1.0f);
+            return v >= 0.0f ? v : fallback;
+        };
+        const float shared = set(t2.colorLimit, set(karmaLimit, 20.0f));
+        const VtValue sharedSetting = delegate->GetRenderSetting(t2.colorLimitShared);
+        const int sharedValue = sharedSetting.IsHolding<bool>() ? int(sharedSetting.UncheckedGet<bool>())
+                                                                : int(number(t2.colorLimitShared, -1.0f));
+        const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
+        frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
     }
     // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
     {

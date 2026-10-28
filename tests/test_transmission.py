@@ -114,15 +114,15 @@ expect(red[1] > 0.85 and red[0] > 0.85, "eldr:refraction off: straight through, 
 # stays whole; "presence" fades it with the rest; eldr:opacityMode off reads
 # "presence" as "transparent".
 sunLight = UsdLux.DistantLight.Define(stage, "/sun")
-sunLight.CreateIntensityAttr(0.2)
+sunLight.CreateIntensityAttr(3000.0)
 mode = {}
 for name, value in (("transparent", "transparent"), ("presence", "presence")):
-    bind(quad("/" + name, 0.5 if name == "presence" else -1.5, -1, 1.5 if name == "presence" else -0.5, 0, 0.1),
+    bind(quad("/" + name, 1.1 if name == "presence" else 0.5, -1, 1.6 if name == "presence" else 1.0, 0, 0.1),
          material("/mtl/" + name, "UsdPreviewSurface",
                   {"diffuseColor": (C, (1, 1, 1)), "metallic": (F, 1.0), "roughness": (F, 0.5), "opacity": (F, 0.5),
                    "opacityMode": (Sdf.ValueTypeNames.Token, value)}, mtlx=False))
 lit, flat = render(), render(opacityMode=False)
-t, p, pOff = rgb(lit, -1, -0.5)[0], rgb(lit, 1, -0.5)[0], rgb(flat, 1, -0.5)[0]
+t, p, pOff = rgb(lit, 0.75, -0.5)[0], rgb(lit, 1.35, -0.5)[0], rgb(flat, 1.35, -0.5)[0]
 print(f"opacityMode: transparent {t:.3f}, presence {p:.3f}, presence with eldr:opacityMode off {pOff:.3f}")
 expect(t - p > 0.03, "presence fades the highlight with the opacity, transparent keeps it")
 expect(abs(pOff - t) < 0.02, "eldr:opacityMode off: presence shades as transparent")
