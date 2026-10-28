@@ -77,6 +77,24 @@ bool SameGeometry(const vkr::Mesh &a, const vkr::Mesh &b)
            a.primvars.size() == b.primvars.size() && samePrimvars();
 }
 
+// Shareable: content that doesn't change by the frame (moving points and
+// blend shapes do).
+bool Shareable(const vkr::Mesh &m)
+{
+    const bool moving = m.jointIndices.empty() && m.velocities.size() == m.points.size();
+    return !moving && m.blendRanges.empty() && m.blendOffsets.empty();
+}
+
+// The arrays SameGeometry compares (but primvars, which hold per-mesh ones
+// too): `to` takes `from`'s, `from` is left with none (and no memory).
+void MoveArrays(vkr::Mesh &from, vkr::Mesh &to)
+{
+    auto move = [](auto &a, auto &b) { b = std::move(a), std::decay_t<decltype(a)>().swap(a); };
+    move(from.points, to.points), move(from.normals, to.normals), move(from.uvs, to.uvs);
+    move(from.colors, to.colors), move(from.indices, to.indices);
+    move(from.jointIndices, to.jointIndices), move(from.jointWeights, to.jointWeights);
+}
+
 // std430 mirrors of the structs in mesh.frag.
 struct GpuTexRef {
     int32_t index;    // bindless texture, or with udim the first of its kUdimTiles in the UDIM table
@@ -490,22 +508,30 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
             continue;
         }
         if (m._emitterAreaVersion != m._geometryVersion) {
-            // Object-space area of the triangles, per corner or indexed.
-            const bool indexed = !m.indices.empty();
-            const size_t corners = indexed ? m.indices.size() : m.points.size() / 3;
+            // Object-space area of the triangles, per corner or indexed; a
+            // shared geometry's arrays are its first user's, its area kept.
+            // ponytail: a shared geometry whose first user re-flattened
+            // before any emitter needed its area has none (no light).
+            const Mesh &g = m._shared ? *m._shared->users.front() : m;
+            const float kept = m._shared ? m._shared->emitterArea : -1.0f;
+            const bool indexed = !g.indices.empty();
+            const size_t corners = indexed ? g.indices.size() : g.points.size() / 3;
             double area = 0;
-            for (size_t t = 0; t + 2 < corners; t += 3) {
+            for (size_t t = 0; kept < 0.0f && t + 2 < corners; t += 3) {
                 const float *p[3];
                 for (int k = 0; k < 3; ++k) {
-                    p[k] = &m.points[size_t(indexed ? m.indices[t + k] : t + k) * 3];
+                    p[k] = &g.points[size_t(indexed ? g.indices[t + k] : t + k) * 3];
                 }
                 const float a[3] = {p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2]};
                 const float b[3] = {p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2]};
                 const float c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
                 area += 0.5 * std::sqrt(double(c[0]) * c[0] + double(c[1]) * c[1] + double(c[2]) * c[2]);
             }
-            m._emitterArea = float(area);
+            m._emitterArea = kept >= 0.0f ? kept : float(area);
             m._emitterAreaVersion = m._geometryVersion;
+            if (m._shared) {
+                m._shared->emitterArea = m._emitterArea;
+            }
         }
         float emitted[3];
         for (int k = 0; k < 3; ++k) {
@@ -583,13 +609,57 @@ VkDeviceSize Scene::VertexBytes() const
     return bytes;
 }
 
+void Scene::ShareEarly(Mesh &mesh)
+{
+    // Only meshes synced since the last Commit compare: their arrays stand
+    // until then (an uploaded one's may be re-flattening on another thread).
+    if (!_device || !mesh.geometryDirty || mesh.points.empty() || !Shareable(mesh)) {
+        return;
+    }
+    const uint64_t key = GeometryKey(mesh);
+    std::lock_guard<std::mutex> lock(_earlyMutex);
+    for (auto [it, end] = _early.equal_range(key); it != end; ++it) {
+        if (SameGeometry(*it->second, mesh)) {
+            mesh._donor = it->second;
+            Mesh none;
+            MoveArrays(mesh, none);
+            return;
+        }
+    }
+    _early.emplace(key, &mesh);
+}
+
 void Scene::RemoveMesh(Mesh *mesh)
 {
     _changed = true;
     // Only bookkeeping here; the freed instance slots are invalidated on the
     // GPU at the next Commit.
+    {
+        // A mesh others dropped their arrays for hands them to the first.
+        std::lock_guard<std::mutex> lock(_earlyMutex);
+        if (!_early.empty()) {
+            Mesh *heir = nullptr;
+            for (const auto &m : _meshes) {
+                if (m->_donor == mesh) {
+                    m->_donor = heir;
+                    heir = heir ? heir : m.get();
+                }
+            }
+            for (auto it = _early.begin(); it != _early.end(); ++it) {
+                if (it->second == mesh) {
+                    if (heir) {
+                        MoveArrays(*mesh, *heir);
+                        it->second = heir;
+                    } else {
+                        _early.erase(it);
+                    }
+                    break;
+                }
+            }
+        }
+    }
     if (_device) {
-        _ReleaseGeometry(*mesh);
+        _ReleaseGeometry(*mesh, true);
         _jointAlloc.Free(mesh->_jointBase, mesh->_jointSlots);
         _skinXformAlloc.Free(mesh->_skinXformBase, mesh->_skinXformSlots);
         _weightAlloc.Free(mesh->_weightBase, mesh->_weightSlots);
@@ -725,15 +795,21 @@ void Scene::_EnsureCapacity(Buffer &buffer, RangeAllocator &alloc, uint32_t need
 }
 
 // The mesh no longer draws its pool geometry: freed unless other meshes
-// share it.
-void Scene::_ReleaseGeometry(Mesh &m)
+// share it. A removed first user hands its arrays (the content) on; one
+// re-flattened already has new ones, and the geometry then matches no new
+// mesh.
+void Scene::_ReleaseGeometry(Mesh &m, bool removed)
 {
     SharedGeometry *shared = m._shared;
     m._shared = nullptr;
     bool keep = false;
     if (shared) {
+        const bool first = shared->users.front() == &m;
         shared->users.erase(std::find(shared->users.begin(), shared->users.end(), &m));
         keep = !shared->users.empty();
+        if (keep && first && removed) {
+            MoveArrays(m, *shared->users.front());
+        }
         if (!keep) {
             for (auto [it, end] = _sharedGeometry.equal_range(shared->key); it != end; ++it) {
                 if (it->second.get() == shared) {
@@ -769,6 +845,35 @@ void Scene::_UploadGeometry(Mesh &m)
     static std::atomic<uint64_t> geometryVersions{0};
     m._geometryVersion = ++geometryVersions;
 
+    auto join = [&](SharedGeometry &shared) {
+        const Mesh &s = *shared.users.front();
+        m._geometryVersion = s._geometryVersion;
+        m._flat = s._flat;
+        std::copy_n(s._flatTriangle, 9, m._flatTriangle);
+        m._uvSpacing = s._uvSpacing;
+        m._vertexOffset = s._vertexOffset, m._vertexCount = s._vertexCount;
+        m._firstIndex = s._firstIndex, m._indexCount = s._indexCount;
+        m._skinOffset = s._skinOffset, m._skinCount = s._skinCount, m._skinStride = s._skinStride;
+        m._boundsBase = s._boundsBase, m._boundsSlots = s._boundsSlots;
+        m._primvarVertexOffset = s._primvarVertexOffset, m._primvarVertexCount = s._primvarVertexCount;
+        m._primvarComponents = s._primvarComponents;
+        m._jointBounds = s._jointBounds;
+        std::copy_n(s._boundsMin, 3, m._boundsMin);
+        std::copy_n(s._boundsMax, 3, m._boundsMax);
+        m._lods = s._lods;
+        m._lodFirstIndex = s._lodFirstIndex, m._lodIndexCount = s._lodIndexCount;
+        shared.users.push_back(&m);
+        m._shared = &shared;
+    };
+    // Dropped its arrays at sync: the donor uploaded first (Commit).
+    if (Mesh *donor = m._donor) {
+        m._donor = nullptr;
+        if (donor->_shared) {
+            join(*donor->_shared);
+        }
+        return;
+    }
+
     // Elements of the per-corner arrays: corners, or vertices with indices.
     const bool indexed = !m.indices.empty();
     const size_t elements = m.points.size() / 3;
@@ -788,35 +893,19 @@ void Scene::_UploadGeometry(Mesh &m)
         return;
     }
     const bool moving = !skinned && m.velocities.size() == m.points.size();
-    // Moving points and blend shapes change by the frame: their own.
     // ponytail: a shared mesh whose first user goes before its levels of
     // detail are built keeps drawing whole.
-    const bool shareable = !moving && m.blendRanges.empty() && m.blendOffsets.empty();
+    const bool shareable = Shareable(m);
     const uint64_t key = shareable ? GeometryKey(m) : 0;
     for (auto [it, end] = _sharedGeometry.equal_range(key); shareable && it != end; ++it) {
-        SharedGeometry &shared = *it->second;
-        const Mesh &s = *shared.users.front();
-        if (!SameGeometry(s, m)) {
-            continue;
+        if (SameGeometry(*it->second->users.front(), m)) {
+            join(*it->second);
+            // The first user's arrays are the content: this one's copy would
+            // only take memory (9000 agents: 5 GB). A new sync refills them.
+            Mesh none;
+            MoveArrays(m, none);
+            return;
         }
-        m._geometryVersion = s._geometryVersion;
-        m._flat = s._flat;
-        std::copy_n(s._flatTriangle, 9, m._flatTriangle);
-        m._uvSpacing = s._uvSpacing;
-        m._vertexOffset = s._vertexOffset, m._vertexCount = s._vertexCount;
-        m._firstIndex = s._firstIndex, m._indexCount = s._indexCount;
-        m._skinOffset = s._skinOffset, m._skinCount = s._skinCount, m._skinStride = s._skinStride;
-        m._boundsBase = s._boundsBase, m._boundsSlots = s._boundsSlots;
-        m._primvarVertexOffset = s._primvarVertexOffset, m._primvarVertexCount = s._primvarVertexCount;
-        m._primvarComponents = s._primvarComponents;
-        m._jointBounds = s._jointBounds;
-        std::copy_n(s._boundsMin, 3, m._boundsMin);
-        std::copy_n(s._boundsMax, 3, m._boundsMax);
-        m._lods = s._lods;
-        m._lodFirstIndex = s._lodFirstIndex, m._lodIndexCount = s._lodIndexCount;
-        shared.users.push_back(&m);
-        m._shared = &shared;
-        return;
     }
     // Planar reflections: is the mesh flat? Its first proper triangle,
     // and every point within a thousandth of its size of that plane.
@@ -1642,9 +1731,23 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.moved = false;
     std::vector<float> motion;
     std::vector<uint32_t> motionBase(_meshes.size(), kNone);
+    // Geometry first, meshes that dropped their arrays at sync (ShareEarly)
+    // after the ones they share.
+    _early.clear();
+    std::vector<uint8_t> uploaded(_meshes.size());
+    for (const bool sharing : {false, true}) {
+        for (const auto &m : _meshes) {
+            if (m->geometryDirty && (m->_donor != nullptr) == sharing) {
+                uploaded[m->_slot] = 1;
+                _UploadGeometry(*m);
+            }
+        }
+    }
     for (const auto &m : _meshes) {
-        const bool geometry = m->geometryDirty, transforms = m->transformsDirty || geometry;
-        if (transforms && (!geometry || m->shutterMotion) && m->jointIndices.empty() && !m->transforms.empty() &&
+        const bool geometry = uploaded[m->_slot], transforms = m->transformsDirty || geometry;
+        // Shared geometry has no arrays of its own: its skin tells.
+        const bool skinned = m->_skinCount > 0;
+        if (transforms && (!geometry || m->shutterMotion) && !skinned && !m->transforms.empty() &&
             m->prevTransforms.size() == m->transforms.size()) {
             motionBase[m->_slot] = uint32_t(motion.size() / 12);
             for (size_t i = 0; i < m->prevTransforms.size(); i += 16) {
@@ -1656,10 +1759,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         m->prevTransforms.clear();
         m->shutterMotion = false;
-        const bool joints = !m->jointIndices.empty() && (m->jointsDirty || transforms);
-        if (geometry) {
-            _UploadGeometry(*m);
-        }
+        const bool joints = skinned && (m->jointsDirty || transforms);
         if (transforms) {
             _UploadInstances(*m);
         }

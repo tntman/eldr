@@ -10,6 +10,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -360,6 +361,7 @@ struct Mesh;
 struct SharedGeometry {
     uint64_t key = 0;             // content hash
     std::vector<Mesh *> users;    // users[0]'s arrays are the content
+    float emitterArea = -1.0f;    // object-space area, once an emitter needed it
 };
 
 struct Mesh {
@@ -494,6 +496,9 @@ private:
     // The pools' geometry it shares with meshes of the same content
     // (Scene::SharedGeometry; null: its own or none).
     struct SharedGeometry *_shared = nullptr;
+    // Until the next Commit: the mesh of the same content whose arrays it
+    // dropped at sync (Scene::ShareEarly).
+    Mesh *_donor = nullptr;
 };
 
 // Lights in world space, same threading rules as Mesh. The Hydra layer resolves the UsdLux inputs
@@ -647,6 +652,11 @@ public:
 
     Mesh *AddMesh();
     void RemoveMesh(Mesh *mesh);
+    // After a sync that flattened `mesh`: when a mesh synced since the last
+    // Commit has the same content, this one drops its arrays now and shares
+    // that one's geometry at Commit. Keeps a crowd from holding every
+    // agent's arrays at once. Thread-safe (Hydra syncs rprims in parallel).
+    void ShareEarly(Mesh &mesh);
     Light *AddLight();
     void RemoveLight(Light *light);
     Dome *AddDome();
@@ -981,7 +991,10 @@ private:
     // vertices, indices, skin weights, joint bounds and levels of detail.
     // The first user's arrays are what later uploads compare against.
     std::unordered_multimap<uint64_t, std::unique_ptr<SharedGeometry>> _sharedGeometry;
-    void _ReleaseGeometry(Mesh &mesh);
+    void _ReleaseGeometry(Mesh &mesh, bool removed = false);
+    // Meshes synced since the last Commit whose arrays others share (ShareEarly).
+    std::mutex _earlyMutex;
+    std::unordered_multimap<uint64_t, Mesh *> _early;
 };
 
 } // namespace vkr

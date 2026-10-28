@@ -453,6 +453,11 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         m.material = material ? material->Get() : nullptr;
     }
     _SyncSubsets(sceneDelegate);
+    // A crowd's agents: one copy of their arrays rather than one each.
+    _scene->ShareEarly(m);
+    for (vkr::Mesh *subset : _subsetMeshes) {
+        _scene->ShareEarly(*subset);
+    }
 
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }

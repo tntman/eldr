@@ -317,10 +317,11 @@ int main()
                 return m;
             };
             vkr::Mesh *left = triangle(-0.5f);
-            triangle(0.5f);
+            vkr::Mesh *right = triangle(0.5f);
             scene.Commit();
             Image img = Render(renderer, scene);
             Expect(scene.SharedGeometries() == 1, "two meshes of one content: one geometry");
+            Expect(right->points.empty(), "a shared geometry's later user drops its own arrays");
             Expect(img.At(16, 20, 0) > 0.5f && img.At(48, 20, 0) > 0.5f, "both shared triangles drawn");
             scene.RemoveMesh(left);
             scene.Commit();
