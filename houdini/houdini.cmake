@@ -41,9 +41,22 @@ file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/eldr.json CONTENT
     \"path\": \"$<TARGET_FILE_DIR:hdVk>/houdini\",
     \"env\": [
         {\"PXR_PLUGINPATH_NAME\": {\"method\": \"append\", \"value\": \"$<TARGET_FILE_DIR:hdVk>\"}},
-        {\"PXR_AR_DEFAULT_SEARCH_PATH\": {\"method\": \"append\", \"value\": \"$HFS/bin/usd_plugins/hdx/resources/textures\"}}
+        {\"PXR_AR_DEFAULT_SEARCH_PATH\": {\"method\": \"append\", \"value\": \"$HFS/bin/usd_plugins/hdx/resources/textures\"}},
+        {\"ELDR_HUSK\": \"$<TARGET_FILE_DIR:hdVk>/houdini/bin/eldr_husk.cmd\"}
     ]
 }
+")
+
+# husk for Eldr renders of instanced crowds (a USD Render ROP's Render Command:
+# $ELDR_HUSK). USD reads HD_ENABLE_DEFERRED_SKINNING once at startup, before
+# Eldr loads, so only the launch can set it: the crowd's agents then stay
+# instances (crowd 9k: 7.5 -> 2.4 GB). Only for Eldr: Karma can't skin deferred.
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/houdini/bin/eldr_husk.cmd CONTENT
+"@echo off
+rem husk with USD's deferred skinning, for Eldr (Karma can't skin deferred).
+set HD_ENABLE_DEFERRED_SKINNING=1
+if not defined HFS set \"HFS=${HOUDINI_ROOT}\"
+\"%HFS%/bin/husk.exe\" %*
 ")
 
 # Eldr's Solaris UI (Render Settings / Render Geometry Settings tabs, viewport
