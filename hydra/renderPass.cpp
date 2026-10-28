@@ -910,7 +910,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // eldr:inPlaceReadback: colour, depth and the ids stay where the GPU
     // copied them (two buffers in turn) and the app maps them there, no copy
     // (a maximized viewport's four: 27 MB, ~5 ms). Not resampled or converted ones.
-    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty();
+    // eldr:offlineBatchSeconds: an offline frame (husk, usdrecord) renders
+    // film samples back to back for that long or until converged, and
+    // reads back only the last: the app's wait between executes (husk:
+    // ~100 ms a sample) and every sample's readback go. Viewports keep one
+    // sample per execute.
+    const float batchSeconds = offline ? delegate->GetRenderSetting<float>(t2.offlineBatchSeconds, 1.0f) : 0.0f;
+    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty() && batchSeconds <= 0.0f;
     auto readBuffer = [&](int i) { return uintptr_t(mapped[i] || (staleIds && i >= 2) ? buffers[i] : nullptr); };
     const std::array<uintptr_t, 6> readback = {readBuffer(0), readBuffer(1), readBuffer(2), readBuffer(3), frame.width,
                                                frame.height};
@@ -934,9 +940,27 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
         tRender = FrameTiming::Clock::now();
-        _renderer->Render(_scene, frame, out);
+        if (batchSeconds > 0.0f && !frame.deferReadback) {
+            vkr::Renderer::Targets sample = out;
+            sample.readback = false;
+            const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
+                                             std::chrono::duration<double>(batchSeconds));
+            for (;;) {
+                _renderer->Render(_scene, frame, sample);
+                vkDelegate->NoteFrame();
+                if ((_renderer->IsConverged() && !_scene.LodsPending()) || FrameTiming::Clock::now() >= until) {
+                    break;
+                }
+                // As the app's commit between executes: last sample's motion settles.
+                vkDelegate->CommitResources(nullptr);
+                frame.stillCamera = HdVkCamera::IsViewportCamera(cameraId);  // the next execute's
+            }
+            _renderer->Read(out);
+        } else {
+            _renderer->Render(_scene, frame, out);
+            vkDelegate->NoteFrame();
+        }
         tRendered = FrameTiming::Clock::now();
-        vkDelegate->NoteFrame();
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();

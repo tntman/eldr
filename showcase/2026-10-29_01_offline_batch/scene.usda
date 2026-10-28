@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+def Scope "Render"
+{
+    def RenderSettings "batched"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:gi = 1
+        custom int eldr:filmSamples = 64
+        custom float eldr:offlineBatchSeconds = 1.0
+    }
+
+    def RenderSettings "oneSamplePerExecute"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:gi = 1
+        custom int eldr:filmSamples = 64
+        custom float eldr:offlineBatchSeconds = 0.0
+    }
+}
