@@ -1,0 +1,133 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+def Camera "cam"
+{
+    float focalLength = 18
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    double3 xformOp:translate = (0, 2.2, 14)
+    float xformOp:rotateX = -8
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.4
+}
+
+def Scope "mtl"
+{
+    def Material "m"
+    {
+        token outputs:surface.connect = </mtl/m/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.75, 0.55, 0.3)
+            float inputs:roughness = 0.35
+            token outputs:surface
+        }
+    }
+}
+
+def Mesh "floor" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-12, 0, 6), (12, 0, 6), (12, 0, -6), (-12, 0, -6)]
+    rel material:binding = </mtl/m>
+}
+
+def Mesh "catmullDefault" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    double3 xformOp:translate = (-7, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/m>
+}
+
+def Mesh "catmullLevel1" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    uniform token subdivisionScheme = "catmullClark"
+    int primvars:eldr:refineLevel = 1
+    double3 xformOp:translate = (-3.5, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/m>
+}
+
+def Mesh "polygonCage" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (0, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/m>
+}
+
+def Mesh "polygonAsSubdiv" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    uniform token subdivisionScheme = "none"
+    bool primvars:eldr:renderAsSubdivision = 1
+    int primvars:eldr:refineLevel = 2
+    double3 xformOp:translate = (3.5, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/m>
+}
+
+def Mesh "dicingCap" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    uniform token subdivisionScheme = "catmullClark"
+    int primvars:eldr:object:dicingdepthmax = 1
+    double3 xformOp:translate = (7, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/m>
+}
+
+def Scope "Render"
+{
+    def RenderSettings "level3"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom int eldr:maxRefineLevel = 3
+    }
+
+    def RenderSettings "level1"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom int eldr:maxRefineLevel = 1
+    }
+
+    def RenderSettings "subdivOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:subdivision = 0
+    }
+}

@@ -1,0 +1,58 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+def Scope "Render"
+{
+    def RenderSettings "default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+    }
+
+    def RenderSettings "rtShadows"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtShadows = 1
+    }
+
+    def RenderSettings "rtReflectionsHitShadows2"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtReflections = 1
+        custom int eldr:rtHitShadows = 2
+    }
+
+    def RenderSettings "rtReflectionsHitShadows0"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtReflections = 1
+        custom int eldr:rtHitShadows = 0
+    }
+
+    def RenderSettings "shadowMapsOnly"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtShadows = 0
+        custom string eldr:finalShadows = "maps"
+    }
+
+    def RenderSettings "emissiveLightsOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:emissiveLights = 0
+    }
+
+    def RenderSettings "emissiveLightsOn"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:emissiveLights = 1
+    }
+}
