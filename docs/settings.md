@@ -119,7 +119,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray hitting a surface from behind takes `eldr:screenBackfaceScale` of its light: less leaking through objects. An SSR ray lost behind a surface (e.g. floor hidden behind a ball) takes that share of it instead of missing. | SSR 0.27 ms on crowd; SSGI horizon 0.60 to 0.76 ms; bitmask free |
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
-| Indirect Light Clamp<br>`eldr:indirectClamp` | float 10 (0 = off) | Same for every bounce (SSGI, SSR and traced hits, GI rays). Dome not clamped. | |
+| Indirect Light Clamp<br>`eldr:indirectClamp` | float 10 (0 = off) | Same for every bounce (SSGI, SSR and traced hits, GI rays). Emission seen by traced and GI rays is direct light (direct clamp); the dome is not clamped. | |
 
 ### Shadows
 

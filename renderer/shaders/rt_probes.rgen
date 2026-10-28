@@ -35,9 +35,7 @@ void main()
     } else if ((hit.flags & kHitBackface) != 0u) {
         result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
     } else {
-        result = vec4(BrightnessClamp(ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u, false),
-                                      frame.lightClamp.y),
-                      hit.t);
+        result = vec4(ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u, false), hit.t);
     }
     giRays[probe * rays + ray] = result;
 }
