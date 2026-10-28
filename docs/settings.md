@@ -46,7 +46,7 @@ The settings people change most come first and are open in the UIs; rarely touch
 | Global Illumination (RTX probes)<br>`eldr:gi` | off | [RT] DDGI probe grid: diffuse light is the scene's bounced light. For interiors and emissive lighting. | Kitchen 2-3 ms (1728 probes x 128 rays); crowd 0.2 ms; plus acceleration structure memory |
 | Screen-Space GI (replaces AO)<br>`eldr:ssgi` | off | [prepass] Per-pixel indirect diffuse gathered from the screen; close-range colour bleeding. No ray tracing needed. | Half res 0.67 ms, full 1.55 ms (Kitchen) |
 | Ray-Traced Shadows<br>`eldr:rtShadows` | off | [RT][prepass] Traced shadows for the sun and the 3 most important local lights (15 in final quality), instead of maps. Soft from light size; the film averages the noise. | Kitchen about 10 ms |
-| Ray-Traced Reflections<br>`eldr:rtReflections` | off | [RT][prepass] Traced reflections replace dome and SSR up to roughness 0.7; shaded at hits. Sees off-screen geometry. | Kitchen about 15 ms |
+| Ray-Traced Reflections<br>`eldr:rtReflections` | int 1 | [RT][prepass] 0 off, 1 final quality, 2 always. Traced reflections replace dome and SSR up to roughness 0.7; shaded at hits. Sees off-screen geometry. A bool counts as 2 (true) or 0. | Kitchen about 15 ms when on |
 | Ambient Occlusion (GTAO)<br>`eldr:ambientOcclusion` | on | AO on the dome's diffuse and specular light. [prepass] Replaced by SSGI when that is on. | 0.34 ms |
 | Dome Light Lighting (IBL)<br>`eldr:imageBasedLighting` | on | Dome diffuse (SH9) and specular (prefiltered cube). Off: direct lights only. Also gates the reflection probe. | Small |
 | Dome Sun Extraction<br>`eldr:domeSun` | on | HDRI texels above the threshold become a shadowed distant light. Off: HDRI only. | CPU work on dome change |
@@ -121,7 +121,9 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray hitting a surface from behind takes `eldr:screenBackfaceScale` of its light: less leaking through objects. An SSR ray lost behind a surface (e.g. floor hidden behind a ball) takes that share of it instead of missing. | SSR 0.27 ms on crowd; SSGI horizon 0.60 to 0.76 ms; bitmask free |
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
-| Indirect Light Clamp<br>`eldr:indirectClamp` | float 10 (0 = off) | Same for every bounce (SSGI, SSR and traced hits, GI rays). Emission seen by traced and GI rays is direct light (direct clamp); the dome is not clamped. | |
+| Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps every bounce (SSGI, SSR and traced hits, GI rays) and emission those rays see. Wins over `eldr:colorLimit` and Karma's. The dome is not clamped. | |
+| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): the indirect clamp unless `eldr:colorLimitShared` is off. Lower it to darken emitters seen by bounces, like Karma. | |
+| Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | 0 off, 1 on. Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
 
 ### Shadows
 
@@ -199,6 +201,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced triangles and height-map bump (with `eldr:rtDisplacement`). Off: flat glass look. | Displaced glass only |
 | Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A translucent holdout cuts colour and alpha by its opacity. | Small pass when present |
+| Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" scales the highlights with the opacity and never refracts; "transparent" keeps them. Off: presence shades as transparent. | Free |
 
 ### Fog and volumes
 

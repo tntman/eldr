@@ -42,7 +42,7 @@ engine.SetRendererSetting("eldr:filmSamples", 256)
 | Linear ungraded EXR for comp | Default (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
 | True soft shadows, bokeh, motion blur | Leave `eldr:shadowJitter`, `eldr:dofJitter`, `eldr:motionBlurTimeSamples` on (defaults) |
 | Indirect light | `eldr:gi`, `eldr:ssgi` (+ `eldr:ssgiBitmask` for thin occluders) |
-| Accurate off-screen shadows and reflections | `eldr:finalShadows` `raytraced` or `auto`; `eldr:rtReflections` with 1 ray |
+| Accurate off-screen shadows and reflections | `eldr:finalShadows` `raytraced` or `auto`; `eldr:rtReflections` (final quality by default) with 1 ray |
 | Clean geometry | `eldr:lodBias` -1 or `eldr:lod` off; `--complexity veryhigh` or `eldr:maxRefineLevel` |
 | Fireflies | `eldr:directClamp`, `eldr:indirectClamp` |
 
@@ -127,7 +127,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 - **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows. A flat one (a panel) is a rect on each face and, unless thinner than 1% of their area, on each edge: beside a panel under a ceiling the edges give most of its light.
 - **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one. The same attribute on a dome hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
 - **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
-- **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` (10) limit fireflies. The indirect clamp limits bounced light only: emission a ray sees (GI, final gather, traced reflections and refractions) is that emitter's direct light, under the direct clamp.
+- **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` limit fireflies. The indirect clamp is Karma's colour limit (default 20, 0 = off): `eldr:indirectClamp`, else (`eldr:colorLimitShared` off) `karma:global:colorlimitindirect`, else `eldr:colorLimit`, else `karma:global:colorlimit`, else 20. It limits bounced light and the emission a bounce ray sees (GI, final gather, traced reflections and refractions), as Karma limits a sample after its path throughput; the direct clamp stays Eldr's own and off. Eldr clamps the radiance at the hit, before the surface's albedo, so a dark surface lit by a very bright emitter is limited harder than Karma's sample would be.
 - **Ambient:** GTAO on the dome's light, or with SSGI the traced visibility.
 
 ### Shadow modes
@@ -171,7 +171,7 @@ Each pixel takes the best source for its roughness.
 | SSR denoiser | `eldr:ssrDenoise` (off) | One GGX ray per pixel, 9-ray spatial filter, temporal reprojection, bilateral filter; roughness up to 0.8. Crowd shading 11.7 to 20.4 ms. Not with ray-traced reflections. |
 | Reflection probes | `eldr:reflectionProbe` | Captured cube with parallax correction. One automatic probe, or up to 8 authored (`primvars:eldr:reflectionProbe`; smallest box wins, soft edges). `eldr:probeNormalize` needs GI or SSGI. |
 | Planar reflections | `eldr:planarReflections` | Mirrors (`primvars:eldr:planarReflection`, else largest flat glossy opaque mesh) render the scene mirrored with an oblique near plane; `eldr:planarCount` (4) at `eldr:planarScale` (0.5). |
-| Ray-traced reflections | `eldr:rtReflections` | GGX rays shaded at hits (shadowed by every light in final quality, `eldr:rtHitShadows`), up to roughness 0.7, replace dome and SSR; rough ones averaged over up to 12 pixels. Sees displacement (`eldr:rtDisplacement`) and skinned instances up to the cap. |
+| Ray-traced reflections | `eldr:rtReflections` | [RT] 0 off, 1 final quality (default), 2 always. GGX rays shaded at hits (shadowed by every light in final quality, `eldr:rtHitShadows`), up to roughness 0.7, replace dome and SSR; rough ones averaged over up to 12 pixels. Sees displacement (`eldr:rtDisplacement`) and skinned instances up to the cap. |
 
 Mirror pixels take the planar reflection; others use the probe (if on) or the dome as the base, with SSR where the screen has the hit.
 
@@ -248,7 +248,7 @@ Eldr shades each surface model by its spec: the USD spec for UsdPreviewSurface, 
 | Subsurface | random walk | Approximated: separable screen-space blur of the diffuse light |
 | Constants only | `diffuse_roughness`, `base_diffuse_roughness`, `coat_affect_*`, `coat_darkening` | Textured or graph-driven values keep the constant |
 
-Not mapped: MaterialX `gltf_pbr` (no surface), UsdPreviewSurface `opacityMode` presence (shaded as transparent). Ray-traced hits (GI rays, reflections of reflections) shade with a simplified F0 = 0.04 / metallic base.
+UsdPreviewSurface `opacityMode` "presence" (without a threshold) scales the whole lighting response by the opacity, highlights included, and never refracts; "transparent" (the default) fades diffuse light and emission only (`eldr:opacityMode`). Not mapped: MaterialX `gltf_pbr` (no surface); presence in ray-traced hits. Ray-traced hits (GI rays, reflections of reflections) shade with a simplified F0 = 0.04 / metallic base.
 
 | Topic | Support |
 |---|---|
@@ -266,7 +266,7 @@ Not mapped: MaterialX `gltf_pbr` (no surface), UsdPreviewSurface `opacityMode` p
 |---|---|
 | Meshes | Implicit surfaces converted to meshes, GeomSubsets, PointInstancer and native instancing (one indirect draw per prototype), render tags and purposes |
 | Subdivision (`eldr:subdivision`, `eldr:maxRefineLevel`) | catmullClark, loop, bilinear via OpenSubdiv at the display style's refine level or a mesh's own (`primvars:eldr:refineLevel`); creases, corners, holes, boundary and face-varying rules; limit positions and normals. Skinned meshes refine in the rest pose, skin on the GPU. |
-| Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset. Height maps read at the mip matching vertex spacing. |
+| Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset; a graph's is taken as |scale|, or the shader's `inputs:eldr:displacementBound` (object units) when the graph outputs more than -1..1. Height maps read at the mip matching vertex spacing. |
 | Displacement graphs (`eldr:displacementGraphs`) | A shading graph runs per vertex, also for ray-tracing BLASes (`eldr:rtDisplacement`). Graphs reading world position, normal or instance primvars give the 256 largest instances a BLAS each (rebuilt when they or their primvars change); others share the first instance's. |
 | LOD (`eldr:lod`, `eldr:lodBias`) | Meshes of 1000+ triangles get up to 3 coarser levels (quadric simplification weighing normals, uvs, colours, joint weights); culling picks the coarsest level under about 1 px of error, with hysteresis. Crowd 54.5M to 13.6M triangles, 68 to 28-34 ms; Kitchen at Very High 34.8M to 6.4M, 30 to 10.5 ms. `eldr:lodFade` crossfades over 8 frames. |
 | Skinning (UsdSkel) | GPU linear blend or dual quaternion (`primvars:skel:skinningMethod = "dualQuaternion"`), 4 or 8 influences, blend shapes, per-instance poses (one draw per prototype); authored normals kept. With `HD_ENABLE_DEFERRED_SKINNING=1` (USD's, set before the app starts) instanced agents with their own animations stay one instanced mesh per prototype; a mesh with its own `skel:joints` gets every instance's joints remapped (USD remaps only the first) |

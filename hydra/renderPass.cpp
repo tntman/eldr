@@ -393,7 +393,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
                                 {t.hairShading, &frame.hairShading}, {t.texturedLobes, &frame.texturedLobes},
                                 {t.texturedTransmission, &frame.texturedTransmission}, {t.rtShadows, &frame.rtShadows},
-                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
+                                {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
                                 {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
                                 {t.refraction, &frame.refraction}, {t.holdoutAlpha, &frame.holdoutAlpha}, {t.multiRefraction, &frame.multiRefraction}, {t.refractionBackFaces, &frame.refractionBackFaces},
                                 {t.translucentShadows, &frame.translucentShadows},
@@ -413,7 +413,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm},
                                 {t2.ssgiThickness, &frame.ssgiThickness},
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
-                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement},
+                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
@@ -521,7 +521,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
                                 {t2.directIntensity, &frame.directIntensity},
                                 {t2.indirectIntensity, &frame.indirectIntensity},
-                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp},
+                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp},
                                 {t2.screenBackfaceScale, &frame.screenBackfaceScale},
                                 {t2.finalGatherDistance, &frame.finalGatherDistance},
                                 {t2.finalGatherDenoise, &frame.finalGatherDenoise}}) {
@@ -570,7 +570,36 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
-    // 0 allowed: off.
+    // Colour limit (Karma's per-sample brightness limit, default 20): the indirect clamp, from
+    // eldr:indirectClamp, else (colour limit not shared) karma:global:colorlimitindirect, else the
+    // shared limit eldr:colorLimit, else karma:global:colorlimit, else 20. 0 = off.
+    {
+        static const TfToken karmaLimit("karma:global:colorlimit"), karmaIndirect("karma:global:colorlimitindirect"),
+            karmaLinked("karma:global:colorlimitindlinked");
+        auto number = [&](const TfToken &token, float fallback) {
+            const VtValue v = delegate->GetRenderSetting(token);
+            return v.IsHolding<double>() ? float(v.UncheckedGet<double>())
+                   : v.IsHolding<float>() ? v.UncheckedGet<float>()
+                   : v.IsHolding<int>()   ? float(v.UncheckedGet<int>()) : fallback;
+        };
+        // The settings' descriptors default to -1: not set, so Karma's apply.
+        auto set = [&](const TfToken &token, float fallback) {
+            const float v = number(token, -1.0f);
+            return v >= 0.0f ? v : fallback;
+        };
+        const float shared = set(t2.colorLimit, set(karmaLimit, 20.0f));
+        const VtValue sharedSetting = delegate->GetRenderSetting(t2.colorLimitShared);
+        const int sharedValue = sharedSetting.IsHolding<bool>() ? int(sharedSetting.UncheckedGet<bool>())
+                                                                : int(number(t2.colorLimitShared, -1.0f));
+        const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
+        frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
+    }
+    // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
+    {
+        const VtValue v = delegate->GetRenderSetting(t.rtReflections);
+        frame.rtReflections = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2u : 0u)
+                                                  : uint32_t(std::clamp(delegate->GetRenderSetting<int>(t.rtReflections, int(frame.rtReflections)), 0, 2));
+    }
     frame.rtRefraction =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtRefraction, int(frame.rtRefraction)), 0, 2));
     frame.rtHitShadows =

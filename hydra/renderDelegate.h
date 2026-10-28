@@ -153,6 +153,9 @@ PXR_NAMESPACE_OPEN_SCOPE
 #define HDVK_RENDER_SETTING_TOKENS2                          \
     ((directClamp, "eldr:directClamp"))                      \
     ((indirectClamp, "eldr:indirectClamp"))                  \
+    ((colorLimit, "eldr:colorLimit"))                        \
+    ((colorLimitShared, "eldr:colorLimitShared"))            \
+    ((opacityMode, "eldr:opacityMode"))                      \
     ((ssgiThickness, "eldr:ssgiThickness"))                  \
     ((ssgiBitmask, "eldr:ssgiBitmask"))                      \
     ((rtDisplacement, "eldr:rtDisplacement"))                \

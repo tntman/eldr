@@ -24,6 +24,9 @@ layout(set = 0, binding = 86, rgba16f) uniform readonly image2D rtRefractionImag
 // what's behind it) and the fraction it refracts (sampled from the
 // background by TransmissionEnd).
 float gStraight = 0.0, gRefracted = 0.0;
+// Opacity presence (UsdPreviewSurface opacityMode): the light is shaded at
+// full opacity and scaled by this at the end, highlights too.
+float gPresence = 1.0;
 // The light TransmissionEnd added from the background (the light splits'
 // indirect glossy: Karma counts refraction with the specular lobes).
 vec3 gRefractedLight = vec3(0.0);
@@ -38,6 +41,11 @@ void TransmissionBegin(inout float alpha)
         return;
     }
     Material m = ShadingMaterial();
+    if (m.subsurfaceRadius.w > 0.0 && frame.rtRefraction.y != 0u) {
+        gPresence = alpha;  // alpha is out coverage (gStraight); no refraction
+        alpha = 1.0;
+        return;
+    }
     gRefracted = alpha * m.transmission.w;
     alpha *= 1.0 - m.transmission.w;
     if (m.refraction.w > 0.0) {

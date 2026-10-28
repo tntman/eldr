@@ -230,6 +230,9 @@ struct Material {
     float occlusion = 1;
     float opacity = 1;           // below 1 (or a texture) without a threshold: translucent
     float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
+    // UsdPreviewSurface opacityMode "presence" (without a threshold): opacity scales the whole lighting
+    // response, highlights too, and never refracts; "transparent" scales the diffuse light and emission.
+    bool opacityPresence = false;
     // The surface model whose spec the shading follows (shaders/brdf.glsl's
     // SetupBase): its Fresnel, layering and multiple scattering.
     enum class Model : uint32_t { kPreviewSurface, kStandardSurface, kOpenPbr };

@@ -33,7 +33,7 @@ struct Material {
     vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
     vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts
     vec4 subsurface;        // colour, weight (subsurface.glsl)
-    vec4 subsurfaceRadius;  // per channel, world units
+    vec4 subsurfaceRadius;  // per channel, world units; w: 1 = opacity presence (transparency.glsl)
     vec4 surface;           // model (0 UsdPreviewSurface, 1 standard_surface, 2 OpenPBR), diffuse roughness,
                             // coat affect colour (OpenPBR: coat darkening), coat affect roughness
 };
