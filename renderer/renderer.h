@@ -231,13 +231,14 @@ public:
         // instead of only switching off; 32 more rays per probe and frame.
         bool giRelocation = true;
         // Final gather (with gi and the depth prepass): per pixel and frame
-        // a cosine ray at least finalGatherDistance (world units) and a
-        // probe spacing long, shaded where it lands or from the probes at
-        // its end: the diffuse indirect light (contact shadows, corners,
-        // colour bleeding) instead of the probes', AO and SSGI. 0 off, 1 in
-        // final quality (film runs started fresh), 2 always.
+        // a cosine ray shaded where it lands (unlimited, or with
+        // finalGatherDistance > 0 at most that, in world units, and a probe
+        // spacing long, else from the probes at its end): the diffuse
+        // indirect light (contact shadows, corners, colour bleeding) instead
+        // of the probes', AO and SSGI. 0 off, 1 in final quality (film runs
+        // started fresh), 2 always.
         uint32_t finalGather = 1;
-        float finalGatherDistance = 0.5f;
+        float finalGatherDistance = 0.0f;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.

@@ -277,16 +277,6 @@ float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
     return sum / float(samples);
 }
 
-// One edge's term of a polygon's form factor vector (corners relative to
-// the shading point); the sum over a closed loop, / 2 pi, is the vector.
-vec3 EdgeFormFactor(vec3 a, vec3 b)
-{
-    vec3 v0 = normalize(a), v1 = normalize(b);
-    vec3 c = cross(v0, v1);
-    float len = length(c);
-    return len > 1e-8 ? acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len : vec3(0.0);
-}
-
 // Form factor vector of the rect toLight +- hw +- hh (seen from the
 // shading point), pointing at it whatever the winding.
 vec3 RectFormFactor(vec3 toLight, vec3 hw, vec3 hh)
@@ -298,32 +288,6 @@ vec3 RectFormFactor(vec3 toLight, vec3 hw, vec3 hh)
     }
     formFactor /= 2.0 * PI;
     return dot(formFactor, toLight) < 0.0 ? -formFactor : formFactor;
-}
-
-// Lambert's form factor of the rect toLight +- hw +- hh clipped to the
-// horizon of n: exact (irradiance / (pi L)), where the sphere approximation
-// of the clipped form factor ((f^2 + F.n) / (f + 1)) was up to 4% bright on
-// a rect above the horizon (Karma integrates it exactly).
-float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
-{
-    vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
-    vec3 poly[5];
-    int count = 0;
-    for (int i = 0; i < 4; ++i) {
-        vec3 a = corners[i], b = corners[(i + 1) % 4];
-        float da = dot(a, n), db = dot(b, n);
-        if (da > 0.0) {
-            poly[count++] = a;
-        }
-        if ((da > 0.0) != (db > 0.0)) {
-            poly[count++] = a + (b - a) * (da / (da - db));
-        }
-    }
-    float sum = 0.0;
-    for (int i = 0; i < count; ++i) {
-        sum += dot(EdgeFormFactor(poly[i], poly[(i + 1) % count]), n);
-    }
-    return abs(sum) / (2.0 * PI);
 }
 
 // Form factor vector of the side of a cylinder (axis toLight +- axis,

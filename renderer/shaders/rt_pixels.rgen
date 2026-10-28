@@ -21,10 +21,14 @@
 // Frame::rtSkinnedInstances blocks no rays, small-object culling), shadow
 // rays start from the prepass's surface instead (its normal from the
 // depths around) and there is no traced reflection.
-// Final gather (rt.gather.y): a cosine ray up to rt.gather.x long, shaded
-// where it lands (direct light, the probes' bounces) or, where it lands on
-// nothing, the probes' light at its end towards the pixel (irradiance / pi
-// around the ray: their radiance, blurred); back faces give none.
+// Final gather (rt.gather.y): a cosine ray shaded where it lands (direct
+// light, shadowed with eldr:rtHitShadows; the probes' bounces) or, escaped,
+// the dome; back faces give none. With rt.gather.x > 0 the ray stops there
+// and a miss takes the probes' light at its end towards the pixel
+// (irradiance / pi around the ray: their radiance, blurred): cheaper, but
+// that lobe sees past the pixel's horizon, e.g. emitters under a ceiling
+// that the ceiling can't see (emissive.usda's ceiling by GI alone: 0.45 for
+// 0.25 at its front edge, the floor 20% dark).
 layout(set = 0, binding = 53, rgba8) uniform writeonly image2D rtShadowImage;
 layout(set = 0, binding = 54, rgba16f) uniform writeonly image2D rtReflectionImage;
 layout(set = 0, binding = 87, rgba16f) uniform writeonly image2D rtGatherImage;
@@ -145,15 +149,17 @@ void main()
             l = reflect(l, ng);  // under the surface (bumped normal): mirrored above it
         }
         vec3 o = OffsetRay(p, ng);
-        float reach = rt.gather.x;
+        float reach = rt.gather.x > 0.0 ? rt.gather.x : 1e30;
         hit.t = 0.5;  // cone
         traceRayEXT(tlas, gl_RayFlagsNoneEXT, kRtMaskSurfaces, 0, 0, 0, o, 0.0, l, reach, 0);
         vec3 radiance = vec3(0.0);
-        if (hit.t < 0.0) {
+        if (hit.t < 0.0 && rt.gather.x <= 0.0) {
+            radiance = Dome(l, 0.5 * float(frame.counts.z));  // escaped: as the probes see the dome
+        } else if (hit.t < 0.0) {
             vec4 gi = GiIrradiance(o + l * reach, l, -l);
             radiance = mix(DomeDiffuse(l), gi.rgb, gi.a);
         } else if ((hit.flags & kHitBackface) == 0u) {
-            radiance = ShadeHit(l, seed, (hit.flags & kHitEmitter) == 0u, false);
+            radiance = ShadeHit(l, seed, (hit.flags & kHitEmitter) == 0u, rt.shadowInfo.w != 0u);
         }
         imageStore(rtGatherImage, pixel, vec4(radiance, 1.0));
     }

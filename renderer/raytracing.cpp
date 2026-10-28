@@ -1039,7 +1039,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
         return;
     }
     _FitProbes(gpu);
-    d.gather[0] = std::max(work.gatherDistance, _giSpacing);
+    d.gather[0] = work.gatherDistance > 0.0f ? std::max(work.gatherDistance, _giSpacing) : 0.0f;  // 0: unlimited
     const uint32_t probes = _giCounts[0] * _giCounts[1] * _giCounts[2];
     const VkDeviceSize rayBytes = VkDeviceSize(probes) * _work.giRays * 4 * sizeof(float);
     if (_giRays.size < rayBytes) {
