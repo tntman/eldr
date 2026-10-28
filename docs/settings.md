@@ -32,7 +32,7 @@ The settings people change most come first and are open in the UIs; rarely touch
 | Final Quality<br>`eldr:finalQuality` | off | [film] Offline mode: every change restarts the film from scratch, never from TAA. Also on when Hydra's `enableInteractive` is false (husk). | |
 | Film Samples<br>`eldr:filmSamples` | int 64 | [film] Samples until converged. 256+ for noise-free finals. | Linear |
 | Adaptive Sampling Threshold, Final Quality<br>`eldr:adaptiveFinalThreshold` | float 0 (off) | [film] Opt-in noise threshold for final quality, e.g. 0.01; off, a final frame takes every film sample. Pixels touched only now and then can stop too early. | Fewer samples |
-| Final Quality Shadows<br>`eldr:finalShadows` | string maps | [RT][film] `maps`, `raytraced` or `auto`: how final quality shadows lights when `eldr:rtShadows` is off. `raytraced` traces the sun and 15 lights; `auto` traces when the scene is dense enough. Interactive follows `eldr:rtShadows`. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
+| Final Quality Shadows<br>`eldr:finalShadows` | string maps | [RT][film] `maps`, `raytraced` or `auto`: final quality shadows. `raytraced` traces the sun and 15 lights. `auto` traces at >= 2 triangles per pixel and shadowed light, if all skinned instances fit in RT. `eldr:rtShadows` on overrides it. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
 | Ray-Traced Refraction<br>`eldr:rtRefraction` | int 1 | [RT][prepass] 0 off, 1 final quality, 2 always. Traces the nearest refracting surface's ray through the glass (back faces, glass behind glass, total internal reflection, absorption), shaded at the hit; rough glass jitters per sample. | glass.usda 8.1-9.7 ms (compute fallback); crowd unchanged |
 | Motion Blur<br>`eldr:motionBlur` | on | Blur for an open shutter (`shutter:open`, `shutter:close`). Interactive: post blur. | Post blur 0.2 ms |
 | Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | [film] Each sample renders the whole scene at a shutter time (shadows, rays, refraction included; instances, joints, blend shapes, camera). Off: post blur. | Crowd 1.7-2.1 ms per sample |
@@ -56,11 +56,11 @@ The settings people change most come first and are open in the UIs; rarely touch
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Auto Exposure<br>`eldr:autoExposure` | on | Histogram exposure that adapts over time. Off for deterministic finals; set `eldr:exposureCompensation`. | 0.11 ms |
-| Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added; fixed exposure when auto is off. | |
-| Tonemapper<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). | |
-| Bloom Intensity<br>`eldr:bloomIntensity` | float 0.04 | Bloom strength (0 = off). | |
-| Linear Beauty<br>`eldr:productLinear` | on | Product beauty and the Houdini viewport's colour are linear scene colour, the frame's exposure, no bloom or tonemap. husk and the viewport skip auto exposure unless the settings prim asks; Houdini applies its own view. Off: Eldr's tonemapped colour. | One extra pass |
+| Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added, always (also with Linear Beauty on); the fixed exposure when auto exposure is off. | |
+| Linear Beauty<br>`eldr:productLinear` | on | Houdini viewport and husk beauty are linear scene colour. Turns off the tonemapper (none), bloom (0) and auto exposure (unless the settings prim sets it); exposure compensation stays. Off: Eldr's tonemapped colour. | One extra pass |
+| Auto Exposure (Linear Beauty off)<br>`eldr:autoExposure` | on | Histogram exposure that adapts over time. With Linear Beauty on (Houdini viewport, husk) it is off unless the settings prim sets it, whatever the UI shows. Off for deterministic finals. | 0.11 ms |
+| Tonemapper (Linear Beauty off)<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). Ignored while Linear Beauty is on (Houdini viewport, husk products): none there. | |
+| Bloom Intensity (Linear Beauty off)<br>`eldr:bloomIntensity` | float 0.04 | 0-1, share of the blurred image mixed in. Ignored while Linear Beauty is on (Houdini viewport, husk products). | |
 
 ## Advanced
 
@@ -185,7 +185,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Order-Independent Transparency<br>`eldr:oit` | on | Weighted blended OIT. Off sorts meshes back to front (can misorder one mesh's triangles). | 18 bytes per pixel, one pass |
 | OIT Depth Weight<br>`eldr:oitDepthWeight` | float 4 | Distance weight exponent (0 = plain average). Raise if far layers show through near ones. | |
 | Refraction<br>`eldr:refraction` | on | [prepass] Materials with transmission or `ior` bend and tint the opaque colour behind them. Screen space: off-screen content isn't refracted. | Glass scene 0.2 ms |
-| Refraction Blur Samples<br>`eldr:refractionSamples` | int 8 | Taps for rough refraction (1-16). | |
+| Refraction Blur Samples<br>`eldr:refractionSamples` | int 8 | Taps for rough glass (1-16), screen-space refraction only. Ray-traced refraction (`eldr:rtRefraction`) blurs over film samples instead. | |
 | Holdouts<br>`eldr:holdouts` | on | Matte objects draw black, zero alpha, keep depth, ids and shadows. | None |
 | Refraction Back Faces<br>`eldr:refractionBackFaces` | on | Draws back faces (water from below, Snell's window, total internal reflection). Off discards them. | |
 | Refraction Through Layers<br>`eldr:multiRefraction` | on | Glass behind glass: background re-copied after each layer. | 0.1 ms per copy |
@@ -222,7 +222,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
 | Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
-| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Distant lights scatter more than once (octaves, Wrenninge 2015). Off: single scattering, as Karma's default Volume Limit 0. On with `karma:object:volumelimit` above 0. | About 1.2x Karma at Volume Limit 16 |
+| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Distant lights scatter more than once (octaves, Wrenninge 2015). Off: single scattering, as Karma's default Volume Limit 0. Also on for a volume with `primvars:eldr:object:volumelimit` (else `karma:object:volumelimit`) above 0. | About 1.2x Karma at Volume Limit 16 |
 
 ### Camera and film
 

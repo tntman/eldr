@@ -81,6 +81,22 @@ expect(triangles(1.3) == expected(3) - 8 * (4**3 - 4), "the dicing depth caps th
 loop.RemovePrimvar("karma:object:dicingdepthmax")
 expect(triangles(1.3) == expected(3), "both removed")
 
+# Eldr's twin wins over Karma's: eldr 3 beside karma 1 caps at 3.
+loop.CreatePrimvar("karma:object:dicingdepthmax", Sdf.ValueTypeNames.Int).Set(1)
+loop.CreatePrimvar("eldr:object:dicingdepthmax", Sdf.ValueTypeNames.Int).Set(3)
+expect(triangles(1.3) == expected(3), "primvars:eldr:object:dicingdepthmax 3 wins over karma's 1")
+loop.CreatePrimvar("eldr:object:dicingdepthmax", Sdf.ValueTypeNames.Int).Set(0)
+expect(triangles(1.3) == expected(3) - 8 * (4**3 - 1), "eldr:object:dicingdepthmax 0 draws the cage")
+loop.RemovePrimvar("eldr:object:dicingdepthmax")
+loop.RemovePrimvar("karma:object:dicingdepthmax")
+
+# Render as Subdivision: the ground (a quad, scheme none) refines like a cage.
+ground = UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/ground"))
+ground.CreatePrimvar("eldr:renderAsSubdivision", Sdf.ValueTypeNames.Bool).Set(True)
+expect(triangles(1.1) == expected(1) + 2 * (4 - 1), "primvars:eldr:renderAsSubdivision refines a polygon mesh")
+ground.CreatePrimvar("eldr:renderAsSubdivision", Sdf.ValueTypeNames.Bool).Set(False)
+expect(triangles(1.1) == expected(1), "renderAsSubdivision off again")
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

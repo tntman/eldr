@@ -440,13 +440,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
-    // Karma's Volume Limit (render settings) above 0: volumes scatter more than once there too.
+    // Volume Limit above 0, on a volume (HdVkVolume::Sync) or in the render
+    // settings, eldr:object:volumelimit set before karma:object:volumelimit:
+    // volumes scatter more than once there too.
     {
-        static const TfToken volumeLimit("karma:object:volumelimit");
-        const VtValue v = delegate->GetRenderSetting(volumeLimit);
-        const double limit = v.IsHolding<float>() ? v.UncheckedGet<float>() : v.IsHolding<double>() ? v.UncheckedGet<double>()
-                           : v.IsHolding<int>() ? v.UncheckedGet<int>() : 0.0;
-        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0;
+        static const TfToken eldrLimit("eldr:object:volumelimit"), karmaLimit("karma:object:volumelimit");
+        auto number = [](const VtValue &v) {
+            return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
+                 : v.IsHolding<int>() ? double(v.UncheckedGet<int>()) : -1.0;
+        };
+        double limit = number(delegate->GetRenderSetting(eldrLimit));
+        if (limit < 0.0) {
+            limit = number(delegate->GetRenderSetting(karmaLimit));
+        }
+        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0 ||
+                                          _scene.AnyVolumeMultipleScattering();
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
@@ -640,6 +648,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if ((offline || hostLinear) && !_appliedSettings.count(t.autoExposure)) {
         frame.post.autoExposure = false;
     }
+    // Bloom mixes the blurred image in: 0-1 (past 1 it extrapolates to dark rings).
+    frame.post.bloomIntensity = std::clamp(frame.post.bloomIntensity, 0.0f, 1.0f);
     // Any edit to the scene or the settings starts the film over; the
     // camera's only when its lens changed (below).
     frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |

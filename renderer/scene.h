@@ -670,6 +670,16 @@ public:
     // changed since the last commit (no material, light, visibility or
     // tag edit), so a commit with no dirty mesh returns at once.
     void Commit(bool keepMotion = false, bool unchanged = false);
+    // Some volume has a Volume Limit above 0 (Volume::multipleScattering).
+    bool AnyVolumeMultipleScattering() const
+    {
+        for (const auto &v : _volumes) {
+            if (v->multipleScattering && v->visible) {
+                return true;
+            }
+        }
+        return false;
+    }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
     // Pool geometries meshes share (_sharedGeometry), each with its users.

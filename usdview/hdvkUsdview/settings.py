@@ -17,7 +17,7 @@ GROUPS = [
     ("Lighting and GI", True,
      "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
     ("Image", True,
-     "autoExposure exposureCompensation tonemapper bloomIntensity productLinear"),
+     "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
     ("Advanced: Geometry and products", False,
      "lod lodBias lodFade subdivision maxRefineLevel displacement curveRibbons pointSprites "
      "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "

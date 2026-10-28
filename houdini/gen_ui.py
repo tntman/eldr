@@ -30,30 +30,67 @@ from pxr import UsdImagingGL
 
 RENDERER = "HdVkRendererPlugin"
 
-# Per-prim primvars Eldr reads (docs/features.md, "USD authoring conventions"):
-# name, label, usd type, default, help. They have no descriptors.
-PRIMVARS = [
-    ("primvars:eldr:reflectionProbe", "Reflection Probe", "bool", False,
-     "The mesh (typically an invisible Cube) is a reflection probe: never drawn, its world box is the "
-     "influence and parallax volume. Needs the Reflection Probe render setting."),
-    ("primvars:eldr:planarReflection", "Planar Reflection", "bool", False,
-     "A flat mesh that mirrors the scene in planar reflections. Needs the Planar Reflections render setting."),
-    ("primvars:eldr:hair", "Hair Shading", "bool", True,
-     "BasisCurves shade as hair (Kajiya-Kay). Off: ordinary surfaces with SSR (cables, ropes)."),
-    ("primvars:eldr:ribbons", "Curves as Ribbons", "bool", False,
-     "BasisCurves draw as camera-facing ribbons instead of tubes, whatever the render setting says."),
-    ("primvars:eldr:sprites", "Points as Discs", "bool", False,
-     "Points draw as camera-facing discs instead of spheres, whatever the render setting says."),
-    ("primvars:eldr:refineLevel", "Subdivision Level", "int", 2,
-     "How often a subdivision surface (subdivisionScheme not none) is refined, instead of the viewport's "
-     "Level of Detail or husk's complexity. At most the Subdivision Max Level render setting."),
+# The Eldr tab of Render Geometry Settings: per-prim primvars in collapsible
+# sections, most important first (docs/features.md, "USD authoring
+# conventions"): (title, open, [(attribute, label, usd type, default, help,
+# menu [(value, label)] or None)]). They have no descriptors. Every
+# primvars:eldr:object:* one has a Karma twin, primvars:karma:object:* (the
+# Karma tab's), read when Eldr's is not set.
+# Houdini drops a second parm of the same name, so the twin names differ and
+# both tabs can carry the control.
+ORDER = "Eldr's own setting wins, then Karma's, then the default."
+SECTIONS = [
+    ("Subdivision and dicing", True, [
+        ("primvars:eldr:renderAsSubdivision", "Render as Subdivision", "bool", False,
+         "Renders a polygon mesh (subdivisionScheme none) as Catmull-Clark without changing the mesh, as Mesh Edit "
+         "with Catmull-Clark would. Needs the Subdivision render setting.", None),
+        ("primvars:eldr:refineLevel", "Subdivision Level", "int", 2,
+         "How often a subdivision surface (subdivisionScheme not none) is refined, instead of the viewport's "
+         "Level of Detail or husk's complexity. At most the Subdivision Max Level render setting.", None),
+        ("primvars:eldr:object:dicingdepthmax", "Dicing Maximum Depth", "int", -1,
+         "Caps the subdivision level of this mesh (-1: no cap). Eldr's setting wins over Karma's "
+         "primvars:karma:object:dicingdepthmax.", None),
+    ]),
+    ("Visibility", True, [
+        ("primvars:eldr:object:rendervisibility", "Render Visibility", "string", "*",
+         "Which rays see the object: *, primary, shadow, diffuse, reflect, refract, joined by | or &, - to remove "
+         "(-primary is a phantom: unseen, still shadows and reflects); empty hides it. Eldr's wins over Karma's.", None),
+        ("primvars:eldr:object:holdoutmode", "Holdout Mode", "int", 0,
+         "Holdout: black, zero alpha, keeps depth, ids and shadows. Matte and Background both cut a holdout. "
+         "Eldr's wins over Karma's.", [(0, "Off"), (1, "Matte"), (2, "Background")]),
+    ]),
+    ("Motion", False, [
+        ("primvars:eldr:object:mblur", "Enable Motion Blur", "bool", True,
+         "Off: no transform or deformation motion blur of its own (camera motion still blurs it). Eldr's wins "
+         "over Karma's.", None),
+        # Velocity Blur (eldr:object:vblur, eldr:object:instance_vblur) is added here by the motion blur work.
+    ]),
+    ("Curves and points", False, [
+        ("primvars:eldr:object:curve_style", "Render Curves As", "int", 3,
+         "Curves: flat or oriented ribbons (camera-facing without normals), rounded tubes, or the Curves as "
+         "Ribbons render setting. Eldr's wins over Karma's.",
+         [(0, "Flat Ribbons"), (1, "Rounded Curves"), (2, "Oriented Ribbons"), (3, "USD Default")]),
+        ("primvars:eldr:object:point_style", "Render Points As", "int", 3,
+         "Points: camera-facing discs, spheres, or the Points as Discs render setting. Eldr's wins over Karma's.",
+         [(0, "Discs"), (1, "Spheres"), (2, "Oriented Discs"), (3, "USD Default")]),
+        ("primvars:eldr:object:width_scale", "Width Scale", "float", 1.0,
+         "Multiplies the widths of curves and points. Eldr's wins over Karma's.", None),
+        ("primvars:eldr:hair", "Hair Shading", "bool", True,
+         "BasisCurves shade as hair (Kajiya-Kay). Off: ordinary surfaces with SSR (cables, ropes).", None),
+    ]),
+    ("Reflections", False, [
+        ("primvars:eldr:reflectionProbe", "Reflection Probe", "bool", False,
+         "The mesh (typically an invisible Cube) is a reflection probe: never drawn, its world box is the "
+         "influence and parallax volume. Needs the Reflection Probe render setting.", None),
+        ("primvars:eldr:planarReflection", "Planar Reflection", "bool", False,
+         "A flat mesh that mirrors the scene in planar reflections. Needs the Planar Reflections render setting.", None),
+    ]),
+    ("Volumes", False, [
+        ("primvars:eldr:object:volumelimit", "Volume Limit", "float", 0.0,
+         "Above 0, the volume scatters more than once (Volume Multiple Scattering). Eldr's wins over Karma's "
+         "primvars:karma:object:volumelimit and the render setting of that name.", None),
+    ]),
 ]
-
-# Karma's per-object controls Eldr honours: set them on this node's Karma
-# tab (Houdini drops a second parm of the same name, docs/houdini.md).
-KARMA_TAB = ("Eldr also reads, from the Karma tab:",
-             "Render Visibility, Holdout Mode, Enable Motion Blur,",
-             "Render Curves As, Render Points As, Width Scale, Dicing Maximum Depth")
 
 
 def groups(settings_py):
@@ -102,8 +139,9 @@ def q(text):
 
 
 def label_help(name, tip=""):
-    """'Depth Prepass (off: no AO)' -> label 'Depth Prepass'; help = the docs' text."""
-    return name.split(" (")[0], tip or name
+    """'Depth Prepass (off: no AO)' -> label 'Depth Prepass'; help = the docs' text.
+    A "(Linear Beauty off)" note stays in the label."""
+    return re.sub(r"\s*\((?!Linear Beauty off)[^()]*\)", "", name), tip or name
 
 
 def tooltips(settings_py):
@@ -154,7 +192,9 @@ def entry(attr, label, kind, default, help_, scope, control=True, menu=None, rng
     if rng:
         out += f"        range   {{ {rng[0]} {rng[1]} }}\n"
     if menu:
-        out += "        menu {\n" + "".join(f"            {q(m)} {q(m)}\n" for m in menu) + "        }\n"
+        out += "        menu {\n" + "".join(
+            f"            {q(m[0])} {q(m[1])}\n" if isinstance(m, tuple) else f"            {q(m)} {q(m)}\n"
+            for m in menu) + "        }\n"
     if control:
         out += f'        disablewhen "{{ {ctl} == block }} {{ {ctl} == none }}"\n'
     return out + "    }\n"
@@ -225,20 +265,18 @@ def main(out, settings_py):
                            isOpen, "viewport" if kind == "Viewport" else None)
         write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_{kind}.ds", text + "}\n")
 
-    text = HEADER
-    for p in PRIMVARS:
-        text += entry(p[0], p[1], p[2], p[3], p[4], "None")
-    for i, line in enumerate(KARMA_TAB):
-        text += f'''    parm {{
-        name    "eldr_karma_tab{i}"
-        label   ""
+    text = HEADER + f'''    parm {{
+        name    "eldr_order"
+        label   "Precedence"
         type    label
-        default {{ {q(line)} }}
+        default {{ {q(ORDER)} }}
     }}
 '''
+    for i, (title, isOpen, parms) in enumerate(SECTIONS):
+        text += folder(title, i, "".join(entry(*p[:5], "None", menu=p[5]) for p in parms), isOpen)
     write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_Geometry.ds", text + "}\n")
     stats = write_renderers(out, settings_py)
-    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {len(PRIMVARS)} primvars, {stats} stats -> {out}")
+    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {sum(len(g[2]) for g in SECTIONS)} primvars, {stats} stats -> {out}")
 
 
 if __name__ == "__main__":

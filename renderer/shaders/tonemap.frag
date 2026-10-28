@@ -82,7 +82,7 @@ void main()
     vec3 c = hdr.rgb / coverage;
     if (pc.a.x > 0.0) {
         vec3 b = textureLod(bloom, gl_FragCoord.xy * pc.b.xy, 0.0).rgb / pc.a.y;
-        c = mix(c, b, pc.a.x);
+        c = mix(c, b, min(pc.a.x, 1.0));
     }
     // ponytail: bloom doesn't spill onto the app's background colour.
     outColor = mix(pc.c, vec4(Tonemap(c * exp2(exposure.ev)), 1.0), coverage);

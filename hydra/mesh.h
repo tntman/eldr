@@ -6,6 +6,7 @@
 #include "pxr/imaging/hd/sceneDelegate.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 
@@ -20,19 +21,19 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdVkSubdivision;
 // Whether a gprim is a holdout (matte object): a non-zero constant primvar
 // eldr:matte (which HdVk's matte scene index writes for the active
-// UsdRenderPass's collection:matte) or Karma's
+// UsdRenderPass's collection:matte), eldr:object:holdoutmode or Karma's
 // karma:object:holdoutmode (1 matte; 2, background, is taken as matte).
 bool HdVkHoldout(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 
 // A gprim's primvar as one T (bool, int, float or std::string; the first
-// of an array, a token as a string, numbers cast), else `fallback`.
+// of an array, a token as a string, numbers cast), else nullopt.
 template <typename T>
-T HdVkPrimvar(HdSceneDelegate *sceneDelegate, SdfPath const &id, TfToken const &name, T fallback)
+std::optional<T> HdVkPrimvarIfSet(HdSceneDelegate *sceneDelegate, SdfPath const &id, TfToken const &name)
 {
     const VtValue v = sceneDelegate->Get(id, name);
     if (v.IsHolding<VtArray<T>>()) {
         const VtArray<T> &a = v.UncheckedGet<VtArray<T>>();
-        return a.empty() ? fallback : a[0];
+        return a.empty() ? std::nullopt : std::optional<T>(a[0]);
     }
     if constexpr (std::is_same_v<T, std::string>) {
         if (v.IsHolding<TfToken>()) {
@@ -40,18 +41,38 @@ T HdVkPrimvar(HdSceneDelegate *sceneDelegate, SdfPath const &id, TfToken const &
         }
     }
     const VtValue cast = VtValue::Cast<T>(v);
-    return cast.IsHolding<T>() ? cast.UncheckedGet<T>() : fallback;
+    return cast.IsHolding<T>() ? std::optional<T>(cast.UncheckedGet<T>()) : std::nullopt;
 }
 
-// The rays that see a gprim (vkr::Mesh::Rays) by Karma's render visibility,
-// primvars:karma:object:rendervisibility: a traceset expression such as
+// HdVkPrimvarIfSet, else `fallback`.
+template <typename T>
+T HdVkPrimvar(HdSceneDelegate *sceneDelegate, SdfPath const &id, TfToken const &name, T fallback)
+{
+    return HdVkPrimvarIfSet<T>(sceneDelegate, id, name).value_or(fallback);
+}
+
+// A per-object attribute with its Eldr twin: primvars:eldr:<name> when set,
+// else Karma's primvars:karma:<name> when set, else `fallback` (the USD
+// standard or default). `name` is e.g. "object:mblur".
+template <typename T>
+T HdVkObjectPrimvar(HdSceneDelegate *sceneDelegate, SdfPath const &id, std::string const &name, T fallback)
+{
+    if (auto v = HdVkPrimvarIfSet<T>(sceneDelegate, id, TfToken("eldr:" + name))) {
+        return *v;
+    }
+    return HdVkPrimvar<T>(sceneDelegate, id, TfToken("karma:" + name), fallback);
+}
+
+// The rays that see a gprim (vkr::Mesh::Rays) by the render visibility,
+// primvars:eldr:object:rendervisibility (else Karma's karma:object:rendervisibility): a traceset expression such as
 // "*", "primary|shadow", "-primary", "-diffuse&-reflect&-refract" or ""
 // (unrenderable). Primary is the camera; diffuse, reflect and refract are
 // Eldr's secondary rays together (off only when all three are). Volume and
 // sss are ignored.
 uint32_t HdVkRays(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 
-// Karma's per-object motion blur switch, primvars:karma:object:mblur: off,
+// The per-object motion blur switch, primvars:eldr:object:mblur (else Karma's
+// karma:object:mblur): off,
 // the gprim keeps no motion of its own (transform or deformation).
 bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 
@@ -137,6 +158,7 @@ private:
     int _RefineLevel(HdSceneDelegate *sceneDelegate) const;
     bool _FlattenRefined();
     int _refineLevel = 0;
+    bool _asSubdivision = false;  // primvars:eldr:renderAsSubdivision
     std::shared_ptr<HdVkSubdivision> _subdivision;
 };
 

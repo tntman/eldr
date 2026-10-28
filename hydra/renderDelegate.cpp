@@ -333,7 +333,6 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Indirect Light Clamp (radiance, 0 = off)", t2.indirectClamp, VtValue(frame.indirectClamp)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
-        {"Linear Beauty (EXR products and Houdini viewport ignore eldr:tonemapper)", t2.productLinear, VtValue(frame.linearBeauty)},
         {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
@@ -407,7 +406,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
         {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
         {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},
-        {"Refraction Blur Samples (1-16)", t.refractionSamples, VtValue(int(frame.refractionSamples))},
+        {"Refraction Blur Samples (screen-space refraction only, 1-16)", t.refractionSamples, VtValue(int(frame.refractionSamples))},
         {"Refraction Back Faces (water from below, TIR)", t.refractionBackFaces, VtValue(frame.refractionBackFaces)},
         {"Refraction Through Layers (glass behind glass)", t.multiRefraction, VtValue(frame.multiRefraction)},
         {"Refraction Layers (copies, 1-16)", t.refractionLayers, VtValue(int(frame.refractionLayers))},
@@ -478,10 +477,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
         {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
         {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
-        {"Auto Exposure", t.autoExposure, VtValue(defaults.autoExposure)},
         {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
-        {"Bloom Intensity", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
-        {"Tonemapper (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
+        {"Linear Beauty (Houdini viewport, husk products: no tonemapper, bloom or auto exposure)", t2.productLinear,
+         VtValue(frame.linearBeauty)},
+        {"Auto Exposure (Linear Beauty off)", t.autoExposure, VtValue(defaults.autoExposure)},
+        {"Tonemapper (Linear Beauty off) (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
+        {"Bloom Intensity (Linear Beauty off) (0-1)", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
     };
 #ifdef HDVK_VOLUMES
     const vkr::VolumePass::Settings &volume = frame.volume;

@@ -360,6 +360,8 @@ Costly opt-ins on a 1080 Ti at 1280x720: `eldr:ssrDenoise` +9 ms (crowd), `eldr:
 
 All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 
+Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` one when set, then Karma's when set, then the USD standard or default.
+
 | Convention | On | Meaning |
 |---|---|---|
 | `bool primvars:eldr:reflectionProbe = 1` | mesh (typically an invisible Cube) | Reflection probe: never drawn, not in bounds or shadows; its world box is the influence and parallax volume, captured from its centre. Max 8, smallest first. Needs `eldr:reflectionProbe`. |
@@ -370,12 +372,15 @@ All optional, beyond standard UsdPreviewSurface, UsdLux and UsdGeom.
 | `float inputs:eldr:toonBands = 3`, `float inputs:eldr:toonSoftness = 0.05` | material surface shader | Toon bands per unit of light (0 = none), band edge width |
 | `inputs:eldr:clearcoatColor` | UsdPreviewSurface shader | Coat tint (read as `coat_color`); constant or connected |
 | `int primvars:eldr:refineLevel` | subdivision mesh | Its own refine level instead of the host's (usdview Complexity, Houdini Level of Detail); still at most `eldr:maxRefineLevel` |
-| `int primvars:karma:object:holdoutmode = 1` | gprim | Holdout: black, zero alpha, keeps depth, ids, shadows. Mode 2 acts as matte. |
-| `string primvars:karma:object:rendervisibility` | mesh, curves, points | Karma's ray visibility: `*`, `-primary` (phantom: unseen, still shadows and reflects), `-shadow`, `primary\|shadow`, `""` (unrenderable). Diffuse, reflect and refract are one class in Eldr (ray-traced reflections, GI, refraction); screen-space effects see what the camera sees. |
-| `bool primvars:karma:object:mblur = 0` | gprim | No motion blur of its own (transform, deformation); camera motion still blurs it |
-| `int primvars:karma:object:curve_style`, `point_style` | BasisCurves, Points | Karma's Render Curves As (0, 2 ribbons; 1 tubes; 3 the render setting) and Render Points As (0, 2 discs; 1 spheres). Oriented ribbons without normals and oriented discs face the camera. `eldr:ribbons`, `eldr:sprites` win. |
-| `float primvars:karma:object:width_scale` | BasisCurves, Points | Multiplies the widths |
-| `int primvars:karma:object:dicingdepthmax` | subdivision mesh | Caps the refine level (-1: no cap) |
+| `int primvars:eldr:object:holdoutmode = 1`, Karma's `karma:object:holdoutmode` | gprim | Holdout: black, zero alpha, keeps depth, ids, shadows. Mode 2 acts as matte. |
+| `string primvars:eldr:object:rendervisibility`, `karma:object:rendervisibility` | mesh, curves, points | Ray visibility: `*`, `-primary` (phantom: unseen, still shadows and reflects), `-shadow`, `primary\|shadow`, `""` (unrenderable). Diffuse, reflect and refract are one class in Eldr (ray-traced reflections, GI, refraction); screen-space effects see what the camera sees. |
+| `bool primvars:eldr:object:mblur = 0`, `karma:object:mblur` | gprim | No motion blur of its own (transform, deformation); camera motion still blurs it |
+| `int primvars:eldr:object:curve_style`, `point_style`, `karma:object:curve_style`, `point_style` | BasisCurves, Points | Render Curves As (0, 2 ribbons; 1 tubes; 3 the render setting) and Render Points As (0, 2 discs; 1 spheres). Oriented ribbons without normals and oriented discs face the camera. `eldr:ribbons`, `eldr:sprites` win. |
+| `float primvars:eldr:object:width_scale`, `karma:object:width_scale` | BasisCurves, Points | Multiplies the widths |
+| `int primvars:eldr:object:dicingdepthmax`, `karma:object:dicingdepthmax` | subdivision mesh | Caps the refine level (-1: no cap) |
+| `float primvars:eldr:object:volumelimit`, `karma:object:volumelimit` | volume (also a render setting of that name) | Above 0, volumes scatter more than once, as `eldr:volumeMultipleScattering` |
+| `bool primvars:eldr:renderAsSubdivision` | polygon mesh (subdivisionScheme none) | Renders it as Catmull-Clark without changing the mesh, as Mesh Edit would; then `refineLevel` applies. Needs `eldr:subdivision`. |
+| `bool inputs:eldr:light:renderlightgeo`, `inputs:karma:light:renderlightgeo` | light | Light geometry visible to the camera (false hides it) |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
 | `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |
