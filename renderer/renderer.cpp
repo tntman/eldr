@@ -66,7 +66,7 @@ struct FrameData {
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
-    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
 };
 
@@ -2926,6 +2926,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.geometry[0] = frame.displacementScale;
         fd.geometry[3] = frame.displacementGraphs ? 1.0f : 0.0f;
     }
+    fd.rtRefraction[1] = frame.opacityMode ? 1u : 0u;
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
@@ -2954,8 +2955,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool cameraMoved = _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
     // The camera the motion starts from: the last frame's, or with sampled
     // motion the scene's own one frame before (then no history is needed).
-    const float *motionViewProj = frame.sampledMotion ? appFrame.prevViewProj : _prevViewProj;
-    const float *motionCameraPos = frame.sampledMotion ? appFrame.prevCameraPos : _prevCameraPos;
+    // A still camera (a viewport's, a switch) has none.
+    const float *motionViewProj = frame.sampledMotion ? appFrame.prevViewProj
+                                : frame.stillCamera   ? appFrame.viewProj
+                                                      : _prevViewProj;
+    const float *motionCameraPos = frame.sampledMotion ? appFrame.prevCameraPos
+                                 : frame.stillCamera   ? appFrame.cameraPos
+                                                       : _prevCameraPos;
     const bool motionHistory = _historyValid || frame.sampledMotion;
     const bool cameraMotion = motionHistory && std::memcmp(appFrame.viewProj, motionViewProj, sizeof(_prevViewProj)) != 0;
     const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && motionHistory &&
@@ -2999,6 +3005,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // fresh history (filmMode 1 without either), stays interactive.
     _filmFinal = film && (filmMode != 0 ? (frame.finalQuality || _freshRun) : _filmFinal);
     _filmRuns += filmMode != 0 ? 1 : 0;
+    // eldr:rtReflections: 2 always, 1 in final quality.
+    const bool tracedReflections = frame.rtReflections >= 2 || (frame.rtReflections == 1 && film && _filmFinal);
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
     // resolves (the camera or the scene moves) a loop of the first
@@ -3028,7 +3036,20 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _shutter.instanceCapacity = gpu.instanceCapacity;
         std::memcpy(_shutter.viewProj, motionViewProj, sizeof(_shutter.viewProj));
         std::memcpy(_shutter.cameraPos, motionCameraPos, sizeof(_shutter.cameraPos));
+        std::memcpy(_shutter.endViewProj, appFrame.viewProj, sizeof(_shutter.endViewProj));
     }
+    // The shutter's camera: with sampled motion this frame's own (its
+    // samples, whatever camera it is now); else the capture's while the
+    // camera stays where that motion ended. The scene's motion outlives
+    // camera-only frames, the camera's must not: a camera moved or switched
+    // since (Houdini's free camera taking over) would blur from the old pose.
+    const bool keptCamera = std::memcmp(appFrame.viewProj, _shutter.endViewProj, sizeof(_shutter.endViewProj)) == 0;
+    const float *shutterViewProj = frame.sampledMotion ? appFrame.prevViewProj
+                                 : keptCamera          ? _shutter.viewProj
+                                                       : appFrame.viewProj;
+    const float *shutterCameraPos = frame.sampledMotion ? appFrame.prevCameraPos
+                                  : keptCamera          ? _shutter.cameraPos
+                                                        : appFrame.cameraPos;
     _shutter.valid = _shutter.valid && shutterOn && gpu.version == _shutter.version &&
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
                      gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
@@ -3059,13 +3080,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
-            lensed.viewProj[i] = _shutter.viewProj[i] + (appFrame.viewProj[i] - _shutter.viewProj[i]) * shutterT;
+            lensed.viewProj[i] = shutterViewProj[i] + (appFrame.viewProj[i] - shutterViewProj[i]) * shutterT;
         }
         const Mat4 inv = Inverse(ToMat4(lensed.viewProj));
         std::memcpy(lensed.invViewProj, inv.m, sizeof(lensed.invViewProj));
         shutterInvViewProj = inv;
         for (int i = 0; i < 3; ++i) {
-            lensed.cameraPos[i] = _shutter.cameraPos[i] + (appFrame.cameraPos[i] - _shutter.cameraPos[i]) * shutterT;
+            lensed.cameraPos[i] = shutterCameraPos[i] + (appFrame.cameraPos[i] - shutterCameraPos[i]) * shutterT;
         }
         std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
     }
@@ -3149,7 +3170,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
-        if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {
+        if (frame.ssrDenoise && !(tracedReflections && _rt && frame.depthPrepass)) {
             fd.ssr[2] = 1.0f;
             _ssr.Prepare();
         }
@@ -3191,7 +3212,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
                       (frame.finalShadows == FinalShadows::Auto && autoTraced())));
     rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
-    rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
+    rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
     // Traced refraction: in final quality (or always), for scenes with
     // refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
@@ -4163,7 +4184,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     Lens::Params lens{};
     if (dof || postBlur || residualBlur) {
         const Mat4 back = postBlur       ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj)
-                          : residualBlur ? shutterInvViewProj * ToMat4(_shutter.viewProj)
+                          : residualBlur ? shutterInvViewProj * ToMat4(shutterViewProj)
                                          : Mat4();
         std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
         std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
@@ -4353,7 +4374,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
 
     // Extra AOVs (aov.h), before the lens bends depth and the ids.
-    if (frame.extraAovs && Aovs::Any(out.aovs)) {
+    _aovsRecorded = frame.extraAovs && Aovs::Any(out.aovs);
+    if (_aovsRecorded) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
@@ -4459,7 +4481,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _deferred.adaptivePixelFraction = frame.adaptivePixelFraction;
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {
-        if (!o.dst) {
+        if (!o.dst || !out.readback) {
             continue;
         }
         o.offset = offset;
@@ -4539,9 +4561,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _deferredOutputs = true;
     } else {
         _WaitInFlight();
-        _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
-        if (frame.extraAovs) {
-            _aovs.Read(out.aovs);
+        if (out.readback) {
+            _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
+            if (frame.extraAovs) {
+                _aovs.Read(out.aovs);
+            }
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
@@ -4696,6 +4720,9 @@ void Renderer::Read(const Targets &out)
         if (outputs[i].second) {
             std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _outWidth * _outHeight);
         }
+    }
+    if (_aovsRecorded) {  // their copy is in the last Render's commands
+        _aovs.Read(out.aovs);
     }
 }
 

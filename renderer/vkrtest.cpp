@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.rtReflections = 0;    // tests turn traced reflections on themselves (the default is final quality)
     frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
@@ -2120,7 +2121,7 @@ int main()
             scene.Commit();
             vkr::Renderer::Frame frame = IdentityFrame();
             const float off = Render(renderer, scene, frame).At(32, 41, 1);
-            frame.rtReflections = true;
+            frame.rtReflections = 2;
             const float on = Render(renderer, scene, frame).At(32, 41, 1);
             Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
 
@@ -2267,11 +2268,10 @@ int main()
         }
 
         if (device.rayTracing) {
-            // GI sees emission unclamped: the GI test's panel, emitting 40
-            // instead of lit (not a light: emissiveLights off), lights the
-            // wall the same through an indirect clamp of 10 as without one
-            // (the clamp is for bounced light; emissive.usda's room was lit
-            // at a quarter).
+            // GI sees emission under the colour limit (Karma's: the indirect
+            // clamp, 20): the GI test's panel, emitting 40 instead of lit
+            // (not a light: emissiveLights off), lights the wall less
+            // through a clamp of 20 than without one.
             vkr::Scene scene(&device);
             scene.SetEmissiveLights(false, 4.0f);
             auto white = std::make_shared<vkr::Material>();
@@ -2296,10 +2296,10 @@ int main()
                 }
                 return img.At(28, 32, 0);
             };
-            const float clamped = lit(10.0f), unclamped = lit(0.0f);
-            std::printf("GI emission: clamp 10 %.3f, off %.3f\n", clamped, unclamped);
-            Expect(unclamped > 0.5f && std::abs(clamped - unclamped) < 0.03f * unclamped,
-                   "the indirect clamp leaves the emission GI rays see");
+            const float clamped = lit(20.0f), unclamped = lit(0.0f);
+            std::printf("GI emission: clamp 20 %.3f, off %.3f\n", clamped, unclamped);
+            Expect(unclamped > 0.5f && clamped > 0.3f * unclamped && clamped < 0.8f * unclamped,
+                   "the colour limit caps the emission GI rays see");
         }
 
         if (device.rayTracing) {
@@ -4780,7 +4780,7 @@ int main()
             };
             const float full = wall(0.0f), quarter = wall(0.5f);
             Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
-            Expect(vkr::Renderer::Frame().indirectClamp == 10.0f, "the indirect clamp is 10 by default");
+            Expect(vkr::Renderer::Frame().indirectClamp == 20.0f, "the indirect clamp is 20 (Karma's colour limit) by default");
         }
 
         {

@@ -264,5 +264,5 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     }
     vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
     radiance = BrightnessClamp(radiance, frame.lightClamp.y);
-    return emission ? radiance + BrightnessClamp(hit.emissive, frame.lightClamp.x) : radiance;
+    return emission ? radiance + BrightnessClamp(hit.emissive, frame.lightClamp.y) : radiance;
 }
