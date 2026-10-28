@@ -48,6 +48,9 @@ const uint32_t kRefractionRgen[] =
 const uint32_t kGiUpdateComp[] =
 #include "gi_update.comp.inc"
 ;
+const uint32_t kGatherDenoiseComp[] =
+#include "gather_denoise.comp.inc"
+;
 
 // GI probes: at most this many (the grid coarsens until it fits), atlas
 // tiles per row, rays per probe (gi_update.comp's kMaxRays).
@@ -148,8 +151,8 @@ RayTracing::~RayTracing()
 {
     vkDeviceWaitIdle(_dev.device);
     Release();
-    for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_giIrradiance,
-                       &_giVisibility, &_giOffsets}) {
+    for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_gatherTemp,
+                       &_gatherGuide, &_giIrradiance, &_giVisibility, &_giOffsets}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_uniforms);
@@ -159,7 +162,8 @@ RayTracing::~RayTracing()
     _dev.Destroy(_skinnedTable);
     _dev.Destroy(_displacedTable);
     _dev.Destroy(_instanceBlasBuffer);
-    for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _displacePipeline, _giUpdate[0], _giUpdate[1]}) {
+    for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _displacePipeline, _giUpdate[0], _giUpdate[1],
+                         _gatherDenoise[0], _gatherDenoise[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -217,7 +221,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     // once they exist).
     const VkShaderStageFlags compute = VK_SHADER_STAGE_COMPUTE_BIT;
     const VkShaderStageFlags hits = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR | VK_SHADER_STAGE_RAYGEN_BIT_KHR;
-    const VkDescriptorSetLayoutBinding bindings[10] = {
+    const VkDescriptorSetLayoutBinding bindings[] = {
         {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
@@ -231,17 +235,22 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         // The probes' relocation offsets (gi_update.comp).
         {9, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        // Final gather denoise (gather_denoise.comp): its first pass, the
+        // normals rt_pixels.rgen writes.
+        {10, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {11, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
-    VkDescriptorBindingFlags partial[10];
-    std::fill(partial, partial + 10, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+    constexpr uint32_t kBindings = sizeof(bindings) / sizeof(bindings[0]);
+    VkDescriptorBindingFlags partial[kBindings];
+    std::fill(partial, partial + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
-    flags.bindingCount = 10;
+    flags.bindingCount = kBindings;
     flags.pBindingFlags = partial;
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, &flags};
-    slci.bindingCount = 10;
+    slci.bindingCount = kBindings;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 5}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -306,6 +315,16 @@ void RayTracing::_EnsurePipelines()
         r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_giUpdate[i]);
     }
     vkDestroyShaderModule(device, giModule, nullptr);
+    Check(r, "vkCreateComputePipelines");
+    // The final gather's denoise, a pipeline per pass.
+    VkShaderModule denoiseModule = CreateShaderModule(device, kGatherDenoiseComp, sizeof(kGatherDenoiseComp));
+    cci.stage.module = denoiseModule;
+    for (int32_t pass = 0; pass < 2 && r == VK_SUCCESS; ++pass) {
+        const VkSpecializationInfo spec{1, &entry, sizeof(pass), &pass};
+        cci.stage.pSpecializationInfo = &spec;
+        r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_gatherDenoise[pass]);
+    }
+    vkDestroyShaderModule(device, denoiseModule, nullptr);
     Check(r, "vkCreateComputePipelines");
 
     // Shader groups: the ray generation shaders, misses (closest surface,
@@ -443,6 +462,8 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _dev.Destroy(_reflectionImage);
     _dev.Destroy(_refractionImage);
     _dev.Destroy(_gatherImage);
+    _dev.Destroy(_gatherTemp);
+    _dev.Destroy(_gatherGuide);
     _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
     _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
@@ -451,6 +472,20 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     }
     if (_work.gather) {
         _gatherImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+        _gatherTemp = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+        _gatherGuide = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+        const VkDescriptorImageInfo images[2] = {{VK_NULL_HANDLE, _gatherTemp.view, VK_IMAGE_LAYOUT_GENERAL},
+                                                 {VK_NULL_HANDLE, _gatherGuide.view, VK_IMAGE_LAYOUT_GENERAL}};
+        VkWriteDescriptorSet writes[2] = {};
+        for (uint32_t i = 0; i < 2; ++i) {
+            writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            writes[i].dstSet = _set;
+            writes[i].dstBinding = 10 + i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(_dev.device, 2, writes, 0, nullptr);
     }
     _width = width;
     _height = height;
@@ -1035,6 +1070,13 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.refraction[0] = std::clamp(work.refractionBounces, 1u, 16u);
     d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
     d.gather[1] = work.gather && work.gi ? 1.0f : 0.0f;
+    const uint32_t gatherRays = std::clamp(work.gatherRays, 1u, kMaxGatherRays);
+    for (uint32_t i = 0; i < gatherRays; ++i) {
+        d.gatherSamples[i / 2][i % 2 * 2] = work.gatherSamples[i][0];
+        d.gatherSamples[i / 2][i % 2 * 2 + 1] = work.gatherSamples[i][1];
+    }
+    d.gatherInfo[0] = float(gatherRays);
+    d.gatherInfo[1] = std::clamp(work.gatherDenoise, 0.0f, 1.0f);
     if (!work.gi) {
         return;
     }
@@ -1310,7 +1352,20 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
             // Its own launch: the per pixel shader above stays as it was.
             _fn->cmdTraceRays(cmd, &_raygenRefraction, &_miss, &_hit, &_callable, _width, _height, 1);
         }
-        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+        VkPipelineStageFlags2 written = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
+        if (_work.gather && _work.gatherDenoise > 0.0f) {
+            // The gathered light's denoise (gather_denoise.comp), two passes.
+            for (VkPipeline p : _gatherDenoise) {
+                MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                              VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 2, sets, 0, nullptr);
+                vkCmdDispatch(cmd, (_width + 7) / 8, (_height + 7) / 8, 1);
+                written = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+            }
+            written |= VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;  // the refraction's
+        }
+        MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
         pass("rayTracing");
     }

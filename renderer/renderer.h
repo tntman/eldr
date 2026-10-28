@@ -239,6 +239,13 @@ public:
         // started fresh), 2 always.
         uint32_t finalGather = 1;
         float finalGatherDistance = 0.0f;
+        // Gather rays per pixel and sample (1..16): each film sample's
+        // directions are the next points of a scrambled Sobol sequence,
+        // turned per pixel by blue noise.
+        uint32_t finalGatherRays = 1;
+        // Edge-aware denoise of the gathered light before the albedo
+        // (gather_denoise.comp), 0..1: the filtered share per frame.
+        float finalGatherDenoise = 1.0f;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
