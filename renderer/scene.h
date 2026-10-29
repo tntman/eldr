@@ -454,6 +454,14 @@ struct Mesh {
     // Reflection probes: this mesh only marks one (primvars:eldr:reflectionProbe):
     // never drawn, its world bounds are the probe's influence box.
     bool reflectionProbe = false;
+    // Caustics (raytracing.h's photons): a caster (Karma's
+    // karma:object:causticsenable) sends the photons that hit it on through
+    // its glass or metal; a receiver gathers them on its diffuse surface
+    // (-1: every mesh but refracting glass). Casters' roughness is at least
+    // causticsRoughness for the photons (Karma's causticsroughnessclamp).
+    bool causticsCast = false;
+    int8_t causticsReceive = -1;
+    float causticsRoughness = 0.2f;
 
 private:
     friend class Scene;
@@ -541,6 +549,7 @@ struct Light {
     bool cameraVisible = true;           // its shape shows to the camera (Frame::lightShapesVisible)
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
+    bool caustics = true;                // sends caustic photons (Karma's contributescaustics): distant, sphere, rect, disk
     // Its light group (Karma's LPE tag, karma:light:lpetag): which of
     // Scene::SetLightGroups' groups its direct light is split into.
     std::string lpeTag;
@@ -608,7 +617,9 @@ struct DrawInfo {
     uint32_t facing;           // Mesh::facing
     float uvSpacing;           // mean uv length of an edge (vertex-stage texture footprint, displace.glsl)
     uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
-    uint32_t pad[3];
+    uint32_t caustics;         // 1: Mesh::causticsCast, 2: receives (Mesh::causticsReceive)
+    float causticsRoughness;   // Mesh::causticsRoughness
+    uint32_t pad;
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -863,6 +874,11 @@ public:
         // the opaque colour for it.
         bool refraction = false;
         bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
+        // Caustics: the lights that send photons (indices into lights:
+        // Light::caustics, distant, sphere, rect, disk) and the drawn
+        // casters' world bounds (none: min > max).
+        std::vector<uint32_t> causticLights;
+        float causticMin[3] = {1, 1, 1}, causticMax[3] = {0, 0, 0};
         // Commands of opaque and cutout meshes with subsurface materials
         // (and their pipeline variants), shaded again by the subsurface pass.
         std::vector<uint32_t> subsurface;

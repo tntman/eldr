@@ -152,6 +152,20 @@ Traced shadows cover opaque pixels only. With volumes, fog, translucent surfaces
 | DDGI probes | `eldr:gi` | ray tracing | Probe grid (`eldr:giProbes`, `eldr:giRaysPerProbe`); octahedral irradiance and visibility atlases blended by `eldr:giHysteresis`; Chebyshev visibility prevents leaks; probes in or just behind walls move out (`eldr:giRelocation`, RTXGI's relocation), those that can't drop out; hits shaded with direct light, emission and probe bounces; dome fallback |
 | Final gather | `eldr:finalGather` | GI, prepass | On in final quality. `eldr:finalGatherRays` (1) cosine rays per pixel and sample, their directions a scrambled Sobol sequence over the film's samples turned per pixel by blue noise (stratified); the gathered light (before the albedo) denoised per frame by two edge-aware a-trous passes (`eldr:finalGatherDenoise`, plane, normal and luminance stops: corners keep their contact shadows within 1%), so 64 samples are cleaner than 256 raw. Each ray shaded at its hit with direct light (rect lights by their exact form factor) and probe bounces (`eldr:finalGatherDistance` > 0: rays that long, else the probes at their end); replaces the probes, AO and SSGI on opaque diffuse light: contact shadows, corners, colour bleeding |
 | SSGI | `eldr:ssgi` | prepass | Near-field indirect light from the screen (GTAO horizon scan, last frame's lighting) at half resolution, denoised. Replaces AO. |
+| Caustics | `eldr:caustics` | ray tracing | On in final quality, only with caster objects. See below. |
+
+### Caustics
+
+Light focused by glass or metal onto diffuse surfaces (a glass's bright spot, a pool floor's ripples), by progressive photon mapping:
+
+- **Casters:** objects with `primvars:karma:object:causticsenable` (Karma's Enable Caustics; `primvars:eldr:object:causticsenable` wins). None by default, so nothing is traced. Their glass refracts and reflects photons by Fresnel (absorbing as traced refraction), their metal reflects them (Schlick from the base colour); the rest of a caster is diffuse. Roughness is at least `karma:object:causticsroughnessclamp` (default 0.2, as Karma; `eldr:` twin).
+- **Lights:** distant, sphere (spot cones included), rect and disk lights send `eldr:causticsPhotons` (262144) photons each per film sample, aimed at the casters' bounding sphere; `inputs:karma:light:contributescaustics` (or `inputs:eldr:light:contributescaustics`) off leaves a light out. Not cylinders, emissive meshes, domes (their extracted sun does send) or light textures.
+- **Receivers:** every mesh but refracting glass gathers them on its diffuse surface; `primvars:eldr:object:causticsreceive` overrides. Photons are kept in a hashed grid on the GPU (2^20 cells, a cell twice the gather radius).
+- **Progressive:** film sample i gathers within r_i, r_(i+1)^2 = r_i^2 (i + 2/3) / (i + 1) (Knaus and Zwicker 2011), from `eldr:causticsRadius` (0: 2% of the casters' bounding radius); the film's average converges, sharper with every sample. Adaptive tiles don't skip tiles while caustics run.
+- **Shadows:** under caustics a caster's glass blocks its traced shadows and tint maps (its light arrives as caustics instead, no double counting).
+- **AOV:** `caustics` (raw), or Karma-style LPEs `C<RD>.+<TS>L`, `C<RD><TS>.*L`, `C<RD>[<TS><RS>].*L`; it is part of indirect diffuse, so the splits still sum to the beauty. Traced hits (reflections, refraction, GI probes, final gather) see caustics too.
+
+CAUSTICS_RESULTS
 
 - `eldr:ssgiBitmask`: 32-sector bitmask, light passes behind thin objects (occluder thickness `eldr:ssgiBitmaskThickness`).
 - `eldr:ssgiThickness`: rays respect thin and grazing surfaces.

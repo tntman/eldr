@@ -3,6 +3,9 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 #define RAY_TRACING
+#ifdef PHOTONS
+#define CAUSTICS_WRITE  // caustics.glsl's storing side (rt_photons.glsl)
+#endif
 #include "frame.glsl"
 #include "lights.glsl"
 #include "scene.glsl"
@@ -188,6 +191,9 @@ Surface Evaluate(vec3 dir, float cone)
     return s;
 }
 
+#ifdef PHOTONS
+#include "rt_photons.glsl"
+#else
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -284,3 +290,4 @@ void main()
     // Out of interfaces inside glass: the dome along the last direction.
     imageStore(rtRefractionImage, pixel, vec4(throughput * Dome(dir, 0.0), first));
 }
+#endif

@@ -158,13 +158,15 @@ constexpr uint32_t kFeatureSunRegion = 1u << 24;
 constexpr uint32_t kFeatureTimeSample = 1u << 25;
 // frame.glsl: GGX multiple-scattering compensation.
 constexpr uint32_t kFeatureMultiScatter = 1u << 26;
+// caustics.glsl: mesh.frag gathers caustic photons.
+constexpr uint32_t kFeatureCaustics = 1u << 27;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
                                        kFeatureRefraction |
                                        kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
                                        kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | kFeatureSunRegion |
-                                       kFeatureTimeSample;
+                                       kFeatureTimeSample | kFeatureCaustics;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -801,6 +803,8 @@ void Renderer::_CreateDescriptors()
         {86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
         // Final gather (RayTracing::Work::gather), bound while on.
         {87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},  // and its denoise
+        // Caustic photons (RayTracing::Work::caustics, caustics.glsl), bound while on.
+        {92, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
@@ -851,7 +855,7 @@ void Renderer::_CreateDescriptors()
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
-    std::fill(bindingFlags + 33, bindingFlags + 44, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86, 87
+    std::fill(bindingFlags + 33, bindingFlags + 45, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86, 87, 92
     std::fill(bindingFlags + kBindings - 4, bindingFlags + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flags.bindingCount = kBindings;
@@ -3280,6 +3284,30 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // the spatial filter's blotches as texture).
     rt.gatherDenoise = frame.denoise ? 0.0f : frame.finalGatherDenoise;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
+    // Caustics: in final quality (or always), with casters and lights that
+    // send photons. Progressive photon mapping (Knaus and Zwicker 2011):
+    // film sample i gathers within r_i, r_(i+1)^2 = r_i^2 (i + a) / (i + 1),
+    // a = 2/3; the film's average of the samples converges.
+    rt.caustics = rtScene && gpu.causticMin[0] <= gpu.causticMax[0] && !gpu.causticLights.empty() &&
+                  (frame.caustics >= 2 || (frame.caustics == 1 && film && _filmFinal));
+    if (rt.caustics) {
+        rt.causticPhotons = frame.causticsPhotons;
+        rt.causticLights = gpu.causticLights;
+        float diagonal = 0.0f, extent = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            rt.causticSphere[k] = 0.5f * (gpu.causticMin[k] + gpu.causticMax[k]);
+            diagonal += (gpu.causticMax[k] - gpu.causticMin[k]) * (gpu.causticMax[k] - gpu.causticMin[k]);
+            extent += (gpu.boundsMax[k] - gpu.boundsMin[k]) * (gpu.boundsMax[k] - gpu.boundsMin[k]);
+        }
+        rt.causticSphere[3] = std::max(0.5f * std::sqrt(diagonal), 1e-4f);
+        rt.sceneExtent = std::sqrt(extent);
+        float r2 = frame.causticsRadius > 0.0f ? frame.causticsRadius * frame.causticsRadius
+                                                : 4e-4f * rt.causticSphere[3] * rt.causticSphere[3];
+        for (uint32_t i = 1; film && i < _filmSamples; ++i) {
+            r2 *= (float(i) + 2.0f / 3.0f) / float(i + 1);
+        }
+        rt.causticRadius = std::sqrt(r2);
+    }
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
@@ -3342,7 +3370,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                           shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
-                      (rt.gi ? kFeatureGi : 0);
+                      (rt.gi ? kFeatureGi : 0) | (rt.caustics ? kFeatureCaustics : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     // Soft sun shadows: for a sun with an angle, from its cascades.
     // Jittered, the cascades are looked up hard (the bit stays: the same
@@ -3434,7 +3462,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
-    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction;
+    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics;
     // Time samples move the scene without a new version; the TLAS follows
     // (and once more when they end).
     rt.moving = timeSample || _shutterMoved;
@@ -4312,6 +4340,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             ++_filmStamp;
             const bool tileSkip = frame.adaptiveTiles && _filmAdaptive && filmMode == 0 &&
                                   _filmSamples > std::max(frame.adaptiveMinSamples, 2u) && !refraction && !dof &&
+                                  !rt.caustics &&  // ponytail: their radius still shrinks where the noise settled
                                   !(draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty());
             fd.tiles[0] = tileSkip ? _filmStamp - 1 : 0;
             fd.tiles[1] = _taa.TilesAcross();

@@ -433,6 +433,17 @@ public:
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
         uint32_t rtRefraction = 1;
         uint32_t rtRefractionBounces = 4;  // 1..16
+        // Caustics (needs Device::rayTracing; RayTracing::Work::caustics):
+        // photons from the lights that send them (Light::caustics) through
+        // the caster meshes (Mesh::causticsCast), gathered on the receivers'
+        // diffuse surfaces, the radius shrinking over film samples
+        // (progressive photon mapping). Nothing without casters.
+        // 0 off, 1 in final quality (film runs started fresh), 2 always.
+        uint32_t caustics = 1;
+        uint32_t causticsPhotons = 262144;  // per light and sample
+        // The first sample's gather radius (world units); 0: 2% of the
+        // casters' bounding sphere.
+        float causticsRadius = 0.0f;
         // Traced reflection and refraction hits shadow every light (one ray
         // each, up to 16 local lights a hit), not only the sun.
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
