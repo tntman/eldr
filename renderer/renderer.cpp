@@ -2679,7 +2679,9 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         };
         copy();
         use(0);
-        if (frame.refractionBackFaces) {
+        if (frame.refractionBackFaces && !(gpu.translucentFlags[i] & Scene::Gpu::kThin)) {
+            // (Thin walls have no inside: their back faces would all discard,
+            // and spend a background copy.)
             drawSlot(_refractBackPipeline + _shadingBase, i);
             drawn = true;
             copy();

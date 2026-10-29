@@ -124,7 +124,7 @@ for oit in (True, False):
     image = render(oit=oit)
     behind, front = rgb(image, 0.55, 0.65), rgb(image, 1.45, 0.65)
     print("oit %d: red behind glass %s, in front %s" % (oit, ["%.2f" % c for c in behind], ["%.2f" % c for c in front]))
-    expect(behind[0] < 0.1 and behind[2] > 0.3, "translucent behind glass is seen through it (oit %d)" % oit)
+    expect(behind[0] < 0.1 and 0.3 < behind[2] < 0.7, "translucent behind glass is seen through it (oit %d)" % oit)
     expect(front[0] > 0.35 and front[2] > 0.3, "translucent in front of glass blends over it (oit %d)" % oit)
 for path in ("/orderGlassFront", "/orderRedBehind", "/orderRedFront", "/orderGlassBehind"):
     stage.RemovePrim(path)

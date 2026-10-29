@@ -258,7 +258,7 @@ engine.SetRendererSetting("eldr:volumeResolution", 1)
 # only the nearest layer split the ray, and the cloud between the panes was
 # dimmed by both too. Linear (no post) for the ratios.
 UsdShade.MaterialBindingAPI(volume.GetPrim()).Bind(material)
-edf.GetInput("color").Set((0, 0.2, 0.2))
+edf.GetInput("color").Set((0, 0.05, 0.05))
 glass = UsdShade.Material.Define(stage, "/glass")
 glassShader = UsdShade.Shader.Define(stage, "/glass/surface")
 glassShader.CreateIdAttr("ND_standard_surface_surfaceshader")
