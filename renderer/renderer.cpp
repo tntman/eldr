@@ -4471,6 +4471,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
         params.filmRadius = filmRadius;
         params.filmWeights = _taa.FilmWeights();
+        std::copy(out.aovFilters, out.aovFilters + Aovs::kCount, params.filters);
+        std::copy(out.aovFilterRadius, out.aovFilterRadius + Aovs::kCount, params.filterRadius);
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(aovTargets) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {

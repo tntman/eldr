@@ -95,6 +95,7 @@
 |---|---|---|---|---|
 | Multi-layer EXR with AOVs | Yes | Yes | Yes | |
 | Light-split AOVs that sum to the beauty | Yes | Yes | Partial | Eldr: Karma's LPE names. |
+| Per-AOV sample filter (min, max, closest, nearest, box, Gauss) | Yes | No | No | Eldr: Karma's Render Var "Sample Blending" or `driver:parameters:aov:eldr:filter`, film only. |
 | Cryptomatte with soft edges (3 layers, 6 ranks) | Yes | Partial | No | Eldr: coverage from the film's samples, Karma's `<var>00..02` layout. EEVEE: hard edges. |
 | Cryptomatte | Yes | Yes | Yes | |
 | UsdRenderSettings and render products | Yes | No | No | Eldr honours resolution, pixel aspect and data window. |

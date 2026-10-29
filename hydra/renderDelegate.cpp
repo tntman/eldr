@@ -598,6 +598,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
         {"Cryptomatte: Soft Edges and Ranks (film samples)", t2.cryptomatteSoft, VtValue(frame.cryptomatteSoft)},
+        {"Per-AOV Sample Filters (render var filter)", t2.aovFilters, VtValue(true)},
         {"Direct Light Intensity (final pixel only)", t2.directIntensity, VtValue(frame.directIntensity)},
         {"Indirect Light Intensity (final pixel only)", t2.indirectIntensity, VtValue(frame.indirectIntensity)},
         {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,
