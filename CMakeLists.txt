@@ -118,6 +118,15 @@ foreach(variant layers graph_layers)
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Half resolution volumes: volume.frag packing radiance and coloured transmittance (HALF).
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/volume_half.frag.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DHALF
+            -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/volume.frag
+    DEPENDS renderer/shaders/volume.frag renderer/shaders/frame.glsl renderer/shaders/lights.glsl
+            renderer/shaders/fog.glsl renderer/shaders/noise.glsl renderer/shaders/volume.glsl
+            third_party/nanovdb/PNanoVDB.h)
+list(APPEND shader_incs ${spv})
 # Upscaling (TAAU): taa.frag reconstructing a larger history (UPSCALE).
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/taa_upscale.frag.inc)
 add_custom_command(OUTPUT ${spv}
@@ -252,6 +261,11 @@ if(WIN32)
         add_test(NAME viewport_overlap COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
                  ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --aovs color,depth,primId --overlap)
         set_tests_properties(viewport_overlap PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # GetRenderStats before the first frame (Houdini's viewport polls early): no crash.
+        add_test(NAME viewport_startup COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
+                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --houdini --startup)
+        set_tests_properties(viewport_startup PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
+                             FAIL_REGULAR_EXPRESSION "FAIL")
     endif()
     add_test(NAME purpose COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_purpose.py)
     set_tests_properties(purpose PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
@@ -275,6 +289,9 @@ if(WIN32)
     set_tests_properties(settings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME viewport COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_viewport.py)
     set_tests_properties(viewport PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>" TIMEOUT 600)
+    # Houdini's free camera after a scene camera with an open shutter: no camera blur carried over.
+    add_test(NAME motion_camera_switch COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_camera_switch.py)
+    set_tests_properties(motion_camera_switch PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME docs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_docs.py)
     set_tests_properties(docs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME light_shapes COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_light_shapes.py)

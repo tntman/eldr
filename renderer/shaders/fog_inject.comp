@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
 #include "frame.glsl"
 #include "lights.glsl"
 #include "fog.glsl"
@@ -150,7 +151,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 toCamera)
     float theta = acos(clamp(cosOff, -1.0, 1.0));
     float shaping = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                        : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-    vec3 radiance = light.color.rgb * shaping;
+    vec3 radiance = light.color.rgb * shaping * LightTint(light, p);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
     }

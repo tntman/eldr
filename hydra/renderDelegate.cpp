@@ -431,6 +431,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Shadow Small Object Culling (shadow texels)", t.shadowCullPixels, VtValue(frame.shadowCullPixels)},
         {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
+        {"Dicing by Screen Size (final quality)", t2.screenDicing, VtValue(kHdVkScreenDicing)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Level of Detail Crossfade (dithered)", t2.lodFade, VtValue(frame.lodFade)},
@@ -464,7 +465,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Dome Sun Extraction (HDRI sun as a shadowed light)", t2.domeSun, VtValue(frame.domeSun)},
         {"Dome Sun Threshold (radiance)", t2.domeSunThreshold, VtValue(frame.domeSunThreshold)},
         {"Direct Light Clamp (radiance, 0 = off)", t2.directClamp, VtValue(frame.directClamp)},
-        {"Indirect Light Clamp (radiance, 0 = off)", t2.indirectClamp, VtValue(frame.indirectClamp)},
+        {"Indirect Light Clamp (radiance, 0 = off, -1 = color limit)", t2.indirectClamp, VtValue(-1.0f)},
+        {"Color Limit (radiance, 0 = off, -1 = Karma's, else 20)", t2.colorLimit, VtValue(-1.0f)},
+        {"Opacity Mode Presence (UsdPreviewSurface; off: shaded as transparent)", t2.opacityMode, VtValue(frame.opacityMode)},
+        {"Indirect Clamp Shared with Color Limit (-1 unset, 0 off, 1 on)", t2.colorLimitShared, VtValue(-1)},
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
@@ -475,7 +479,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
         {"Denoised Glossy SSR (GGX rays, ratio estimator)", t2.ssrDenoise, VtValue(frame.ssrDenoise)},
         {"SSR Hit Footprint Filter (mip by the ray's cone)", t2.ssrHitFilter, VtValue(frame.ssrHitFilter)},
-        {"Ray-Traced Reflections (RTX; replace SSR)", t.rtReflections, VtValue(frame.rtReflections)},
+        {"Ray-Traced Reflections (0 off, 1 final quality, 2 always; replace SSR)", t.rtReflections, VtValue(int(frame.rtReflections))},
         {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
@@ -489,6 +493,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
         {"Planar Reflection Mirrors (most)", t2.planarCount, VtValue(int(frame.planarCount))},
+        {"Planar Reflection Blur (0 = sharp)", t2.planarBlur, VtValue(frame.planarBlur)},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -607,6 +612,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
         {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},
         {"Read Back in Place (no copy)", t2.inPlaceReadback, VtValue(frame.inPlaceReadback)},
+        {"Offline Samples per Execute (seconds; husk, usdrecord; 0: one sample)", t2.offlineBatchSeconds,
+         VtValue(1.0f)},
         {"Keep Ids while Moving (no readback)", t2.staleMovingIds, VtValue(frame.staleMovingIds)},
         {"Compile Pipelines on Demand (fast start)", t2.lazyPipelines, VtValue(frame.lazyPipelines)},
         {"Unread AOVs Once Converged", t2.lazyExtraAovs, VtValue(frame.lazyExtraAovs)},
@@ -655,7 +662,10 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
         const HdSceneIndexBaseRefPtr terminal(_terminalSceneIndex);
-        if (key == t.subdivision || key == t.maxRefineLevel) {
+        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing || key == t.finalQuality) {
+            if (key == t2.screenDicing || key == t.finalQuality) {
+                _dicingView.reset();  // the pass dices again for its camera
+            }
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
         } else if (key == t2.curveRibbons) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
@@ -1061,6 +1071,40 @@ void HdVkRenderDelegate::NoteCameraShutter(SdfPath const &camera, float open, fl
     std::lock_guard<std::mutex> lock(_shutterMutex);
     _shutters[camera] = GfVec2f(open, close);
     _lastOpenCamera = close > open ? camera : _lastOpenCamera;
+}
+
+// Houdini doesn't always send houdini:viewport (a Render Settings LOP frame
+// arrives with houdini:renderer = husk), but its viewport always sends
+// houdini:interactive (normal, tumbling, editing); husk sends neither, only
+// rasterRenderProducts (a batch frame). Offline: husk, or hdPrman's
+// convention, enableInteractive false (usdrecord sets neither).
+bool HdVkRenderDelegate::HoudiniViewport() const
+{
+    const VtValue flag = GetRenderSetting(TfToken("houdini:viewport"));
+    const VtValue asBool = VtValue::Cast<bool>(flag);
+    return (!flag.IsEmpty() && (asBool.IsEmpty() || asBool.UncheckedGet<bool>())) ||
+           !GetRenderSetting(TfToken("houdini:interactive")).IsEmpty();
+}
+
+bool HdVkRenderDelegate::Offline() const
+{
+    return !HoudiniViewport() && (!GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty() ||
+                                  !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
+}
+
+bool HdVkRenderDelegate::ScreenDicing() const
+{
+    return GetRenderSetting<bool>(HdVkRenderSettingsTokens2->screenDicing, kHdVkScreenDicing) &&
+           (GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) || Offline());
+}
+
+void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
+{
+    _dicingView = view;
+    if (_terminalSceneIndex) {
+        HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
+                       {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
+    }
 }
 
 void HdVkRenderDelegate::SetActiveCamera(SdfPath const &camera)

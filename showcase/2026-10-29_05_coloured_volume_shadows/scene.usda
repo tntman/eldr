@@ -1,0 +1,120 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/volume.usda@]
+)
+
+# volume.usda (a grey smoke cloud lit by the sun and a dome) with its fire
+# replaced by orange-brown soot: an absorbing MaterialX volume that lets red
+# through and stops blue, so its shadow on the floor is orange. Settings
+# prims flip how the shadow and the cloud's multiple scattering are made.
+
+over "fire" (active = false)
+{
+}
+
+def Volume "soot" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel field:density = </soot/density>
+    rel material:binding = </mtl/soot>
+    double3 xformOp:translate = (2.2, -0.2, 0.3)
+    float3 xformOp:scale = (0.8, 0.8, 0.8)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @../../tests/scenes/volume.vdb@
+        token fieldName = "density"
+    }
+}
+
+def Scope "mtl"
+{
+    def Material "soot"
+    {
+        token outputs:mtlx:volume.connect = </mtl/soot/volume.outputs:out>
+
+        def Shader "volume"
+        {
+            uniform token info:id = "ND_volume"
+            token inputs:vdf.connect = </mtl/soot/vdf.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "vdf"
+        {
+            uniform token info:id = "ND_absorption_vdf"
+            vector3f inputs:absorption.connect = </mtl/soot/absorption.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "density"
+        {
+            uniform token info:id = "ND_geompropvalue_float"
+            string inputs:geomprop = "density"
+            float outputs:out
+        }
+
+        def Shader "absorption"
+        {
+            uniform token info:id = "ND_multiply_vector3FA"
+            vector3f inputs:in1 = (0.15, 0.6, 1.2)
+            float inputs:in2.connect = </mtl/soot/density.outputs:out>
+            vector3f outputs:out
+        }
+    }
+}
+
+def Scope "Render"
+{
+    def RenderSettings "maps"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "traced"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:rtShadows = 1
+    }
+
+    def RenderSettings "halfResolution"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:volumeResolution = 2
+    }
+
+    def RenderSettings "shadowsOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:volumeShadows = 0
+    }
+
+    def RenderSettings "volumeLimit1"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom float karma:object:volumelimit = 1
+    }
+
+    def RenderSettings "volumeLimit4"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom float karma:object:volumelimit = 4
+    }
+
+    def RenderSettings "volumeLimit16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom float karma:object:volumelimit = 16
+    }
+}

@@ -14,8 +14,8 @@ The Cornell box with a product `aovs` listing the render vars a Karma Render Set
 
 ## Open
 
-- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_01_light_groups/scene.usda` writes `lightGroups.exr`; render the same with `-R BRAY_HdKarma` to compare layer by layer.
+- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_06_light_groups/scene.usda` writes `lightGroups.exr`; render the same with `-R BRAY_HdKarma` to compare layer by layer.
 - Houdini: Sublayer LOP on the file, Eldr as the viewport renderer; the Render Outputs menu lists the vars.
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_01_light_groups\scene.usda`, AOV menu, or `usdrecord --renderSettingsPrimPath /Render/default`.
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_06_light_groups\scene.usda`, AOV menu, or `usdrecord --renderSettingsPrimPath /Render/default`.
 
 Settings prims: `/Render/default`, `/Render/noHoldouts`.

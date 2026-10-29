@@ -1361,6 +1361,7 @@ void main()
         color = ToonShade(color, emissive, BaseToonAlbedo() * alpha);
     }
     alpha = TransmissionEnd(color, n, v, perceptual);
+    color *= gPresence;
     if (LightPathScaled()) {
         // What it refracts is indirect glossy (screen space: the copied
         // colour behind has the intensities taken out, background_unscale.comp).

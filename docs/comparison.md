@@ -42,7 +42,7 @@
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |
 | Ray-traced reflections | Yes | No | Yes | |
 | Authored reflection probes | Yes | Yes | Yes | Eldr: up to 8, from flagged meshes. |
-| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, sharp only. EEVEE 5.1 added glossy planars. |
+| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, blurred by roughness (`eldr:planarBlur`), no contact hardening. EEVEE 5.1 added glossy planars. |
 
 ## Transparency, volumes and atmosphere
 
@@ -70,7 +70,7 @@
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
 | Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
-| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels, per mesh or from the host; no adaptive dicing. |
+| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels per mesh, from the host, the mesh, or in final quality its size on screen (Karma's dicing quality); no per-face adaptive dicing. |
 | Per-object ray visibility (camera, shadow, reflections) | Partial | Yes | Yes | Eldr: Karma's render visibility; reflections and GI only when ray traced, screen-space effects see what the camera sees. |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
 | Virtual geometry (Nanite-style) | No | No | Yes | *(interactive)* |

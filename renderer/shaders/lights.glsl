@@ -91,6 +91,30 @@ float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
     return abs(sum) / (2.0 * PI);
 }
 
+// A textured rect/disk light's colour as seen from p: the texel above p's
+// foot on the light's plane, at the mip of the light seen from its height
+// (mesh.frag's diffuseTint). White for other lights or with light textures
+// off. Shared by the paths that treat the light as a point (traced hits,
+// probes, fog, volumes).
+// ponytail: one tap, no filtered polygon integral; mesh.frag has the same.
+vec3 LightTint(Light light, vec3 p)
+{
+    int tex = int(light.focusTint.w);
+    uint type = uint(light.position.w);
+    if (tex < 0 || (frame.reflections.z & kLightTextures) == 0u || (type != kLightRect && type != kLightDisk)) {
+        return vec3(1.0);
+    }
+    vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz, toLight = light.position.xyz - p;
+    vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
+    foot = type == kLightRect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
+    ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
+    float texels = float(max(size.x, size.y));
+    float extent = length(hw) + length(hh);
+    float height = abs(dot(toLight, light.axis.xyz));
+    float lod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
+    return textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + foot * vec2(-0.5, 0.5), lod).rgb;
+}
+
 uint ClusterIndex(vec2 fragCoord, float viewDepth)
 {
     uvec2 tile = min(uvec2(fragCoord / frame.viewport.xy * vec2(kClustersX, kClustersY)),

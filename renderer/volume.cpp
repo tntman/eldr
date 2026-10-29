@@ -23,6 +23,9 @@ const uint32_t kVolumeFrag[] =
 const uint32_t kShapesFrag[] =
 #include "light_shapes.frag.inc"
 ;
+const uint32_t kHalfFrag[] =  // volume.frag with HALF
+#include "volume_half.frag.inc"
+;
 const uint32_t kUpsampleFrag[] =
 #include "volume_upsample.frag.inc"
 ;
@@ -30,7 +33,7 @@ const uint32_t kShadowFrag[] =
 #include "volume_shadow.frag.inc"
 ;
 
-constexpr VkFormat kHalfFormat = VK_FORMAT_R16G16B16A16_SFLOAT;  // premultiplied radiance, 1 - transmittance
+constexpr VkFormat kHalfFormat = VK_FORMAT_R32G32B32A32_UINT;  // half floats: radiance, coloured transmittance
 
 struct VolumeParams {  // mirror of the push block in volume.frag
     float stepSize;
@@ -43,7 +46,8 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t originX, originY;
     uint32_t mutual;  // Settings::mutualShadows
     uint32_t defaultFields;  // Settings::defaultFields
-    uint32_t multiple;       // Settings::multipleScattering
+    uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
+    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -58,7 +62,15 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.count = count;
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
-    p.multiple = s.multipleScattering;
+    // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
+    // gain over single scattering at limits 1, 4 and 16 (within 7% on
+    // volume.usda's and fog.usda's clouds, sun and dome; docs/features.md).
+    // Less directional octaves lost the backlit clouds' gain: the phase stays.
+    const float limit = s.volumeLimit > 0.0f ? s.volumeLimit
+                      : s.multipleScattering ? VolumePass::Settings::kDefaultVolumeLimit : 0.0f;
+    p.octaves = limit > 0.0f ? uint32_t(std::min(2.0f * std::ceil(limit), 6.0f)) : 1;
+    p.octaveLight = 0.5f + 0.1f * std::clamp((limit - 4.0f) / 12.0f, 0.0f, 1.0f);
+    p.octaveDepth = 0.25f;
     return p;
 }
 
@@ -157,6 +169,9 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
+    VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};  // filters nothing: integer texels
+    sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    Check(vkCreateSampler(_dev.device, &sci, nullptr, &_halfSampler), "vkCreateSampler");
 }
 
 // When a volume or light shape first draws: a scene without them doesn't
@@ -172,11 +187,11 @@ void VolumePass::_EnsurePipelines()
         _pipeline[factors] = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag),
                                                       Renderer::kColorFormat, false, true, false, VK_FORMAT_UNDEFINED,
                                                       true, &spec);
-        _halfPipeline[factors] = CreateFullscreenPipeline(_dev, _layout, kVolumeFrag, sizeof(kVolumeFrag), kHalfFormat,
+        _halfPipeline[factors] = CreateFullscreenPipeline(_dev, _layout, kHalfFrag, sizeof(kHalfFrag), kHalfFormat,
                                                           false, false, false, VK_FORMAT_UNDEFINED, false, &spec);
     }
     _upsamplePipeline = CreateFullscreenPipeline(_dev, _layout, kUpsampleFrag, sizeof(kUpsampleFrag),
-                                                 Renderer::kColorFormat, false, true);
+                                                 Renderer::kColorFormat, false, true, false, VK_FORMAT_UNDEFINED, true);
     _shapePipeline = CreateFullscreenPipeline(_dev, _layout, kShapesFrag, sizeof(kShapesFrag), Renderer::kColorFormat,
                                               false, true);
     _shadowPipeline = CreateFullscreenPipeline(_dev, _layout, kShadowFrag, sizeof(kShadowFrag),
@@ -192,6 +207,7 @@ VolumePass::~VolumePass()
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
+    vkDestroySampler(_dev.device, _halfSampler, nullptr);
     _dev.Destroy(_half);
     _dev.Destroy(_translucentDepth);
 }
@@ -386,7 +402,8 @@ void Scene::_CommitVolumes()
     // over the field's range (0 included, as empty space reads 0), linear
     // in between. With factors of the density's grid in scattering or
     // absorption (or neither per unit of density), a table of the mean
-    // extinction over the density's range too: the shadow marches step it.
+    // extinction over the density's range too (per channel and their mean,
+    // 4 floats an entry): the shadow marches step it.
     std::vector<float> luts;
     for (Drawn &d : drawn) {
         const VolumeShading &s = d.shading;
@@ -422,7 +439,7 @@ void Scene::_CommitVolumes()
             d.lutOffsets[3] = uint32_t(luts.size());
             for (uint32_t i = 0; i < kVolumeLut; ++i) {
                 const float rho = at(d.lutLow[3], d.lutScale[3], i);
-                float extinction = 0.0f;
+                float extinction[4] = {};
                 for (int c = 0; c < 3; ++c) {
                     for (const auto &[mask, sigma] : {std::pair{s.scatteringFactors, s.scattering[c]},
                                                        std::pair{s.absorptionFactors, s.absorption[c]}}) {
@@ -430,10 +447,11 @@ void Scene::_CommitVolumes()
                         for (size_t k = 0; k < s.factors.size() && k < VolumeShading::kMaxFactors; ++k) {
                             v *= (mask >> k & 1) && d.slots[k] == 0 ? s.factors[k].value(rho)[c] : 1.0f;
                         }
-                        extinction += std::max(v, 0.0f) / 3.0f;
+                        extinction[c] += std::max(v, 0.0f);
                     }
+                    extinction[3] += extinction[c] / 3.0f;
                 }
-                luts.push_back(extinction);
+                luts.insert(luts.end(), extinction, extinction + 4);
             }
         }
     }
@@ -513,8 +531,8 @@ void Scene::_CommitVolumes()
             g.lutScale[k] = g.lutSlots[k] == 4 && k < 3 ? 0.0f : d.lutScale[k];
         }
         // The material's coefficients per channel (the march's
-        // transmittance is coloured); the shadow maps and traced shadows
-        // take their mean.
+        // transmittance and the shadows it casts are coloured); medium.x is
+        // their mean, the optical depth the march steps towards the lights.
         const VolumeShading &s = d.shading;
         float extinction = 0.0f;
         for (int c = 0; c < 3; ++c) {
