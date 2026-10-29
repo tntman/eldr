@@ -20,7 +20,8 @@ struct Light {
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier
     vec4 focusTint;   // w: rect/disk: the texture's bindless index (-1: none)
     vec4 ies;         // xyz: the light's +X (IES phi 180); w: its IES profile's bindless index (-1: none)
-    vec4 link;        // x: IES angle scale; y, z: light, shadow link bit of Instance::linkMask (-1: everything)
+    vec4 link;        // x: IES angle scale; y, z: light, shadow link bit of Instance::linkMask (-1: everything);
+                      // w: an emissive mesh's bounce clamp (EmitterClamp; 0: none)
 };
 const uint kLightTextures = 4u;  // frame.reflections.z: lights' textures on
 layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
@@ -32,6 +33,17 @@ layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 const uint kClustersX = 16u, kClustersY = 9u, kClustersZ = 24u;
 const uint kMaxClusterLights = 63u;
 layout(std430, set = 0, binding = 14) CLUSTER_ACCESS buffer Clusters { uint clusterLights[]; };
+
+// An emissive mesh as a light (Scene::SetEmissiveLights): Karma reaches
+// emitters by bounce rays only and clamps each such sample, radiance times
+// the albedo (the cosine-sampled diffuse weight), at its indirect colour
+// limit, keeping hue. The light's share of that, for a surface of `albedo`.
+float EmitterClamp(Light light, vec3 albedo)
+{
+    vec3 sample_ = light.color.rgb * albedo;
+    float peak = max(max(sample_.r, sample_.g), sample_.b);
+    return light.link.w > 0.0 && peak > light.link.w ? light.link.w / peak : 1.0;
+}
 
 // UsdLux lights have no range. A sphere/rect light is cut off where it
 // would light a white surface facing it with less than the cutoff radiance

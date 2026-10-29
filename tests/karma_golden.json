@@ -6,74 +6,74 @@
   },
   "scenes": {
     "cornell": {
-      "lum": 0.7552,
-      "region": 1.188,
-      "mald": 0.5452
+      "lum": 1.0321,
+      "region": 0.1301,
+      "mald": 0.0285
     },
     "emissive": {
-      "lum": 1.7357,
-      "region": 0.8199,
-      "mald": 0.1751
+      "lum": 1.008,
+      "region": 0.0714,
+      "mald": 0.0633
     },
     "lights": {
-      "lum": 0.9927,
-      "region": 0.0968,
-      "mald": 0.0491
+      "lum": 1.0141,
+      "region": 0.0807,
+      "mald": 0.0338
     },
     "step4": {
-      "lum": 1.0708,
-      "region": 0.6728,
-      "mald": 0.1239
+      "lum": 1.1061,
+      "region": 0.6872,
+      "mald": 0.0962
     },
     "sunangle": {
-      "lum": 2.2649,
-      "region": 0.8583,
-      "mald": 0.6834
+      "lum": 1.0072,
+      "region": 0.0123,
+      "mald": 0.0095
     },
     "mtlx": {
-      "lum": 1.1606,
+      "lum": 1.1616,
       "region": 1.1936,
-      "mald": 0.0744
+      "mald": 0.0772
     },
     "glass": {
-      "lum": 0.9551,
-      "region": 1.1292,
-      "mald": 0.2121
+      "lum": 0.9462,
+      "region": 1.1279,
+      "mald": 0.2321
     },
     "volume": {
-      "lum": 1.3857,
-      "region": 0.8487,
-      "mald": 0.2583
+      "lum": 1.4036,
+      "region": 0.858,
+      "mald": 0.2693
     },
     "displacement": {
-      "lum": 1.9136,
-      "region": 0.8618,
-      "mald": 0.5293
+      "lum": 0.9848,
+      "region": 0.0426,
+      "mald": 0.0172
     },
     "subsurface": {
-      "lum": 0.9665,
-      "region": 1.0281,
-      "mald": 0.1896
+      "lum": 0.9614,
+      "region": 1.0094,
+      "mald": 0.2006
     },
     "caustics": {
-      "lum": 1.015,
-      "region": 0.239,
-      "mald": 0.137
+      "lum": 1.0104,
+      "region": 0.2396,
+      "mald": 0.1453
     },
     "transparency_order": {
-      "lum": 1.0276,
-      "region": 0.0567,
-      "mald": 0.0499
+      "lum": 1.0627,
+      "region": 0.0781,
+      "mald": 0.0721
     },
     "lightlink": {
-      "lum": 0.9464,
-      "region": 0.1615,
-      "mald": 0.2249
+      "lum": 1.0158,
+      "region": 0.0749,
+      "mald": 0.0327
     },
     "ies": {
-      "lum": 1.0082,
-      "region": 0.1026,
-      "mald": 0.0331
+      "lum": 1.011,
+      "region": 0.1726,
+      "mald": 0.1183
     }
   }
 }
