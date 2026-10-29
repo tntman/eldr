@@ -345,6 +345,11 @@ if(WIN32)
         add_test(NAME macbeth COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/macbeth_compare.py
                  --exrinfo $<TARGET_FILE:exrinfo> --variants white --no-karma --check)
         set_tests_properties(macbeth PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # Eldr against Karma references rendered once by tests/karma_refs.py (skipped without them).
+        add_test(NAME karma_golden COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/karma_refs.py
+                 --compare --exrinfo $<TARGET_FILE:exrinfo>)
+        set_tests_properties(karma_golden PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
+                             LABELS slow SKIP_RETURN_CODE 77 TIMEOUT 1800)
         add_test(NAME motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_motion.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
