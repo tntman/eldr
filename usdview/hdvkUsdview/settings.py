@@ -31,7 +31,7 @@ GROUPS = [
     ("Advanced: Shadows", False,
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
      "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
-     "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
+     "rtSkinnedInstances rtDisplacement rtCompaction shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
      "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur"),

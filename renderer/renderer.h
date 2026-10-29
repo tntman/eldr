@@ -483,6 +483,9 @@ public:
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
         bool rtDisplacement = true;
+        // Static BLASes are copied to their compacted size after the first
+        // build (about half the memory). Skinned and displaced ones refit.
+        bool rtCompaction = true;
         // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
         // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
         // through a ratio estimator, temporal reprojection through the

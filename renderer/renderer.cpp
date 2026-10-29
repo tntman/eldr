@@ -3281,6 +3281,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.gatherDenoise = frame.denoise ? 0.0f : frame.finalGatherDenoise;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     rt.displacementGraphs = frame.displacementGraphs;
+    rt.compaction = frame.rtCompaction;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on

@@ -4917,7 +4917,7 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
-            // Saving prunes the other shader builds' caches of this driver
+            // Saving keeps the newest 3 other builds' caches of this driver
             // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
             std::filesystem::path current;
@@ -4927,14 +4927,22 @@ int main()
                 }
             }
             const std::string name = current.filename().string();
-            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
-                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
-            std::filesystem::copy_file(current, stale, cacheError);
+            const std::string stem = name.substr(0, name.rfind('-') + 1);
+            const std::filesystem::path other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            for (int i = 1; i <= 4; ++i) {
+                std::filesystem::copy_file(current, cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin"),
+                                           cacheError);
+            }
             std::filesystem::copy_file(current, other, cacheError);
             device.SavePipelineCache();
-            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
-                       std::filesystem::exists(other),
-                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            int kept = 0;
+            for (int i = 1; i <= 4; ++i) {
+                const auto stale = cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin");
+                kept += std::filesystem::exists(stale);
+                std::filesystem::remove(stale, cacheError);
+            }
+            Expect(kept == 3 && std::filesystem::exists(current) && std::filesystem::exists(other),
+                   "pipeline cache: saving keeps this driver's newest 3 other caches, not older ones; other drivers' stay");
             std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {
