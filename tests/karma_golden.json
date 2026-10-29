@@ -1,0 +1,8 @@
+{
+  "tolerance": {
+    "lum": 0.05,
+    "region": 0.1,
+    "mald": 0.04
+  },
+  "scenes": {}
+}
