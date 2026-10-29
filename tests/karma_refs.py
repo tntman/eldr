@@ -33,13 +33,15 @@ REFS = os.environ.get("ELDR_REFS", r"E:\eldr-refs")
 HFS = os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects Software\Houdini 22.0.466")
 BASELINE = os.path.join(HERE, "karma_golden.json")
 W, H, SPP = 320, 180, 256
+SPP_SCENE = {"emissive": 2048}  # small emitters: Karma Path Traced is noisy at 256
 CELLS, REGIONS = (32, 18), (4, 4)
 # lighting/exposure, materials, volumes, transmission, displacement, SSS
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
           "subsurface"]
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
-        "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true"]
+        "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
+        "eldr:domeCameraVisible=false"]  # Karma hides domes from the camera (renderlightgeo 0)
 
 
 def scene_path(name):
@@ -55,7 +57,8 @@ def wrapper(folder, name, exr=None):
     """A layer over the scene: 16:9 camera, /Render/golden (Karma's samples, Eldr's linear settings);
     with `exr`, an EXR product for Eldr (husk names its own output with -o)."""
     scene = scene_path(name)
-    cam = UsdGeom.Camera(Usd.Stage.Open(scene).GetPrimAtPath(CAMERA))
+    stage = Usd.Stage.Open(scene)  # kept alive while the camera is read
+    cam = UsdGeom.Camera(stage.GetPrimAtPath(CAMERA))
     vap = cam.GetHorizontalApertureAttr().Get() * H / W
     product = ""
     if exr:
@@ -87,11 +90,12 @@ def Scope "Render" {{
         rel camera = <{CAMERA}>
         int2 resolution = ({W}, {H})
         custom token karma:global:convergence_mode = "Path Traced"
-        custom int karma:global:pathtracedsamples = {SPP}
+        custom int karma:global:pathtracedsamples = {SPP_SCENE.get(name, SPP)}
         custom bool eldr:finalQuality = 1
         custom string eldr:tonemapper = "none"
         custom bool eldr:autoExposure = 0
-        custom float eldr:bloomIntensity = 0{product}
+        custom float eldr:bloomIntensity = 0
+        custom bool eldr:domeCameraVisible = 0{product}
     }}
 }}
 """)
@@ -112,14 +116,14 @@ def render_refs(names):
     work = tempfile.mkdtemp(prefix="eldr_karma_refs_")
     manifest.update(husk=husk, houdini=os.path.basename(HFS), resolution=[W, H],
                     settings={"renderer": "BRAY_HdKarma", "karma:global:convergence_mode": "Path Traced",
-                              "karma:global:pathtracedsamples": SPP})
+                              "karma:global:pathtracedsamples": SPP, "per scene": SPP_SCENE})
     for name in names:
         exr = os.path.join(REFS, name + ".exr")
         t = time.time()
         subprocess.run([husk, "-R", "BRAY_HdKarma", "-s", "/Render/golden", "-o", exr, wrapper(work, name)],
                        env=env, check=True, timeout=1800)
         manifest["scenes"][name] = {"scene": "tests/scenes/%s.usda" % name, "camera": CAMERA, "exr": name + ".exr",
-                                    "sha1": sha1(scene_path(name)), "seconds": round(time.time() - t, 1),
+                                    "sha1": sha1(scene_path(name)), "samples": SPP_SCENE.get(name, SPP), "seconds": round(time.time() - t, 1),
                                     "date": datetime.datetime.now().isoformat(timespec="seconds")}
         print("%-12s %6.1f s  %s" % (name, time.time() - t, exr), flush=True)
         with open(manifest_path, "w") as f:  # after every scene: an interrupted run keeps what it made

@@ -13,8 +13,11 @@ rendered once, kept outside the repo, and Eldr is compared against them automati
    one EXR per scene and `manifest.json` (scene, camera, settings, Houdini version, date, the scene
    file's sha1, seconds). `--scenes a,b` re-renders some; `ELDR_HFS` points at another Houdini.
    Never commit the images.
-2. `ctest -R karma_golden` (label `slow`) renders the same scenes with Eldr (exr_record.py: final
-   quality, linear colour: no tonemap, bloom or auto exposure) and prints per scene, Eldr / Karma:
+   Karma takes about 2.5 min for all ten scenes (emissive gets 2048 samples, as its small emitters
+   are noisy at 256).
+2. `ctest -R karma_golden` (label `slow`, about 1 min) renders the same scenes with Eldr (exr_record.py:
+   final quality, linear colour: no tonemap, bloom or auto exposure; `eldr:domeCameraVisible` off,
+   because Karma doesn't show domes to the camera by default) and prints per scene, Eldr / Karma:
 
    | Metric | Meaning |
    |---|---|
@@ -31,6 +34,12 @@ rendered once, kept outside the repo, and Eldr is compared against them automati
 Scenes: cornell, emissive (lighting and exposure), lights (sphere, spot, rect, dome), step4 (HDRI dome
 and sun), sunangle (sun and sky), mtlx (MaterialX standard_surface, UsdPreviewSurface), glass
 (transmission), volume, displacement, subsurface.
+
+Baseline of 2026-10-29 (Eldr / Karma 22.0.466): lights 0.99, step4 1.07, glass 0.96, subsurface 0.97,
+volume 1.12, mtlx 1.16, cornell 0.76, emissive 1.74, displacement 1.91, sunangle 2.27 (mean luminance
+ratio; see `tests/karma_golden.json` for all metrics). In sunangle, the ground (displayColor 0.7, no
+material, under sun and sky) is 0.65 in Eldr, which is the Lambert value (0.68), and 0.28 in Karma. The
+likely cause is Karma's default material for prims without one; this has not been investigated.
 
 The point is catching regressions and tracking the distance to Karma, not pixel equality: the grids are
 coarse enough that sample noise stays well under the tolerances.
