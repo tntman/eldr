@@ -393,7 +393,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.anisotropicSpecular, &frame.anisotropicSpecular}, {t.toon, &frame.toon},
                                 {t.hairShading, &frame.hairShading}, {t.texturedLobes, &frame.texturedLobes},
                                 {t.texturedTransmission, &frame.texturedTransmission}, {t.rtShadows, &frame.rtShadows},
-                                {t.rtReflections, &frame.rtReflections}, {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
+                                {t.gi, &frame.gi}, {t.ssgi, &frame.ssgi},
                                 {t.emissiveLights, &frame.emissiveLights}, {t.oit, &frame.oit},
                                 {t.refraction, &frame.refraction}, {t.holdoutAlpha, &frame.holdoutAlpha}, {t.multiRefraction, &frame.multiRefraction}, {t.refractionBackFaces, &frame.refractionBackFaces},
                                 {t.translucentShadows, &frame.translucentShadows},
@@ -413,7 +413,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm},
                                 {t2.ssgiThickness, &frame.ssgiThickness},
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
-                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement},
+                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
@@ -509,7 +509,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogDensity, &frame.fogDensity}, {t.fogHeight, &frame.fogHeight},
                                 {t.fogHeightFalloff, &frame.fogHeightFalloff},
                                 {t.fogAnisotropy, &frame.fogAnisotropy}, {t.fogMaxDistance, &frame.fogMaxDistance},
-                                {t.planarScale, &frame.planarScale},
+                                {t.planarScale, &frame.planarScale}, {t2.planarBlur, &frame.planarBlur},
                                 {t.volumeStepSize, &frame.volume.stepSize}, {t.volumeDensity, &frame.volume.density},
                                 {t.volumeEmission, &frame.volume.emission},
                                 {t.volumeAnisotropy, &frame.volume.anisotropy},
@@ -521,7 +521,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
                                 {t2.directIntensity, &frame.directIntensity},
                                 {t2.indirectIntensity, &frame.indirectIntensity},
-                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp}, {t2.indirectClamp, &frame.indirectClamp},
+                                {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp},
                                 {t2.screenBackfaceScale, &frame.screenBackfaceScale},
                                 {t2.finalGatherDistance, &frame.finalGatherDistance},
                                 {t2.finalGatherDenoise, &frame.finalGatherDenoise}}) {
@@ -570,7 +570,36 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
-    // 0 allowed: off.
+    // Colour limit (Karma's per-sample brightness limit, default 20): the indirect clamp, from
+    // eldr:indirectClamp, else (colour limit not shared) karma:global:colorlimitindirect, else the
+    // shared limit eldr:colorLimit, else karma:global:colorlimit, else 20. 0 = off.
+    {
+        static const TfToken karmaLimit("karma:global:colorlimit"), karmaIndirect("karma:global:colorlimitindirect"),
+            karmaLinked("karma:global:colorlimitindlinked");
+        auto number = [&](const TfToken &token, float fallback) {
+            const VtValue v = delegate->GetRenderSetting(token);
+            return v.IsHolding<double>() ? float(v.UncheckedGet<double>())
+                   : v.IsHolding<float>() ? v.UncheckedGet<float>()
+                   : v.IsHolding<int>()   ? float(v.UncheckedGet<int>()) : fallback;
+        };
+        // The settings' descriptors default to -1: not set, so Karma's apply.
+        auto set = [&](const TfToken &token, float fallback) {
+            const float v = number(token, -1.0f);
+            return v >= 0.0f ? v : fallback;
+        };
+        const float shared = set(t2.colorLimit, set(karmaLimit, 20.0f));
+        const VtValue sharedSetting = delegate->GetRenderSetting(t2.colorLimitShared);
+        const int sharedValue = sharedSetting.IsHolding<bool>() ? int(sharedSetting.UncheckedGet<bool>())
+                                                                : int(number(t2.colorLimitShared, -1.0f));
+        const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
+        frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
+    }
+    // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
+    {
+        const VtValue v = delegate->GetRenderSetting(t.rtReflections);
+        frame.rtReflections = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2u : 0u)
+                                                  : uint32_t(std::clamp(delegate->GetRenderSetting<int>(t.rtReflections, int(frame.rtReflections)), 0, 2));
+    }
     frame.rtRefraction =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtRefraction, int(frame.rtRefraction)), 0, 2));
     frame.rtHitShadows =
@@ -744,6 +773,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                           static_cast<HdVkRenderDelegate *>(delegate)->SampledMotionShutter(&shutterOpen, &shutterClose);
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.prevViewProj);
     std::copy(frame.cameraPos, frame.cameraPos + 3, frame.prevCameraPos);
+    // Without sampled motion the camera's motion is the last frame's pose:
+    // none for Houdini's viewport camera, nor across a switch of cameras.
+    const SdfPath cameraId = camera ? camera->GetId() : SdfPath();
+    frame.stillCamera = cameraId != _lastCameraId || HdVkCamera::IsViewportCamera(cameraId);
+    _lastCameraId = cameraId;
     GfMatrix4d prevCamera;
     if (const auto *vkCamera = dynamic_cast<const HdVkCamera *>(camera);
         frame.sampledMotion && vkCamera && vkCamera->GetPrevTransform(&prevCamera)) {
@@ -932,7 +966,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // eldr:inPlaceReadback: colour, depth and the ids stay where the GPU
     // copied them (two buffers in turn) and the app maps them there, no copy
     // (a maximized viewport's four: 27 MB, ~5 ms). Not resampled or converted ones.
-    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty();
+    // eldr:offlineBatchSeconds: an offline frame (husk, usdrecord) renders
+    // film samples back to back for that long or until converged, and
+    // reads back only the last: the app's wait between executes (husk:
+    // ~100 ms a sample) and every sample's readback go. Viewports keep one
+    // sample per execute.
+    const float batchSeconds = offline ? delegate->GetRenderSetting<float>(t2.offlineBatchSeconds, 1.0f) : 0.0f;
+    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty() && batchSeconds <= 0.0f;
     auto readBuffer = [&](int i) { return uintptr_t(mapped[i] || (staleIds && i >= 2) ? buffers[i] : nullptr); };
     const std::array<uintptr_t, 6> readback = {readBuffer(0), readBuffer(1), readBuffer(2), readBuffer(3), frame.width,
                                                frame.height};
@@ -956,9 +996,27 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
         tRender = FrameTiming::Clock::now();
-        _renderer->Render(_scene, frame, out);
+        if (batchSeconds > 0.0f && !frame.deferReadback) {
+            vkr::Renderer::Targets sample = out;
+            sample.readback = false;
+            const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
+                                             std::chrono::duration<double>(batchSeconds));
+            for (;;) {
+                _renderer->Render(_scene, frame, sample);
+                vkDelegate->NoteFrame();
+                if ((_renderer->IsConverged() && !_scene.LodsPending()) || FrameTiming::Clock::now() >= until) {
+                    break;
+                }
+                // As the app's commit between executes: last sample's motion settles.
+                vkDelegate->CommitResources(nullptr);
+                frame.stillCamera = HdVkCamera::IsViewportCamera(cameraId);  // the next execute's
+            }
+            _renderer->Read(out);
+        } else {
+            _renderer->Render(_scene, frame, out);
+            vkDelegate->NoteFrame();
+        }
         tRendered = FrameTiming::Clock::now();
-        vkDelegate->NoteFrame();
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();

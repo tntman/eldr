@@ -156,6 +156,9 @@ PXR_NAMESPACE_OPEN_SCOPE
 #define HDVK_RENDER_SETTING_TOKENS2                          \
     ((directClamp, "eldr:directClamp"))                      \
     ((indirectClamp, "eldr:indirectClamp"))                  \
+    ((colorLimit, "eldr:colorLimit"))                        \
+    ((colorLimitShared, "eldr:colorLimitShared"))            \
+    ((opacityMode, "eldr:opacityMode"))                      \
     ((ssgiThickness, "eldr:ssgiThickness"))                  \
     ((ssgiBitmask, "eldr:ssgiBitmask"))                      \
     ((rtDisplacement, "eldr:rtDisplacement"))                \
@@ -171,6 +174,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((authoredProbes, "eldr:authoredProbes")) \
     ((probeNormalize, "eldr:probeNormalize")) \
     ((planarCount, "eldr:planarCount")) \
+    ((planarBlur, "eldr:planarBlur")) \
     ((motionBlurTimeSamples, "eldr:motionBlurTimeSamples")) \
     ((renderScale, "eldr:renderScale")) \
     ((productLinear, "eldr:productLinear")) \
@@ -197,6 +201,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
     ((inPlaceReadback, "eldr:inPlaceReadback")) \
+    ((offlineBatchSeconds, "eldr:offlineBatchSeconds")) \
     ((staleMovingIds, "eldr:staleMovingIds")) \
     ((lazyPipelines, "eldr:lazyPipelines")) \
     ((lazyExtraAovs, "eldr:lazyExtraAovs")) \

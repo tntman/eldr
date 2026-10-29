@@ -42,7 +42,7 @@
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |
 | Ray-traced reflections | Yes | No | Yes | |
 | Authored reflection probes | Yes | Yes | Yes | Eldr: up to 8, from flagged meshes. |
-| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, sharp only. EEVEE 5.1 added glossy planars. |
+| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, blurred by roughness (`eldr:planarBlur`), no contact hardening. EEVEE 5.1 added glossy planars. |
 
 ## Transparency, volumes and atmosphere
 
