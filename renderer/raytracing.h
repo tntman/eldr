@@ -126,7 +126,7 @@ public:
         // causticRadius (this sample's). sceneExtent: how far before the
         // sphere a sun's photons start.
         bool caustics = false;
-        uint32_t causticPhotons = 262144;
+        uint32_t causticPhotons = 65536;
         std::vector<uint32_t> causticLights;
         float causticSphere[4] = {};
         float causticRadius = 0.0f;

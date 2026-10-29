@@ -60,7 +60,7 @@ def expect(ok, what):
 
 
 on, off = render(2), render(0)
-g = lambda cell, var: cell.get(var + ".G", 0.0)
+g = lambda cell, var: cell.get(var + ".G", cell.get("G", 0.0) if var == "C" else 0.0)
 best = max(range(len(on)), key=lambda i: g(on[i], "caustics"))
 lit = max(g(c, "directdiffuse") for c in off)  # the sunlit floor
 expect(g(on[best], "caustics") > 2.0 * lit,

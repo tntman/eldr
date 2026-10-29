@@ -48,9 +48,9 @@ void StorePhoton(vec3 p, vec3 flux, vec3 dir)
 // The caustic light at p (normal n facing the viewer): irradiance / pi of
 // the photons within the gather radius (a flat disc around p: at most a
 // quarter radius off its plane) that arrive on n's side.
-// ponytail: at most kMaxGathered photons a pixel (a hang guard for a too
+// ponytail: at most kMaxGathered photons a pixel (a hang guard for a far too
 // large radius); raise the photon count's share of the radius instead.
-const uint kMaxGathered = 4096u;
+const uint kMaxGathered = 65536u;  // 4096 cut caustics.usda's focus to half
 vec3 CausticDiffuse(vec3 p, vec3 n)
 {
     float r = rt.caustics.x, r2 = r * r;

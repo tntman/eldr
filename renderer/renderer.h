@@ -463,7 +463,7 @@ public:
         // (progressive photon mapping). Nothing without casters.
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
         uint32_t caustics = 1;
-        uint32_t causticsPhotons = 262144;  // per light and sample
+        uint32_t causticsPhotons = 65536;  // per light and sample
         // The first sample's gather radius (world units); 0: 2% of the
         // casters' bounding sphere.
         float causticsRadius = 0.0f;
