@@ -58,6 +58,7 @@ public:
         kShadow,          // the direct light shadows took (shadow;C.*[LO]), holdouts' not
         kHoldoutShadow,   // the same on holdouts, diffuse only (Karma's holdouts;shadow;CDL)
         kVolume,          // volumes' light (CV.*L); the splits behind are attenuated by them
+        kCaustics,        // caustic photons' light, also in indirect diffuse (eldr:caustics, C<RD>.+<TS>L)
         kLightGroup0,     // a light group's direct light (C.*<L.'tag'>), kMaxLightGroups of them
         // The film's beauty before Frame::denoise, linear and exposed, rgba:
         // the Renderer's own (no pass here), once the film converged.
@@ -88,14 +89,14 @@ public:
     // layer per light group up to the last one asked for; 4 (direct and
     // indirect diffuse and glossy) without split AOVs.
     static uint32_t SplitLayers(float *const targets[kCount]);
-    static constexpr uint32_t kSplitLayers = 10;
+    static constexpr uint32_t kSplitLayers = 11;
 
     // The light splits' image (RGBA16F, GENERAL), layers: 0 direct diffuse
     // (a: the fog's transmittance), 1 indirect diffuse (both with the
     // subsurface light), 2 direct glossy, 3 indirect glossy (with what glass
     // refracts); then (SplitLayers) 4 refracted, 5 and 6 the subsurface's
     // direct and indirect, 7 coat, 8 shadow (a: 1 on holdouts), 9 volumes,
-    // 10... the light groups. Made at this size and layer count
+    // 10 caustics, 11... the light groups. Made at this size and layer count
     // (1 x 1 without splits) before the frame's descriptors are written;
     // ClearSplits zeroes it before the shading pass stores into it, with
     // `keepPrevious` first copying last frame's into PreviousSplitsView

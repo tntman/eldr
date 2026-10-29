@@ -23,6 +23,6 @@ Zoom in to pixels at the silhouettes of the ball and the tall box against the ba
 
 ## Open
 
-- usdrecord: `usdenv usdrecord --renderer Eldr --renderSettingsPrimPath /Render/default showcase\2026-10-29_08_aov_filters\scene.usda out.png` writes `aovFilters.exr` in the current folder; then `/Render/max` and `/Render/off`.
-- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_08_aov_filters/scene.usda`; with `-R BRAY_HdKarma` the Karma-named filters (`depth_max`, `Pcam_closest`, `directdiffuse`) do the same in Karma.
+- usdrecord: `usdenv usdrecord --renderer Eldr --renderSettingsPrimPath /Render/default showcase\2026-10-29_14_aov_filters\scene.usda out.png` writes `aovFilters.exr` in the current folder; then `/Render/max` and `/Render/off`.
+- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_14_aov_filters/scene.usda`; with `-R BRAY_HdKarma` the Karma-named filters (`depth_max`, `Pcam_closest`, `directdiffuse`) do the same in Karma.
 - Houdini: Sublayer LOP on the file; the Render Var LOP's Karma tab shows "Sample Blending". Eldr's own attribute needs an Edit Properties LOP.
