@@ -447,9 +447,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
-    // Volume Limit above 0, on a volume (HdVkVolume::Sync) or in the render
-    // settings, eldr:object:volumelimit set before karma:object:volumelimit:
-    // volumes scatter more than once there too.
+    // Volume Limit, the largest on a volume (HdVkVolume::Sync) or in the
+    // render settings (eldr:object:volumelimit set before
+    // karma:object:volumelimit): above 0 volumes scatter more than once.
     {
         static const TfToken eldrLimit("eldr:object:volumelimit"), karmaLimit("karma:object:volumelimit");
         auto number = [](const VtValue &v) {
@@ -460,8 +460,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         if (limit < 0.0) {
             limit = number(delegate->GetRenderSetting(karmaLimit));
         }
-        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0 ||
-                                          _scene.AnyVolumeMultipleScattering();
+        frame.volume.volumeLimit = std::max(float(limit), _scene.MaxVolumeLimit());
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
