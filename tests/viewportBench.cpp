@@ -499,6 +499,14 @@ int main(int argc, char **argv)
             std::vector<int32_t> lastIds;
             std::vector<std::pair<int, int>> changed;
             const auto tFirst = Clock::now();
+            {  // Houdini's viewport may poll before the first frame: sensible defaults, no crash
+                const VtDictionary early = delegate->GetRenderStats();
+                auto it = early.find("rendererStage");
+                std::printf("%s: stats before the first frame (rendererStage %s)\n",
+                            it != early.end() && it->second.IsHolding<std::string>() ? "ok" : "FAIL",
+                            it != early.end() && it->second.IsHolding<std::string>()
+                                ? it->second.UncheckedGet<std::string>().c_str() : "missing");
+            }
             while (frameMs.size() < 2000 && stage != "converged") {
                 // Frames 2 to 10 orbit, then the camera stops (TAA, then the film).
                 const double angle = 0.5 * double(std::min<size_t>(frameMs.size(), 9));
