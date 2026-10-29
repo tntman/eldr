@@ -33,6 +33,7 @@ const uint kOpHeightToNormal = 49u, kOpFract = 50u, kOpRound = 51u, kOpSign = 52
            kOpAcos = 55u, kOpAtan2 = 56u, kOpMagnitude = 57u, kOpCross = 58u;
 const uint kOpRotate2d = 59u, kOpRotate3d = 60u, kOpAaStep = 61u, kOpTransformMatrix = 62u, kOpSpaceTransform = 63u,
            kOpTangent = 64u, kOpViewDirection = 65u, kOpTime = 66u, kOpArtisticIor = 67u;
+const uint kOpBlend = 68u, kOpRampTable = 69u, kOpHexTile = 70u;
 const uint kProgramRegisters = 16u;
 const uint kFeatureProcedurals = 256u;  // frame.features.x: Procedural Textures on
 // Pipelines for programs that run noise (Scene::Gpu::kProcedural); in the
@@ -230,6 +231,114 @@ vec3 ProgramTangent(bool bitangent)
     return normalize(v);
 }
 
+// The program's image i (GpuMaterial::program.w: its first constant).
+TexRef ProgramTexture(uint images, uint i)
+{
+    uint t = images + 5u * i;
+    vec4 h = programConstants[t];
+    return TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), floatBitsToInt(h.w),
+                  programConstants[t + 1u], programConstants[t + 2u], programConstants[t + 3u],
+                  programConstants[t + 4u]);
+}
+
+// MaterialX's compositing nodes (stdlib genglsl, M_FLOAT_EPS 1e-8), fg
+// over bg mixed by m; per component, as their float to color4 variants.
+// Burn and dodge read 0 where they would divide by 0, unpremult passes a
+// zero alpha's colour through.
+vec4 Blend(uint mode, vec4 fg, vec4 bg, float m)
+{
+    const float eps = 1e-8;
+    vec4 v = bg;
+    if (mode == 0u) {  // plus
+        v = bg + fg;
+    } else if (mode == 1u) {  // minus
+        v = bg - fg;
+    } else if (mode == 2u) {  // difference
+        v = abs(bg - fg);
+    } else if (mode == 3u || mode == 4u) {  // burn 1 - (1 - B) / F, dodge B / (1 - F)
+        vec4 d = mode == 3u ? fg : 1.0 - fg;
+        bvec4 zero = lessThan(abs(d), vec4(eps));
+        v = mode == 3u ? 1.0 - (1.0 - bg) / mix(d, vec4(1.0), zero) : bg / mix(d, vec4(1.0), zero);
+        return mix(mix(bg, v, m), vec4(0.0), zero);
+    } else if (mode == 5u) {  // screen
+        v = 1.0 - (1.0 - fg) * (1.0 - bg);
+    } else if (mode == 6u) {  // disjointover
+        float sum = fg.a + bg.a;
+        v.rgb = sum <= 1.0 ? fg.rgb + bg.rgb : abs(bg.a) < eps ? vec3(0.0) : fg.rgb + bg.rgb * ((1.0 - fg.a) / bg.a);
+        v.a = min(sum, 1.0);
+    } else if (mode == 7u) {  // in
+        v = fg * bg.a;
+    } else if (mode == 8u) {  // mask
+        v = bg * fg.a;
+    } else if (mode == 9u) {  // matte
+        v = vec4(fg.rgb * fg.a + bg.rgb * (1.0 - fg.a), fg.a + bg.a * (1.0 - fg.a));
+    } else if (mode == 10u) {  // out
+        v = fg * (1.0 - bg.a);
+    } else if (mode == 11u) {  // over
+        v = fg + bg * (1.0 - fg.a);
+    } else if (mode == 12u) {  // premult (of fg)
+        return vec4(fg.rgb * fg.a, fg.a);
+    } else if (mode == 13u) {  // unpremult
+        return fg.a == 0.0 ? fg : vec4(fg.rgb / fg.a, fg.a);
+    }
+    return v * m + bg * (1.0 - m);
+}
+
+// Karma's kma_color_hextiling, as Houdini's viewport GLSL has it
+// (houlib/VK/hextiling.func, after Mikkelsen's hextile-demo, MIT): three
+// hexagonal tiles around st, each rotated, scaled and offset by its cell's
+// cell noise, blended by their barycentric weights to the power weightexp,
+// lowered by luminance (contrast_falloff) and sharpened by contrast.
+// p = (rot, rand_rot, scale, rand_scale), q = (contrast, falloff, weightexp,
+// seed). Gradients from st's (rotated and scaled with each tile), so the
+// tiles' seams keep their mip level.
+// ponytail: no `direction` alignment (its default, none) and no `weights` output.
+float HexCell(vec2 v, int seed)
+{
+    return mx_cell_noise_float(vec3(v, float(uint(seed) & 0x7FFFFFu)));
+}
+
+vec4 HexTile(TexRef tex, vec4 fallback, vec2 st, vec4 p, vec4 q)
+{
+    const float pi = 3.14159265358979, tolerance = 1e-4;
+    int seed = int(q.w);
+    // The skewed triangle grid: three nearest hex centres and weights.
+    vec2 g = mat2(1.0, -0.57735027, 0.0, 1.15470054) * (st * 3.4641016151377544);
+    vec2 cell = floor(g), f = g - cell;
+    float z = 1.0 - f.x - f.y, s = z < 0.0 ? 1.0 : 0.0, s2 = 2.0 * s - 1.0;
+    vec3 w = vec3(-z * s2, s - f.y * s2, s - f.x * s2);
+    vec2 vertex[3] = vec2[3](cell + vec2(s), cell + vec2(s, 1.0 - s), cell + vec2(1.0 - s, s));
+#ifdef PROGRAM_VERTEX
+    vec2 dx = UV_DX(st), dy = UV_DY(st);
+#else
+    vec2 dx = dFdx(st), dy = dFdy(st);
+#endif
+    vec4 c[3];
+    vec3 lum;
+    for (int i = 0; i < 3; ++i) {
+        vec2 v = vertex[i];
+        float angle = abs(v.x * v.y) + abs(v.x + v.y) + pi + HexCell(v, seed) * 2.0 * pi;
+        angle -= 2.0 * pi * floor(angle / (2.0 * pi));
+        angle = (angle > pi ? angle - 2.0 * pi : angle) * p.y + radians(p.x);
+        mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+        vec2 centre = mat2(1.0, 0.5, 0.0, 0.866025402569) * v * 0.2886751345948129;
+        float scale = mix(1.0, HexCell(v, seed + 1) + 1.0, p.w) / max(tolerance, p.z);
+        vec2 offset = mx_cell_noise_vec3(vec3(v, float(uint(seed + 2) & 0x7FFFFFu))).xy;
+        c[i] = FetchGrad(tex, fallback, rot * (st - centre) * scale + centre + offset, rot * dx * scale,
+                         rot * dy * scale);
+        lum[i] = dot(c[i].rgb, vec3(0.299, 0.587, 0.114));
+    }
+    vec3 weights = mix(vec3(1.0), lum, q.y) * pow(w, vec3(q.z));
+    weights /= weights.x + weights.y + weights.z;
+    if (q.x != 0.5) {  // gain: an S-curve, normalized again
+        float k = log(max(1.0 - q.x, tolerance)) * -1.4426950409;
+        vec3 high = 2.0 * step(0.5, weights), m = 2.0 * (1.0 - high);
+        weights = 0.5 * high + 0.25 * m * pow(max(vec3(0.0), high + weights * m), vec3(k));
+        weights /= weights.x + weights.y + weights.z;
+    }
+    return weights.x * c[0] + weights.y * c[1] + weights.z * c[2];
+}
+
 // kOpRotate2d .. kOpArtisticIor, MaterialX's genglsl formulas; c: the
 // program's first constant.
 vec4 GeometryOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
@@ -290,8 +399,11 @@ vec4 GeometryOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
 
 // kOpNoise .. kOpGeomNormal and kOpRotate2d on (scene.h has their
 // operands), only in the kProcedurals pipelines.
-vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
+vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, vec4 y, uint c, uint images)
 {
+    if (code == kOpHexTile) {
+        return HexTile(ProgramTexture(images, imm0), y, a.xy, b, x);
+    }
     if (code >= kOpRotate2d) {
         return GeometryOp(code, imm0, imm1, a, b, x, c);
     }
@@ -305,7 +417,8 @@ vec4 ProceduralOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint 
         bool fractal = code == kOpFractal;
         v = MxLayered(a.xyz, imm0, imm1, fractal, fractal ? int(x.x) : 1, x.y, x.z);
     } else {
-        v = code == kOpCellNoise ? vec4(MxCellNoise(a.xyz, imm0)) : MxWorley(a.xyz, imm0, imm1, b.x, int(x.x));
+        v = code == kOpCellNoise ? vec4(MxCellNoise(a.xyz, imm0))
+                                 : MxWorley(a.xyz, imm0 & 15u, imm1, b.x, int(x.x), imm0 >> 4);
     }
     return Components(code == kOpNoise ? v * b + x.x : code == kOpFractal ? v * b : v, imm1);
 }
@@ -359,15 +472,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpTexcoord: r = vec4(inUv, 0.0, 0.0); break;
         case kOpDisplayColor: r = vec4(inColor, 1.0); break;
         case kOpPrimvar: r = ReadPrimvar(imm0, a); break;
-        case kOpImage: {
-            uint t = program.w + 5u * imm0;
-            vec4 h = programConstants[t];
-            TexRef ref = TexRef(floatBitsToInt(h.x), floatBitsToInt(h.y), floatBitsToInt(h.z), floatBitsToInt(h.w),
-                                programConstants[t + 1u], programConstants[t + 2u], programConstants[t + 3u],
-                                programConstants[t + 4u]);
-            r = Fetch(ref, b, a.xy);
-            break;
-        }
+        case kOpImage: r = Fetch(ProgramTexture(program.w, imm0), b, a.xy); break;
         case kOpAdd: r = a + b; break;
         case kOpSubtract: r = a - b; break;
         case kOpMultiply: r = a * b; break;
@@ -478,6 +583,17 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpAtan2: r = atan(a, b); break;  // MaterialX atan2(iny = a, inx = b)
         case kOpMagnitude: r = vec4(length(Components(a, imm1))); break;
         case kOpCross: r = vec4(cross(a.xyz, b.xyz), 0.0); break;
+        case kOpBlend: r = Blend(imm1, a, b, x.x); break;
+        case kOpRampTable: {
+            // Houdini's ramps (kma_rampconst), baked: n values over the keys' range.
+            uint base = c + imm0, n = imm1 & 255u;
+            vec2 range = programConstants[base].xy;
+            float f = clamp((a.x - range.x) / max(range.y - range.x, 1e-20), 0.0, 1.0) * float(n - 1u);
+            uint i = min(uint(f), n - 2u);
+            r = (imm1 & 256u) != 0u ? vec4(mix(PackedFloat(base + 1u, i), PackedFloat(base + 1u, i + 1u), f - float(i)))
+                                   : mix(programConstants[base + 1u + i], programConstants[base + 2u + i], f - float(i));
+            break;
+        }
         case kOpHeightToNormal: {
             // MaterialX's mx_heighttonormal_vector3: a normal map (encoded)
             // from the height's and uv's screen derivatives, 1/16 for
@@ -506,10 +622,10 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         }
         default:
 #ifdef PROGRAM_VERTEX
-            r = ProceduralOp(code, imm0, imm1, a, b, x, c);  // displaced pipelines only (kDisplacement)
+            r = ProceduralOp(code, imm0, imm1, a, b, x, y, c, program.w);  // displaced pipelines only (kDisplacement)
 #else
             if (kProcedurals) {
-                r = ProceduralOp(code, imm0, imm1, a, b, x, c);
+                r = ProceduralOp(code, imm0, imm1, a, b, x, y, c, program.w);
             }
 #endif
             break;
