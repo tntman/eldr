@@ -2775,7 +2775,11 @@ int main()
             bool empty = true;
             for (uint32_t k = 0; k < A::kCount; ++k) {
                 for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
-                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                    if (at(A::Kind(k), 2, 2, int(c)) != 0.0f) {
+                        std::printf("  AOV %u component %u is %g where nothing was drawn\n", k, c,
+                                    at(A::Kind(k), 2, 2, int(c)));
+                        empty = false;
+                    }
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
