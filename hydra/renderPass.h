@@ -8,10 +8,12 @@
 #include "pxr/base/vt/value.h"
 
 #include "renderProducts.h"
+#include "subdivision.h"
 
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 
 namespace vkr {
 class Renderer;
@@ -48,6 +50,8 @@ private:
     bool _lastDeferred = false;  // last frame was left to Collect
     bool _extraStale = false;    // unread extra AOVs were left out of the last frame (eldr:lazyExtraAovs)
     bool _failed = false;        // the last frame's Render threw: not converged, no products
+    bool _redicing = false;      // eldr:screenDicing: the meshes re-dice for the last frame's view
+    std::optional<HdVkDicingView> _lastDicing;  // the last frame's view (still or moving)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

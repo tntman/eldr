@@ -50,6 +50,8 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 |---|---|---|---|
 | Subdivision and dicing | Render as Subdivision | `bool primvars:eldr:renderAsSubdivision` | A polygon mesh renders as Catmull-Clark, as with Mesh Edit; Karma has no such control |
 | | Subdivision Level | `int primvars:eldr:refineLevel` | The refine level instead of the viewport's or husk's, at most `eldr:maxRefineLevel` (Karma dices by screen size) |
+| | Dicing Quality | `float primvars:eldr:object:dicingquality` | With Dicing by Screen Size (`eldr:screenDicing`) in final quality: about quality squared polygons per pixel (0.5, as Karma's) |
+| | Dicing Minimum Depth | `int primvars:eldr:object:dicingdepthmin` | Lowest refine level (-1: none) |
 | | Dicing Maximum Depth | `int primvars:eldr:object:dicingdepthmax` | Caps the refine level (-1: no cap) |
 | Visibility | Render Visibility | `string primvars:eldr:object:rendervisibility` | Camera (`primary`), shadows (`shadow`: shadow maps and traced shadow rays) and secondary rays (`diffuse`, `reflect`, `refract` together: traced reflections, GI probes, refraction). `-primary` is a phantom: unseen, still shadows and reflects. `""` hides it. Screen-space effects (SSR, SSGI, AO) see what the camera sees. Meshes, curves, points; not volumes. |
 | | Holdout Mode | `int primvars:eldr:object:holdoutmode` | Matte and Background both cut a holdout |
@@ -64,13 +66,15 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality and the other dicing controls, Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags, caustics, outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 
 A mesh is a subdivision surface when its `subdivisionScheme` is `catmullClark`, `loop` or `bilinear`. SOP Import authors `none` for polygons unless **Geometry Handling > Treat Polygons as Subdivision Surfaces** is on (optionally for a **Subdivision Group** only), which authors `catmullClark`; a Mesh LOP or an Edit Properties LOP can set `subdivisionScheme` too.
 
 Eldr refines it uniformly with OpenSubdiv to Hydra's refine level, at most the **Subdivision Max Level** render setting (`eldr:maxRefineLevel`, 3), or the **Subdivision Level** on Eldr's tab of a Render Geometry Settings LOP per mesh. husk's `--complexity` defaults to `veryhigh`: level 3; `low` draws the cage (measured with husk: a catmullClark box covered 1024 pixels at `low`, 568 at `medium` to `veryhigh`). The viewport's level is its Level of Detail (Display Options > Geometry) times the `complexitymultiplier` above.
+
+In final quality (husk, or `eldr:finalQuality`) **Dicing by Screen Size** (`eldr:screenDicing`, on) replaces the host's level: each mesh gets the uniform level its nearest cage face needs for about Dicing Quality squared polygons per pixel of the render camera at the render resolution (Karma's `dicingquality`, 0.5; faces off screen at 0.1 of it), between Dicing Minimum and Maximum Depth and at most `eldr:maxRefineLevel`. husk's first frame syncs the cages, the render pass names its camera and the meshes re-dice before anything renders; when the camera moves between frames they re-dice again. The viewport keeps its levels while the camera moves and re-dices once it stops.
 
 ## Render statistics
 

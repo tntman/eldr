@@ -1,0 +1,96 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Dicing by screen size: five loop octahedra (tests/scenes/subdivision.usda's
+# /loop) from near to far. In final quality each gets the refine level its
+# size on screen needs (Karma's dicing quality 0.5) instead of the host's.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    float2 clippingRange = (0.1, 2000)
+    double3 xformOp:translate = (0, 1.5, 6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.3
+}
+
+def Mesh "ground"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-200, 0, 20), (200, 0, 20), (200, 0, -400), (-200, 0, -400)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+}
+
+def Mesh "near" (references = @../../tests/scenes/subdivision.usda@</loop>)
+{
+    double3 xformOp:translate = (-1.2, 1.3, 1.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "mid" (references = @../../tests/scenes/subdivision.usda@</loop>)
+{
+    double3 xformOp:translate = (1.5, 1.3, -4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "far" (references = @../../tests/scenes/subdivision.usda@</loop>)
+{
+    double3 xformOp:translate = (-4, 2.6, -20)
+    double3 xformOp:scale = (2, 2, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "farther" (references = @../../tests/scenes/subdivision.usda@</loop>)
+{
+    double3 xformOp:translate = (8, 5.2, -60)
+    double3 xformOp:scale = (4, 4, 4)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+# Its own Dicing Quality (Karma's attribute): 4 is 64 times the polygons of 0.5.
+def Mesh "farthest" (references = @../../tests/scenes/subdivision.usda@</loop>)
+{
+    float primvars:karma:object:dicingquality = 4
+    double3 xformOp:translate = (-20, 10.4, -150)
+    double3 xformOp:scale = (8, 8, 8)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Scope "Render"
+{
+    # Screen dicing (the default in final quality).
+    def RenderSettings "dicing"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:screenDicing = 1
+    }
+
+    # The host's level for every mesh (husk: --complexity, level 3).
+    def RenderSettings "fixed"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:screenDicing = 0
+    }
+}

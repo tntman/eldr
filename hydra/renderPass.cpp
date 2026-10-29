@@ -168,7 +168,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 bool HdVkRenderPass::IsConverged() const
 {
     HdVkTimedCall timed(HdVkCallTimes::kConverged);
-    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed);
+    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed && !_redicing);
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -341,15 +341,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // enableInteractive but hands its raster products over as a setting
     // (rasterRenderProducts). Attributes of the settings prim (husk:*) don't
     // tell: the viewport looks through the same prims.
-    // Houdini doesn't always send houdini:viewport (a Render Settings LOP
-    // frame arrives with houdini:renderer = husk), but its viewport always
-    // sends houdini:interactive (normal, tumbling, editing); husk sends
-    // neither, only rasterRenderProducts (a batch frame).
-    const VtValue viewportFlag = delegate->GetRenderSetting(TfToken("houdini:viewport"));
-    const VtValue viewportBool = VtValue::Cast<bool>(viewportFlag);
-    const bool houdiniViewport = (!viewportFlag.IsEmpty() && (viewportBool.IsEmpty() || viewportBool.UncheckedGet<bool>())) ||
-                                 !delegate->GetRenderSetting(TfToken("houdini:interactive")).IsEmpty();
+    // (HdVkRenderDelegate::HoudiniViewport, Offline.)
+    const bool houdiniViewport = static_cast<HdVkRenderDelegate *>(delegate)->HoudiniViewport();
     const bool batch = !houdiniViewport && !delegate->GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty();
+    bool resync = false;  // a setting from the prim changes the meshes
     if (const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings()) {
         for (const auto &[key, value] : prim->GetNamespacedSettings()) {
             if (key.compare(0, 5, "eldr:") != 0) {
@@ -365,6 +360,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             const VtValue typed = VtValue::CastToTypeOf(value, current);
             if (!typed.IsEmpty()) {
                 delegate->SetRenderSetting(token, typed);
+                // These re-sync the meshes (SetRenderSetting): wait for that.
+                const auto &ts = *HdVkRenderSettingsTokens;
+                resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
+                                                         token == ts.finalQuality ||
+                                                         token == HdVkRenderSettingsTokens2->screenDicing));
             }
         }
     }
@@ -648,8 +648,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // hdPrman: enableInteractive false). usdrecord sets neither, but its
     // first frame has no history, so its film starts with the first sample.
     frame.firstFrameFinal = !houdiniViewport;
-    const bool offline = batch || (!houdiniViewport &&
-                                   !delegate->GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
+    const bool offline = static_cast<HdVkRenderDelegate *>(delegate)->Offline();
     frame.finalQuality = frame.finalQuality || offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
     // unless the render settings prim asks for eldr:autoExposure.
@@ -708,6 +707,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.cameraPos[0] = float(eye[0]);
     frame.cameraPos[1] = float(eye[1]);
     frame.cameraPos[2] = float(eye[2]);
+    // eldr:screenDicing: subdivision surfaces refine for this view. Offline
+    // they re-dice whenever it changed and this frame waits for them (not
+    // converged, nothing rendered: husk comes back after the sync); an
+    // interactive final-quality frame keeps its levels while the camera
+    // moves and re-dices once it stands still. The same wait for a
+    // subdivision setting the settings prim just changed.
+    _redicing = resync;
+    if (resync && offline) {
+        return;
+    }
+    if (auto *vk = static_cast<HdVkRenderDelegate *>(delegate); vk->ScreenDicing()) {
+        HdVkDicingView dicing;
+        dicing.viewProj = viewProj;
+        dicing.eye = eye;
+        dicing.ortho = projection[3][3] != 0.0;
+        dicing.width = int(frame.width);
+        dicing.height = int(frame.height);
+        dicing.pixels = std::min(std::abs(projection[0][0]) * frame.width, std::abs(projection[1][1]) * frame.height) / 2.0;
+        const bool still = _lastDicing && dicing == *_lastDicing;
+        _lastDicing = dicing;
+        if ((!vk->DicingView() || !(dicing == *vk->DicingView())) && (offline || still)) {
+            vk->SetDicingView(dicing);
+            _redicing = true;
+            if (offline) {
+                return;
+            }
+        }
+    }
     // Sampled motion: rprims sample over this camera's shutter (from the next
     // sync on; a first frame's take the open camera that synced), and the
     // camera's own motion comes from its samples.

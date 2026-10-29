@@ -355,6 +355,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Shadow Small Object Culling (shadow texels)", t.shadowCullPixels, VtValue(frame.shadowCullPixels)},
         {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
         {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
+        {"Dicing by Screen Size (final quality)", t2.screenDicing, VtValue(kHdVkScreenDicing)},
         {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
         {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
         {"Level of Detail Crossfade (dithered)", t2.lodFade, VtValue(frame.lodFade)},
@@ -579,7 +580,10 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
         const HdSceneIndexBaseRefPtr terminal(_terminalSceneIndex);
-        if (key == t.subdivision || key == t.maxRefineLevel) {
+        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing || key == t.finalQuality) {
+            if (key == t2.screenDicing || key == t.finalQuality) {
+                _dicingView.reset();  // the pass dices again for its camera
+            }
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
         } else if (key == t2.curveRibbons) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
@@ -985,6 +989,40 @@ void HdVkRenderDelegate::NoteCameraShutter(SdfPath const &camera, float open, fl
     std::lock_guard<std::mutex> lock(_shutterMutex);
     _shutters[camera] = GfVec2f(open, close);
     _lastOpenCamera = close > open ? camera : _lastOpenCamera;
+}
+
+// Houdini doesn't always send houdini:viewport (a Render Settings LOP frame
+// arrives with houdini:renderer = husk), but its viewport always sends
+// houdini:interactive (normal, tumbling, editing); husk sends neither, only
+// rasterRenderProducts (a batch frame). Offline: husk, or hdPrman's
+// convention, enableInteractive false (usdrecord sets neither).
+bool HdVkRenderDelegate::HoudiniViewport() const
+{
+    const VtValue flag = GetRenderSetting(TfToken("houdini:viewport"));
+    const VtValue asBool = VtValue::Cast<bool>(flag);
+    return (!flag.IsEmpty() && (asBool.IsEmpty() || asBool.UncheckedGet<bool>())) ||
+           !GetRenderSetting(TfToken("houdini:interactive")).IsEmpty();
+}
+
+bool HdVkRenderDelegate::Offline() const
+{
+    return !HoudiniViewport() && (!GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty() ||
+                                  !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
+}
+
+bool HdVkRenderDelegate::ScreenDicing() const
+{
+    return GetRenderSetting<bool>(HdVkRenderSettingsTokens2->screenDicing, kHdVkScreenDicing) &&
+           (GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) || Offline());
+}
+
+void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
+{
+    _dicingView = view;
+    if (_terminalSceneIndex) {
+        HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
+                       {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
+    }
 }
 
 void HdVkRenderDelegate::SetActiveCamera(SdfPath const &camera)

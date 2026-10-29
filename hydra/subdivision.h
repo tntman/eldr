@@ -1,6 +1,8 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/matrix4d.h"
+#include "pxr/base/gf/vec3d.h"
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/enums.h"
 #include "pxr/imaging/hd/meshTopology.h"
@@ -21,6 +23,33 @@ PXR_NAMESPACE_OPEN_SCOPE
 // display style's refine level (usdview's Complexity) up to this.
 constexpr bool kHdVkSubdivision = true;
 constexpr int kHdVkMaxRefineLevel = 3;
+// eldr:screenDicing: in final quality (husk) a subdivision surface's level
+// comes from its size on screen (Karma's dicing quality).
+constexpr bool kHdVkScreenDicing = true;
+
+// The view subdivision surfaces dice for (eldr:screenDicing): world to clip,
+// the eye, the focal length in pixels (an orthographic view: pixels per
+// unit) and the frame's size.
+struct HdVkDicingView {
+    GfMatrix4d viewProj{1.0};
+    GfVec3d eye{0.0};
+    double pixels = 0.0;
+    bool ortho = false;
+    int width = 0, height = 0;
+    bool operator==(HdVkDicingView const &o) const
+    {
+        return viewProj == o.viewProj && width == o.width && height == o.height;
+    }
+};
+
+// The uniform refine level, up to `maxLevel`, at which every cage face of
+// `topology` over `points`, under each of `transforms` (16 floats, row
+// vectors), gets about `quality` squared polygons per pixel `view` shows of
+// it (Karma's dicingquality: 1 is a polygon per pixel; faces measured head
+// on, as Karma's dicingzimportance 1). Faces off screen dice at Karma's
+// offscreen quality, 0.1 of it.
+int HdVkScreenRefineLevel(HdVkDicingView const &view, HdMeshTopology const &topology, VtVec3fArray const &points,
+                          std::vector<float> const &transforms, float quality, int maxLevel);
 
 // Uniform subdivision with OpenSubdiv (through pxOsd, so creases, corners,
 // holes, interpolateBoundary and faceVaryingLinearInterpolation apply): a
