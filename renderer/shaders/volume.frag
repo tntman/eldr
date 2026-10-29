@@ -24,8 +24,9 @@
 // also marches the other volumes' boxes on its way (OthersDepth).
 // ponytail: volumes are composited one after another along the ray (in
 // entry order, not interleaved where they overlap); local lights get one atlas tap per step, the
-// dome's light only comes down from above (half its optical depth, as
-// light also arrives from the sides), through the other volumes too.
+// dome's light only comes down from above (its upper half, through the
+// optical depth straight up; geometry doesn't block it), through the other
+// volumes too.
 
 #include "frame.glsl"
 #include "lights.glsl"
@@ -47,6 +48,22 @@ struct ShadowTile {
 layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
+
+// The light splits (aov.h) behind a volume are seen through it, as in
+// Karma's LPEs; its light is layer 9's. As volume_upsample.frag's.
+layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
+void VolumeSplits(vec3 radiance, vec3 transmittance)
+{
+    int layers = imageSize(lightSplits).z;
+    if (frame.aovs.x == 0u || layers <= 4) {
+        return;
+    }
+    ivec2 q = ivec2(gl_FragCoord.xy);
+    for (int i = 0; i < layers; ++i) {
+        vec4 s = imageLoad(lightSplits, ivec3(q, i));
+        imageStore(lightSplits, ivec3(q, i), vec4(s.rgb * transmittance + (i == 9 ? radiance : vec3(0.0)), s.a));
+    }
+}
 
 layout(push_constant) uniform Params {
     float stepSize;     // density voxels per step
@@ -126,6 +143,18 @@ vec3 DomeScatter(vec3 d, float g)
                     + frame.envSh[7].rgb * 1.092548 * n.x * n.z
                     + frame.envSh[8].rgb * 0.546274 * (n.x * n.x - n.y * n.y));
     return max(sh, 0.0) * frame.envRadiance.rgb;
+}
+
+// DomeScatter from the dome's upper half only (above the horizon of its
+// pole, latlong +y): what Karma's single scattering gets over a ground,
+// which hides the lower half. Exact for isotropic phase (SH to band 1:
+// half the mean plus the pole's band-1 lobe), the anisotropic bands halved.
+// ponytail: assumes ground below every volume; a cloud over nothing gets
+// half the lower half's light too few.
+vec3 DomeScatterUpper(vec3 d, float g)
+{
+    vec3 tilt = frame.envSh[1].rgb * (3.0 / (2.0 * PI) * 0.488603 * 0.25);
+    return max(0.5 * DomeScatter(d, g) + tilt * frame.envRadiance.rgb, 0.0);
 }
 
 // Planckian locus (Krystek 1985, 1000..15000 K) in linear Rec.709 with
@@ -379,7 +408,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     vec3 scattering = volumes[i].scattering.rgb * params.density;
     vec3 absorption = volumes[i].absorption.rgb * params.density;
     float g = volumes[i].medium.y > 0.0 ? volumes[i].scattering.w : params.anisotropy;
-    vec3 dome = frame.envRadiance.w > 0.0 ? DomeScatter(dir, g) : vec3(0.0);
+    vec3 dome = frame.envRadiance.w > 0.0 ? DomeScatterUpper(dir, g) : vec3(0.0);
 
     // Steps of stepSize voxels; a box that would need more than maxSteps
     // gets longer ones.
@@ -461,7 +490,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 if (mutual) {
                     depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
-                light = dome * Octaves(0.5 * depth);
+                light = dome * Octaves(depth);
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
@@ -605,4 +634,7 @@ void main()
         radiance = before + (radiance - before) * fog.a + (transmittanceBefore - transmittance) * fog.rgb;
     }
     Output(radiance, transmittance);
+#ifndef HALF
+    VolumeSplits(radiance, transmittance);
+#endif
 }

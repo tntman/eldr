@@ -1,0 +1,104 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/denoise16"
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# The Cornell box lit by its glowing panel and bulb, with GI and final
+# gather: noisy at few samples, so the denoiser and adaptive sampling show.
+
+def Scope "Render"
+{
+    def RenderSettings "raw16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 16
+    }
+
+    def RenderSettings "denoise16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = </Render/Products/beautyAndRaw>
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 16
+        custom bool eldr:denoise = 1
+    }
+
+    def RenderSettings "karmaImageFilter16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 16
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+    }
+
+    def RenderSettings "raw64"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 64
+    }
+
+    def RenderSettings "adaptiveTiles256"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 256
+        custom float eldr:adaptiveFinalThreshold = 0.01
+        custom bool eldr:adaptiveTiles = 1
+    }
+
+    def RenderSettings "adaptiveFull256"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom int eldr:finalGather = 1
+        custom int eldr:filmSamples = 256
+        custom float eldr:adaptiveFinalThreshold = 0.01
+        custom bool eldr:adaptiveTiles = 0
+    }
+
+    def Scope "Products"
+    {
+        def RenderProduct "beautyAndRaw"
+        {
+            token productName = "denoise16.exr"
+            rel orderedVars = [</Render/Products/Vars/C>, </Render/Products/Vars/raw>]
+        }
+
+        def Scope "Vars"
+        {
+            def RenderVar "C"
+            {
+                uniform token dataType = "color4f"
+                uniform string sourceName = "C.*[LO]"
+                uniform token sourceType = "lpe"
+            }
+
+            def RenderVar "raw"
+            {
+                uniform token dataType = "color4f"
+                uniform string sourceName = "eldr:beautyRaw"
+                uniform token sourceType = "raw"
+            }
+        }
+    }
+}

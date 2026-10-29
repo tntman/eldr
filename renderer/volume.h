@@ -30,8 +30,10 @@ struct VolumeGrid {
 // emission. The defaults are what a volume without a material renders as.
 // The Hydra layer may update it in place, as Material.
 struct VolumeShading {
-    float scattering[3] = {0.8f, 0.8f, 0.8f};  // sigma_s per unit of density
-    float absorption[3] = {0.2f, 0.2f, 0.2f};  // sigma_a per unit of density
+    // Without a material, Karma's: white scattering, no absorption, isotropic
+    // (measured: Karma CPU renders such a volume as anisotropic_vdf(0, density, 0)).
+    float scattering[3] = {1.0f, 1.0f, 1.0f};  // sigma_s per unit of density
+    float absorption[3] = {0.0f, 0.0f, 0.0f};  // sigma_a per unit of density
     float densityScale = 1.0f;                  // times the density field
     // Henyey-Greenstein g; NaN: the renderer's setting (no material).
     float anisotropy = std::numeric_limits<float>::quiet_NaN();
@@ -135,7 +137,7 @@ public:
         uint32_t shadowSteps = 8;   // towards each distant light (half as many up to the dome)
         float density = 1.0f;       // extinction multiplier (on the material's)
         float emission = 1.0f;      // emission multiplier (on the material's)
-        float anisotropy = 0.2f;    // Henyey-Greenstein g of volumes whose material has none
+        float anisotropy = 0.0f;    // Henyey-Greenstein g of volumes without a material (Karma's: isotropic)
         uint32_t resolution = 1;    // 1: every pixel, 2: half resolution, upsampled
         // Under transparency: with translucent meshes in view (and the depth
         // prepass), the part of each ray behind the nearest translucent

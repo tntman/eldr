@@ -21,7 +21,7 @@ layout(push_constant) uniform BlurParams {
     vec4 splits;  // x: 1 moves the light in the light splits too, yz: direct, indirect intensity
 } pc;
 
-layout(set = 0, binding = 4, rgba16f) uniform image2DArray lightSplits;  // 0: direct, 1: indirect diffuse
+layout(set = 0, binding = 4, rgba16f) uniform image2DArray lightSplits;  // 0: direct, 1: indirect diffuse, 5, 6: of them the subsurface's
 
 layout(location = 0) out vec4 outColor;
 
@@ -78,6 +78,11 @@ void main()
         vec3 moved = scale > 0.0 ? (result - center.rgb) / scale : vec3(0.0);
         imageStore(lightSplits, ivec3(q, 0), vec4(direct.rgb + share * moved, direct.a));
         imageStore(lightSplits, ivec3(q, 1), vec4(indirect.rgb + (1.0 - share) * moved, indirect.a));
+        if (imageSize(lightSplits).z > 4) {  // all of it is the subsurface's (layers 5, 6)
+            vec4 sssDirect = imageLoad(lightSplits, ivec3(q, 5)), sssIndirect = imageLoad(lightSplits, ivec3(q, 6));
+            imageStore(lightSplits, ivec3(q, 5), vec4(sssDirect.rgb + share * moved, 1.0));
+            imageStore(lightSplits, ivec3(q, 6), vec4(sssIndirect.rgb + (1.0 - share) * moved, 1.0));
+        }
     }
     outColor = vertical ? vec4(result - center.rgb, 0.0) : vec4(result, 1.0);
 }

@@ -2775,7 +2775,11 @@ int main()
             bool empty = true;
             for (uint32_t k = 0; k < A::kCount; ++k) {
                 for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
-                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                    if (at(A::Kind(k), 2, 2, int(c)) != 0.0f) {
+                        std::printf("  AOV %u component %u is %g where nothing was drawn\n", k, c,
+                                    at(A::Kind(k), 2, 2, int(c)));
+                        empty = false;
+                    }
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
@@ -4347,7 +4351,7 @@ int main()
                 return x * x + y * y + z * z <= 144.0f;
             };
             const float px = (40.5f / 32.0f - 1.0f), py = (32.5f / 32.0f - 1.0f);  // the pixel's world x, y
-            double sumT = 0.0, sumHalf = 0.0;  // the dome's: half the optical depth (volume.frag)
+            double sumT = 0.0;
             int samples = 0;
             for (float z = -0.5f; z < 0.5f; z += 1.0f / 256.0f) {
                 if (!inBall(int(std::floor(px * 32 + 16)), int(std::floor(py * 32 + 16)), int(std::floor(z * 32 + 16)))) {
@@ -4359,7 +4363,6 @@ int main()
                     voxels += inBall(i, j, k) && (float(i) - 15.5f) * 3 / 32 + 2 > px ? 1 : 0;
                 }
                 sumT += std::exp(-0.5 * voxels * 3.0 / 32.0);
-                sumHalf += std::exp(-0.25 * voxels * 3.0 / 32.0);
                 ++samples;
             }
             const float expected = float(sumT / std::max(samples, 1));
@@ -4399,7 +4402,7 @@ int main()
             {
                 // The dome's light comes down from its pole (+y) through the
                 // big ball above at y 2: the small ball's top (y 0.27), as the
-                // sun's case turned by 90 degrees, at half the optical depth.
+                // sun's case turned by 90 degrees (the whole optical depth).
                 vkr::Scene above(&device);
                 above.AddVolume()->fields["density"] = ball->fields["density"];
                 vkr::Volume *upper = above.AddVolume();
@@ -4411,7 +4414,7 @@ int main()
                 frame.volume.mutualShadows = false;
                 const Image apart = Render(renderer, above, frame);
                 frame.volume.mutualShadows = true;
-                const float domeExpected = float(sumHalf / std::max(samples, 1));
+                const float domeExpected = expected;
                 const float ratio = both.At(32, 40, 0) / apart.At(32, 40, 0);
                 std::printf("mutual volume shadows (dome): top %.4f / %.4f = %.3f (expected %.3f)\n", both.At(32, 40, 0),
                             apart.At(32, 40, 0), ratio, domeExpected);

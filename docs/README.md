@@ -9,6 +9,7 @@ Eldr is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08, for fast raster re
 | settings | Every `eldr:` render setting: type, default, effect, cost |
 | comparison | Feature table: Eldr vs EEVEE and Unreal |
 | houdini | Houdini 22 build, install and use |
+| testing | ctest, and the Karma golden references (`tests/karma_refs.py`) |
 
 ## Keeping the docs current
 

@@ -9,8 +9,8 @@
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_06_effect_denoise\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_11_effect_denoise\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
 - Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_06_effect_denoise/scene.usda`
+- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_11_effect_denoise/scene.usda`
 
 Settings prims: `/Render/raw4`, `/Render/denoise4`, `/Render/raw16`, `/Render/denoise16`, `/Render/raw64`, `/Render/denoise64`, `/Render/noFade64`.

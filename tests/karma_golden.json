@@ -1,0 +1,59 @@
+{
+  "tolerance": {
+    "lum": 0.05,
+    "region": 0.1,
+    "mald": 0.04
+  },
+  "scenes": {
+    "cornell": {
+      "lum": 0.7552,
+      "region": 1.188,
+      "mald": 0.5452
+    },
+    "emissive": {
+      "lum": 1.7357,
+      "region": 0.8199,
+      "mald": 0.1751
+    },
+    "lights": {
+      "lum": 0.9927,
+      "region": 0.0968,
+      "mald": 0.0491
+    },
+    "step4": {
+      "lum": 1.0708,
+      "region": 0.6728,
+      "mald": 0.1239
+    },
+    "sunangle": {
+      "lum": 2.2649,
+      "region": 0.8583,
+      "mald": 0.6834
+    },
+    "mtlx": {
+      "lum": 1.1606,
+      "region": 1.1936,
+      "mald": 0.0744
+    },
+    "glass": {
+      "lum": 0.9551,
+      "region": 1.1292,
+      "mald": 0.2121
+    },
+    "volume": {
+      "lum": 1.3857,
+      "region": 0.8487,
+      "mald": 0.2583
+    },
+    "displacement": {
+      "lum": 1.9136,
+      "region": 0.8618,
+      "mald": 0.5293
+    },
+    "subsurface": {
+      "lum": 0.9665,
+      "region": 1.0281,
+      "mald": 0.1896
+    }
+  }
+}
