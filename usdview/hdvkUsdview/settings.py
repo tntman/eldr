@@ -23,7 +23,7 @@ GROUPS = [
      "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
      "indirectIntensity renderProducts productResolution"),
     ("Advanced: Lighting", False,
-     "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
+     "localLights clusteredLights lightTextures lightLinking lightIes lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
      "finalGatherRays finalGatherDenoise ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "

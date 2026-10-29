@@ -106,11 +106,12 @@ const float kShadowOpaque = 6.9;  // optical depth of 1e-3 transmittance: nothin
 // smoke casts coloured shadows. `weighted`, `weighted2`: the integral of the
 // channels' mean times s and times s^2. Segments outside a volume's box are
 // skipped and the march stops once every channel reaches kShadowOpaque, but
-// empty tiles inside it are still stepped.
+// empty tiles inside it are still stepped. shadowLink: the light's shadow
+// link bit (-1: every volume casts), as the volumes' link masks hold it.
 // ponytail: per channel from the material's coefficients (or the extinction
 // table of the density); a colour field (Cd) tinting the scattering isn't read.
-vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, out float weighted,
-                        out float weighted2)
+vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, int shadowLink,
+                        out float weighted, out float weighted2)
 {
     float len = length(dir);
     vec3 tau = vec3(0.0);
@@ -121,7 +122,8 @@ vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float
         vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
         vec2 span = Slabs(oi, di, volumes[i].indexMin.xyz, volumes[i].indexMax.xyz);
         span = vec2(max(span.x, 0.0), min(span.y, 1.0));
-        if (!(span.x < span.y)) {
+        bool linked = shadowLink < 0 || (floatBitsToUint(volumes[i].indexMin.w) & (1u << uint(shadowLink))) != 0u;
+        if (!(span.x < span.y) || !linked) {
             continue;
         }
         uint steps = uint(clamp(ceil((span.y - span.x) * length(di) / (2.0 * stepSize)), 1.0, float(kShadowSteps)));

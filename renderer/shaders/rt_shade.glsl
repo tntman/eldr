@@ -22,18 +22,22 @@ void Trace(vec3 origin, vec3 dir, float cone)
 
 // What reaches origin from tMax along dir: 0 behind an opaque surface,
 // else what the translucent casters (rt.shadowInfo.x) and the volumes
-// (rt.shadowInfo.y) on the way let through.
-vec3 TraceShadow(vec3 origin, vec3 dir, float tMax)
+// (rt.shadowInfo.y) on the way let through. shadowLink: the light's
+// shadow link bit (lights.glsl's ShadowLinked, -1: every caster); with
+// one every surface runs rt_shadow.rahit, which skips the others (as
+// -(bit + 1) in the payload's a; the miss shader sets it to 1).
+vec3 TraceShadow(vec3 origin, vec3 dir, float tMax, int shadowLink)
 {
-    shadowRay = vec4(1.0, 1.0, 1.0, 0.0);
-    traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, rt.shadowInfo.x, 1, 0, 1,
-                origin, 0.0, dir, tMax, 1);
-    vec3 through = shadowRay.rgb * shadowRay.a;
+    shadowRay = vec4(1.0, 1.0, 1.0, shadowLink >= 0 ? -float(shadowLink + 1) : 0.0);
+    uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT |
+                 (shadowLink >= 0 ? gl_RayFlagsForceNonOpaqueEXT : 0u);
+    traceRayEXT(tlas, flags, rt.shadowInfo.x, 1, 0, 1, origin, 0.0, dir, tMax, 1);
+    vec3 through = shadowRay.rgb * max(shadowRay.a, 0.0);
     if (rt.shadowInfo.y > 0u && shadowRay.a > 0.0) {
         // ponytail: a sun's ray marches 1e4 units (the volumes' boxes clip it).
         float weighted, weighted2;
         through *= exp(-VolumeOpticalDepth(origin, dir * min(tMax, 1e4), rt.shadowInfo.y, rt.shadowVolume.x,
-                                           rt.shadowVolume.y, weighted, weighted2));
+                                           rt.shadowVolume.y, shadowLink, weighted, weighted2));
     }
     return through;
 }
@@ -157,7 +161,7 @@ vec3 LightVisibility(uint index, vec3 p, vec3 ng, vec2 u, uint samples)
                 sum += vec3(1.0);
             } else if (dot(dir, ng) > 0.0) {
                 // Short of the light: its own surface (a rect on a ceiling) is not a blocker.
-                sum += TraceShadow(origin, dir, dist * 0.999);
+                sum += TraceShadow(origin, dir, dist * 0.999, int(light.link.z));
             } else {
                 continue;
             }
@@ -212,10 +216,11 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     vec3 albedo = hit.baseColor * (1.0 - hit.metallic);
     vec3 f0 = mix(vec3(0.04), hit.baseColor, hit.metallic);
     vec3 irradiance = vec3(0.0);  // direct, cosine-weighted
+    uint linkMask = RtLinkMask(hit.instance);
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light light = lights[i];
         float NoL = dot(n, light.position.xyz);
-        if (NoL > 0.0) {
+        if (NoL > 0.0 && LightLinked(light, linkMask)) {
             vec3 shadow = i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u) ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : vec3(1.0);
             irradiance += light.color.rgb * (NoL * light.halfHeight.w * shadow);
         }
@@ -229,7 +234,8 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
         float NoL = dot(n, l);
         float cosLight = -dot(l, light.axis.xyz);
         uint type = uint(light.position.w);
-        if (NoL <= 0.0 || (type != kLightSphere && type != kLightCylinder && cosLight <= 0.0)) {
+        if (NoL <= 0.0 || (type != kLightSphere && type != kLightCylinder && cosLight <= 0.0) ||
+            !LightLinked(light, linkMask)) {
             continue;
         }
         // Irradiance / radiance: a rect's exact form factor (clipped to the

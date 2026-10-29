@@ -840,7 +840,7 @@ HdDirtyBits HdVkVolume::GetInitialDirtyBitsMask() const
 {
     return HdChangeTracker::InitRepr | HdChangeTracker::DirtyVolumeField | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyPrimvar;
+           HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyPrimvar | HdChangeTracker::DirtyCategories;
 }
 
 void HdVkVolume::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -882,6 +882,10 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
         v.transforms = HdVkWorldTransforms(sceneDelegate, id, GetInstancerId());
+    }
+    // Light linking: the volume's link categories (not per instance).
+    if (*dirtyBits & HdChangeTracker::DirtyCategories) {
+        v.linkCategories = HdVkLinkCategories(sceneDelegate->GetCategories(id));
     }
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         _UpdateVisibility(sceneDelegate, dirtyBits);

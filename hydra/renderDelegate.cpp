@@ -40,6 +40,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #ifdef _WIN32
 #include <corecrt_startup.h>  // _crt_atexit
 #endif
@@ -151,6 +152,34 @@ std::vector<std::string> HdVkLightGroups()
 {
     std::lock_guard<std::mutex> lock(lightGroupsMutex);
     return lightGroups;
+}
+
+uint32_t HdVkLinkCategory(TfToken const &category, bool light)
+{
+    static std::mutex mutex;
+    static std::unordered_map<TfToken, uint32_t, TfToken::HashFunctor> ids;
+    static std::unordered_set<uint32_t> lightIds;
+    if (category.IsEmpty()) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
+    const uint32_t id = ids.emplace(category, uint32_t(ids.size()) + 1).first->second;
+    if (light && lightIds.insert(id).second && lightIds.size() == vkr::Scene::kMaxLinkCategories + 1) {
+        TF_WARN("Eldr: more than %zu light link collections; lights past them light and shadow everything",
+                vkr::Scene::kMaxLinkCategories);
+    }
+    return id;
+}
+
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories)
+{
+    std::vector<uint32_t> ids;
+    for (TfToken const &c : categories) {
+        if (const uint32_t id = HdVkLinkCategory(c)) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
 }
 
 bool HdVkFindAov(TfToken const &name, HdVkExtraAov *found)
@@ -474,6 +503,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
+        {"Light Linking (UsdLux lightLink/shadowLink collections)", t2.lightLinking, VtValue(frame.lightLinking)},
+        {"IES Profiles (UsdLux shaping:ies:file)", t2.lightIes, VtValue(frame.lightIes)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},

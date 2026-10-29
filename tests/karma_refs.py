@@ -37,7 +37,7 @@ SPP_SCENE = {"emissive": 2048}  # small emitters: Karma Path Traced is noisy at 
 CELLS, REGIONS = (32, 18), (4, 4)
 # lighting/exposure, materials, volumes, transmission, displacement, SSS
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
-          "subsurface"]
+          "subsurface", "lightlink", "ies"]
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",

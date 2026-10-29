@@ -121,13 +121,15 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 | RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures them (Karma orientation: left edge at +X, top row at +Y) |
 | CylinderLight | Side only; `treatAsLine` |
 | DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube |
-| Shaping | Cone angle, softness, focus, focus tint |
+| Shaping | Cone angle, softness, focus, focus tint; IES profiles (`shaping:ies:file`, `angleScale`, `normalize`) |
 
 - **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Diffuse is unchanged. Textured lights are read at the lobe's mip.
 - **Clustered lights:** 63 per cluster, cut off at 1% of mid-gray on a white surface.
 - **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows. A flat one (a panel) is a rect on each face and, unless thinner than 1% of their area, on each edge: beside a panel under a ceiling the edges give most of its light.
 - **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one. The same attribute on a dome hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
 - **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
+- **Light linking** (`eldr:lightLinking`): a light's `collection:lightLink` limits what it lights, its `collection:shadowLink` what casts its shadows (UsdLux; Houdini's Light Linker LOP writes both). Hydra's light linking scene index turns them into categories; each instance and volume carries a 32-bit mask of the linked collections it is in. Every light loop honours the light link (raster, clusters, traced hits, GI probes, volumes, subsurface transmission), the shadow link every shadow (shadow maps and atlas tiles, translucent and volume tint maps, traced shadows, a volume's own shadow). Light groups still sum to the beauty. Up to 32 linked collections (lights sharing a collection share one); lights past them light everything, with a warning. Domes and the fog ignore links; per-instance links work for one level of instancing (as Hydra's scene index).
+- **IES profiles** (`eldr:lightIes`): `inputs:shaping:ies:file` (LM-63, type C) scales a sphere, rect, disk or cylinder light per direction wherever it lights: raster, traced hits, GI, fog and volumes. Theta is measured from the light's -Z (its emission axis), phi from its +X towards +Y; `angleScale` rescales theta as UsdLux says; `normalize` divides by the profile's mean intensity (over the sphere, or the hemisphere it covers), else candela times hdEmbree's factor. Baked into a 64 x 256 half-float texture per file.
 - **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` limit fireflies. The indirect clamp is Karma's colour limit (default 20, 0 = off): `eldr:indirectClamp`, else (`eldr:colorLimitShared` off) `karma:global:colorlimitindirect`, else `eldr:colorLimit`, else `karma:global:colorlimit`, else 20. It limits bounced light and the emission a bounce ray sees (GI, final gather, traced reflections and refractions), as Karma limits a sample after its path throughput; the direct clamp stays Eldr's own and off. Eldr clamps the radiance at the hit, before the surface's albedo, so a dark surface lit by a very bright emitter is limited harder than Karma's sample would be.
 - **Ambient:** GTAO on the dome's light, or with SSGI the traced visibility.
 
@@ -407,6 +409,8 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | `inputs:angle` | DistantLight | Sun angular diameter for soft shadows |
 | `inputs:texture:file` | RectLight, DiskLight, DomeLight | Image on the light (left edge at +X, top row at +Y, as Karma) or the dome's latlong |
 | `shadow:enable` | lights | Lights without it cast no shadows |
+| `collection:lightLink`, `collection:shadowLink` | lights (not domes) | Light linking: what it lights, what casts its shadows (default: everything) |
+| `inputs:shaping:ies:file`, `shaping:ies:angleScale`, `shaping:ies:normalize` | sphere, rect, disk, cylinder lights | IES profile |
 | `emissiveColor` (constant) | UsdPreviewSurface / standard_surface emission | Small bright emitters become lights |
 | `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field, motion blur |
 | `wrapS/wrapT` | UsdUVTexture | repeat, mirror, clamp, black, useMetadata (default). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
@@ -421,7 +425,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | Output | All render products use the first raster product's framing; the collection is ignored. Vars Eldr cannot fill are left out with a warning. No `elementId` AOV. |
 | Output | Cryptomatte ranks come from film samples in the 3x3 filter footprint; thin objects between samples can be missed. Interactive: one id per pixel. |
 | Hydra | Volumes are not pickable; a field prim's own transform is ignored; OpenVDB assets only. |
-| Hydra | Dome `poleAxis`, portals, shadow colour/distance and IES profiles are ignored. One frame in flight. |
+| Hydra | Dome `poleAxis`, portals and shadow colour/distance are ignored; domes and the fog ignore light linking; IES types A and B are read as C, TILT is ignored. One frame in flight. |
 | Lights | 63 lights per cluster (the rest are dropped); every cluster tests every light. |
 | Lights | Textured lights use two taps, not a filtered polygon; traced hits, probes, fog and volumes read one tap above the shaded point (no highlight tint); emissive-as-light ignores the texture. |
 | Lights | Emissive surfaces become lights only when constant, rigid, small and at most 32; others light via GI only. |

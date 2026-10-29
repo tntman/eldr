@@ -84,6 +84,7 @@ struct Volume {
     // once, as Settings::volumeLimit (the largest of the frame's).
     float volumeLimit = 0.0f;
     uint32_t tag = 1;  // render tag bit, as Mesh::tag
+    std::vector<uint32_t> linkCategories;  // light linking, as Mesh::linkCategories
 
 private:
     friend class Scene;
@@ -93,7 +94,7 @@ private:
 // std430 mirror of Volume in shaders/volume.frag: one per drawn instance.
 struct GpuVolume {
     float worldToIndex[3][4];   // density index = rows . (world, 1)
-    float indexMin[4];          // density index-space box around the active voxels
+    float indexMin[4];          // density index-space box around the active voxels; w: light link mask (bits)
     float indexMax[4];
     uint32_t grids[4];          // byte offsets in the grid pool: density, temperature, color, emission (kNone: none)
     uint32_t types[4];          // their PNANOVDB_GRID_TYPE_*
@@ -193,14 +194,15 @@ public:
     // `cascade`: multiplies the colour by the volumes' transmittance along
     // the light and writes the depth of their optical depth's mean, before
     // the translucent casters (which keep the nearer depth). Binds `set`
-    // with its own layout: rebind the renderer's after.
+    // with its own layout: rebind the renderer's after. shadowLink: the
+    // light's shadow link bit (volumes outside it cast none; -1: all do).
     void RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
-                      uint32_t mapSize, const Settings &settings);
+                      uint32_t mapSize, const Settings &settings, int32_t shadowLink = -1);
     // The same for a local light's atlas tile (index `tile` of the
     // renderer's ShadowTiles): rendering into the tint atlas with the
     // viewport and scissor on its rectangle (x, y, size texels).
     void RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile, uint32_t x,
-                          uint32_t y, uint32_t size, const Settings &settings);
+                          uint32_t y, uint32_t size, const Settings &settings, int32_t shadowLink = -1);
 
     // Frame::lightShapesVisible: the shapes of lights [first, first + count)
     // of the renderer's light buffer over `color` (as Record, with the

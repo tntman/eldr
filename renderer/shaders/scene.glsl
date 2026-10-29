@@ -26,7 +26,7 @@ struct Instance {
     uint draw;       // mesh slot, kFreeSlot if unused
     int index;       // index into the mesh's instances (instanceId AOV)
     uint joints;     // skinned: first of the instance's joint matrices
-    uint pad;
+    uint linkMask;   // light linking: bit k = in the k-th linked category (Scene::_linkBits)
 };
 
 mat4 InstanceTransform(Instance inst)

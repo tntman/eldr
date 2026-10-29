@@ -210,7 +210,8 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
            HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags;
+           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags |
+           HdChangeTracker::DirtyCategories;
 }
 
 void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -432,6 +433,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
         HdVkSetTransforms(sceneDelegate, id, GetInstancerId(), m);
     }
+    if ((*dirtyBits & HdChangeTracker::DirtyCategories) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        HdVkSetLinkCategories(sceneDelegate, id, GetInstancerId(), m);
+    }
     // Per-instance primvars (the instancer's), in the transforms' order.
     if (programNamesChanged || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
@@ -598,6 +603,11 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.prevTransforms = m.shutterMotion ? m.prevTransforms : std::move(d.transforms);
             d.shutterMotion = m.shutterMotion;
             d.transforms = m.transforms;
+            d.transformsDirty = true;
+        }
+        if (d.linkCategories != m.linkCategories || d.instanceLinkCategories != m.instanceLinkCategories) {
+            d.linkCategories = m.linkCategories;
+            d.instanceLinkCategories = m.instanceLinkCategories;
             d.transformsDirty = true;
         }
         if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights ||

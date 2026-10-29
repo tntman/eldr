@@ -7,6 +7,7 @@
 #include "scene.glsl"
 #include "material.glsl"
 #include "rt.glsl"
+#include "gi.glsl"
 
 // Shadow rays' any hit: a translucent caster (only shadow rays that tint
 // see them, rt.shadowInfo.x) multiplies what passes by what it lets through,
@@ -22,6 +23,18 @@ void main()
     uint slot = gl_InstanceCustomIndexEXT;
     if ((draws[slot].visible & kRaysShadow) == 0u) {  // a translucent mesh shadows don't see (tlas.comp)
         ignoreIntersectionEXT;
+    }
+    // Light linking: TraceShadow's shadow link bit, -(bit + 1) in a (its
+    // rays force every surface through here); casters outside it don't
+    // block, opaque ones in it do.
+    int shadowLink = int(-shadowRay.a) - 1;
+    if (shadowLink >= 0) {
+        if ((RtLinkMask(uint(gl_InstanceID)) & (1u << uint(shadowLink))) == 0u) {
+            ignoreIntersectionEXT;
+        }
+        if ((rtSlots[slot].flags & (kRtSlotCutout | kRtSlotTranslucent)) == 0u) {
+            return;
+        }
     }
     uint material = draws[slot].material;
     bool translucent = (rtSlots[slot].flags & kRtSlotTranslucent) != 0u;

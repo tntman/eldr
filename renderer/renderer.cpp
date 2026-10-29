@@ -213,15 +213,17 @@ struct DrawParams {
     float viewProj[16];
     uint32_t listBase;
     uint32_t motion;  // see mesh.vert
+    uint32_t shadowLink;  // shadow passes: the light's shadow link bit + 1 (0: every caster)
 };
 
 void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewProj, uint32_t listBase,
-              uint32_t motion = 0)
+              uint32_t motion = 0, uint32_t shadowLink = 0)
 {
     DrawParams p;
     std::memcpy(p.viewProj, viewProj, sizeof(p.viewProj));
     p.listBase = listBase;
     p.motion = motion;
+    p.shadowLink = shadowLink;
     vkCmdPushConstants(cmd, layout, kPushStages, 0, sizeof(p), &p);
 }
 
@@ -2295,6 +2297,7 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
             t.origin[0] = position.x;
             t.origin[1] = position.y;
             t.origin[2] = position.z;
+            t.origin[3] = float(c.shadowLinkBit);  // the shadow link bit + 1 its draws skip by (mesh.vert)
             tiles.push_back(t);
         };
         if (spot) {
@@ -2425,7 +2428,8 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
         vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-        PushDraw(_cmd, _layout, t.viewProj, tileList);
+        const uint32_t shadowLink = uint32_t(t.origin[3]);
+        PushDraw(_cmd, _layout, t.viewProj, tileList, 0, shadowLink);
         DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
         vkCmdEndRendering(_cmd);
         if (tint) {
@@ -2453,9 +2457,9 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
             vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
             if (volume) {
                 _volumePass->RecordTileShadow(_cmd, _set, gpu.volumeCount, tileIndex, uint32_t(tx), uint32_t(ty),
-                                              tsize, *volume);
+                                              tsize, *volume, int32_t(shadowLink) - 1);
                 vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-                PushDraw(_cmd, _layout, t.viewProj, tileList);  // the volume pipeline's layout dropped them
+                PushDraw(_cmd, _layout, t.viewProj, tileList, 0, shadowLink);  // the volume pipeline's layout dropped them
             }
             _DrawTintCasters(gpu, tileCommands);
             vkCmdEndRendering(_cmd);
@@ -3873,7 +3877,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             vkCmdSetScissor(_cmd, 0, 1, &scissor);
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline[0]);
             vkCmdSetDepthBias(_cmd, 0.0f, 0.0f, 1.5f);
-            PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
+            PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity, 0, gpu.shadowLinkBit);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
@@ -3908,11 +3912,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 vkCmdSetViewport(_cmd, 0, 1, &tvp);
                 vkCmdSetScissor(_cmd, 0, 1, &tri.renderArea);
                 if (volumeShadows) {
-                    _volumePass->RecordShadow(_cmd, _set, gpu.volumeCount, c, map.size, frame.volume);
+                    _volumePass->RecordShadow(_cmd, _set, gpu.volumeCount, c, map.size, frame.volume,
+                                              int32_t(gpu.shadowLinkBit) - 1);
                     vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
                 }
                 if (translucentShadows) {
-                    PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity);
+                    PushDraw(_cmd, _layout, fd.cascadeViewProj[c], (1 + c) * gpu.instanceCapacity, 0,
+                             gpu.shadowLinkBit);
                     _DrawTintCasters(gpu,
                                      VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand));
                 }

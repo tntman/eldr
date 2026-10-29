@@ -6,6 +6,8 @@
 #include "scene.h"
 
 #include "pxr/base/gf/color.h"
+#include "pxr/base/gf/half.h"
+#include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/gf/colorSpace.h"
 #include "pxr/base/gf/math.h"
 #include "pxr/base/gf/matrix4d.h"
@@ -15,7 +17,13 @@
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/usd/sdf/assetPath.h"
 
+#include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <map>
+#include <mutex>
+#include <sstream>
+#include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -37,6 +45,129 @@ void Copy(const GfVec3d &v, float out[3])
     out[0] = float(v[0]);
     out[1] = float(v[1]);
     out[2] = float(v[2]);
+}
+
+// An IES profile (UsdLux shaping:ies:file) baked for vkr::Light::ies:
+// relative intensity over kIesPhi x kIesTheta texels, its peak and its
+// power (mean intensity, for shaping:ies:normalize). Cached per file for
+// the process (a few KB each; the GPU may still read a replaced one).
+// ponytail: LM-63 type C photometry only (A and B are read as C, with a
+// warning); TILT ignored; bilinear in the file's angles, as hdEmbree.
+struct IesProfile {
+    std::shared_ptr<vkr::Texture> texture;
+    float peak = 0.0f, power = 0.0f;
+};
+constexpr uint32_t kIesPhi = 64, kIesTheta = 256;
+// Candela to UsdLux intensity: hdEmbree's (Cycles') factor.
+constexpr float kIesCandela = 0.0706650768394f;
+
+IesProfile LoadIes(const std::string &path)
+{
+    static std::mutex mutex;
+    static std::map<std::string, IesProfile> cache;
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto found = cache.find(path);
+    if (found != cache.end()) {
+        return found->second;
+    }
+    IesProfile &profile = cache[path];
+    std::ifstream in(path);
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const size_t tilt = text.find("TILT=");
+    const size_t eol = tilt == std::string::npos ? tilt : text.find('\n', tilt);
+    if (eol == std::string::npos) {
+        TF_WARN("Eldr: can't read the IES profile '%s'", path.c_str());
+        return profile;
+    }
+    std::istringstream numbers(text.substr(eol + 1));
+    std::vector<double> v;
+    for (double x; numbers >> x;) {
+        v.push_back(x);
+    }
+    size_t at = 0;
+    if (text.compare(tilt, 12, "TILT=INCLUDE") == 0 && v.size() > 1) {  // lamp geometry, pairs, angles, factors
+        at = 2 + 2 * size_t(v[1]);
+    }
+    auto next = [&] { return at < v.size() ? v[at++] : 0.0; };
+    next();  // lamps
+    next();  // lumens per lamp
+    const double multiplier = next();
+    const size_t nV = size_t(next()), nH = size_t(next());
+    const int type = int(next());
+    for (int k = 0; k < 4; ++k) {
+        next();  // units, width, length, height
+    }
+    const double factor = multiplier * next();  // ballast factor
+    next();  // future use
+    next();  // input watts
+    if (nV < 2 || nH < 1 || at + nV + nH + nV * nH > v.size()) {
+        TF_WARN("Eldr: can't read the IES profile '%s'", path.c_str());
+        return profile;
+    }
+    if (type != 1) {
+        TF_WARN("Eldr: IES profile '%s' has type %s photometry; read as type C", path.c_str(), type == 2 ? "B" : "A");
+    }
+    const double *vAngles = &v[at], *hAngles = &v[at + nV], *candela = &v[at + nV + nH];
+    // Type C symmetry by the last horizontal angle: 0 all around, 90 per
+    // quadrant, 180 mirrored across the 0-180 plane, else as given.
+    const double lastH = hAngles[nH - 1];
+    auto span = [](const double *a, size_t n, double x, size_t &i, double &f) {
+        i = std::clamp<size_t>(size_t(std::upper_bound(a, a + n, x) - a), 1, std::max<size_t>(n - 1, 1)) - 1;
+        f = n < 2 || a[i + 1] <= a[i] ? 0.0 : std::clamp((x - a[i]) / (a[i + 1] - a[i]), 0.0, 1.0);
+    };
+    auto lookup = [&](double theta, double phi) {
+        if (theta < vAngles[0] || theta > vAngles[nV - 1]) {
+            return 0.0;
+        }
+        if (lastH <= 0.0) {
+            phi = 0.0;
+        } else if (lastH <= 90.0) {
+            phi = phi > 180.0 ? 360.0 - phi : phi;
+            phi = phi > 90.0 ? 180.0 - phi : phi;
+        } else if (lastH <= 180.0) {
+            phi = phi > 180.0 ? 360.0 - phi : phi;
+        }
+        size_t vi, hi;
+        double fv, fh;
+        span(vAngles, nV, theta, vi, fv);
+        span(hAngles, nH, phi, hi, fh);
+        const size_t hj = std::min(hi + 1, nH - 1), vj = std::min(vi + 1, nV - 1);
+        auto c = [&](size_t h, size_t k) { return candela[h * nV + k]; };
+        const double a = c(hi, vi) + (c(hi, vj) - c(hi, vi)) * fv;
+        const double b = c(hj, vi) + (c(hj, vj) - c(hj, vi)) * fv;
+        return (a + (b - a) * fh) * factor;
+    };
+    const uint32_t width = nH == 1 ? 1 : kIesPhi;
+    std::vector<float> baked(size_t(width) * kIesTheta);
+    double power = 0.0;
+    for (uint32_t j = 0; j < kIesTheta; ++j) {
+        const double theta = (j + 0.5) * 180.0 / kIesTheta;
+        for (uint32_t i = 0; i < width; ++i) {
+            const float value = float(std::max(lookup(theta, (i + 0.5) * 360.0 / width), 0.0));
+            baked[size_t(j) * width + i] = value;
+            profile.peak = std::max(profile.peak, value);
+            power += value * std::sin(GfDegreesToRadians(theta));
+        }
+    }
+    if (!(profile.peak > 0.0f)) {
+        TF_WARN("Eldr: IES profile '%s' is dark", path.c_str());
+        return profile;
+    }
+    // The mean intensity over the sphere, or over the hemisphere a profile
+    // within 90 degrees (and a bit) covers, as hdEmbree (which matches Karma).
+    const bool sphere = vAngles[nV - 1] - vAngles[0] > 90.0 + GfRadiansToDegrees(0.1);
+    profile.power = float(power * (kPi / kIesTheta) * (2.0 * kPi / width) / ((sphere ? 4.0 : 2.0) * kPi));
+    auto texture = std::make_shared<vkr::Texture>();
+    texture->width = width;
+    texture->height = kIesTheta;
+    texture->format = vkr::Texture::Format::R16F;
+    texture->pixels.resize(baked.size() * sizeof(GfHalf));
+    auto *texels = reinterpret_cast<GfHalf *>(texture->pixels.data());
+    for (size_t k = 0; k < baked.size(); ++k) {
+        texels[k] = GfHalf(baked[k] / profile.peak);
+    }
+    profile.texture = std::move(texture);
+    return profile;
 }
 
 } // namespace
@@ -69,12 +200,12 @@ HdVkLight::~HdVkLight()
 
 // UsdLux semantics as in hdEmbree: emitted radiance is color * intensity *
 // 2^exposure (* blackbody), divided by the light's area if normalize.
-// ponytail: ignores dome poleAxis/portals, shadow color/distance and IES
-// profiles.
+// ponytail: ignores dome poleAxis/portals and shadow color/distance; domes
+// ignore light linking.
 void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
     HdVkTimedCall timed(HdVkCallTimes::kSync);
-    if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyResource))) {
+    if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyShadowParams | DirtyCollection | DirtyResource))) {
         *dirtyBits = Clean;
         return;
     }
@@ -146,6 +277,14 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     light.cameraVisible = renderLightGeo();
     light.lpeTag = lpeTag();
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
+    // Light linking: UsdLux collection:lightLink and collection:shadowLink
+    // as HdsiLightLinkingSceneIndex's categories (empty: everything).
+    auto category = [&](TfToken const &name) {
+        const VtValue v = sceneDelegate->GetLightParamValue(id, name);
+        return v.IsHolding<TfToken>() ? HdVkLinkCategory(v.UncheckedGet<TfToken>(), true) : 0u;
+    };
+    light.lightLink = category(HdTokens->lightLink);
+    light.shadowLink = category(HdTokens->shadowLink);
     light.specular = param(HdLightTokens->specular, 1.0f);
     if (_type == HdPrimTypeTokens->distantLight) {
         // Shines down its local -Z; store the direction to it. Intensity is
@@ -203,6 +342,21 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         color /= area;
     }
     std::copy(color.data(), color.data() + 3, light.radiance);
+    // IES profile (UsdLux shaping:ies:*), phi from the light's +X.
+    light.ies = nullptr;
+    const VtValue iesFile = param(HdLightTokens->shapingIesFile, VtValue());
+    if (iesFile.IsHolding<SdfAssetPath>()) {
+        const SdfAssetPath &p = iesFile.UncheckedGet<SdfAssetPath>();
+        const std::string path = p.GetResolvedPath().empty() ? p.GetAssetPath() : p.GetResolvedPath();
+        const IesProfile ies = path.empty() ? IesProfile() : LoadIes(path);
+        if (ies.texture) {
+            light.ies = ies.texture;
+            light.iesScale = param(HdLightTokens->shapingIesNormalize, false) ? ies.peak / ies.power
+                                                                               : ies.peak * kIesCandela;
+            light.iesAngleScale = param(HdLightTokens->shapingIesAngleScale, 0.0f);
+            Copy(xf.TransformDir(GfVec3d(1, 0, 0)).GetNormalized(), light.iesX);
+        }
+    }
     light.coneAngle = param(HdLightTokens->shapingConeAngle, 180.0f);
     light.coneSoftness = param(HdLightTokens->shapingConeSoftness, 0.0f);
     light.focus = param(HdLightTokens->shapingFocus, 0.0f);
