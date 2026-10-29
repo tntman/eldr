@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 // Heterogeneous volumes (NanoVDB grids) raymarched per pixel over the shaded
 // image, nearest volume first, up to the opaque depth. Single scattering

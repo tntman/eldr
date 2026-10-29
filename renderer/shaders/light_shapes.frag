@@ -1,5 +1,6 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
 
 // Light shapes seen by the camera (Frame::lightShapesVisible): the nearest
 // sphere, rect, disk or cylinder light along each pixel's ray, in front of
