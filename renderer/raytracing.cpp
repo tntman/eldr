@@ -474,7 +474,8 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _dev.Destroy(_gatherImage);
     _dev.Destroy(_gatherTemp);
     _dev.Destroy(_gatherGuide);
-    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
+    // Then as many layers of the denoise's penumbra radii (four lights a texel, rt_pixels.rgen).
+    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers * 2);
     _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     if (_work.refraction) {
@@ -1092,6 +1093,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.gatherInfo[1] = std::clamp(work.gatherDenoise, 0.0f, 1.0f);
     d.denoise[0] = work.shadowDenoise;
     d.denoise[1] = work.reflectionDenoise;
+    d.denoise[2] = float(_shadowLayers);
     _PrepareCaustics(d);
     if (!work.gi) {
         return;
