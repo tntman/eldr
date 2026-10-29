@@ -266,8 +266,9 @@ public:
         // film samples over which the filters fade out, linearly from the
         // first (full) to none from this one on, so the early samples are
         // clean and the converged film stays sharp and unbiased; 0: they
-        // filter every sample. Interactive frames always filter.
-        uint32_t effectDenoiseSamples = 16;
+        // filter every sample. Interactive frames always filter; with
+        // denoise (OIDN) none of them run.
+        uint32_t effectDenoiseSamples = 64;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
