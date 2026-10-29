@@ -1163,9 +1163,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB, RAM %.1f GB (peak %.1f)",
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
                   total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
-                  double(_device ? _device->Memory().deviceLocal : 0) / gb, double(ram.resident) / gb,
+                  double(_device ? _device->Memory().deviceLocal : 0) / gb,
+                  double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);
     _loadLine = text;
     std::printf("Eldr: %s\n", text);  // husk's log
