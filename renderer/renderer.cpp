@@ -3169,9 +3169,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // (0) to this one (1), until a change other than motion moves the
     // scene's pools. The camera moves for this frame (`frame`, before the
     // lens jitter), the scene in its pools (below).
-    // Volumes moving along their velocity sample the shutter without meshes too.
-    const bool shutterCapture = shutterOn && motionHistory && (cameraMotion || gpu.moved) &&
-                                ((gpu.instanceCapacity > 0 && gpu.drawCount > 0) || gpu.volumeVelocity);
+    // Volumes moving along their velocity (their motion is in every frame,
+    // not from the one before) capture whenever there is no valid capture,
+    // meshes or not.
+    const bool shutterStale = !(_shutter.valid && gpu.version == _shutter.version &&
+                                gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
+                                gpu.blendWeights == _shutter.weightPool &&
+                                gpu.instanceCapacity == _shutter.instanceCapacity);
+    const bool shutterCapture =
+        shutterOn && motionHistory &&
+        (((cameraMotion || gpu.moved) && gpu.instanceCapacity > 0 && gpu.drawCount > 0) ||
+         (gpu.volumeVelocity && (cameraMotion || gpu.moved || shutterStale)));
     if (shutterCapture) {
         _shutter.valid = true;
         _shutter.version = gpu.version;

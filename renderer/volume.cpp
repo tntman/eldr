@@ -723,13 +723,8 @@ void Scene::_CommitVolumes()
     _gpu.volumeGrids = _volumeGrids.buffer;
     _gpu.volumeCount = uint32_t(table.size());
     // Volumes moving along their velocity: the time samples need a capture
-    // of the shutter (Renderer), as moved meshes do; again whenever the
-    // scene's version moves on (the capture lapses with it).
+    // of the shutter (Renderer), as moved meshes do.
     _gpu.volumeVelocity = std::any_of(table.begin(), table.end(), [](const GpuVolume &g) { return g.velocity[3] != 0; });
-    if (_gpu.volumeVelocity && (changed || _gpu.version != _volumeMotionVersion)) {
-        _gpu.moved = _keptMoved = true;
-    }
-    _volumeMotionVersion = _gpu.version;
     _gpu.volumeFactors = std::any_of(table.begin(), table.end(), [](const GpuVolume &g) {
         return ((g.factorMasks[0] | g.factorMasks[1] | g.factorMasks[2]) & 7u) != 0 ||
                g.factorMasks[0] != VolumeShading::kDensity || g.factorMasks[1] != VolumeShading::kDensity ||

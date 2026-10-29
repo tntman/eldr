@@ -1071,7 +1071,6 @@ private:
     Buffer _volumeTable, _volumeGrids;
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> _poolGrids;
     std::vector<float> _poolLuts;  // the volume factors' tables after the grids (_CommitVolumes)
-    uint64_t _volumeMotionVersion = 0;  // _gpu.version when velocity blur last moved the scene
 
     Gpu _gpu;
     Buffer _displacements;  // Gpu::displacements
