@@ -103,7 +103,8 @@ What the film enables (each has a switch, all on by default):
 | Motion blur at shutter times | `eldr:motionBlurTimeSamples` | |
 | Fog without history | `eldr:fogFilmJitter` | |
 | GI preconvergence | `eldr:giPreconverge` | Film waits for fresh probes |
-| Adaptive sampling | `eldr:adaptiveThreshold` (0), `eldr:adaptiveFinalThreshold` (0 = off; opt in for final quality) | Converged once `eldr:adaptivePixelFraction` (0.999) of pixels stopped. Not with motion blur time samples (they run to `eldr:filmSamples`). |
+| Adaptive sampling | `eldr:adaptiveThreshold` (0), `eldr:adaptiveFinalThreshold` (0 = off; opt in for final quality) | Converged once `eldr:adaptivePixelFraction` (0.999) of pixels stopped. 16x16 tiles whose pixels and neighbours stopped skip shading and per-pixel rays (`eldr:adaptiveTiles`, on; not with refraction, subsurface or post depth of field in view): Kitchen 1080p at threshold 0.01, 17.4 to 12.8 s, same image. Not with motion blur time samples (they run to `eldr:filmSamples`). |
+| Denoiser (OIDN) | `eldr:denoise` (off); Karma's `karma:hydra:denoise` or a `denoise` entry in `karma:global:imagefilter` | Intel Open Image Denoise 2.x (Apache 2.0, optional: `OIDN_ROOT`, default C:/dev/oidn-2.5.1; the host's own DLL, e.g. Houdini's, wins) cleans the converged film once on the CPU, with the film's albedo and normal as guides. The film then uses a box pixel filter and the final gather skips its own filter (OIDN keeps correlated noise as texture). The undenoised beauty is the `eldr:beautyRaw` AOV. 1080p: about 1.3 s per frame (GTX 1080 Ti machine; OIDN's CUDA device needs Volta or newer). 16 samples denoised beat 64 raw ones (box filter, vs a 1024-sample reference: Kitchen 0.0047 vs 0.0058 RMS). Light AOVs stay raw (they sum to the raw beauty). |
 
 - Stochastic effects use per-effect Sobol dimensions with blue-noise rotation (`eldr:sampleDimensions`). RMSE against a 1024-sample reference, 64 samples: sunangle 0.0034 to 0.0003, fog 0.0052 to 0.0004, Kitchen_set 0.0068 to 0.0004; 0.2-0.5 s.
 - Ids, depth and surface AOVs (normal, st, P, camera depth) are the sample nearest the pixel centre, not averages.
@@ -184,7 +185,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Refraction | `eldr:refraction` | [prepass] Transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or authored `ior` refract a mip-chained copy of the opaque colour. Thickness estimate places the exit point; roughness blurs (`eldr:refractionSamples`); Fresnel splits; absorption at the surface or Beer-Lambert over `transmission_depth`. |
 | From inside | `eldr:refractionBackFaces` | Back faces first with inverted ior: Snell's window, total internal reflection (48.8 degrees for water) |
 | Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied after each layer: glass behind glass |
-| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as indirect glossy in the light splits. Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
+| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as transmission in the light splits (Karma's `C<TG>.*L`). Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
 | Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
 | Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
 | Subsurface | `eldr:subsurface` | See Materials |
@@ -199,8 +200,8 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 |---|---|
 | Prims | `UsdVolVolume` with `OpenVDBAsset` fields, bound by name; `fieldIndex` honoured. Without a volume material only `density` is read, as in Karma; `eldr:volumeDefaultFields` adds `temperature` (blackbody), `Cd`/`color` and `emission` |
 | Rendering | NanoVDB on the GPU, fullscreen march over the shaded image, empty space skipped |
-| Lighting | HG phase, single scattering as Karma's default (3-octave multiple scattering of distant lights with `eldr:volumeMultipleScattering`), sun cascades for opaque occluders, dome SH, local lights as points via atlas tiles; emission from temperature (blackbody) or an emission field |
-| Materials | MaterialX `volume` (anisotropic_vdf, absorption_vdf, uniform_edf) or Karma's `kma_volume`. Inputs: constants, `geompropvalue` field reads and their products (`constant`, `multiply`, `convert`, `dot`), blackbody of a temperature field. Absorption and scattering are per channel: coloured smoke, coloured transmittance. Coefficients are per unit of density. A colour field scales the scattering; another field times a colour is emission. `eldr:volumeAnisotropy` for volumes without one. |
+| Lighting | HG phase, single scattering as Karma's default (multiple scattering of the sun and dome as octaves fitted to Karma's Volume Limit, with `eldr:volumeMultipleScattering` or a volume limit; local lights stay single scattering), sun cascades for opaque occluders, dome SH, local lights as points via atlas tiles; emission from temperature (blackbody) or an emission field |
+| Materials | MaterialX `volume` (anisotropic_vdf, absorption_vdf, uniform_edf) or Karma's `kma_volume`. Inputs: constants, `geompropvalue` field reads and their products (`constant`, `multiply`, `convert`, `dot`), blackbody of a temperature field. Absorption and scattering are per channel: coloured smoke, coloured transmittance (half resolution too) and coloured shadows on surfaces, fog and other volumes. Coefficients are per unit of density. A colour field scales the scattering; another field times a colour is emission. `eldr:volumeAnisotropy` for volumes without one. |
 | Ramps and remaps | Functions of one float field each, up to three per material, baked into 1024-entry tables over the field's value range (linear in between) and multiplied in. A function of the density replaces the density (a ramp of it is the coefficient); a function of temperature times a colour is fire. Nodes, as MaterialX's stdlib defines them: `remap`, `range`, `smoothstep`, `clamp`, `mix`, `add`, `subtract`, `multiply`, `divide`, `power`, `min`, `max`, `modulo`, `invert`, `absval`, `floor`, `ceil`, `sign`, `sqrt`, `exp`, `ln`, `ifgreater`, `ifgreatereq`, `ifequal`, `switch`, `extract`, `combine2/3/4`, `luminance`, `ramp` (linear, smooth, step; standard, radial, circular, box), `ramplr`, `ramptb`, `ramp4`, `splitlr`, `splittb` (a hard step: no derivatives in a volume), a field into `texcoord` through `convert` or `combine2`. Houdini's: the MtlX Color/Float Ramp and Cubic Ramp VOPs (`hinvlinear`, `huniformramp`, `huniformcubic`, `hcatmullrom`), Karma's `kma_rampconst` (constant, linear, Catmull-Rom). A node of two fields, or any other node: the material is ignored with a warning. Measured against Karma CPU (husk, Houdini-authored networks): emission and absorption within 5% per channel (a Catmull-Rom ramp's faint blue 14%); lit scattering (single, as Karma's default) within 3% for ramps of the density. |
 | Houdini SOP volumes | Houdini build only; see the Houdini page |
 
@@ -305,8 +306,15 @@ Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance
 | Base colour | `export_basecolor` | Base colour |
 | Diffuse albedo | `lpe:CDA` | Base colour x (1 - metallic) |
 | Emission | `lpe:CO`, `lpe:C.*O` | Emitted radiance (not in reflections) |
-| Diffuse | `lpe:C<RD>L` direct, `lpe:C<RD>.+L` indirect, `lpe:C<RD>.*L` combined | Light splits |
-| Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*[LO]` | Light splits |
+| Diffuse | `lpe:C<RD>L` direct, `lpe:C<RD>.+L` indirect, `lpe:C<RD>.*L` combined | Light splits, without subsurface |
+| Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*L` or `.*[LO]` | Light splits (reflection; coat included, refraction not) |
+| Transmission | `lpe:C<TG>.*L` | What glass refracts (screen-space or traced) |
+| Subsurface | `lpe:C<TD>.*L` | The subsurface lobe's diffuse light, direct and indirect, blur and sun through thin parts included |
+| Coat | `lpe:C<...'coat'>.*L` | The coat's reflection of lights and dome (also in glossy; the coat reflects nothing else) |
+| Volume | `lpe:CV.*L`, `lpe:CVL` | Volumes' scattered and emitted light; the splits behind are seen through them |
+| Shadow | `lpe:shadow;C.*[LO]` | Direct light the shadows (and the dome's occlusion) took: unshadowed minus shadowed. Karma's also counts occluded indirect light. |
+| Holdout shadow | `lpe:holdouts;shadow;CDL` | The same on holdouts, diffuse only (a shadow matte, Karma's holdout_shadow) |
+| Light group | `lpe:C.*<L.'tag'>` | Direct light of the lights tagged `tag` (`inputs:karma:light:lpetag`) |
 | Cryptomatte object | `primvars:__name` | Ids of the rprim path |
 | Cryptomatte material | `primvars:__materialname` | Ids of the material path |
 
@@ -319,10 +327,14 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 | Direct | Lights' light; also the dome's unblocked light (`eldr:splitDomeDirect`): diffuse under AO/SSGI visibility, reflection where no probe, mirror, SSR or traced hit replaced it |
 | Indirect | GI, SSGI, multi-bounce, probes, reflections beyond that |
 | Sum | Direct + indirect = combined; with emission = the linear beauty, within 3%, for diffuse, coat, sheen, emissive, subsurface, transmission, under GI, denoised SSR and traced refraction |
-| Refraction | Counts as indirect glossy (no separate AOV) |
+| Transmission | Refracted light, its own split (Karma's `C<TG>`); not in indirect glossy |
 | Denoised SSR | Indirect glossy |
-| Subsurface | Moves light within the diffuse splits |
-| Sun through thin subsurface | Direct diffuse |
+| Subsurface | Its own split (Karma's `C<TD>`): the subsurface weight's share of the diffuse light, the blur's moves and the sun through thin parts; not in diffuse |
+| Coat | Part of glossy (Karma counts it as a glossy reflection labelled `coat`) |
+| Volumes | Their light is the volume split; every split behind a volume is multiplied by its transmittance, as Karma's paths through a medium |
+| Holdouts | No light in any split (they are black); their shadow goes to the holdout shadow |
+| Sum | Diffuse + glossy + transmission + subsurface + volume + emission = the linear beauty (tests/test_aov_sums.py) |
+| Light groups | Up to 8 tags (`inputs:karma:light:lpetag`, Eldr's twin `inputs:eldr:light:lpetag` wins), each the direct light (diffuse, glossy, coat, subsurface) of its lights; a tagged dome adds its unblocked light (`eldr:splitDomeDirect`) and its extracted sun. All lights tagged: groups + indirect diffuse + indirect glossy + transmission + emission + volume = the beauty (subsurface materials aside: their indirect light is in the subsurface split). Indirect light isn't split per light (GI, probes and reflections gather all lights at once). Groups past 8 warn and stay black. Each group is a 16-bit RGBA layer (16 MB at 1080p). |
 | Cost | Compiled in only when an AOV asks: lights scene 0.92 vs 0.62 ms |
 | Accumulation | Like colour: TAA frames or film |
 
@@ -382,9 +394,10 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | `int primvars:eldr:object:dicingdepthmax`, `karma:object:dicingdepthmax` | subdivision mesh | Caps the refine level (-1: no cap) |
 | `int primvars:eldr:object:dicingdepthmin`, `karma:object:dicingdepthmin` | subdivision mesh | Lowest refine level (-1: none) |
 | `float primvars:eldr:object:dicingquality`, `karma:object:dicingquality` | subdivision mesh | With `eldr:screenDicing` in final quality: about quality² polygons per pixel (default 0.5, as Karma: a polygon per 4 pixels); the mesh gets the uniform level its nearest face needs. Off-screen faces count at 0.1 of it (Karma's offscreen quality). |
-| `float primvars:eldr:object:volumelimit`, `karma:object:volumelimit` | volume (also a render setting of that name) | Above 0, volumes scatter more than once, as `eldr:volumeMultipleScattering` |
+| `float primvars:eldr:object:volumelimit`, `karma:object:volumelimit` | volume (also a render setting of that name) | Above 0, volumes scatter more than once: octaves fitted to Karma at that limit (the largest in the frame counts for all volumes) |
 | `bool primvars:eldr:renderAsSubdivision` | polygon mesh (subdivisionScheme none) | Renders it as Catmull-Clark without changing the mesh, as Mesh Edit would; then `refineLevel` applies. Needs `eldr:subdivision`. |
 | `bool inputs:eldr:light:renderlightgeo`, `inputs:karma:light:renderlightgeo` | light | Light geometry visible to the camera (false hides it) |
+| `string inputs:eldr:light:lpetag`, `inputs:karma:light:lpetag` | light, dome | Light group (LPE tag): `lpe:C.*<L.'tag'>` holds its lights' direct light |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
 | `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |
@@ -420,7 +433,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
 | Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
 | Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |
-| Materials | Unsupported graph nodes are bypassed (their pass-through input or default); Arnold or RenderMan volume shaders keep the constant. Volume graphs: Karma's Pyro Shader and Pyro Preview aren't read, nor blackbody of a ramp or remap, a colour field times a ramp, or more than three field functions. A field function that isn't 0 at 0 (a remap with `outlow` above 0, a ramp that starts above black) applies only where the density grid has data, not in its empty tiles; Karma's goes on to the volume's bounds. Catmull-Rom overshoot below 0 is clamped (Karma keeps negative emission). Volume shadow maps and traced shadows use the mean of coloured extinction; half-resolution volumes keep only the mean transmittance. A constant coefficient (no field read) counts per unit of density; Karma fills the active voxels uniformly. Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
+| Materials | Unsupported graph nodes are bypassed (their pass-through input or default); Arnold or RenderMan volume shaders keep the constant. Volume graphs: Karma's Pyro Shader and Pyro Preview aren't read, nor blackbody of a ramp or remap, a colour field times a ramp, or more than three field functions. A field function that isn't 0 at 0 (a remap with `outlow` above 0, a ramp that starts above black) applies only where the density grid has data, not in its empty tiles; Karma's goes on to the volume's bounds. Catmull-Rom overshoot below 0 is clamped (Karma keeps negative emission). Volume shadows (maps, traced, volume on volume) are per channel from the material's coefficients or the density's ramps; a colour field (`Cd`) tinting the scattering doesn't colour them. Multiple scattering octaves don't reach local lights (volume_cubes.usda: about half of Karma's gain) and use one limit for all volumes. A constant coefficient (no field read) counts per unit of density; Karma fills the active voxels uniformly. Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
 | Materials | Coat: no coat normal, anisotropy or SSR; no `coat_darkening`. Thin film assumes air above. Hair has no TT lobe; a closed curve's u jumps at its weld. |
 | Materials | With a textured setting off, a material with a textured weight is still drawn in the translucent or subsurface pass (weight 0). |
 | Displacement | Top mip only; vector displacement drops tangential parts; skinning stretch doesn't scale bump; `displacementEnabled` not read. |

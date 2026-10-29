@@ -90,6 +90,20 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         return eldr.IsEmpty() ? param(TfToken("inputs:karma:light:renderlightgeo"), true)
                               : eldr.GetWithDefault(true);
     };
+    // Its light group: inputs:eldr:light:lpetag when authored, else Karma's
+    // LPE tag (inputs:karma:light:lpetag; Karma's C.*<L.'tag'>).
+    auto lpeTag = [&] {
+        for (const char *name : {"inputs:eldr:light:lpetag", "inputs:karma:light:lpetag"}) {
+            const VtValue v = sceneDelegate->GetLightParamValue(id, TfToken(name));
+            if (v.IsHolding<std::string>()) {
+                return v.UncheckedGet<std::string>();
+            }
+            if (v.IsHolding<TfToken>()) {
+                return v.UncheckedGet<TfToken>().GetString();
+            }
+        }
+        return std::string();
+    };
     const GfMatrix4d xf = sceneDelegate->GetTransform(id);
     GfVec3f color = param(HdLightTokens->color, GfVec3f(1.0f)) * param(HdLightTokens->intensity, 1.0f) *
                     std::exp2(param(HdLightTokens->exposure, 0.0f));
@@ -118,6 +132,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         // Karma's "Render Light Geometry" hides the dome from the camera only.
         // Karma's schema default is off; Eldr shows it unless authored false.
         _dome->cameraVisible = renderLightGeo();
+        _dome->lpeTag = lpeTag();
         *dirtyBits = Clean;
         return;
     }
@@ -129,6 +144,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     // such attribute. ponytail: it can only hide; the shapes still need
     // eldr:lightShapesVisible.
     light.cameraVisible = renderLightGeo();
+    light.lpeTag = lpeTag();
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
     light.specular = param(HdLightTokens->specular, 1.0f);
     if (_type == HdPrimTypeTokens->distantLight) {

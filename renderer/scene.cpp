@@ -454,6 +454,13 @@ bool Scene::SetDomeSun(bool on, float threshold)
     return changed;
 }
 
+bool Scene::SetLightGroups(const std::vector<std::string> &tags)
+{
+    const bool changed = tags != _lightGroups;
+    _lightGroups = tags;
+    return changed;
+}
+
 bool Scene::SetEmissiveLights(bool on, float threshold)
 {
     const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
@@ -2423,6 +2430,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         domeSun.angle = std::max(_domeSun.angle, 0.1f);
         domeSun.castShadows = true;
+        domeSun.lpeTag = (*dome)->lpeTag;
     }
     std::vector<const Light *> sceneLights;
     for (const auto &l : _lights) {
@@ -2439,6 +2447,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     _gpu.sunRegion = false;
+    // A light's group + 1 (0: none), as color.w's bits 2 and up.
+    const auto group = [&](const std::string &tag) {
+        const auto it = tag.empty() ? _lightGroups.end() : std::find(_lightGroups.begin(), _lightGroups.end(), tag);
+        return it == _lightGroups.end() ? 0 : int(it - _lightGroups.begin()) + 1;
+    };
     for (const bool distant : {true, false}) {  // distant lights first
         for (const Light *l : sceneLights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
@@ -2448,7 +2461,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g = GpuLight{};
             g.halfHeight[3] = l->diffuse;
             // Bit 1: light_shapes.frag draws it; bit 2: it casts shadows (rt_shade.glsl's ShadeHit).
-            g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f);
+            g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f) + 4.0f * group(l->lpeTag);
             g.shaping[3] = l->specular;
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
@@ -2599,6 +2612,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
         _gpu.environmentCameraVisible = (*dome)->cameraVisible;
     }
+    _gpu.environmentLightGroup = dome != _domes.end() ? group((*dome)->lpeTag) - 1 : -1;
 
     // What lighting depends on besides geometry (FNV-1a, a word at a time).
     uint64_t hash = 1469598103934665603ull;

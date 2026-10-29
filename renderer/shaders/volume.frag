@@ -14,9 +14,10 @@
 // (VolumeShading: scattering and absorption per unit of density, phase,
 // emission), the settings multiply it. Henyey-Greenstein phase. At scale 2
 // each invocation marches a 2 x 2 block's middle into a half resolution
-// target (volume_upsample.frag). With params.multiple, multiple scattering
-// of the distant lights is approximated by octaves of ever weaker, less attenuated and less
-// directional single scattering (Wrenninge 2015). Each pixel starts at a
+// target (volume_upsample.frag). With params.octaves above 1, multiple
+// scattering of the distant lights and the dome is approximated by octaves
+// of ever weaker and less attenuated single scattering (Wrenninge 2015),
+// fitted to Karma's Volume Limit (VolumePass::Settings::volumeLimit). Each pixel starts at a
 // different fraction of a step every frame, which TAA averages. Steps skip
 // tiles (and the background) of zero density.
 // Volumes shadow each other (params.mutual): the light towards each step
@@ -47,6 +48,22 @@ layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 
+// The light splits (aov.h) behind a volume are seen through it, as in
+// Karma's LPEs; its light is layer 9's. As volume_upsample.frag's.
+layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
+void VolumeSplits(vec3 radiance, vec3 transmittance)
+{
+    int layers = imageSize(lightSplits).z;
+    if (frame.aovs.x == 0u || layers <= 4) {
+        return;
+    }
+    ivec2 q = ivec2(gl_FragCoord.xy);
+    for (int i = 0; i < layers; ++i) {
+        vec4 s = imageLoad(lightSplits, ivec3(q, i));
+        imageStore(lightSplits, ivec3(q, i), vec4(s.rgb * transmittance + (i == 9 ? radiance : vec3(0.0)), s.a));
+    }
+}
+
 layout(push_constant) uniform Params {
     float stepSize;     // density voxels per step
     uint maxSteps;      // per pixel
@@ -60,14 +77,32 @@ layout(push_constant) uniform Params {
     uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
     uint mutual;        // 1: volumes shadow each other
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
-    uint multiple;      // 1: multiple scattering octaves of distant lights
+    uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
+    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
 } params;
 
-// Premultiplied: radiance, 1 - the mean transmittance; at full resolution
-// the image is multiplied by the coloured transmittance (dual-source blend).
-// ponytail: the half resolution target keeps only the mean.
+#ifdef HALF
+// Half resolution (built with HALF, scale 2): radiance and the coloured
+// transmittance as six half floats, volume_upsample.frag blends them.
+layout(location = 0) out uvec4 outPacked;
+#else
+// Premultiplied: radiance, 1 - the mean transmittance; the image is
+// multiplied by the coloured transmittance (dual-source blend).
 layout(location = 0, index = 0) out vec4 outColor;
 layout(location = 0, index = 1) out vec4 outTransmittance;
+#endif
+
+void Output(vec3 radiance, vec3 transmittance)
+{
+#ifdef HALF
+    outPacked = uvec4(packHalf2x16(radiance.rg), packHalf2x16(vec2(radiance.b, transmittance.r)),
+                      packHalf2x16(transmittance.gb), 0u);
+#else
+    float mean = dot(transmittance, vec3(1.0 / 3.0));
+    outColor = vec4(radiance, 1.0 - mean);
+    outTransmittance = vec4(transmittance, mean);
+#endif
+}
 
 const uint kMaxVolumes = 8u;     // per pixel, the nearest
 // Volumes read factor tables (VolumePass::Record's `factors`); without, the
@@ -244,8 +279,8 @@ float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccesso
     return tau * dt;
 }
 
-// Optical depth of the volumes other than `self` along x + dir * s, s in
-// [0, 1]: shadowSteps steps across each box crossed, offset by noise. The
+// Optical depth per channel of the volumes other than `self` along
+// x + dir * s, s in [0, 1] (as VolumeOpticalDepth): shadowSteps steps across each box crossed, offset by noise. The
 // self march (ShadowMarch) covers the volume's own density, so it is left
 // out here. No tint maps: they hold all volumes' transmittance together,
 // the lit volume's own included, with one depth per texel, so they can't
@@ -253,10 +288,10 @@ float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccesso
 // Steps landing in an empty tile go on to the first step past it; the
 // march stops once nothing is left to dim (kShadowOpaque).
 // ponytail: fixed steps per box; cost grows with the volumes crossed.
-float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
+vec3 OthersDepth(uint self, vec3 x, vec3 dir, float noise)
 {
-    float tau = 0.0;
-    for (uint j = 0u; j < params.count && tau < kShadowOpaque; ++j) {
+    vec3 tau = vec3(0.0);
+    for (uint j = 0u; j < params.count && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++j) {
         if (j == self) {
             continue;
         }
@@ -270,11 +305,12 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
         float ds = (span.y - span.x) / float(params.shadowSteps);
         uint table = kFactors ? volumes[j].lutOffsets.w : kNone;
         float low = volumes[j].lutLow.w, tableScale = volumes[j].lutScale.w;
-        float scale = ds * length(dir) * params.density * (table == kNone ? volumes[j].medium.x : 1.0);
+        vec3 scale = ds * length(dir) * params.density *
+                     (table == kNone ? volumes[j].scattering.rgb + volumes[j].absorption.rgb : vec3(1.0));
         vec3 safe = SafeDir(di);
         pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
         float k = 0.0;
-        while (k < float(params.shadowSteps) && tau < kShadowOpaque) {
+        while (k < float(params.shadowSteps) && min(min(tau.x, tau.y), tau.z) < kShadowOpaque) {
             vec3 q = oi + di * (span.x + (k + noise) * ds) + 0.5;  // nearest voxel: floor(q)
             uint level;
             pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, acc,
@@ -287,7 +323,7 @@ float OthersDepth(uint self, vec3 x, vec3 dir, float noise)
                 k = max(k + 1.0, ceil((min(min(exits.x, exits.y), exits.z) - span.x) / ds - noise));
                 continue;
             }
-            tau += (table == kNone ? max(v, 0.0) : ExtinctionTable(table, low, tableScale, max(v, 0.0))) * scale;
+            tau += (table == kNone ? vec3(max(v, 0.0)) : ExtinctionTableRgb(table, low, tableScale, max(v, 0.0))) * scale;
             k += 1.0;
         }
     }
@@ -310,6 +346,21 @@ vec3 Factor(uint i, uint k, vec3 p, float rho, uvec4 types, inout pnanovdb_reada
           : slot == 3u ? ReadRgb(types.w, emission, q).x : 0.0;
     }
     return Lut(volumes[i].lutOffsets[k], volumes[i].lutLow[k], volumes[i].lutScale[k], v);
+}
+
+// Light through optical depth `depth` with multiple scattering: octave o
+// weighs params.octaveLight^o and sees the depth times params.octaveDepth^o
+// (Wrenninge 2015, the phase function kept); one octave: exp(-depth).
+vec3 Octaves(vec3 depth)
+{
+    vec3 sum = vec3(0.0);
+    float a = 1.0, b = 1.0;
+    for (uint o = 0u; o < params.octaves; ++o) {
+        sum += a * exp(-b * depth);
+        a *= params.octaveLight;
+        b *= params.octaveDepth;
+    }
+    return sum;
 }
 
 // The density (bit 3 of mask m) times the factors (bit k: fk) it names.
@@ -426,25 +477,20 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 if (mutual) {
                     depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
-                light = dome * exp(-0.5 * depth);
+                light = dome * Octaves(0.5 * depth);
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
                 vec3 l = sun.position.xyz;
                 vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
                                                       params.shadowSteps);
-                // Octave i: light, optical depth and anisotropy times 1/2^i
-                // (multiple scattering; else the first only).
-                vec3 scattered = vec3(0.0);
-                for (float a = 1.0; a > (params.multiple != 0u ? 0.2 : 0.9); a *= 0.5) {
-                    scattered += a * exp(-depth * a) * Phase(dot(dir, l), g * a);
-                }
-                if (k == frame.counts.y) {
-                    scattered *= SunShadow(x, l);
-                }
                 if (mutual) {
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
-                    scattered *= exp(-OthersDepth(i, x, l * 1e4, shadowNoise));
+                    depth += OthersDepth(i, x, l * 1e4, shadowNoise);
+                }
+                vec3 scattered = Octaves(depth) * Phase(dot(dir, l), g);
+                if (k == frame.counts.y) {
+                    scattered *= SunShadow(x, l);
                 }
                 light += sun.color.rgb * sun.halfHeight.w * scattered;
             }
@@ -551,7 +597,7 @@ void main()
         if (params.scale == 1u) {
             discard;  // blending nothing over the image
         }
-        outColor = vec4(0.0);  // the half resolution target isn't cleared
+        Output(vec3(0.0), vec3(1.0));  // the half resolution target isn't cleared
         return;
     }
 
@@ -574,7 +620,8 @@ void main()
         vec4 fog = Fog(fragCoord, dot(origin + spans[k].x * dir - frame.cameraPos.xyz, frame.cameraForward.xyz));
         radiance = before + (radiance - before) * fog.a + (transmittanceBefore - transmittance) * fog.rgb;
     }
-    float mean = dot(transmittance, vec3(1.0 / 3.0));
-    outColor = vec4(radiance, 1.0 - mean);
-    outTransmittance = vec4(transmittance, mean);
+    Output(radiance, transmittance);
+#ifndef HALF
+    VolumeSplits(radiance, transmittance);
+#endif
 }

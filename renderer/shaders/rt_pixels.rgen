@@ -4,6 +4,7 @@
 #extension GL_GOOGLE_include_directive : require
 #define RAY_TRACING
 #include "frame.glsl"
+#include "tiles.glsl"
 #include "lights.glsl"
 #include "scene.glsl"
 #include "material.glsl"
@@ -50,6 +51,9 @@ const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
+    if (TileSkipped(pixel)) {
+        return;  // a stopped tile (tiles.glsl): its images keep an earlier sample's
+    }
     vec2 ndc = (vec2(pixel) + 0.5) / vec2(gl_LaunchSizeEXT.xy) * 2.0 - 1.0;
     vec4 nearPoint = frame.invViewProj * vec4(ndc, -1.0, 1.0), farPoint = frame.invViewProj * vec4(ndc, 1.0, 1.0);
     vec3 origin = nearPoint.xyz / nearPoint.w;

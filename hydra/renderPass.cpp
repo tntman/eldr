@@ -217,11 +217,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
-        for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            if (aovName == aov.name) {
-                extra[aov.kind] = b.renderBuffer;
-                huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
-            }
+        if (HdVkExtraAov aov; HdVkFindAov(aovName, &aov)) {
+            extra[aov.kind] = b.renderBuffer;
+            huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -444,24 +442,56 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lazyExtraAovs, &frame.lazyExtraAovs},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
-                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
+                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}, {t2.denoise, &frame.denoise},
+                                {t2.adaptiveTiles, &frame.adaptiveTiles}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
     }
-    // Volume Limit above 0, on a volume (HdVkVolume::Sync) or in the render
-    // settings, eldr:object:volumelimit set before karma:object:volumelimit:
-    // volumes scatter more than once there too.
+    // eldr:denoise, else Karma's: its viewport toggle (karma:hydra:denoise)
+    // or a "denoise" image filter (karma:global:imagefilter, its final
+    // renders), from the delegate's settings or the settings prim's. An
+    // eldr:denoise authored on the prim (false too) overrides them.
+    if (!frame.denoise && !_appliedSettings.count(t2.denoise)) {
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto karma = [&](const char *name) {
+            VtValue v = delegate->GetRenderSetting(TfToken(name));
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &settings = prim->GetNamespacedSettings();
+                const auto it = settings.find(name);
+                v = it != settings.end() ? it->second : VtValue();
+            }
+            return v;
+        };
+        const VtValue toggle = VtValue::Cast<bool>(karma("karma:hydra:denoise"));
+        const VtValue filter = VtValue::Cast<std::string>(karma("karma:global:imagefilter"));
+        frame.denoise = (!toggle.IsEmpty() && toggle.UncheckedGet<bool>()) ||
+                        (!filter.IsEmpty() && filter.UncheckedGet<std::string>().find("\"denoise\"") != std::string::npos);
+    }
+    // Volume Limit, the largest on a volume (HdVkVolume::Sync) or in the
+    // render settings (eldr:object:volumelimit set before
+    // karma:object:volumelimit): above 0 volumes scatter more than once.
     {
         static const TfToken eldrLimit("eldr:object:volumelimit"), karmaLimit("karma:object:volumelimit");
         auto number = [](const VtValue &v) {
             return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
                  : v.IsHolding<int>() ? double(v.UncheckedGet<int>()) : -1.0;
         };
-        double limit = number(delegate->GetRenderSetting(eldrLimit));
+        // husk hands the settings prim's attributes over as settings; usdview
+        // and usdrecord don't, so read the active prim too.
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto setting = [&](const TfToken &key) {
+            VtValue v = delegate->GetRenderSetting(key);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(key.GetString());
+                v = it != d.end() ? it->second : v;
+            }
+            return v;
+        };
+        double limit = number(setting(eldrLimit));
         if (limit < 0.0) {
-            limit = number(delegate->GetRenderSetting(karmaLimit));
+            limit = number(setting(karmaLimit));
         }
-        frame.volume.multipleScattering = frame.volume.multipleScattering || limit > 0.0 ||
-                                          _scene.AnyVolumeMultipleScattering();
+        frame.volume.volumeLimit = std::max(float(limit), _scene.MaxVolumeLimit());
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
@@ -892,6 +922,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    // Light groups: the tags the bindings and products asked for so far
+    // (HdVkFindAov) split the lights from this frame on.
+    if (_scene.SetLightGroups(HdVkLightGroups())) {
+        _scene.Commit(true);  // the frame's second: its motion stays
+    }
     // husk writes its colour AOV itself: it gets the linear beauty too.
     const bool huskLinear = !colorHalf.empty() && frame.linearBeauty;
     frame.linearColor = frame.linearBeauty && (_products.HasBeauty() || huskLinear);

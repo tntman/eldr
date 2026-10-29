@@ -28,6 +28,8 @@ uint32_t CryptomatteHash(const std::string &name);
 // distortion.
 class Aovs {
 public:
+    // Light groups (Karma's per-light LPEs, C.*<L.'tag'>): at most this many.
+    static constexpr uint32_t kMaxLightGroups = 8;
     enum Kind : uint32_t {
         kNormal,          // world-space shading normal, xyz
         kNormalEye,       // the same in camera space (Hydra's Neye)
@@ -46,8 +48,20 @@ public:
         // and, with Frame::splitDomeDirect (Karma's convention), the dome's
         // unblocked light; indirect the rest (GI, SSGI, probes,
         // reflections); combined: both.
+        // Diffuse leaves out subsurface, indirect glossy refraction (as
+        // Karma's C<RD> and C<RG>).
         kDirectDiffuse, kIndirectDiffuse, kCombinedDiffuse,
         kDirectGlossy, kIndirectGlossy, kCombinedGlossy,
+        kTransmission,    // what glass refracts (C<TG>.*L)
+        kSubsurface,      // the subsurface lobe's diffuse light, direct and indirect (C<TD>.*L)
+        kCoat,            // the coat's reflection, also in glossy (C<...'coat'>.*L)
+        kShadow,          // the direct light shadows took (shadow;C.*[LO]), holdouts' not
+        kHoldoutShadow,   // the same on holdouts, diffuse only (Karma's holdouts;shadow;CDL)
+        kVolume,          // volumes' light (CV.*L); the splits behind are attenuated by them
+        kLightGroup0,     // a light group's direct light (C.*<L.'tag'>), kMaxLightGroups of them
+        // The film's beauty before Frame::denoise, linear and exposed, rgba:
+        // the Renderer's own (no pass here), once the film converged.
+        kBeautyRaw = kLightGroup0 + kMaxLightGroups,
         kCount
     };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:
@@ -58,16 +72,25 @@ public:
     static bool Any(float *const targets[kCount]);
     static bool NeedsGeometry(float *const targets[kCount]);
     static bool NeedsSplits(float *const targets[kCount]);
+    // The splits image's layers for these targets: kSplitLayers plus a
+    // layer per light group up to the last one asked for; 4 (direct and
+    // indirect diffuse and glossy) without split AOVs.
+    static uint32_t SplitLayers(float *const targets[kCount]);
+    static constexpr uint32_t kSplitLayers = 10;
 
-    // The light splits' image (RGBA16F, layers direct diffuse, indirect
-    // diffuse, direct glossy, indirect glossy; GENERAL): made at this size
+    // The light splits' image (RGBA16F, GENERAL), layers: 0 direct diffuse
+    // (a: the fog's transmittance), 1 indirect diffuse (both with the
+    // subsurface light), 2 direct glossy, 3 indirect glossy (with what glass
+    // refracts); then (SplitLayers) 4 refracted, 5 and 6 the subsurface's
+    // direct and indirect, 7 coat, 8 shadow (a: 1 on holdouts), 9 volumes,
+    // 10... the light groups. Made at this size and layer count
     // (1 x 1 without splits) before the frame's descriptors are written;
     // ClearSplits zeroes it before the shading pass stores into it, with
     // `keepPrevious` first copying last frame's into PreviousSplitsView
     // (SHADER_READ_ONLY; SSR takes the light path intensities out of last
     // frame's colour by it). EnsureSplits returns true when it made them
     // anew (no previous splits then).
-    bool EnsureSplits(uint32_t width, uint32_t height);
+    bool EnsureSplits(uint32_t width, uint32_t height, uint32_t layers = 4);
     VkImageView SplitsView() const { return _splits.view; }
     VkImageView PreviousSplitsView() const { return _prevSplits.view; }
     void ClearSplits(VkCommandBuffer cmd, bool keepPrevious = false);
@@ -129,7 +152,7 @@ private:
     Image _normalSt, _albedo, _emission;  // the G-buffer
     Image _splits;                        // light splits, EnsureSplits
     Image _prevSplits;                    // last frame's, ClearSplits
-    uint32_t _splitsWidth = 0, _splitsHeight = 0;
+    uint32_t _splitsWidth = 0, _splitsHeight = 0, _splitsLayers = 0;
     // Accumulation state (Record).
     uint32_t _frames = 0, _accumWidth = 0, _accumHeight = 0;
     float _viewProj[16] = {};
