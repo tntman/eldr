@@ -193,6 +193,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((deformationBlur, "eldr:deformationBlur")) \
     ((dofResidualBlur, "eldr:dofResidualBlur")) \
     ((motionBlurResidual, "eldr:motionBlurResidual")) \
+    ((planarMotionBlur, "eldr:planarMotionBlur")) \
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
     ((volumeMutualShadows, "eldr:volumeMutualShadows")) ((volumeMultipleScattering, "eldr:volumeMultipleScattering"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \

@@ -3000,7 +3000,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool giSettling = frame.giPreconverge && frame.gi && _rt && !_rt->Converged();
     // Motion blur time samples: the film samples the shutter, so motion
     // no longer keeps it off.
-    const bool shutterOn = frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0;
+    // A nested render (Frame::nestedShutter) samples the time it is given.
+    const bool nestedShutter = frame.nestedShutter >= 0.0f;
+    const bool shutterOn =
+        nestedShutter || (frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0);
     const bool film = taa && frame.filmAccumulation && (!motionBlur || shutterOn) && !giSettling &&
                       (fresh || frame.finalQuality || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
@@ -3034,8 +3037,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // (0) to this one (1), until a change other than motion moves the
     // scene's pools. The camera moves for this frame (`frame`, before the
     // lens jitter), the scene in its pools (below).
-    const bool shutterCapture = shutterOn && motionHistory && (cameraMotion || gpu.moved) && gpu.instanceCapacity > 0 &&
-                                gpu.drawCount > 0;
+    // A nested render captures with its frame, and whenever it has no
+    // capture of its own (made after its frame's): the motion rows the
+    // capture reads stay until a change other than motion.
+    // ponytail: a change between the frame's capture and the nested one's
+    // would blur the reflection by the newer motion.
+    const bool shutterCapture = gpu.instanceCapacity > 0 && gpu.drawCount > 0 &&
+                                (nestedShutter ? frame.nestedCapture || !_shutter.valid
+                                               : shutterOn && motionHistory && (cameraMotion || gpu.moved));
     if (shutterCapture) {
         _shutter.valid = true;
         _shutter.version = gpu.version;
@@ -3062,7 +3071,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _shutter.valid = _shutter.valid && shutterOn && gpu.version == _shutter.version &&
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
                      gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
-    const bool timeSample = film && _shutter.valid;
+    const bool timeSample = (film || nestedShutter) && _shutter.valid;
     // Adaptive sampling stops a pixel on its own samples' variance, but
     // the error of time samples is structured: every sample moves the
     // whole scene, so a pixel the motion covers for 3% of the shutter
@@ -3097,7 +3106,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // ponytail: a box shutter.
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);
-    const float shutterT = timeSample ? 1.0f + frame.shutterOpen + frame.shutter * shutterU : 1.0f;
+    const float shutterT = !timeSample   ? 1.0f
+                         : nestedShutter ? frame.nestedShutter
+                                         : 1.0f + frame.shutterOpen + frame.shutter * shutterU;
     // Deformation blur: point velocities (mesh.vert) move by this.
     fd.deform[0] = shutterT - 1.0f;
     fd.deform[1] = frame.deformationBlur ? 1.0f : 0.0f;
@@ -3105,7 +3116,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.features[0] |= timeSample ? kFeatureTimeSample : 0;
     fd.deform[3] = timeSample ? float((_shutter.joints ? 1 : 0) | (_shutter.weights ? 2 : 0)) : 0.0f;
     Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
-    if (timeSample) {
+    if (timeSample && !nestedShutter) {  // a nested render's camera is at its time already
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
             lensed.viewProj[i] = shutterViewProj[i] + (appFrame.viewProj[i] - shutterViewProj[i]) * shutterT;
         }
@@ -3162,6 +3173,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         lensed.cameraPos[1] = eye.y + d.y;
         lensed.cameraPos[2] = eye.z + d.z;
         std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
+    }
+    // Planar mirrors: rendered with this sample's camera (its shutter time,
+    // its lens point), which shading looks them up by, and under time
+    // samples with the scene at its time (Frame::planarMotionBlur).
+    if (_reflections) {
+        const bool planarTime = timeSample && frame.planarMotionBlur;
+        _reflections->RenderPlanars(scene, frame, planarTime ? shutterT : -1.0f, planarTime && shutterCapture);
     }
     std::memcpy(jitteredViewProj, frame.viewProj, sizeof(jitteredViewProj));
     if (taa) {
@@ -4211,7 +4229,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // time, t of a frame's motion, so the stratum's shutter is divided by
     // t. Pixels whose stratum moves them under a pixel are left alone.
     // ponytail: filmSamples not a power of two leaves the strata uneven.
-    const bool residualBlur = timeSample && frame.motionBlurResidual && shutterT > 1e-3f;
+    const bool residualBlur = timeSample && film && frame.motionBlurResidual && shutterT > 1e-3f;
     Lens::Params lens{};
     if (dof || postBlur || residualBlur) {
         const Mat4 back = postBlur       ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj)
