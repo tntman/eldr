@@ -13,7 +13,8 @@
 // as its tint map would (ShadowTransmission), and the ray goes on; a cutout
 // blocks it where it has a surface (rt.rahit's test). Translucent BLASes
 // have no duplicate any-hit calls, so each surface counts once; a closed
-// mesh counts its two sides, as the tint maps do.
+// mesh counts its two sides, as the tint maps do. Under caustics a caster's
+// glass blocks them: its light arrives as caustic photons (caustics.glsl).
 hitAttributeEXT vec2 barycentrics;
 layout(location = 1) rayPayloadInEXT vec4 shadowRay;
 
@@ -35,6 +36,9 @@ void main()
     vec3 b = vec3(1.0 - barycentrics.x - barycentrics.y, barycentrics);
     vec2 uv = RtUv(RtVertex(slot, triangle, 0u)) * b.x + RtUv(RtVertex(slot, triangle, 1u)) * b.y +
               RtUv(RtVertex(slot, triangle, 2u)) * b.z;
+    if (translucent && Feature(kFeatureCaustics) && (draws[slot].caustics & 1u) != 0u) {
+        return;  // DrawInfo::caustics' caster bit
+    }
     if (translucent) {
         shadowRay.rgb *= clamp(ShadowTransmission(materials[material], uv), 0.0, 1.0);
         ignoreIntersectionEXT;

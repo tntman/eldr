@@ -70,6 +70,31 @@ bool HdVkRenderProducts::GetFraming(const HdRenderSettings *settings, Framing *f
     return false;
 }
 
+void HdVkRenderProducts::GetFilters(const HdRenderSettings *settings, std::string text[vkr::Aovs::kCount],
+                                    std::string var[vkr::Aovs::kCount])
+{
+    if (!settings) {
+        return;
+    }
+    for (const HdRenderSettings::RenderProduct &rp : settings->GetRenderProducts()) {
+        for (const HdRenderSettings::RenderProduct::RenderVar &rv : rp.renderVars) {
+            HdVkExtraAov extra;
+            if (!HdVkFindAov(AovName(rv), &extra)) {
+                continue;
+            }
+            for (const char *key : {"driver:parameters:aov:eldr:filter", "driver:parameters:aov:karma:filter"}) {
+                const auto it = rv.namespacedSettings.find(key);
+                const VtValue value = it == rv.namespacedSettings.end() ? VtValue() : VtValue::Cast<std::string>(it->second);
+                if (!value.IsEmpty()) {
+                    text[extra.kind] = value.UncheckedGet<std::string>();
+                    var[extra.kind] = rv.varPath.GetString();
+                    break;
+                }
+            }
+        }
+    }
+}
+
 void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t width, uint32_t height,
                                  vkr::Renderer::Targets *out)
 {

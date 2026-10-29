@@ -145,6 +145,13 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     // eldr:lightShapesVisible.
     light.cameraVisible = renderLightGeo();
     light.lpeTag = lpeTag();
+    // Caustic photons: inputs:eldr:light:contributescaustics when authored,
+    // else Karma's inputs:karma:light:contributescaustics, else on.
+    {
+        const VtValue eldr = sceneDelegate->GetLightParamValue(id, TfToken("inputs:eldr:light:contributescaustics"));
+        light.caustics = eldr.IsEmpty() ? param(TfToken("inputs:karma:light:contributescaustics"), true)
+                                        : eldr.GetWithDefault(true);
+    }
     light.diffuse = param(HdLightTokens->diffuse, 1.0f);
     light.specular = param(HdLightTokens->specular, 1.0f);
     if (_type == HdPrimTypeTokens->distantLight) {

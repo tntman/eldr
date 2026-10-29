@@ -161,13 +161,15 @@ constexpr uint32_t kFeatureSunRegion = 1u << 24;
 constexpr uint32_t kFeatureTimeSample = 1u << 25;
 // frame.glsl: GGX multiple-scattering compensation.
 constexpr uint32_t kFeatureMultiScatter = 1u << 26;
+// caustics.glsl: mesh.frag gathers caustic photons.
+constexpr uint32_t kFeatureCaustics = 1u << 27;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
                                        kFeatureRefraction |
                                        kFeatureTranslucentShadows | kFeatureSubsurface | kFeatureHoldouts |
                                        kFeatureSoftSun | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | kFeatureSunRegion |
-                                       kFeatureTimeSample;
+                                       kFeatureTimeSample | kFeatureCaustics;
 
 // A material sampler: trilinear, `anisotropy` (1: none), wrap modes
 // s + kWrapModes * t (Scene::Gpu::textureWraps).
@@ -406,6 +408,26 @@ void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
         const uint32_t x = d == 0 ? ReverseBits(index) : SobolBits(index, d - 1);
         out[d] = float(NestedUniformScramble(x, HashU32(seed * 8 + 1 + d)) >> 8) / 16777216.0f;
     }
+}
+
+// Rays this sample when an effect averages `rays` per sample (its count
+// times Frame's quality). Film: sample i takes floor((i + 1) n + c) -
+// floor(i n + c) (c just under 1, so sample 0 always traces): 0.5 traces
+// every other sample (0 rays: the effect keeps the last sample's image),
+// 1.5 alternates 2, 1. `first` is the film's index of this sample's first
+// ray, so Sobol points run on across samples. Else round(n), at least 1.
+uint32_t SampleRays(double rays, bool film, uint32_t sample, uint32_t max, uint32_t *first)
+{
+    rays = std::clamp(rays, 1.0 / 64.0, double(max));
+    if (!film) {
+        const uint32_t count = std::clamp(uint32_t(std::lround(rays)), 1u, max);
+        *first = sample * count;
+        return count;
+    }
+    constexpr double c = 0.999;
+    const double before = std::floor(sample * rays + c);
+    *first = uint32_t(before);
+    return std::min(uint32_t(std::floor((sample + 1.0) * rays + c) - before), max);
 }
 
 // Blue noise (Ulichney's void-and-cluster, Gaussian sigma 1.5, toroidal):
@@ -804,6 +826,8 @@ void Renderer::_CreateDescriptors()
         {86, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
         // Final gather (RayTracing::Work::gather), bound while on.
         {87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},  // and its denoise
+        // Caustic photons (RayTracing::Work::caustics, caustics.glsl), bound while on.
+        {92, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {60, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT},
         // Translucency (Transparency): the refraction background, the
         // translucent shadows' tint maps.
@@ -855,7 +879,7 @@ void Renderer::_CreateDescriptors()
     };
     constexpr uint32_t kBindings = uint32_t(std::size(bindings));
     VkDescriptorBindingFlags bindingFlags[kBindings] = {VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT};
-    std::fill(bindingFlags + 33, bindingFlags + 44, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86, 87
+    std::fill(bindingFlags + 33, bindingFlags + 45, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);  // 33, 52..59, 86, 87, 92
     std::fill(bindingFlags + kBindings - 4, bindingFlags + kBindings, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
     VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
     flags.bindingCount = kBindings;
@@ -3343,7 +3367,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refractionBounces = frame.rtRefractionBounces;
     rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
-    rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
+    // Rays per sample times the quality multipliers (SampleRays; 0: the
+    // effect keeps the last sample's image this sample).
+    // Not across time samples: the kept image would be of another time.
+    const bool spread = film && !timeSample;
+    uint32_t shadowFirst = 0, reflectionFirst = 0, gatherFirst = 0;
+    rt.shadowSamples = SampleRays(double(finalRun ? 1 : frame.rtShadowSamples) * frame.lightQuality, spread, sobolIndex,
+                                  16, &shadowFirst);
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
     // shadow (a texel per light), volumes are marched (per channel).
@@ -3353,12 +3383,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                            ? gpu.volumeCount : 0;
     rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
     rt.volumeDensity = std::max(frame.volume.density, 0.0f);
-    ScrambledSobol(sobolIndex, kSeedRtShadow, rt.shadowSample, 2);
-    rt.reflectionSamples = frame.rtReflectionSamples;
+    // One light point per traced sample (more rays per light: R2 steps from it).
+    ScrambledSobol(spread && frame.lightQuality * (finalRun ? 1 : frame.rtShadowSamples) < 1.0f ? shadowFirst : sobolIndex,
+                   kSeedRtShadow, rt.shadowSample, 2);
+    rt.reflectionSamples = SampleRays(double(frame.rtReflectionSamples) * frame.reflectQuality, spread, sobolIndex, 16,
+                                      &reflectionFirst);
     rt.sun = gpu.shadowLight;
     rt.gi = rtScene && frame.gi;
     rt.giProbes = frame.giProbes;
-    rt.giRays = frame.giRays;
+    rt.giRays = uint32_t(std::lround(double(frame.giRays) * std::max(frame.diffuseQuality, 0.0f)));  // clamped in Prepare
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     rt.giRelocation = frame.giRelocation;
@@ -3368,14 +3401,52 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.gatherDistance = frame.finalGatherDistance;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
-    rt.gatherRays = std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays);
+    rt.gatherRays = SampleRays(double(std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays)) * frame.diffuseQuality, spread,
+                               sobolIndex, kMaxGatherRays, &gatherFirst);
     for (uint32_t i = 0; i < rt.gatherRays; ++i) {
-        ScrambledSobol(sobolIndex * rt.gatherRays + i, kSeedRtGather, rt.gatherSamples[i], 2);
+        ScrambledSobol(gatherFirst + i, kSeedRtGather, rt.gatherSamples[i], 2);
     }
-    // Under eldr:denoise OIDN gets the gather's noise uncorrelated (it keeps
-    // the spatial filter's blotches as texture).
-    rt.gatherDenoise = frame.denoise ? 0.0f : frame.finalGatherDenoise;
+    // Per-effect denoise: full on the film's first sample, fading out
+    // linearly over effectDenoiseSamples (none after), so few samples are
+    // clean while the converged film keeps the unfiltered average.
+    // ponytail: a fixed fade per sample count; a per-pixel one by the
+    // film's variance would stop where each pixel has converged.
+    const float denoiseFade =
+        film && frame.effectDenoiseSamples > 0
+            ? std::clamp(1.0f - float(_filmSamples - 1) / float(frame.effectDenoiseSamples), 0.0f, 1.0f)
+            : 1.0f;
+    // Under eldr:denoise OIDN gets the effects' noise uncorrelated (it keeps
+    // the spatial filters' blotches as texture): none of them run.
+    const float effectDenoise = frame.denoise ? 0.0f : denoiseFade;
+    rt.gatherDenoise = frame.finalGatherDenoise * effectDenoise;
+    constexpr float kShadowDenoiseRadius = 3.0f;  // pixels, on the first sample
+    rt.shadowDenoise = frame.rtShadowDenoise ? kShadowDenoiseRadius * effectDenoise : 0.0f;
+    rt.reflectionDenoise = frame.rtReflectionDenoise ? effectDenoise : 0.0f;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
+    // Caustics: in final quality (or always), with casters and lights that
+    // send photons. Progressive photon mapping (Knaus and Zwicker 2011):
+    // film sample i gathers within r_i, r_(i+1)^2 = r_i^2 (i + a) / (i + 1),
+    // a = 2/3; the film's average of the samples converges.
+    rt.caustics = rtScene && gpu.causticMin[0] <= gpu.causticMax[0] && !gpu.causticLights.empty() &&
+                  (frame.caustics >= 2 || (frame.caustics == 1 && film && _filmFinal));
+    if (rt.caustics) {
+        rt.causticPhotons = frame.causticsPhotons;
+        rt.causticLights = gpu.causticLights;
+        float diagonal = 0.0f, extent = 0.0f;
+        for (int k = 0; k < 3; ++k) {
+            rt.causticSphere[k] = 0.5f * (gpu.causticMin[k] + gpu.causticMax[k]);
+            diagonal += (gpu.causticMax[k] - gpu.causticMin[k]) * (gpu.causticMax[k] - gpu.causticMin[k]);
+            extent += (gpu.boundsMax[k] - gpu.boundsMin[k]) * (gpu.boundsMax[k] - gpu.boundsMin[k]);
+        }
+        rt.causticSphere[3] = std::max(0.5f * std::sqrt(diagonal), 1e-4f);
+        rt.sceneExtent = std::sqrt(extent);
+        float r2 = frame.causticsRadius > 0.0f ? frame.causticsRadius * frame.causticsRadius
+                                                : 4e-4f * rt.causticSphere[3] * rt.causticSphere[3];
+        for (uint32_t i = 1; film && i < _filmSamples; ++i) {
+            r2 *= (float(i) + 2.0f / 3.0f) / float(i + 1);
+        }
+        rt.causticRadius = std::sqrt(r2);
+    }
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
@@ -3438,7 +3509,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                           shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
-                      (rt.gi ? kFeatureGi : 0);
+                      (rt.gi ? kFeatureGi : 0) | (rt.caustics ? kFeatureCaustics : 0);
     fd.counts[1] = shadows || rtSun ? gpu.shadowLight : kNone;
     // Soft sun shadows: for a sun with an angle, from its cascades.
     // Jittered, the cascades are looked up hard (the bit stays: the same
@@ -3530,7 +3601,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
-    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction;
+    const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics;
     // Time samples move the scene without a new version; the TLAS follows
     // (and once more when they end).
     rt.moving = timeSample || _shutterMoved;
@@ -4090,11 +4161,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
-    // SSGI replaces it (its visibility is the AO).
+    // SSGI replaces it (its visibility is the AO). Directions: times the diffuse quality.
+    const uint32_t aoSlices = std::clamp(uint32_t(std::lround(frame.aoSlices * frame.diffuseQuality)), 1u, 8u);
     if (ssgi && draw) {
         _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius,
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
-                         std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
+                         aoSlices, std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid,
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
@@ -4106,7 +4178,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,
                      frame.sampleDimensions ? dims[kDimAo] : float(sample + 1),
-                     std::clamp(frame.aoSlices, 1u, 8u));
+                     aoSlices);
         pass("ambientOcclusion");
     } else {
         _gtao.Clear(_cmd);
@@ -4420,6 +4492,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             ++_filmStamp;
             const bool tileSkip = frame.adaptiveTiles && _filmAdaptive && filmMode == 0 &&
                                   _filmSamples > std::max(frame.adaptiveMinSamples, 2u) && !refraction && !dof &&
+                                  !rt.caustics &&  // ponytail: their radius still shrinks where the noise settled
                                   !(draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty());
             fd.tiles[0] = tileSkip ? _filmStamp - 1 : 0;
             fd.tiles[1] = _taa.TilesAcross();
@@ -4579,6 +4652,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
         params.filmRadius = filmRadius;
         params.filmWeights = _taa.FilmWeights();
+        std::copy(out.aovFilters, out.aovFilters + Aovs::kCount, params.filters);
+        std::copy(out.aovFilterRadius, out.aovFilterRadius + Aovs::kCount, params.filterRadius);
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(aovTargets) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {
@@ -4996,10 +5071,14 @@ void Renderer::Read(const Targets &out)
 void Renderer::_FillRawBeauty(const Targets &out) const
 {
     float *raw = out.aovs[Aovs::kBeautyRaw];
-    if (!raw || _denoiseState != 2 || _rawBeauty.size() != size_t(_outWidth) * _outHeight * 4) {
+    if (!raw) {
         return;
     }
     const uint32_t n = out.aovComponents[Aovs::kBeautyRaw] ? out.aovComponents[Aovs::kBeautyRaw] : 4;
+    if (_denoiseState != 2 || _rawBeauty.size() != size_t(_outWidth) * _outHeight * 4) {
+        std::fill(raw, raw + size_t(_outWidth) * _outHeight * n, 0.0f);  // not yet (or no film): 0, as all AOVs
+        return;
+    }
     for (size_t p = 0; p < size_t(_outWidth) * _outHeight; ++p) {
         for (uint32_t c = 0; c < n; ++c) {
             raw[p * n + c] = c < 4 ? HalfToFloat(_rawBeauty[p * 4 + c]) * (c < 3 ? _rawExposure : 1.0f) : 0.0f;

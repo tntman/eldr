@@ -33,11 +33,14 @@ REFS = os.environ.get("ELDR_REFS", r"E:\eldr-refs")
 HFS = os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects Software\Houdini 22.0.466")
 BASELINE = os.path.join(HERE, "karma_golden.json")
 W, H, SPP = 320, 180, 256
-SPP_SCENE = {"emissive": 2048}  # small emitters: Karma Path Traced is noisy at 256
+SPP_SCENE = {"emissive": 2048, "caustics": 1024}  # small emitters, caustics: Karma Path Traced is noisy at 256
+# Per scene settings for both renderers: caustics without Karma's colour limit (it clamps every sample that sees
+# the sun through the glass, so its caustics would be a fraction of the light's).
+EXTRA_SCENE = {"caustics": "custom float karma:global:colorlimit = 100000"}
 CELLS, REGIONS = (32, 18), (4, 4)
-# lighting/exposure, materials, volumes, transmission, displacement, SSS
+# lighting/exposure, materials, volumes, transmission, displacement, SSS, caustics
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
-          "subsurface"]
+          "subsurface", "caustics"]
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
@@ -48,9 +51,11 @@ def scene_path(name):
     return os.path.join(HERE, "scenes", name + ".usda").replace("\\", "/")
 
 
-def sha1(path):
+def sha1(path, crlf=False):
+    # Line endings normalised: git may check the scene out with CRLF.
     with open(path, "rb") as f:
-        return hashlib.sha1(f.read()).hexdigest()
+        data = f.read().replace(b"\r\n", b"\n")
+    return hashlib.sha1(data.replace(b"\n", b"\r\n") if crlf else data).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -95,7 +100,8 @@ def Scope "Render" {{
         custom string eldr:tonemapper = "none"
         custom bool eldr:autoExposure = 0
         custom float eldr:bloomIntensity = 0
-        custom bool eldr:domeCameraVisible = 0{product}
+        custom bool eldr:domeCameraVisible = 0
+        {EXTRA_SCENE.get(name, "")}{product}
     }}
 }}
 """)
@@ -172,7 +178,7 @@ def compare(names, exrinfo, update):
         if not ref or not os.path.exists(karma):
             print("%-12s no reference: skipped" % name)
             continue
-        if ref["sha1"] != sha1(scene_path(name)):
+        if ref["sha1"] not in (sha1(scene_path(name)), sha1(scene_path(name), crlf=True)):
             print("%-12s scene changed since its reference: skipped (rerun tests/karma_refs.py --scenes %s)"
                   % (name, name))
             continue
