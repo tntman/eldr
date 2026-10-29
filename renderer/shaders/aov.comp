@@ -46,8 +46,8 @@ const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, 
            kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u, kPositionWorld = 9u, kDepth = 10u,
            kDiffuseAlbedo = 11u, kDirectDiffuse = 12u, kIndirectDiffuse = 13u, kCombinedDiffuse = 14u,
            kDirectGlossy = 15u, kIndirectGlossy = 16u, kCombinedGlossy = 17u, kTransmission = 18u,
-           kSubsurface = 19u, kCoat = 20u, kShadow = 21u, kHoldoutShadow = 22u, kVolume = 23u, kLightGroup0 = 24u;
-const int kGroupLayer = 10;  // Aovs::kSplitLayers
+           kSubsurface = 19u, kCoat = 20u, kShadow = 21u, kHoldoutShadow = 22u, kVolume = 23u, kCaustics = 24u, kLightGroup0 = 25u;
+const int kGroupLayer = 11;  // Aovs::kSplitLayers
 
 vec3 OctDecode(vec2 e)
 {
@@ -97,6 +97,7 @@ vec3 Colour(ivec2 q)
         return (s.a > 0.5) == (pc.kind == kHoldoutShadow) ? s.rgb : vec3(0.0);
     }
     case kVolume: return Split(q, 9).rgb;
+    case kCaustics: return Split(q, 10).rgb;
     case kDiffuseAlbedo: {  // base colour * (1 - metallic)
         vec4 a = texelFetch(albedo, q, 0);
         return a.rgb * (1.0 - a.a);

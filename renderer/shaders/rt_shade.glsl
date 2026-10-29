@@ -3,6 +3,7 @@
 // material.glsl, rt.glsl, gi.glsl and volume.glsl.
 
 layout(set = 0, binding = 5) uniform samplerCube envCube;
+#include "caustics.glsl"
 
 layout(location = 0) rayPayloadEXT RtHit hit;
 layout(location = 1) rayPayloadEXT vec4 shadowRay;  // rt_shadow.rmiss, rt_shadow.rahit
@@ -261,6 +262,9 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     if ((frame.features.x & kFeatureGi) != 0u) {
         vec4 gi = GiIrradiance(p, n, -dir);
         indirect = mix(indirect, gi.rgb, gi.a);
+    }
+    if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
+        indirect += CausticDiffuse(p, n);  // seen in reflections, through glass (a pool's floor), by GI
     }
     vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
     radiance = BrightnessClamp(radiance, frame.lightClamp.y);

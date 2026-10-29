@@ -13,7 +13,7 @@ from .tooltips import Tooltips
 GROUPS = [
     ("Final render", True,
      "finalQuality filmSamples adaptiveFinalThreshold denoise diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
-     "finalShadows rtRefraction finalGather motionBlur "
+     "finalShadows rtRefraction finalGather caustics motionBlur "
      "motionBlurTimeSamples depthOfField"),
     ("Lighting and GI", True,
      "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
@@ -26,7 +26,7 @@ GROUPS = [
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise effectDenoiseSamples ssgiSteps "
+     "finalGatherRays finalGatherDenoise effectDenoiseSamples causticsPhotons causticsRadius ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
      "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
     ("Advanced: Shadows", False,

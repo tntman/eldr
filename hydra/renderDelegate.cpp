@@ -77,6 +77,9 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
         // The beauty before eldr:denoise (once the film converged).
         {k.beautyRaw, A::kBeautyRaw, HdFormatFloat32Vec4},
+        // Caustic photons' light (eldr:caustics), part of indirect diffuse;
+        // Karma has no AOV of its own for it (its LPEs below).
+        {k.caustics, A::kCaustics, HdFormatFloat32Vec3},
     };
     return aovs;
 }
@@ -123,6 +126,9 @@ int LpeKind(std::string e)
         {"C<TD>.*L", A::kSubsurface}, {"C<TD>.*[LO]", A::kSubsurface},
         {"C<...'coat'>.*L", A::kCoat}, {"C<RG'coat'>.*L", A::kCoat},
         {"CV.*L", A::kVolume}, {"CVL", A::kVolume}, {"CV.*[LO]", A::kVolume},
+        // Caustics: diffuse seen, then glass or metal on the way to a light.
+        {"C<RD>.+<TS>L", A::kCaustics}, {"C<RD><TS>.*L", A::kCaustics}, {"C<RD>[<TS><RS>].*L", A::kCaustics},
+        {"C<RD>[<TS><RS>]+L", A::kCaustics},
         {"shadow;C.*[LO]", A::kShadow}, {"shadow;C.*L", A::kShadow},
         {"holdouts;shadow;CDL", A::kHoldoutShadow}, {"holdouts;shadow;C.*[LO]", A::kHoldoutShadow},
     };
@@ -448,6 +454,9 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
         {"GI Probe Relocation (out of walls)", t2.giRelocation, VtValue(frame.giRelocation)},
         {"Final Gather (0 off, 1 final quality, 2 always)", t2.finalGather, VtValue(int(frame.finalGather))},
+        {"Caustics (0 off, 1 final quality, 2 always; caster objects)", t2.caustics, VtValue(int(frame.caustics))},
+        {"Caustic Photons per Light and Sample", t2.causticsPhotons, VtValue(int(frame.causticsPhotons))},
+        {"Caustic Gather Radius (world units, 0 = auto)", t2.causticsRadius, VtValue(frame.causticsRadius)},
         {"Final Gather Distance (world units)", t2.finalGatherDistance, VtValue(frame.finalGatherDistance)},
         {"Final Gather Rays per Pixel (1-16)", t2.finalGatherRays, VtValue(int(frame.finalGatherRays))},
         {"Final Gather Denoise (0-1)", t2.finalGatherDenoise, VtValue(frame.finalGatherDenoise)},

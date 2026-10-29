@@ -213,7 +213,10 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
     ((adaptiveTiles, "eldr:adaptiveTiles")) \
-    ((lightQuality, "eldr:lightQuality")) ((diffuseQuality, "eldr:diffuseQuality")) ((reflectQuality, "eldr:reflectQuality")) ((sssQuality, "eldr:sssQuality")) ((volumeQuality, "eldr:volumeQuality"))
+    ((lightQuality, "eldr:lightQuality")) ((diffuseQuality, "eldr:diffuseQuality")) ((reflectQuality, "eldr:reflectQuality")) ((sssQuality, "eldr:sssQuality")) ((volumeQuality, "eldr:volumeQuality")) \
+    ((caustics, "eldr:caustics")) \
+    ((causticsPhotons, "eldr:causticsPhotons")) \
+    ((causticsRadius, "eldr:causticsRadius"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -232,7 +235,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
     ((baseColor, "export_basecolor"))                       \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))           \
-    ((beautyRaw, "eldr:beautyRaw"))
+    ((beautyRaw, "eldr:beautyRaw"))                         \
+    ((caustics, "caustics"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 

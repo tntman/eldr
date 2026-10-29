@@ -2066,6 +2066,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                    std::numeric_limits<float>::lowest()};
     bool anyDrawable = false, facing = false;
+    float casterLo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max()};
+    float casterHi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest()};
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
@@ -2151,6 +2155,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         kind[slot] |= variant;
         d.primId = m.primId;
         d.holdout = m.holdout ? 1u : 0u;
+        // Caustics: casters pass photons on, receivers gather them (by
+        // default every mesh but refracting glass).
+        const bool receives = m.causticsReceive >= 0 ? m.causticsReceive != 0 : !(m.material && m.material->Transmits());
+        d.caustics = (drawable && m.causticsCast ? 1u : 0u) | (receives ? 2u : 0u);
+        d.causticsRoughness = m.causticsRoughness;
         _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
         d.visible = drawable ? m.rays : 0u;  // cull.comp, tlas.comp
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
@@ -2190,9 +2199,15 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             for (int k = 0; k < 3; ++k) {
                 lo[k] = std::min(lo[k], m._worldMin[k]);
                 hi[k] = std::max(hi[k], m._worldMax[k]);
+                if (m.causticsCast) {
+                    casterLo[k] = std::min(casterLo[k], m._worldMin[k]);
+                    casterHi[k] = std::max(casterHi[k], m._worldMax[k]);
+                }
             }
         }
     }
+    std::copy(casterLo, casterLo + 3, _gpu.causticMin);
+    std::copy(casterHi, casterHi + 3, _gpu.causticMax);
     // A call of 500 M triangles takes ~0.1 s on a GTX 1080 Ti; Moana's view
     // draws 11 G, which as one call ran ~2.2 s and reset the driver.
     // ponytail: a single slot over the budget stays one call; splitting it
@@ -2446,6 +2461,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.shadowLight = kNone;
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
+    _gpu.causticLights.clear();
     _gpu.sunRegion = false;
     // A light's group + 1 (0: none), as color.w's bits 2 and up.
     const auto group = [&](const std::string &tag) {
@@ -2463,6 +2479,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             // Bit 1: light_shapes.frag draws it; bit 2: it casts shadows (rt_shade.glsl's ShadeHit).
             g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f) + 4.0f * group(l->lpeTag);
             g.shaping[3] = l->specular;
+            if (l->caustics && l->type != Light::Type::Cylinder) {
+                _gpu.causticLights.push_back(lightCount + localLightCount);
+            }
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
                     _gpu.shadowLight = lightCount;

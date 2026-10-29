@@ -28,6 +28,12 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
     vec4 denoise;        // x: traced shadows' filter radius in pixels (RtTraced), y: traced reflections'
                          // filter scale (RtReflection); 0: off
+    // Caustics (caustics.glsl): x this sample's gather radius, y the hash grid's cell size, z how far
+    // before the casters' sphere a sun's photons start.
+    vec4 caustics;
+    vec4 causticSphere;      // the casters' bounding sphere: centre, radius
+    uvec4 causticInfo;       // photons per light, lights, hash cells (a power of 2), photon capacity
+    uvec4 causticLights[2];  // the lights sending them (indices into lights[])
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
