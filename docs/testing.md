@@ -36,10 +36,13 @@ and sun), sunangle (sun and sky), mtlx (MaterialX standard_surface, UsdPreviewSu
 (transmission), volume, displacement, subsurface.
 
 Baseline of 2026-10-29 (Eldr / Karma 22.0.466): lights 0.99, step4 1.07, glass 0.96, subsurface 0.97,
-volume 1.12, mtlx 1.16, cornell 0.76, emissive 1.74, displacement 1.91, sunangle 2.27 (mean luminance
+volume 1.39 (1.12 before lane 30; its mald fell from 0.41 to 0.26 as the clouds now match; lum rose because darker clouds no longer offset the bare ground, see below), mtlx 1.16, cornell 0.76, emissive 1.74, displacement 1.91, sunangle 2.27 (mean luminance
 ratio; see `tests/karma_golden.json` for all metrics). In sunangle, the ground (displayColor 0.7, no
-material, under sun and sky) is 0.65 in Eldr, which is the Lambert value (0.68), and 0.28 in Karma. The
-likely cause is Karma's default material for prims without one; this has not been investigated.
+material, under sun and sky) is 0.65 in Eldr, which is the Lambert value (0.68), and 0.28 in Karma. The cause is Karma's surface for prims without a material (measured by lane 30): under the same sun a
+UsdPreviewSurface with diffuse 0.5 renders equally in both (0.270 Karma, 0.272 Eldr, Lambert 0.274),
+while bare displayColor 0.5 gives 0.110 in Karma. Karma does use displayColor, but scaled by about 0.4
+with a steeper falloff towards grazing light (about cos^1.45). That is not USD's displayColor fallback,
+so Eldr keeps Lambert of displayColor, as Storm does. Measure with materials bound when it matters.
 
 The point is catching regressions and tracking the distance to Karma, not pixel equality: the grids are
 coarse enough that sample noise stays well under the tolerances.
