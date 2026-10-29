@@ -696,6 +696,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                                                 : int(number(t2.colorLimitShared, -1.0f));
         const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
         frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
+        frame.colorLimit = shared;  // camera-seen emission, as Karma's colorlimit
     }
     // Per-component quality (Karma's): eldr:*Quality, else Karma's on the
     // settings (husk) or the active settings prim (usdview), else 1. Rays
@@ -839,7 +840,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // Any may change the light table: commit once.
-    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
+    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
+                                                    frame.indirectClamp);
     const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes);
     if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive || lightOptions) {
         _scene.Commit(true);  // the frame's second: its motion stays

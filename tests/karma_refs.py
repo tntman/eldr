@@ -44,7 +44,42 @@ SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass",
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
-        "eldr:domeCameraVisible=false"]  # Karma hides domes from the camera (renderlightgeo 0)
+        "eldr:domeCameraVisible=false",  # Karma hides domes from the camera (renderlightgeo 0)
+        "eldr:gi=true"]  # Karma path traces: Eldr's final recipe with its bounce light
+# Karma's default diffuse limit is 1 bounce; Eldr's GI is every bounce. With 10, Karma's Cornell box matches
+# Eldr's within 3% (it is 1.27x Karma's default there). Part of every reference's hash.
+KARMA_ALL = "custom int karma:object:diffuselimit = 10"
+# Prims without a material get a plain UsdPreviewSurface of their displayColor in both renderers:
+# Karma shades bare prims as about 0.4 x displayColor with a steeper falloff (docs/testing.md), Eldr as
+# Lambert of displayColor (as Storm); the goldens compare materials, not that fallback.
+_BARE = """
+def Scope "goldenMtl" {{{mtls}
+}}{overs}"""
+_MTL = """
+    def Material "{name}" {{
+        token outputs:surface.connect = </goldenMtl/{name}/pbr.outputs:surface>
+        def Shader "pbr" {{
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = ({c}, {c}, {c})
+            token outputs:surface
+        }}
+    }}"""
+_BIND = """
+over "{prim}" (prepend apiSchemas = ["MaterialBindingAPI"]) {{
+    rel material:binding = </goldenMtl/{name}>
+}}"""
+
+
+def bare(binds):  # {prim: grey}
+    greys = sorted(set(binds.values()))
+    name = lambda c: "grey" + str(c).replace(".", "")
+    return _BARE.format(mtls="".join(_MTL.format(name=name(c), c=c) for c in greys),
+                        overs="".join(_BIND.format(prim=p, name=name(c)) for p, c in binds.items()))
+
+
+# displayColor 0.7 on the ground; the cubes and ball have none: a mid grey
+OVERS = {"sunangle": bare({"ground": 0.7, "postLeft": 0.5, "postRight": 0.5, "beam": 0.5, "ball": 0.5}),
+         "displacement": bare({"ground": 0.5})}
 
 
 def scene_path(name):
@@ -52,10 +87,13 @@ def scene_path(name):
 
 
 def sha1(path, crlf=False):
-    # Line endings normalised: git may check the scene out with CRLF.
+    # Line endings normalised: git may check the scene out with CRLF. The scene's golden overs count too:
+    # changing either needs a new reference.
     with open(path, "rb") as f:
         data = f.read().replace(b"\r\n", b"\n")
-    return hashlib.sha1(data.replace(b"\n", b"\r\n") if crlf else data).hexdigest()
+    name = os.path.splitext(os.path.basename(path))[0]
+    extra = KARMA_ALL + OVERS.get(name, "")
+    return hashlib.sha1((data.replace(b"\n", b"\r\n") if crlf else data) + extra.encode()).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -101,9 +139,12 @@ def Scope "Render" {{
         custom bool eldr:autoExposure = 0
         custom float eldr:bloomIntensity = 0
         custom bool eldr:domeCameraVisible = 0
+        custom bool eldr:gi = 1
+        {KARMA_ALL}
         {EXTRA_SCENE.get(name, "")}{product}
     }}
 }}
+{OVERS.get(name, "")}
 """)
     return path.replace("\\", "/")
 
@@ -122,7 +163,8 @@ def render_refs(names):
     work = tempfile.mkdtemp(prefix="eldr_karma_refs_")
     manifest.update(husk=husk, houdini=os.path.basename(HFS), resolution=[W, H],
                     settings={"renderer": "BRAY_HdKarma", "karma:global:convergence_mode": "Path Traced",
-                              "karma:global:pathtracedsamples": SPP, "per scene": SPP_SCENE})
+                              "karma:global:pathtracedsamples": SPP, "karma:object:diffuselimit": 10,
+                              "per scene": SPP_SCENE})
     for name in names:
         exr = os.path.join(REFS, name + ".exr")
         t = time.time()

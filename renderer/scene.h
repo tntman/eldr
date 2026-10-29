@@ -741,8 +741,12 @@ public:
     // small rigid mesh whose material emits at least `threshold` (a constant
     // emissiveColor's brightest channel, scene-referred radiance) also
     // lights the scene as a sphere light around it, of the same power
-    // (pi x radiance x area), casting shadows. Returns whether it changed.
-    bool SetEmissiveLights(bool on, float threshold);
+    // (pi x radiance x area), casting shadows. Its light on a surface is
+    // capped where radiance x albedo passes `limit` (brightest channel,
+    // keeping hue; 0: off): Karma reaches emitters by bounce rays only and
+    // clamps each such sample at its indirect colour limit.
+    // Returns whether it changed.
+    bool SetEmissiveLights(bool on, float threshold, float limit = 0.0f);
     // Dome sun extraction: the dome texture's light over `threshold` (scene
     // radiance, luminance) leaves its image-based lighting and lights the
     // scene as a distant light with shadows, of the texels' size. Returns
@@ -1048,6 +1052,7 @@ private:
     uint32_t _tagMask = ~0u;
     bool _emissiveLights = true;
     float _emissiveThreshold = 4.0f;
+    float _emissiveLimit = 0.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<float> _keptMotion;            // the last Commit's motion rows (Commit's keepMotion)
     std::vector<uint32_t> _keptMotionBase;

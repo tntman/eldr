@@ -279,7 +279,8 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-        vec3 e = light.color.rgb * LightTint(light, p) * (formFactor * window * window * cone * light.halfHeight.w);
+        vec3 e = light.color.rgb * LightTint(light, p) *
+                 (formFactor * window * window * cone * light.halfHeight.w * EmitterClamp(light, albedo));
         if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(e.r, max(e.g, e.b)) > 0.0) {
             e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
             ++traced;

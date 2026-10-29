@@ -149,7 +149,8 @@ struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
     float focusTint[4] = {0, 0, 0, -1};  // w: rect/disk: the texture's bindless index (-1: none)
     float ies[4] = {1, 0, 0, -1};        // xyz: the light's +X (IES phi 0); w: the IES profile's bindless index (-1: none)
-    float link[4] = {0, -1, -1, 0};      // x: IES angle scale; y, z: light, shadow link bit (-1: everything)
+    float link[4] = {0, -1, -1, 0};      // x: IES angle scale; y, z: light, shadow link bit (-1: everything);
+                                         // w: an emissive mesh's bounce clamp (lights.glsl's EmitterClamp; 0: none)
 };
 
 constexpr VkBufferUsageFlags kPoolUsage =
@@ -481,11 +482,12 @@ uint32_t Scene::_LinkMask(const std::vector<uint32_t> &categories) const
     return mask;
 }
 
-bool Scene::SetEmissiveLights(bool on, float threshold)
+bool Scene::SetEmissiveLights(bool on, float threshold, float limit)
 {
-    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
+    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold || limit != _emissiveLimit;
     _emissiveLights = on;
     _emissiveThreshold = threshold;
+    _emissiveLimit = limit;
     return changed;
 }
 
@@ -499,6 +501,7 @@ struct Scene::Emitter {
     float radius;                          // sphere
     float thin[3], wide[3], high[3];       // flat: half axes, thin one the faces' normal
     float radiance[3];                     // of the light's surface
+    float scale = 1;                       // radiance over the mesh's emission (a sphere's is spread wider)
     float power;                           // luminous, for picking the brightest
 };
 
@@ -585,6 +588,7 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
                 for (int k = 0; k < 3; ++k) {
                     e.radiance[k] = emitted[k] * area / (4.0f * 3.14159265f * e.radius * e.radius);
                 }
+                e.scale = area / (4.0f * 3.14159265f * e.radius * e.radius);
             }
             e.power = luminance * area;
             found.push_back(e);
@@ -2640,6 +2644,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.color[3] = 2.0f;  // casts shadows; the mesh draws itself
             g.halfHeight[3] = 1.0f;
             g.shaping[0] = g.shaping[1] = 3.14159265f;  // no cone; specular multiplier 0
+            g.link[3] = _emissiveLimit > 0.0f ? _emissiveLimit * e.scale : 0.0f;  // lights.glsl's EmitterClamp
             Scene::Gpu::ShadowCaster c{};
             c.light = lightCount + localLightCount;
             c.coneAngle = 3.14159265f;

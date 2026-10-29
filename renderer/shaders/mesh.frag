@@ -579,7 +579,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     if (window <= 0.0 || d <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * window * window * LightIes(light, p);
+    vec3 radiance = light.color.rgb * (window * window * EmitterClamp(light, diffuseColor)) * LightIes(light, p);
     float cosOff = dot(-toLight / d, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
@@ -1168,6 +1168,7 @@ void main()
     vec3 f0 = base.metalW * base.metalF0 + base.dielW * base.dielF0;  // hair, multi-bounce, toon
     vec3 FssEss = BaseAlbedo(NoV, dfg);
 
+    emissive = BrightnessClamp(emissive, frame.lightClamp.z);  // Karma's colour limit (40 shows as 20)
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
         Light light = lights[i];

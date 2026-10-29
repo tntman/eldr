@@ -50,7 +50,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     vec4 sampleDims[3];
     uvec4 sampleInfo;
     uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them, y 1 = the dome's visible light is direct, z the dome's light group + 1
-    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
+    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit, z: camera-seen emission's
+                         // (Karma's colour limit; brightest channel; 0: off)
     vec4 screenTrace;    // x: 1 = thickness estimator in SSR (Frame::ssgiThickness), y: back-face hits'
                          // share of light (Frame::screenBackface; 1: off), z: 1 = SSR hits
                          // footprint-filtered (Frame::ssrHitFilter, the history's mips)
