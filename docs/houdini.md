@@ -63,6 +63,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 | | Hair Shading | `bool primvars:eldr:hair` | Eldr only |
 | Reflections | Reflection Probe, Planar Reflection | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | Eldr only |
 | Volumes | Volume Limit | `float primvars:eldr:object:volumelimit` | Above 0, the volume scatters more than once, fitted to Karma at that limit |
+| | Volume Velocity Blur Scale | `float primvars:eldr:object:volumevblurscale` | Multiplies the blur along `vel` of a volume with Velocity Blur on (default 1) |
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
@@ -115,13 +116,14 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 | Saved stages (USD ROP) | Volumes go to `<layer>.volumes/N.vdb` and `N.bgeo.sc`; husk renders them |
 
 - Field numbering follows SOP Import: a `HoudiniFieldAsset`'s `fieldIndex` is the primitive number; an `OpenVDBAsset`'s counts VDB primitives named `fieldName`.
-- Eldr binds fields by name. Without a volume material it shades `density` only, as Karma (`eldr:volumeDefaultFields`: also `temperature`, `Cd`, `emission`). Material Library networks of `mtlxvolume`/`anisotropic_vdf` or `kma_volume` with constants, `geompropvalue` and `multiply` are read, and ramps and remaps of a field: MaterialX's `mtlxremap`, `mtlxrange`, `mtlxramp`, `mtlxramplr`/`tb`, math, and Houdini's MtlX Color/Float Ramp and Cubic Ramp and Karma Ramp Const (see the features page). Feed a ramp's `texcoord` from the field through MtlX Combine2. The Karma Pyro Shader is not read (Eldr renders the volume as without a material and warns). SOP Import names a nameless volume's field `field_0`: give volumes a `name` (Name SOP, Pyro's `density`).
+- Eldr binds fields by name. Without a volume material it shades `density` only, as Karma (`eldr:volumeDefaultFields`: also `temperature`, `Cd`, `emission`). Material Library networks of `mtlxvolume`/`anisotropic_vdf` or `kma_volume` with constants, `geompropvalue` and `multiply` are read, and ramps and remaps of a field: MaterialX's `mtlxremap`, `mtlxrange`, `mtlxramp`, `mtlxramplr`/`tb`, math, and Houdini's MtlX Color/Float Ramp and Cubic Ramp and Karma Ramp Const (see the features page). Feed a ramp's `texcoord` from the field through MtlX Combine2. The Karma Pyro Shader is not read (Eldr renders the volume as without a material and warns). SOP Import names a nameless volume's field `field_0`; without a `density` field Eldr shades it as the density.
+- Velocity blur: a volume with Velocity Blur on (Render Geometry Settings, `karma:object:vblur`) blurs along its `vel` field in motion blur time samples: a vector VDB, or Houdini's `vel.x`, `vel.y`, `vel.z` volumes. Karma's Lookup Offset mode (Karma's default is Lattice Deformation); Volume Velocity Blur Scale multiplies it.
 
 | Limitation | Detail |
 |---|---|
 | `op:` paths | Resolve only in the Houdini session holding the LOP network. husk on a USD file with `op:` paths warns "no locked SOP geometry" and skips the field: save with a USD ROP. |
-| Vector volumes | `vel.x/.y/.z` read as three float fields |
-| Conversion cost | Each Houdini volume converts on every field sync |
+| Vector volumes | `vel.x/.y/.z` are read as a vector for velocity blur only; other vector volumes (`Cd.x/.y/.z`) stay three float fields |
+| Conversion cost | A VDB primitive the SOP edit left alone isn't converted again (the same grid); a Houdini volume converts on every field sync |
 | Diagnostics | Tf warnings don't reach hython's console; a missing field shows as a missing volume |
 
 ## husk, AOVs and Cryptomatte

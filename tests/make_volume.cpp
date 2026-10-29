@@ -9,6 +9,10 @@
 // make_volume --sequence <dir> <frames> instead writes <dir>/seq_0000.vdb ...:
 // a density ball per frame, growing (a new bbox and size each frame), for
 // test_volume_sequence.py.
+// make_volume --moving <out.vdb>: a density ball of radius 0.5 (density 4)
+// moving 24 units a second along x, its velocity as a Vec3f grid "vel" and
+// as Houdini's three float volumes "vel.x", "vel.y", "vel.z", active a unit
+// around it, for test_volume_motion.py.
 #include <openvdb/openvdb.h>
 #include <openvdb/tools/Prune.h>
 
@@ -89,10 +93,48 @@ void WriteSequence(const std::string &dir, int frames)
     }
 }
 
+void WriteMoving(const std::string &path)
+{
+    openvdb::FloatGrid::Ptr ball = Grid("density"), vx = Grid("vel.x"), vy = Grid("vel.y"), vz = Grid("vel.z");
+    openvdb::Vec3fGrid::Ptr vel = openvdb::Vec3fGrid::create(openvdb::Vec3f(0.0f));
+    vel->setName("vel");
+    vel->setTransform(openvdb::math::Transform::createLinearTransform(kVoxel));
+    auto b = ball->getAccessor(), x = vx->getAccessor(), y = vy->getAccessor(), z = vz->getAccessor();
+    auto v = vel->getAccessor();
+    const int n = int(1.5 / kVoxel);
+    for (int i = -n; i <= n; ++i) {
+        for (int j = -n; j <= n; ++j) {
+            for (int k = -n; k <= n; ++k) {
+                if (std::sqrt(double(i * i + j * j + k * k)) * kVoxel <= 0.5) {
+                    b.setValue({i, j, k}, 4.0f);
+                }
+                v.setValue({i, j, k}, openvdb::Vec3f(24.0f, 0.0f, 0.0f));
+                x.setValue({i, j, k}, 24.0f);
+                y.setValue({i, j, k}, 0.0f);
+                z.setValue({i, j, k}, 0.0f);
+            }
+        }
+    }
+    // Constant blocks become tiles: a few kilobytes (tests/scenes/volume_moving.vdb).
+    for (const openvdb::GridBase::Ptr &grid : {openvdb::GridBase::Ptr(ball), openvdb::GridBase::Ptr(vel),
+                                               openvdb::GridBase::Ptr(vx), openvdb::GridBase::Ptr(vy),
+                                               openvdb::GridBase::Ptr(vz)}) {
+        grid->pruneGrid();
+    }
+    openvdb::io::File file(path);
+    file.write({ball, vel, vx, vy, vz});
+    file.close();
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
+    if (argc == 3 && std::string(argv[1]) == "--moving") {
+        openvdb::initialize();
+        WriteMoving(argv[2]);
+        return 0;
+    }
     if (argc == 4 && std::string(argv[1]) == "--sequence") {
         openvdb::initialize();
         WriteSequence(argv[2], std::atoi(argv[3]));

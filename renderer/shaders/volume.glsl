@@ -26,6 +26,9 @@ struct Volume {
     uvec4 lutSlots;        // the grid each factor reads (as grids; 4: none, it reads 0)
     vec4 lutLow;           // table index = (value - low) * scale
     vec4 lutScale;
+    uvec4 velocity;        // velocity grids (Vec3f: x; float components: xyz); w: 0 none, 1 Vec3f, 3 floats
+    vec4 toVelocity[3];    // density index -> velocity index
+    vec4 advect[3];        // velocity -> density index offset per frame
 };
 layout(std430, set = 0, binding = 65) readonly buffer Volumes { Volume volumes[]; };
 
@@ -97,6 +100,36 @@ pnanovdb_readaccessor_t Accessor(uint offset)
     return acc;
 }
 
+// Velocity blur (Karma's Lookup Offset): in a motion blur time sample
+// (frame.deform.z, its offset from this frame frame.deform.x in frames)
+// volume i's fields at density index p are read at p - vel(p) * t, the
+// velocity the nearest voxel's.
+bool Moving(uint i)
+{
+    return volumes[i].velocity.w != 0u && frame.deform.z > 0.0 && frame.deform.x != 0.0;
+}
+vec3 Advect(uint i, vec3 p)
+{
+    if (!Moving(i)) {
+        return p;
+    }
+    ivec3 q = ivec3(floor(Row3(volumes[i].toVelocity[0], volumes[i].toVelocity[1], volumes[i].toVelocity[2], p, 1.0)
+                          + 0.5));
+    uvec4 grids = volumes[i].velocity;
+    vec3 v;
+    if (grids.w == 1u) {
+        pnanovdb_readaccessor_t acc = Accessor(grids.x);
+        pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address(PNANOVDB_GRID_TYPE_VEC3F, buf, acc, q);
+        v = vec3(pnanovdb_read_float(buf, a), pnanovdb_read_float(buf, pnanovdb_address_offset(a, 4u)),
+                 pnanovdb_read_float(buf, pnanovdb_address_offset(a, 8u)));
+    } else {
+        pnanovdb_readaccessor_t x = Accessor(grids.x), y = Accessor(grids.y), z = Accessor(grids.z);
+        v = vec3(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, x, q), ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, y, q),
+                 ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, z, q));
+    }
+    return p - Row3(volumes[i].advect[0], volumes[i].advect[1], volumes[i].advect[2], v, 0.0) * frame.deform.x;
+}
+
 const uint kShadowSteps = 64u;     // per volume and shadow ray, at most
 const float kShadowOpaque = 6.9;  // optical depth of 1e-3 transmittance: nothing is left to dim
 
@@ -133,7 +166,7 @@ vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float
         pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
         for (uint k = 0u; k < steps && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++k) {
             float s = span.x + (float(k) + 0.5) * ds;
-            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0);
+            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(Advect(i, oi + di * s) + 0.5))), 0.0);
             vec3 e = (table == 0xFFFFFFFFu ? vec3(d) : ExtinctionTableRgb(table, low, scale, d)) * sigma;
             float m = dot(e, vec3(1.0 / 3.0));
             tau += e;
