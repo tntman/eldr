@@ -119,6 +119,9 @@ const uint32_t kShutterComp[] =
 const uint32_t kShadowTintFrag[] =
 #include "shadow_tint.frag.inc"
 ;
+const uint32_t kTranslucentPeelFrag[] =
+#include "translucent_peel.frag.inc"
+;
 const uint32_t kMatteFrag[] =
 #include "matte.frag.inc"
 ;
@@ -657,7 +660,7 @@ Renderer::~Renderer()
     for (uint32_t v = 0; v < kVariants; ++v) {
         for (VkPipeline p : {_prepassPipeline[v], _shadowPipeline[v], _prepassCutoutPipeline[v],
                              _shadowCutoutPipeline[v], _tintDepthPipeline[v], _tintColorPipeline[v],
-                             _mattePipeline[v]}) {
+                             _peelPipeline[v], _mattePipeline[v]}) {
             vkDestroyPipeline(_dev.device, p, nullptr);
         }
     }
@@ -821,6 +824,7 @@ void Renderer::_CreateDescriptors()
         {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},  // VolumePass::TranslucentLayers
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT | kRt},
@@ -937,6 +941,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     VkShaderModule graphLayersFrag = CreateShaderModule(device, kMeshGraphLayersFrag, sizeof(kMeshGraphLayersFrag));
     VkShaderModule maskFrag = CreateShaderModule(device, kMaskFrag, sizeof(kMaskFrag));
     VkShaderModule tintFrag = CreateShaderModule(device, kShadowTintFrag, sizeof(kShadowTintFrag));
+    VkShaderModule peelFrag = CreateShaderModule(device, kTranslucentPeelFrag, sizeof(kTranslucentPeelFrag));
     VkShaderModule matteFrag = CreateShaderModule(device, kMatteFrag, sizeof(kMatteFrag));
     VkShaderModule matteGraphFrag = CreateShaderModule(device, kMatteGraphFrag, sizeof(kMatteGraphFrag));
     VkShaderModule skyVert = CreateShaderModule(device, kFullscreenVert, sizeof(kFullscreenVert));
@@ -1243,6 +1248,28 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
             r = createMesh(tci, _tintColorPipeline, kDepthVariants);
         }
 
+        // The camera's translucent layers (_RenderTranslucentDepth): depth
+        // tested and written as the prepass, colour and distance stored.
+        const VkPipelineShaderStageCreateInfo peelStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert),
+                                                               stage(VK_SHADER_STAGE_FRAGMENT_BIT, peelFrag)};
+        const VkFormat layerFormat = VolumePass::kLayerFormat;
+        VkPipelineRenderingCreateInfo peelRendering = tintRendering;
+        peelRendering.pColorAttachmentFormats = &layerFormat;
+        peelRendering.depthAttachmentFormat = kDepthFormat;
+        VkPipelineColorBlendAttachmentState peelAttachment{};
+        peelAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo peelBlend = tintBlend;
+        peelBlend.pAttachments = &peelAttachment;
+        VkGraphicsPipelineCreateInfo peci = pci;
+        peci.pNext = &peelRendering;
+        peci.stageCount = 2;
+        peci.pStages = peelStages;
+        peci.pColorBlendState = &peelBlend;
+        if (r == VK_SUCCESS) {
+            r = createMesh(peci, _peelPipeline, kDepthVariants);
+        }
+
         // Translucent holdouts' matte (matte.frag): the colour and its
         // alpha times 1 - their opacity, tested against the opaque depth.
         const VkPipelineShaderStageCreateInfo matteStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert),
@@ -1282,7 +1309,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     }
 
     for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
-                             maskFrag, skyVert, skyFrag, tintFrag, matteFrag, matteGraphFrag}) {
+                             maskFrag, skyVert, skyFrag, tintFrag, peelFrag, matteFrag, matteGraphFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }
     Check(r, "vkCreateGraphicsPipelines");
@@ -1902,6 +1929,13 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         _clampSampler, _volumePass->TranslucentDepth() ? _volumePass->TranslucentDepth() : _brdfLut.view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentDepth);
+    // Without layers yet the sun's tint map (an array too) stands in; only
+    // read where they were peeled.
+    const VkDescriptorImageInfo translucentLayers{
+        _clampSampler,
+        _volumePass->TranslucentLayers() ? _volumePass->TranslucentLayers() : _transparency.SunTint().color.view,
+        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    write(77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentLayers);
     const VkDescriptorImageInfo blueNoise{_clampSampler, _blueNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &blueNoise);
     const VkDescriptorBufferInfo filmTiles{_taa.Tiles(), 0, VK_WHOLE_SIZE};
@@ -2560,64 +2594,77 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
                                  sizeof(VkDrawIndexedIndirectCommand));
     };
 
-    // Refraction layers (Frame::refractionBackFaces, multiRefraction):
-    // refracting meshes back to front, each its back faces (seen from inside
-    // the medium) and then its front faces, blended over the colour before
-    // the other translucent meshes. With multiRefraction the background is
-    // copied again after each layer drawn (up to Frame::refractionLayers
-    // copies), so glass behind glass, and a ball's far side, show through
-    // the layers in front of them.
-    // ponytail: a copy per layer (about 0.1 ms at 1280x720 each); depth
-    // peeling would also order the triangles within a layer.
+    // One walk back to front over all translucent meshes, so refracting and
+    // other translucent meshes composite in depth order where they overlap.
+    // Refraction layers (Frame::refractionBackFaces, multiRefraction): each
+    // refracting mesh draws its back faces (seen from inside the medium),
+    // then its front faces, blended over the colour. With multiRefraction
+    // the background is copied again before a refracting draw when anything
+    // was drawn since the last copy (up to Frame::refractionLayers copies),
+    // so glass behind glass, a ball's far side and translucent meshes behind
+    // glass show through the layers in front of them. The other meshes
+    // between two refracting ones: one OIT accumulation, resolved before
+    // the next refracting mesh (Frame::oit), or blended sorted.
+    // ponytail: a copy per layer (about 0.1 ms at 1280x720 each) and an OIT
+    // resolve per run of meshes between refracting ones; depth peeling would
+    // also order the triangles within a layer.
     const bool layers = refraction && (frame.refractionBackFaces || frame.multiRefraction);
-    if (layers) {
-        uint32_t copies = frame.multiRefraction ? std::clamp(frame.refractionLayers, 1u, 16u) : 0;
-        bool drawn = false;  // since the last copy
-        begin(false);
+    const bool oit = frame.oit;
+    const VkPipeline *pipelines = (oit ? _oitPipeline : _translucentPipeline) + _shadingBase;
+    uint32_t copies = layers && frame.multiRefraction ? std::clamp(frame.refractionLayers, 1u, 16u) : 0;
+    bool drawn = false;  // since the last background copy
+    int rendering = -1;  // open: 0 into the colour, 1 OIT accumulation, -1 none
+    auto close = [&]() {
+        if (rendering < 0) {
+            return;
+        }
+        vkCmdEndRendering(_cmd);
+        if (rendering == 1) {
+            _transparency.Resolve(_cmd, _color.view);
+        }
+        vkCmdPipelineBarrier2(_cmd, &dep);  // the colour and ids again, for what follows
+        rendering = -1;
+    };
+    auto use = [&](int target) {
+        if (rendering == target) {
+            return;
+        }
+        close();
+        if (target == 1) {
+            _transparency.BeginAccumulation(_cmd);
+        }
+        begin(target == 1);
+        bound = VK_NULL_HANDLE;
+        rendering = target;
+    };
+    for (const auto &[distance, i] : order) {
+        if (!layers || !(gpu.translucentFlags[i] & Scene::Gpu::kRefracts)) {
+            use(oit ? 1 : 0);
+            drawSlot(pipelines, i);
+            drawn = true;
+            continue;
+        }
         auto copy = [&]() {
             if (copies == 0 || !drawn) {
                 return;
             }
-            vkCmdEndRendering(_cmd);
+            close();
             background();
-            begin(false);
-            bound = VK_NULL_HANDLE;
             drawn = false;
             --copies;
         };
-        for (const auto &[distance, i] : order) {
-            if (!(gpu.translucentFlags[i] & Scene::Gpu::kRefracts)) {
-                continue;
-            }
-            copy();
-            if (frame.refractionBackFaces) {
-                drawSlot(_refractBackPipeline + _shadingBase, i);
-                drawn = true;
-                copy();
-            }
-            drawSlot(_translucentPipeline + _shadingBase, i);
+        copy();
+        use(0);
+        if (frame.refractionBackFaces) {
+            drawSlot(_refractBackPipeline + _shadingBase, i);
             drawn = true;
+            copy();
+            use(0);
         }
-        vkCmdEndRendering(_cmd);
-        vkCmdPipelineBarrier2(_cmd, &dep);  // the colour and ids again, for the pass below
-        bound = VK_NULL_HANDLE;
+        drawSlot(_translucentPipeline + _shadingBase, i);
+        drawn = true;
     }
-
-    const bool oit = frame.oit;
-    if (oit) {
-        _transparency.BeginAccumulation(_cmd);
-    }
-    begin(oit);
-    const VkPipeline *pipelines = (oit ? _oitPipeline : _translucentPipeline) + _shadingBase;
-    for (const auto &[distance, i] : order) {
-        if (!layers || !(gpu.translucentFlags[i] & Scene::Gpu::kRefracts)) {
-            drawSlot(pipelines, i);
-        }
-    }
-    vkCmdEndRendering(_cmd);
-    if (oit) {
-        _transparency.Resolve(_cmd, _color.view);
-    }
+    close();
 
     // Translucent holdouts (Frame::holdoutAlpha): the shading passes drew
     // them as nothing; their matte cuts the colour and its alpha by their
@@ -2683,52 +2730,101 @@ void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
     }
 }
 
-// Volumes under transparency: the nearest translucent surfaces' depth
-// (VolumePass::TranslucentDepth), drawn with the depth prepass's pipelines
-// and the camera's culled commands; left readable by fragment shaders.
-// ponytail: whole meshes, their transparent texels and cutouts included.
+// Volumes under transparency: the camera's translucent layers in front of
+// the opaque depth (VolumePass::TranslucentLayers), nearest first, peeled
+// one per pass with the camera's culled commands (translucent_peel.frag:
+// each pass takes the nearest fragment behind the last pass's depth, copied
+// to TranslucentDepth). Left readable by fragment shaders.
+// ponytail: whole meshes, their cutouts included; a peel per layer (one
+// draw of the translucent meshes each); layers past the last one peeled
+// count as behind it.
 void Renderer::_RenderTranslucentDepth(const Scene::Gpu &gpu, const float *viewProj)
 {
-    const Image &target = _volumePass->EnsureTranslucentDepth(_width, _height);
-    const VkImageSubresourceRange range = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
-    ImageBarrier(_cmd, target.image, range, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-    VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    att.imageView = target.view;
-    att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    att.clearValue.depthStencil.depth = 1.0f;
-    VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    ri.renderArea = {{0, 0}, {_width, _height}};
-    ri.layerCount = 1;
-    ri.pDepthAttachment = &att;
-    vkCmdBeginRendering(_cmd, &ri);
-    const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
-    vkCmdSetViewport(_cmd, 0, 1, &vp);
-    vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
-    vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
-    PushDraw(_cmd, _layout, viewProj, 0);
+    const Image &last = _volumePass->TranslucentDepthImage();
+    const Image &peel = _volumePass->PeelDepth();
+    const Image &layers = _volumePass->TranslucentLayerImage();
+    const uint32_t count = _volumePass->TranslucentLayerCount();
+    const VkImageSubresourceRange depthRange = Range(VK_IMAGE_ASPECT_DEPTH_BIT);
+    const VkImageSubresourceRange layerRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, count};
+    constexpr VkPipelineStageFlags2 kPeelTests =
+        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    // The first pass peels behind depth 0: everything.
+    ImageBarrier(_cmd, last.image, depthRange, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    const VkClearDepthStencilValue zero{0.0f, 0};
+    vkCmdClearDepthStencilImage(_cmd, last.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &depthRange);
+    ImageBarrier(_cmd, last.image, depthRange, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    ImageBarrier(_cmd, layers.image, layerRange, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                 VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                 VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
     const VkDeviceSize vertexOffset = 0;
-    vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
-    vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
-    VkPipeline bound = VK_NULL_HANDLE;
-    for (size_t i = 0; i < gpu.translucent.size(); ++i) {
-        const VkPipeline pipeline = _prepassPipeline[gpu.translucentVariant[i] & kDepthVariants];
-        if (pipeline != bound) {
-            vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-            bound = pipeline;
+    for (uint32_t layer = 0; layer < count; ++layer) {
+        ImageBarrier(_cmd, peel.image, depthRange, VK_PIPELINE_STAGE_2_COPY_BIT, 0, kPeelTests,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        color.imageView = _volumePass->TranslucentLayer(layer);
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.clearValue.color = {{1.0f, 1.0f, 1.0f, -1.0f}};  // no layer
+        VkRenderingAttachmentInfo depth{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = peel.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil.depth = 1.0f;
+        VkRenderingInfo ri{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        ri.renderArea = {{0, 0}, {_width, _height}};
+        ri.layerCount = 1;
+        ri.colorAttachmentCount = 1;
+        ri.pColorAttachments = &color;
+        ri.pDepthAttachment = &depth;
+        vkCmdBeginRendering(_cmd, &ri);
+        const VkViewport vp{0, 0, float(_width), float(_height), 0, 1};
+        vkCmdSetViewport(_cmd, 0, 1, &vp);
+        vkCmdSetScissor(_cmd, 0, 1, &ri.renderArea);
+        vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &_set, 0, nullptr);
+        PushDraw(_cmd, _layout, viewProj, 0);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        VkPipeline bound = VK_NULL_HANDLE;
+        for (size_t i = 0; i < gpu.translucent.size(); ++i) {
+            const VkPipeline pipeline = _peelPipeline[gpu.translucentVariant[i] & kDepthVariants];
+            if (pipeline != bound) {
+                vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                bound = pipeline;
+            }
+            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                     VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand), 1,
+                                     sizeof(VkDrawIndexedIndirectCommand));
         }
-        vkCmdDrawIndexedIndirect(_cmd, _commands.buffer, VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand),
-                                 1, sizeof(VkDrawIndexedIndirectCommand));
+        vkCmdEndRendering(_cmd);
+        if (layer + 1 == count) {
+            break;
+        }
+        // This layer's depth is the next pass's floor.
+        ImageBarrier(_cmd, peel.image, depthRange, kPeelTests, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        ImageBarrier(_cmd, last.image, depthRange, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+                     VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        VkImageCopy copy{};
+        copy.srcSubresource = copy.dstSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1};
+        copy.extent = {_width, _height, 1};
+        vkCmdCopyImage(_cmd, peel.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, last.image,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        ImageBarrier(_cmd, last.image, depthRange, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
-    vkCmdEndRendering(_cmd);
-    ImageBarrier(_cmd, target.image, range,
-                 VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                 VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+    ImageBarrier(_cmd, layers.image, layerRange, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                 VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
@@ -3508,12 +3604,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
     }
-    // Volumes under transparency: split around the nearest translucent
-    // surface, which needs its depth (and the prepass's, readable early).
+    // Volumes under transparency: split around the translucent layers,
+    // peeled up to the refraction layer budget (and the prepass's depth,
+    // readable early).
     const bool volumesUnder = frame.volumes && frame.volume.underTransparency && gpu.volumeCount > 0 && draw &&
                               frame.translucency && frame.depthPrepass && !gpu.translucent.empty();
     if (volumesUnder) {
-        _volumePass->EnsureTranslucentDepth(_width, _height);
+        _volumePass->EnsureTranslucentLayers(_width, _height, frame.refractionLayers);
     }
     // SSGI: in the AO texture (gtao.cpp), sampled by shading.
     const bool ssgi = frame.ssgi && frame.depthPrepass;
@@ -4126,11 +4223,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _RenderSubsurface(gpu, frame, jitteredViewProj, fd.invViewProj, depthAtt, splits);
         pass("subsurface");
     }
+    // Traced refraction replaces what's behind the glass it finds: there the
+    // volumes all go over the translucency (VolumePass::kThrough).
+    const bool volumesThrough = volumesUnder && fd.rtRefraction[0] != 0u;
     if (volumesUnder) {
         _RenderTranslucentDepth(gpu, jitteredViewProj);
-        _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            VolumePass::kBehind, gpu.volumeFactors);
-        pass("volumes");
+        if (!volumesThrough) {
+            _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
+                                VolumePass::kBehind, gpu.volumeFactors);
+            pass("volumes");
+        }
     }
     if (draw && frame.translucency && !gpu.translucent.empty()) {
         _RenderTranslucency(gpu, frame, &fd, jitteredViewProj, motion, depthAtt);
@@ -4162,17 +4264,23 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _prevBlendSource = gpu.blendWeights;
     }
     // Volumes, clipped by the opaque depth. Under transparency (above) the
-    // part behind the nearest translucent surface went in before the
+    // part behind the farthest translucent layer went in before the
     // translucency pass, which dims and refracts it; here the part in front
-    // goes over the composited translucency. Otherwise all of it goes over
-    // everything shaded so far, translucent surfaces included. Volumetric
-    // fog, already in the image to the surface behind, applies to them
-    // once: volume.frag puts each behind the fog in front of it.
-    // ponytail: only the nearest translucent layer splits a ray: volumes
-    // between two layers of glass go behind both.
+    // goes over the composited translucency, each stretch between layers
+    // dimmed by the layers in front of it (under traced refraction all of
+    // it, so). Otherwise all of it goes over everything shaded so far,
+    // translucent surfaces included. Volumetric fog, already in the image to
+    // the surface behind, applies to them once: volume.frag puts each
+    // behind the fog in front of it.
+    // ponytail: a volume between layers dims the whole pixel behind it,
+    // the light of the layers in front of it too (their reflections), and
+    // isn't refracted.
     if (frame.volumes &&
         _volumePass->Record(_cmd, _set, gpu.volumeCount, _color.view, _width, _height, frame.volume,
-                            volumesUnder ? VolumePass::kInFront : VolumePass::kAll, gpu.volumeFactors)) {
+                            volumesThrough ? VolumePass::kThrough
+                            : volumesUnder ? VolumePass::kInFront
+                                           : VolumePass::kAll,
+                            gpu.volumeFactors)) {
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     // Light shapes: the local lights seen by the camera, in front of the opaque depth.

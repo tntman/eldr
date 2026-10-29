@@ -209,20 +209,48 @@ VolumePass::~VolumePass()
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroySampler(_dev.device, _halfSampler, nullptr);
     _dev.Destroy(_half);
-    _dev.Destroy(_translucentDepth);
+    _DestroyLayers();
 }
 
-const Image &VolumePass::EnsureTranslucentDepth(uint32_t width, uint32_t height)
+void VolumePass::_DestroyLayers()
 {
-    if (width != _depthWidth || height != _depthHeight) {
-        _dev.Destroy(_translucentDepth);
-        _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
-                                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                             VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
-        _depthWidth = width;
-        _depthHeight = height;
+    for (VkImageView &v : _layerViews) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+        v = VK_NULL_HANDLE;
     }
-    return _translucentDepth;
+    _dev.Destroy(_translucentDepth);
+    _dev.Destroy(_peelDepth);
+    _dev.Destroy(_layers);
+    _layerCount = 0;
+}
+
+void VolumePass::EnsureTranslucentLayers(uint32_t width, uint32_t height, uint32_t layers)
+{
+    layers = std::clamp(layers, 1u, kMaxLayers);
+    if (width == _depthWidth && height == _depthHeight && layers == _layerCount) {
+        return;
+    }
+    _DestroyLayers();
+    _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                         VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _peelDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                  VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _layers = _dev.CreateImage(kLayerFormat, width, height, layers, 1,
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    for (uint32_t layer = 0; layer < layers; ++layer) {
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.image = _layers.image;
+        vci.format = kLayerFormat;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+        Check(vkCreateImageView(_dev.device, &vci, nullptr, &_layerViews[layer]), "vkCreateImageView");
+    }
+    _depthWidth = width;
+    _depthHeight = height;
+    _layerCount = layers;
 }
 
 VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)

@@ -109,6 +109,26 @@ off = render(refraction=False)
 red = rgb(off, -0.5, 0.5)
 expect(red[1] > 0.85 and red[0] > 0.85, "eldr:refraction off: straight through, untinted")
 
+# Refracting and other translucent meshes in one order: a half-opaque red
+# glowing quad behind blue glass is tinted blue (no red); in front of it, it
+# stays half red. Once the translucent quad was drawn over all glass.
+glowRed = material("/mtl/glowRed", "UsdPreviewSurface",
+                   {"diffuseColor": (C, (0, 0, 0)), "emissiveColor": (C, (1, 0, 0)), "opacity": (F, 0.5)}, mtlx=False)
+blueGlass = material("/mtl/blueGlass", "ND_standard_surface_surfaceshader",
+                     {"transmission": (F, 1.0), "transmission_color": (C, (0, 0, 1)), "thin_walled": (B, True)})
+bind(quad("/orderGlassFront", 0.2, 0.3, 0.9, 1.0, 0.5), blueGlass)
+bind(quad("/orderRedBehind", 0.2, 0.3, 0.9, 1.0, 0.2), glowRed)
+bind(quad("/orderRedFront", 1.1, 0.3, 1.8, 1.0, 0.5), glowRed)
+bind(quad("/orderGlassBehind", 1.1, 0.3, 1.8, 1.0, 0.2), blueGlass)
+for oit in (True, False):
+    image = render(oit=oit)
+    behind, front = rgb(image, 0.55, 0.65), rgb(image, 1.45, 0.65)
+    print("oit %d: red behind glass %s, in front %s" % (oit, ["%.2f" % c for c in behind], ["%.2f" % c for c in front]))
+    expect(behind[0] < 0.1 and behind[2] > 0.3, "translucent behind glass is seen through it (oit %d)" % oit)
+    expect(front[0] > 0.35 and front[2] > 0.3, "translucent in front of glass blends over it (oit %d)" % oit)
+for path in ("/orderGlassFront", "/orderRedBehind", "/orderRedFront", "/orderGlassBehind"):
+    stage.RemovePrim(path)
+
 # UsdPreviewSurface opacityMode: a half-opaque mirror-like quad in a dim sun over
 # the white wall. "transparent" fades the diffuse light only, so the highlight
 # stays whole; "presence" fades it with the rest; eldr:opacityMode off reads

@@ -72,7 +72,7 @@ GPU passes in order. Names are the timers in usdview's **Eldr > Render Statistic
 | 11 | `shading` | Sky, then opaque PBR: sun, local lights, dome, probes, GI, SSR, fog. Writes colour, ids, motion, light splits |
 | 12 | `ssrDenoise` (opt) | Glossy SSR filters |
 | 13 | `subsurface` (opt) | Screen-space subsurface blur |
-| 14 | `volumes` (opt) | OpenVDB march; `volumesInFront` is the part before glass |
+| 14 | `volumes` (opt) | OpenVDB march; `volumesInFront` is the part before the farthest glass layer (all of it under traced refraction) |
 | 15 | `translucency` (opt) | Refraction layers, OIT, holdouts |
 | 16 | `depthOfField` (opt) | Post DOF (skipped with lens jitter) |
 | 17 | `film` or `taa` | Film average or TAA resolve |
@@ -181,10 +181,10 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Feature | Setting | How |
 |---|---|---|
 | Cutouts | | UsdPreviewSurface `opacityThreshold > 0`, MaterialX opacity textures at 0.5; alpha-tested in every pass, shadows too |
-| Translucency | `eldr:translucency`, `eldr:oit` | Opacity below 1 (constant, or a texture without threshold). Drawn after the sky, weighted blended OIT (`eldr:oitDepthWeight`) or sorted per mesh. Diffuse and emission scale with opacity, highlights don't. |
+| Translucency | `eldr:translucency`, `eldr:oit` | Opacity below 1 (constant, or a texture without threshold). Drawn after the sky, weighted blended OIT (`eldr:oitDepthWeight`) or sorted per mesh. Refracting and other translucent meshes share one back-to-front order: the meshes between two refracting ones are one OIT group, resolved before the nearer glass. Diffuse and emission scale with opacity, highlights don't. |
 | Refraction | `eldr:refraction` | [prepass] Transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or authored `ior` refract a mip-chained copy of the opaque colour. Thickness estimate places the exit point; roughness blurs (`eldr:refractionSamples`); Fresnel splits; absorption at the surface or Beer-Lambert over `transmission_depth`. |
 | From inside | `eldr:refractionBackFaces` | Back faces first with inverted ior: Snell's window, total internal reflection (48.8 degrees for water) |
-| Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied after each layer: glass behind glass |
+| Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied before each refracting layer: glass behind glass, and translucent meshes behind glass, refracted |
 | Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as transmission in the light splits (Karma's `C<TG>.*L`). Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
 | Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
 | Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
@@ -210,7 +210,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Volumes shadow surfaces and fog from the sun | `eldr:volumeShadows` |
 | ... from local lights | `eldr:localVolumeShadows` |
 | Volumes shadow each other (sun, local lights, dome); a lone volume pays nothing | `eldr:volumeMutualShadows` |
-| Glass tints fog; volumes behind glass are dimmed and refracted | `eldr:volumeUnderTransparency` |
+| Glass tints fog; volumes behind glass are dimmed by every translucent layer in front of them (up to `eldr:refractionLayers`, at most 4, peeled per pixel) and refracted | `eldr:volumeUnderTransparency` |
 | Half-resolution march, about 3x cheaper | `eldr:volumeResolution` 2 |
 
 ## Materials
@@ -431,8 +431,8 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | SSGI, SSR | No depth mip chain (large radii sample sparsely); SSR runs at full resolution with one ray and reflects only what is on screen. |
 | Probes, planar | Probe reflections lack screen-space effects and volumes; CPU prefilter; no seam filtering. Planar: rough mirrors blur by a fixed disc (no contact hardening), refraction through planar water not done; coplanar mirrors don't share renders. |
 | Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
-| Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
-| Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |
+| Transparency | OIT and sorting are per mesh (one order for refracting and other translucent meshes). Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
+| Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volumes between translucent layers are dimmed by the layers in front of them but not refracted, and also dim those layers' reflections; layers past `eldr:refractionLayers` (at most 4) count as behind the last one. Under traced refraction volumes aren't refracted (they go over the glass, dimmed). |
 | Materials | Unsupported graph nodes are bypassed (their pass-through input or default); Arnold or RenderMan volume shaders keep the constant. Volume graphs: Karma's Pyro Shader and Pyro Preview aren't read, nor blackbody of a ramp or remap, a colour field times a ramp, or more than three field functions. A field function that isn't 0 at 0 (a remap with `outlow` above 0, a ramp that starts above black) applies only where the density grid has data, not in its empty tiles; Karma's goes on to the volume's bounds. Catmull-Rom overshoot below 0 is clamped (Karma keeps negative emission). Volume shadows (maps, traced, volume on volume) are per channel from the material's coefficients or the density's ramps; a colour field (`Cd`) tinting the scattering doesn't colour them. Multiple scattering octaves don't reach local lights (volume_cubes.usda: about half of Karma's gain) and use one limit for all volumes. A constant coefficient (no field read) counts per unit of density; Karma fills the active voxels uniformly. Gray textures in gamma colour spaces aren't decoded. No tangent primvars (frame follows uv derivatives). |
 | Materials | Coat: no coat normal, anisotropy or SSR; no `coat_darkening`. Thin film assumes air above. Hair has no TT lobe; a closed curve's u jumps at its weld. |
 | Materials | With a textured setting off, a material with a textured weight is still drawn in the translucent or subsurface pass (weight 0). |

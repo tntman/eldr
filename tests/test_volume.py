@@ -252,6 +252,42 @@ expect(all(abs(brightness(image, x, 0) - brightness(full, x, 0)) < 0.05 for x in
        "half resolution volumes")
 engine.SetRendererSetting("eldr:volumeResolution", 1)
 
+# Volumes under glass (VolumePass::TranslucentLayers): the glowing cloud
+# through two grey thin panes (each letting about half through) is dimmed by
+# both; with the far pane moved behind the cloud, by the near one only. Once
+# only the nearest layer split the ray, and the cloud between the panes was
+# dimmed by both too. Linear (no post) for the ratios.
+UsdShade.MaterialBindingAPI(volume.GetPrim()).Bind(material)
+edf.GetInput("color").Set((0, 0.2, 0.2))
+glass = UsdShade.Material.Define(stage, "/glass")
+glassShader = UsdShade.Shader.Define(stage, "/glass/surface")
+glassShader.CreateIdAttr("ND_standard_surface_surfaceshader")
+glassShader.CreateInput("transmission", Sdf.ValueTypeNames.Float).Set(1.0)
+glassShader.CreateInput("transmission_color", Sdf.ValueTypeNames.Color3f).Set((0.5, 0.5, 0.5))
+glassShader.CreateInput("thin_walled", Sdf.ValueTypeNames.Bool).Set(True)
+glass.CreateSurfaceOutput("mtlx").ConnectToSource(glassShader.CreateOutput("out", Sdf.ValueTypeNames.Token))
+panes = {}
+for name, z in (("near", 3.0), ("far", 2.0)):
+    pane = UsdGeom.Mesh.Define(stage, "/" + name)
+    pane.CreatePointsAttr([(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)])
+    pane.CreateFaceVertexCountsAttr([4])
+    pane.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+    UsdShade.MaterialBindingAPI.Apply(pane.GetPrim()).Bind(glass)
+    panes[name] = pane.AddTranslateOp()
+    panes[name].Set(Gf.Vec3d(0, 0, z))
+engine.SetRendererSetting("eldr:postProcess", False)
+behindBoth = color(render(), 0, 0).greenF()
+panes["far"].Set(Gf.Vec3d(0, 0, -3))
+between = color(render(), 0, 0).greenF()
+for name in panes:
+    stage.GetPrimAtPath("/" + name).SetActive(False)
+bare = color(render(), 0, 0).greenF()
+print("cloud green: bare %.3f, behind two panes %.3f, between them %.3f" % (bare, behindBoth, between))
+expect(0.15 * bare < behindBoth < 0.35 * bare, "a cloud behind two panes is dimmed by both")
+expect(between > 1.3 * behindBoth, "a cloud between two panes is dimmed by the near one only")
+engine.SetRendererSetting("eldr:postProcess", True)
+UsdShade.MaterialBindingAPI(volume.GetPrim()).UnbindAllBindings()
+
 engine.SetRendererSetting("eldr:volumes", False)
 image = render()
 expect(brightness(image, 0, 0) > 0.9 * wallLevel, "eldr:volumes switches volumes off")
