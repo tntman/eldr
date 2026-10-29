@@ -133,9 +133,20 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 #ifdef LAYERS
     over = layers.under;
 #endif
-    float through = gRefracted * (1.0 - F);
+    // A thin film reflects what its specular reflects (brdf.glsl's
+    // Iridescence, at this cosine): that much less gets through, in the
+    // complementary colour (not the film's reflection on top of all the
+    // light: a soap bubble came out brighter than the light around it).
+    vec3 reflectance = vec3(F);
+#ifdef LAYERS
+    if (m.thinFilm.x > 0.0 && (frame.features.x & kFeatureThinFilm) != 0u && !total) {
+        reflectance = mix(reflectance, min(Iridescence(cosine, m.thinFilm.y, m.thinFilm.z, vec3(f0)), vec3(1.0)),
+                          m.thinFilm.x);
+    }
+#endif
+    vec3 through = gRefracted * (1.0 - reflectance);
     if (!Feature(kFeatureRefraction)) {
-        return 1.0 - gStraight - through;  // no background: seen straight through, untinted
+        return 1.0 - gStraight - dot(through, vec3(1.0 / 3.0));  // no background: seen straight through, untinted
     }
     if (frame.rtRefraction.x != 0u) {
         vec4 traced = imageLoad(rtRefractionImage, ivec2(gl_FragCoord.xy));

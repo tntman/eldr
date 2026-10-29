@@ -54,7 +54,7 @@ foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shad
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
-                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/volume.glsl
+                renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/volume.glsl
                 renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
@@ -67,7 +67,7 @@ add_custom_command(OUTPUT ${spv}
     DEPENDS renderer/shaders/rt_refraction.rgen renderer/shaders/rt_photons.glsl renderer/shaders/caustics.glsl
             renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
             renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
-            renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+            renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
             renderer/shaders/program.glsl renderer/shaders/noise.glsl renderer/shaders/displace.glsl
             third_party/nanovdb/PNanoVDB.h)
 list(APPEND shader_incs ${spv})
