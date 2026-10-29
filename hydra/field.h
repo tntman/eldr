@@ -9,6 +9,10 @@ namespace vkr {
 struct VolumeGrid;
 }
 
+// Drops the files the fields read since the last call (HdVkCachedFile,
+// gridReader.h): the delegate's commit, after the fields synced.
+void HdVkReleaseFiles();
+
 PXR_NAMESPACE_OPEN_SCOPE
 
 // An openvdbAsset field (UsdVolOpenVDBAsset): one grid of a .vdb file

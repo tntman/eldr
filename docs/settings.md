@@ -250,6 +250,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
 | Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
 | Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Sun and dome light scatters more than once (octaves), as Karma's Volume Limit 16. Off: single scattering (Karma's default, limit 0). A Volume Limit above 0 (`eldr:` or `karma:object:volumelimit`, on a volume or the settings prim) sets the octaves for that limit. | Fitted to Karma at limits 1, 4, 16: within 9% of its gain over single scattering (sun, dome; front-lit clouds within 6%, backlit sun-only up to 23% too bright at limit 16); up to 6 octaves per sun and step |
+| Volume Velocity Blur<br>`eldr:volumeVelocityBlur` | on | Volumes with Velocity Blur (`primvars:eldr:` or `karma:object:vblur` above 0) move along their `vel` field in motion blur time samples, as Karma's Lookup Offset. Off: sharp. | Steps through empty tiles instead of skipping them while blurring |
 
 ### Camera and film
 

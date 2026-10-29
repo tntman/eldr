@@ -659,6 +659,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(frame.volume.defaultFields)},
         {"Volume Multiple Scattering (octaves; off: single, as Karma's volume limit 0)",
          t2.volumeMultipleScattering, VtValue(frame.volume.multipleScattering)},
+        {"Volume Velocity Blur (vel field, volumes with velocity blur on)", t2.volumeVelocityBlur, VtValue(true)},
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},
@@ -727,7 +728,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||
-                   key == t2.sampledMotion || key == t.postProcess) {
+                   key == t2.sampledMotion || key == t.postProcess || key == t2.volumeVelocityBlur) {
             // The motion a commit hands the renderer is gone after it (the
             // renderer keeps it while the blur is on): the prims and the
             // camera sample their motion again, moved or not
@@ -1226,6 +1227,9 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     _committedEdits = edits;
     _committedSettings = settings;
     _motionSettingsChanged = false;  // the prims synced for it
+#ifdef HDVK_VOLUMES
+    HdVkReleaseFiles();  // the fields that synced read their files
+#endif
     try {
         _scene->Commit(false, unchanged);
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

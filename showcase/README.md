@@ -30,6 +30,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_14_aov_filters` | Per-AOV sample filters: min, max, closest, farthest, nearest, box, Gauss per render var (Karma's Sample Blending) | `driver:parameters:aov:eldr:filter`, `driver:parameters:aov:karma:filter`, `eldr:aovFilters` |
 | 2026-10-29 | `2026-10-29_16_mtlx_coverage` | MaterialX compositing nodes, glTF PBR / Disney / unlit surfaces, Karma's Ramp Const, Hex Tiled Texture and Voronoi | `eldr:materialGraphs`, `eldr:proceduralTextures` |
 | 2026-10-29 | `2026-10-29_17_karma_colour_limit` | Karma's colour limit on seen emitters and on emissive-mesh light; full-HDR emitters for comp | `eldr:colorLimit`, `eldr:indirectClamp` |
+| 2026-10-29 | `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 

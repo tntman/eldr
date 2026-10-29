@@ -22,6 +22,10 @@ class Scene;
 struct VolumeGrid {
     std::vector<uint32_t> words;  // 32-bit words, as the GPU reads them
     uint64_t version = 0;         // bump after changing `words`
+    // The Hydra layer's record of what `words` came from (a file's path,
+    // grid and time; the grid object), so the same again isn't converted.
+    std::string source;
+    std::weak_ptr<const void> origin;
 };
 
 // A volume's material: coefficients per unit of the density field (as
@@ -85,6 +89,12 @@ struct Volume {
     // else karma:object:volumelimit): above 0 the frame scatters more than
     // once, as Settings::volumeLimit (the largest of the frame's).
     float volumeLimit = 0.0f;
+    // Velocity blur (Karma's Volume Velocity Blur, its Lookup Offset mode):
+    // in motion blur time samples the fields are read at p - vel * t, t
+    // the sample's offset from this frame in frames. Object units per frame
+    // per unit of the velocity field (vel, else v: a Vec3f grid, or three
+    // float grids vel.x/.y/.z or vel_x/_y/_z); 0: none.
+    float velocityScale = 0.0f;
     uint32_t tag = 1;  // render tag bit, as Mesh::tag
     std::vector<uint32_t> linkCategories;  // light linking, as Mesh::linkCategories
 
@@ -114,6 +124,10 @@ struct GpuVolume {
     uint32_t lutSlots[4];       // the grid (0..3, as grids) each factor reads
     float lutLow[4];            // table i = (value - low) * scale, 0..kVolumeLut - 1
     float lutScale[4];
+    uint32_t velocity[4];       // velocity grids: xyz the Vec3f grid's (x) or the three float grids'; w: 0 none,
+                                // 1 a Vec3f grid, 3 three float grids
+    float toVelocity[3][4];     // density index -> velocity index (rows)
+    float advect[3][4];         // velocity value -> density index offset per frame (rows, w 0)
 };
 constexpr uint32_t kVolumeLut = 1024;  // entries (vec4) per factor table
 static_assert(sizeof(GpuVolume) % 16 == 0, "std430 array stride of GpuVolume");

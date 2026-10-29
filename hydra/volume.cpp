@@ -10,6 +10,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/imaging/hd/material.h"
 #include "pxr/imaging/hd/renderIndex.h"
+#include "pxr/imaging/hd/sceneGlobalsSchema.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/tokens.h"
 
@@ -845,6 +846,22 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     // Volume Limit (eldr:object:volumelimit, else karma:object:volumelimit).
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         v.volumeLimit = std::max(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", 0.0f), 0.0f);
+        // Velocity blur, as Karma's: Velocity Blur on (eldr:object:vblur,
+        // else karma:object:vblur, above 0), motion blur on (object:mblur),
+        // times Volume Velocity Blur Scale (object:volumevblurscale); the
+        // field is per second, the renderer's shutter in frames.
+        auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+        double fps = 24.0;
+        if (HdSceneIndexBaseRefPtr si = sceneDelegate->GetRenderIndex().GetTerminalSceneIndex()) {
+            if (const HdDoubleDataSourceHandle rate = HdSceneGlobalsSchema::GetFromSceneIndex(si).GetTimeCodesPerSecond()) {
+                fps = rate->GetTypedValue(0.0f) > 0.0 ? rate->GetTypedValue(0.0f) : fps;
+            }
+        }
+        const bool blur = vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->volumeVelocityBlur, true) &&
+                          HdVkObjectPrimvar<int>(sceneDelegate, id, "object:vblur", 0) > 0 &&
+                          HdVkMotionBlur(sceneDelegate, id);
+        v.velocityScale =
+            blur ? float(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumevblurscale", 1.0f) / fps) : 0.0f;
     }
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }

@@ -395,6 +395,11 @@ if(WIN32)
                      ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py $<TARGET_FILE:make_volume>)
             set_tests_properties(volume_sequence_legacy PROPERTIES ENVIRONMENT
                 "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX=0;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX_DEPRECATION_WARNING=0")
+            if(TARGET exrinfo)  # Velocity blur (vel, vel.x/.y/.z) and a nameless density field.
+                add_test(NAME volume_motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume_motion.py
+                         $<TARGET_FILE:make_volume> $<TARGET_FILE:exrinfo>)
+                set_tests_properties(volume_motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+            endif()
         endif()
         add_test(NAME traced_media COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_traced_media.py)
         set_tests_properties(traced_media PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

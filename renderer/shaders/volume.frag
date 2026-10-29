@@ -324,14 +324,15 @@ vec3 OthersDepth(uint self, vec3 x, vec3 dir, float noise)
                      (table == kNone ? volumes[j].scattering.rgb + volumes[j].absorption.rgb : vec3(1.0));
         vec3 safe = SafeDir(di);
         pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
+        const bool moving = Moving(j);  // velocity blur: no tile skips (the fields move)
         float k = 0.0;
         while (k < float(params.shadowSteps) && min(min(tau.x, tau.y), tau.z) < kShadowOpaque) {
-            vec3 q = oi + di * (span.x + (k + noise) * ds) + 0.5;  // nearest voxel: floor(q)
+            vec3 q = Advect(j, oi + di * (span.x + (k + noise) * ds)) + 0.5;  // nearest voxel: floor(q)
             uint level;
             pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, acc,
                                                                                      ivec3(floor(q)), level);
             float v = pnanovdb_read_float(buf, a);
-            if (level > 0u && v <= 0.0) {
+            if (level > 0u && v <= 0.0 && !moving) {
                 // An empty tile (or the background): on to the first step past its far side.
                 float dim = level == 1u ? 8.0 : level == 2u ? 128.0 : 4096.0;
                 vec3 exits = (floor(q / dim) * dim + step(0.0, di) * dim - 0.5 - oi) / safe;
@@ -422,14 +423,22 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     pnanovdb_readaccessor_t color = Accessor(grids.z != kNone ? grids.z : grids.x);
     pnanovdb_readaccessor_t emission = Accessor(grids.w != kNone ? grids.w : grids.x);
     const bool mutual = params.mutual != 0u && params.count > 1u && params.shadowSteps > 0u;
+    // Velocity blur: every field is read where the step's point was t
+    // frames before (Advect), the lights marched from there too; empty
+    // tiles are stepped through, not skipped (the fields move).
+    const bool moving = Moving(i);
     float t = t0 + noise * dt;
     while (t < t1 && stepsLeft > 0u && Max3(transmittance) > kOpaque) {
         --stepsLeft;
-        vec3 p = oi + t * di;
+        vec3 p = Advect(i, oi + t * di);
         ivec3 ijk = ivec3(floor(p));
         uint level;
         pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, density,
                                                                                  ijk, level);
+        if (level > 0u && pnanovdb_read_float(buf, a) <= 0.0 && moving) {
+            t += dt;
+            continue;
+        }
         if (level > 0u && pnanovdb_read_float(buf, a) <= 0.0) {
             // An empty tile (or the background): on to the first step past
             // its far side, keeping this pixel's step offset.
