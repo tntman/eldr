@@ -3080,6 +3080,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // (_WaitInFlight), is denoised before the next frame records, and that
     // image replaces the film's from then on (after RecordFilm, below).
     _denoiseRun = film && (frame.denoise || out.aovs[Aovs::kBeautyRaw]);
+    // The film's pixel filter: a box for the denoiser (one sample per
+    // pixel, as OIDN wants: the Gaussian's 3x3 splats correlate the noise
+    // and OIDN keeps it as texture; emissive.usda at 4 samples: pixel-to-
+    // pixel noise 0.038 -> 0.036 denoised with the Gaussian, 0.045 -> 0.021
+    // with the box).
+    const float filmRadius = frame.denoise ? 0.0f : std::clamp(frame.filmFilterRadius, 0.0f, 2.0f);
     if (!_denoiseRun || filmMode != 0) {
         _denoiseState = 0;
         _denoiseUpload = false;
@@ -3270,7 +3276,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     for (uint32_t i = 0; i < rt.gatherRays; ++i) {
         ScrambledSobol(sobolIndex * rt.gatherRays + i, kSeedRtGather, rt.gatherSamples[i], 2);
     }
-    rt.gatherDenoise = frame.finalGatherDenoise;
+    // Under eldr:denoise OIDN gets the gather's noise uncorrelated (it keeps
+    // the spatial filter's blotches as texture).
+    rt.gatherDenoise = frame.denoise ? 0.0f : frame.finalGatherDenoise;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
@@ -4310,7 +4318,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             fd.tiles[2] = (_height + 15) / 16;
             // From a TAA image: as much as 4 samples, a small bias that keeps
             // the switch from TAA from showing one sample's noise.
-            _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f,
+            _taa.RecordFilm(_cmd, filmOffset, filmRadius, filmMode, 4.0f,
                             adaptiveThreshold, frame.adaptiveMinSamples,
                             frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation),
                             _filmStamp);
@@ -4461,7 +4469,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         params.filmNearer = filmNearer;
         params.cryptoSoft = frame.cryptomatteSoft;
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
-        params.filmRadius = std::clamp(frame.filmFilterRadius, 0.0f, 2.0f);
+        params.filmRadius = filmRadius;
         params.filmWeights = _taa.FilmWeights();
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(aovTargets) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
@@ -4706,7 +4714,8 @@ void Renderer::_Denoise(bool oidn, float exposure)
         }
         float *albedo = guides[0], *normal = guides[1];
         std::string error;
-        _denoiseUpload = _denoiser.Run(pixels, albedo, normal, width, height, &error);
+        _denoiseUpload = _denoiser.Run(pixels, albedo, normal, width, height,
+                                       std::getenv("HDVK_OIDN_PREFILTER") != nullptr, &error);
         if (!_denoiseUpload && !_denoiseWarned) {
             _denoiseWarned = true;
             std::fprintf(stderr, "Eldr: no denoising (eldr:denoise): %s\n", error.c_str());

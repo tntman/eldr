@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #ifdef HDVK_OIDN
 #include <OpenImageDenoise/oidn.hpp>
@@ -64,6 +65,21 @@ bool LoadOidn(std::string *error)
 } // namespace
 #endif
 
+// Round to nearest; finite inputs up to 65504 (the film's are clean).
+uint16_t FloatToHalf(float f)
+{
+    uint32_t x;
+    std::memcpy(&x, &f, 4);
+    const uint16_t sign = uint16_t((x >> 16) & 0x8000);
+    const float a = std::min(std::fabs(f), 65504.0f);
+    if (a < 6.103515625e-05f) {  // a subnormal half
+        return uint16_t(sign | uint16_t(std::lround(a * 16777216.0f)));
+    }
+    std::memcpy(&x, &a, 4);
+    x += 0x0FFF + ((x >> 13) & 1);  // round to nearest even
+    return uint16_t(sign | (((x >> 23) - 112) << 10) | ((x >> 13) & 0x3FF));
+}
+
 struct Denoiser::Impl {
 #ifdef HDVK_OIDN
     oidn::DeviceRef device;
@@ -74,7 +90,8 @@ struct Denoiser::Impl {
 Denoiser::Denoiser() = default;
 Denoiser::~Denoiser() = default;
 
-bool Denoiser::Run(uint16_t *rgba, float *albedo, float *normal, uint32_t width, uint32_t height, std::string *error)
+bool Denoiser::Run(uint16_t *rgba, float *albedo, float *normal, uint32_t width, uint32_t height, bool prefilter,
+                   std::string *error)
 {
 #ifdef HDVK_OIDN
     if (!_impl) {
@@ -116,23 +133,33 @@ bool Denoiser::Run(uint16_t *rgba, float *albedo, float *normal, uint32_t width,
             }
         }
     }
-    // The guides denoised first, in place (OIDN's prefiltering), so the
-    // beauty's filter may trust them (cleanAux).
-    auto prefilter = [&](oidn::FilterRef &filter, const char *name, float *data) {
+    // Separate float images in and out (OIDN filters don't promise in-place).
+    // The guides are the rasteriser's, noise-free: the beauty's filter trusts
+    // them (cleanAux). `prefilter` first denoises them as OIDN recommends
+    // for noisy guides (traced ones), at twice the cost.
+    Impl &d = *_impl;
+    std::vector<float> scratch(pixels * 3);
+    auto denoiseGuide = [&](oidn::FilterRef &filter, const char *name, float *data) {
         filter.setImage(name, data, oidn::Format::Float3, width, height);
-        filter.setImage("output", data, oidn::Format::Float3, width, height);
+        filter.setImage("output", scratch.data(), oidn::Format::Float3, width, height);
         filter.commit();
         filter.execute();
+        std::copy(scratch.begin(), scratch.end(), data);
     };
-    Impl &d = *_impl;
-    if (albedo) {
-        prefilter(d.albedo, "albedo", albedo);
+    if (albedo && prefilter) {
+        denoiseGuide(d.albedo, "albedo", albedo);
     }
-    if (normal) {
-        prefilter(d.normal, "normal", normal);
+    if (normal && prefilter) {
+        denoiseGuide(d.normal, "normal", normal);
     }
-    d.beauty.setImage("color", rgba, oidn::Format::Half3, width, height, 0, 8, size_t(width) * 8);
-    d.beauty.setImage("output", rgba, oidn::Format::Half3, width, height, 0, 8, size_t(width) * 8);
+    std::vector<float> color(pixels * 3);
+    for (size_t p = 0; p < pixels; ++p) {
+        for (int c = 0; c < 3; ++c) {
+            color[3 * p + c] = HalfToFloat(rgba[4 * p + c]);
+        }
+    }
+    d.beauty.setImage("color", color.data(), oidn::Format::Float3, width, height);
+    d.beauty.setImage("output", scratch.data(), oidn::Format::Float3, width, height);
     if (albedo) {
         d.beauty.setImage("albedo", albedo, oidn::Format::Float3, width, height);
     } else {
@@ -153,9 +180,14 @@ bool Denoiser::Run(uint16_t *rgba, float *albedo, float *normal, uint32_t width,
         *error = std::string("OIDN: ") + (message ? message : "");
         return false;
     }
+    for (size_t p = 0; p < pixels; ++p) {
+        for (int c = 0; c < 3; ++c) {
+            rgba[4 * p + c] = FloatToHalf(scratch[3 * p + c]);
+        }
+    }
     return true;
 #else
-    (void)rgba, (void)albedo, (void)normal, (void)width, (void)height;
+    (void)rgba, (void)albedo, (void)normal, (void)width, (void)height, (void)prefilter;
     *error = "Eldr was built without Intel Open Image Denoise (OIDN_ROOT)";
     return false;
 #endif
