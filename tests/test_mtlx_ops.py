@@ -5,8 +5,10 @@ pixel at the quad's centre (uv 0.5, 0.5) is the graph's value.
 Run: usdenv.cmd python tests\\test_mtlx_ops.py [case ...]"""
 import math
 import os
+import struct
 import sys
 import tempfile
+import zlib
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
@@ -137,6 +139,34 @@ CASES = [
 ]
 
 
+def blend(node, fg, bg, mix, rgb, typ="color3"):
+    """A compositing case: `node` of fg over bg mixed by mix (color4 shown as its rgb)."""
+    k = f("k", node, {"fg": (typ, fg), "bg": (typ, bg), "mix": ("float", mix)}, typ)
+    return (node, k + (f("out", "convert", {"in": (typ, "@k")}, "color3") if typ != "color3" else
+                       k.replace('name="k"', 'name="out"')), rgb)
+
+
+# MaterialX's compositing nodes (genglsl's formulas).
+CASES += [
+    blend("plus", "0.1, 0.2, 0.3", "0.2, 0.2, 0.2", "1", (0.3, 0.4, 0.5)),
+    blend("minus", "0.1, 0.2, 0.3", "0.5, 0.5, 0.5", "0.5", (0.45, 0.4, 0.35)),
+    blend("difference", "0.2, 0.9, 0.5", "0.7, 0.4, 0.5", "1", (0.5, 0.5, 0.0)),
+    # burn 1 - (1 - B) / F, 0 where F is 0; dodge B / (1 - F), 0 where F is 1.
+    blend("burn", "0.5, 0, 0.8", "0.75, 0.75, 0.6", "1", (0.5, 0.0, 0.5)),
+    blend("dodge", "0.5, 1, 0.5", "0.25, 0.5, 0.2", "0.5", (0.375, 0.0, 0.3)),
+    blend("screen", "0.5, 0.2, 0", "0.5, 0.5, 0.4", "1", (0.75, 0.6, 0.4)),
+    blend("over", "0.2, 0.4, 0.6, 0.5", "1, 0, 0, 1", "1", (0.7, 0.4, 0.6), "color4"),
+    # f + b > 1: F + B (1 - f) / b.
+    blend("disjointover", "0.2, 0.2, 0.2, 0.6", "0.5, 0.5, 0.5, 0.8", "1", (0.45,) * 3, "color4"),
+    blend("in", "0.4, 0.6, 0.8, 1", "0, 0, 0, 0.5", "1", (0.2, 0.3, 0.4), "color4"),
+    blend("matte", "0.4, 0.6, 0.8, 0.25", "0.8, 0.4, 0, 1", "1", (0.7, 0.45, 0.2), "color4"),
+    ("premult", f("k", "premult", {"in": ("color4", "0.8, 0.4, 0.2, 0.5")}, "color4") +
+     f("out", "convert", {"in": ("color4", "@k")}, "color3"), (0.4, 0.2, 0.1)),
+    grey("inside", "inside", {"in": ("float", "0.8"), "mask": ("float", "0.5")}, 0.4),
+    grey("outside", "outside", {"in": ("float", "0.8"), "mask": ("float", "0.25")}, 0.6),
+]
+
+
 
 def karma_bump(stage, path):
     """A Karma-context material (Houdini's: outputs:kma:surface) whose emission is
@@ -168,8 +198,98 @@ def karma_bump(stage, path):
     return material
 
 
+def usd_shader(stage, path, id_, **inputs):
+    """A shader: inputs name=(Sdf type, value) or name=(shader, output) to connect."""
+    s = UsdShade.Shader.Define(stage, path)
+    s.CreateIdAttr(id_)
+    for name, (a, b) in inputs.items():
+        if isinstance(a, UsdShade.Shader):
+            s.CreateInput(name, Sdf.ValueTypeNames.Token).ConnectToSource(a.ConnectableAPI(), b)
+        else:
+            s.CreateInput(name, a).Set(b)
+    return s
+
+
+def emitting(stage, path, node, output="out", convert="ND_convert_float_color3"):
+    """A material whose standard_surface emission is `node`'s output (through `convert`)."""
+    material = UsdShade.Material.Define(stage, path)
+    cv = usd_shader(stage, path + "/cv", convert, **{"in": (node, output)}) if convert else node
+    surf = usd_shader(stage, path + "/surf", "ND_standard_surface_surfaceshader", base=(Sdf.ValueTypeNames.Float, 0.0),
+                      specular=(Sdf.ValueTypeNames.Float, 0.0), emission=(Sdf.ValueTypeNames.Float, 1.0),
+                      emission_color=(cv, "out" if convert else output))
+    material.CreateSurfaceOutput("mtlx").ConnectToSource(surf.ConnectableAPI(), "out")
+    return material
+
+
+def surface_material(stage, path, id_, **inputs):
+    material = UsdShade.Material.Define(stage, path)
+    surf = usd_shader(stage, path + "/surf", id_, **inputs)
+    material.CreateSurfaceOutput("mtlx").ConnectToSource(surf.ConnectableAPI(), "out")
+    return material
+
+
+def kma_ramp_float(stage, path):
+    """Karma's Ramp Const, monotone cubic over keys 0 and 1 (flat at both ends: smoothstep) at 0.25."""
+    T = Sdf.ValueTypeNames
+    r = usd_shader(stage, path + "/r", "kma_rampconst_float", t=(T.Float, 0.25), framp=(T.Int, 2),
+                   fkeys=(T.FloatArray, [0, 1]), fvalues=(T.FloatArray, [0, 1]),
+                   fbasis=(T.TokenArray, ["monotonecubic", "monotonecubic"]))
+    return emitting(stage, path, r)
+
+
+def kma_ramp_color(stage, path):
+    """A linear colour Ramp Const at 0.25, its keys out of order (Houdini sorts them)."""
+    T = Sdf.ValueTypeNames
+    r = usd_shader(stage, path + "/r", "kma_rampconst_color", t=(T.Float, 0.25), vramp=(T.Int, 2),
+                   vkeys=(T.FloatArray, [1, 0]), vvalues=(T.Color3fArray, [(0, 0, 1), (1, 0, 0)]),
+                   vbasis=(T.TokenArray, ["linear", "linear"]))
+    return emitting(stage, path, r, convert=None)
+
+
+def kma_voronoi(stage, path):
+    """Karma's Voronoi Noise 3D without jitter at (0.5, 0.5, 0.5) - (0.25, 0, 0): F1 to the cell's centre, 0.25."""
+    T = Sdf.ValueTypeNames
+    v = usd_shader(stage, path + "/v", "kma_voronoinoise3d_float", position=(T.Vector3f, (0.5, 0.5, 0.5)),
+                   offset=(T.Vector3f, (0.25, 0, 0)), jitter=(T.Float, 0.0), metric=(T.Int, 0))
+    return emitting(stage, path, v, "distance")
+
+
+def kma_hextiling(stage, path):
+    """Karma's hex tiling of a uniform texture: its colour, whatever the tiles' weights."""
+    T = Sdf.ValueTypeNames
+    h = usd_shader(stage, path + "/h", "kma_color_hextiling", file=(T.Asset, UNIFORM_PNG),
+                   sourceColorSpace=(T.String, "raw"), size=(T.Float, 0.3), contrast=(T.Float, 0.725))
+    return emitting(stage, path, h, convert="ND_convert_color4_color3")
+
+
+def unlit(stage, path):
+    T = Sdf.ValueTypeNames
+    return surface_material(stage, path, "ND_surface_unlit", emission=(T.Float, 0.5),
+                            emission_color=(T.Color3f, (0.4, 0.8, 1.0)))
+
+
+def gltf(stage, path):
+    """glTF PBR: unlit but for its emissive (no lights): base black, no specular."""
+    T = Sdf.ValueTypeNames
+    return surface_material(stage, path, "ND_gltf_pbr_surfaceshader", base_color=(T.Color3f, (0, 0, 0)),
+                            specular=(T.Float, 0.0), emissive=(T.Color3f, (0.3, 0.5, 0.7)),
+                            emissive_strength=(T.Float, 1.0))
+
+
+def disney(stage, path):
+    """Disney principled has no emission: black without lights (and read: no fallback in the stats)."""
+    return surface_material(stage, path, "ND_disney_principled", baseColor=(Sdf.ValueTypeNames.Color3f, (0.8, 0.2, 0.2)))
+
+
 # Cases authored as USD (a function making the material, expected rgb).
-USD_CASES = [("bump in scene units (Karma context)", karma_bump, (0.5 ** 0.5, 0, 0.5 ** 0.5))]
+USD_CASES = [("bump in scene units (Karma context)", karma_bump, (0.5 ** 0.5, 0, 0.5 ** 0.5)),
+             ("kma_rampconst monotone cubic", kma_ramp_float, (0.15625,) * 3),
+             ("kma_rampconst colour", kma_ramp_color, (0.75, 0, 0.25)),
+             ("kma_voronoinoise3d", kma_voronoi, (0.25,) * 3),
+             ("kma_color_hextiling", kma_hextiling, (64 / 255, 128 / 255, 192 / 255)),
+             ("surface_unlit", unlit, (0.2, 0.4, 0.5)),
+             ("gltf_pbr emissive", gltf, (0.3, 0.5, 0.7)),
+             ("disney_principled", disney, (0, 0, 0))]
 
 SIZE = 512
 COLS = 8
@@ -187,6 +307,14 @@ fbo.bind()
 only = set(sys.argv[1:])
 cases = [c for c in CASES + USD_CASES if not only or c[0] in only]
 folder = tempfile.mkdtemp()
+# A uniform 8-bit texture (64, 128, 192) for the hex tiling case.
+UNIFORM_PNG = os.path.join(folder, "uniform.png").replace("\\", "/")
+with open(UNIFORM_PNG, "wb") as fh:
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+    fh.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0)) +
+             chunk(b"IDAT", zlib.compress(b"".join(b"\x00" + bytes((64, 128, 192)) * 8 for _ in range(8)))) +
+             chunk(b"IEND", b""))
 mtlx = os.path.join(folder, "cases.mtlx")
 with open(mtlx, "w") as fh:
     fh.write('<?xml version="1.0"?>\n<materialx version="1.39">\n')

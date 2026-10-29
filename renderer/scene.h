@@ -120,7 +120,7 @@ struct MaterialProgram {
         kNoise,        // noise2d/3d: value * b + c.x
         kFractal,      // fractal2d/3d: value * b, c = (octaves, lacunarity, diminish)
         kCellNoise,    // cellnoise2d/3d (float)
-        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
+        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style; imm0 >> 4: metric (noise.glsl's MxWorley)
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
         kConvert,      // MaterialX convert of a from imm0 to imm1 components (not from a float: those are splat already)
@@ -141,6 +141,14 @@ struct MaterialProgram {
         kViewDirection,     // camera to the point, imm0: 0 object space, 1 world
         kTime,              // imm0 0: the scene's frame, 1: its time in seconds
         kArtisticIor,       // Gulbrandsen's ior (imm1 0) or extinction (1) of reflectivity a, edge colour b
+        // Every pipeline again:
+        kBlend,      // MaterialX compositing imm1 (program.glsl's Blend) of a = fg over b = bg, mixed by c.x
+        kRampTable,  // imm1 & 255 values over [constants[imm0].x, .y] from constants[imm0 + 1] at a.x, linearly
+                     // (imm1 & 256: floats packed four to a vec4): Houdini ramps baked
+        // Procedural pipelines: Karma's hex tiling (kma_color_hextiling) of
+        // images[imm0] at uv a, b = (rot, rand_rot, scale, rand_scale),
+        // c = (contrast, contrast_falloff, weightexp, seed), else d.
+        kHexTile,
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them, then
     // the lobes' (Material's constants of the same names; brdf.glsl reads
@@ -177,7 +185,7 @@ struct MaterialProgram {
     {
         for (size_t i = 0; i < code.size(); i += 4) {
             const uint32_t op = code[i] & 0xFFu;
-            if ((op >= kNoise && op <= kGeomNormal) || op >= kRotate2d) {
+            if ((op >= kNoise && op <= kGeomNormal) || (op >= kRotate2d && op <= kArtisticIor) || op == kHexTile) {
                 return true;
             }
         }
