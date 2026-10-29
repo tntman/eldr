@@ -211,6 +211,10 @@ public:
         // and refit every frame).
         bool rtShadows = false;
         uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16); final quality: 1 per film sample
+        // Traced shadows' denoise (gi.glsl's RtTraced): the visibility
+        // averaged over a few pixels in the receiver's plane, the radius
+        // fading out over the film (effectDenoiseSamples).
+        bool rtShadowDenoise = true;
         // Shadows of final quality's film runs (_filmFinal) without
         // rtShadows: shadow maps, traced (then the sun and up to 15 local
         // lights, not 3), or traced when likely cheaper (Renderer::Render's
@@ -227,6 +231,10 @@ public:
         // quality (film runs started fresh), 2 always.
         uint32_t rtReflections = 1;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        // Traced reflections' denoise (gi.glsl's RtAround): rough ones
+        // averaged over up to 12 pixels in their plane, the radius fading
+        // out over the film (effectDenoiseSamples).
+        bool rtReflectionDenoise = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
@@ -254,6 +262,13 @@ public:
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;
+        // Per-effect denoise (final gather, traced shadows and reflections):
+        // film samples over which the filters fade out, linearly from the
+        // first (full) to none from this one on, so the early samples are
+        // clean and the converged film stays sharp and unbiased; 0: they
+        // filter every sample. Interactive frames always filter; with
+        // denoise (OIDN) none of them run.
+        uint32_t effectDenoiseSamples = 64;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.

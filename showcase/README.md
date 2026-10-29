@@ -22,6 +22,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_07_oidn_adaptive_tiles` | Intel Open Image Denoise on the converged film, raw beauty AOV, adaptive sampling skipping stopped tiles | `eldr:denoise`, `karma:global:imagefilter`, `eldr:beautyRaw` AOV, `eldr:adaptiveTiles` |
 | 2026-10-29 | `2026-10-29_06_light_groups` | Karma's AOVs: light groups, transmission, subsurface, coat, volume, shadow mattes | `inputs:karma:light:lpetag`, `eldr:holdouts`; LPE render vars |
 | 2026-10-29 | `2026-10-29_08_volume_karma_defaults` | Volumes without a material scatter as Karma's (white, no absorption, isotropic; dome from its upper half) | `eldr:volumeAnisotropy`, `karma:object:volumelimit` |
+| 2026-10-29 | `2026-10-29_11_effect_denoise` | Ray-traced effects (final gather, shadows, reflections) denoised per signal, fading out over the film | `eldr:effectDenoiseSamples`, `eldr:rtShadowDenoise`, `eldr:rtReflectionDenoise`, `eldr:finalGatherDenoise` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 

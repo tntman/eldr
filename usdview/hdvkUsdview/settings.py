@@ -25,15 +25,15 @@ GROUPS = [
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise ssgiSteps "
+     "finalGatherRays finalGatherDenoise effectDenoiseSamples ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
      "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
     ("Advanced: Shadows", False,
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
-     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
+     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples rtShadowDenoise "
      "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtReflectionDenoise rtHitShadows reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur"),
     ("Advanced: Materials", False,
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "

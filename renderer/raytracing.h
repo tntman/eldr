@@ -29,6 +29,7 @@ struct RayTracingData {
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
     float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
     float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
+    float denoise[4];           // x: traced shadows' filter radius (pixels), y: traced reflections' filter scale
 };
 constexpr uint32_t kMaxGatherRays = 16;
 // TLAS instance masks (shaders/gi.glsl).
@@ -90,6 +91,9 @@ public:
         uint32_t gatherRays = 1;
         float gatherSamples[kMaxGatherRays][2] = {};
         float gatherDenoise = 1.0f;
+        // mesh.frag's filters of the traced shadows (radius in pixels) and
+        // reflections (scale of their roughness radius); 0: off.
+        float shadowDenoise = 0.0f, reflectionDenoise = 1.0f;
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
