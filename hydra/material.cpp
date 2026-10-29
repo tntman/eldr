@@ -19,6 +19,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/errorMark.h"
 #ifdef interface
 #undef interface  // windows.h's (via Vulkan): HdMaterialNetworkSchema has a member of that name
 #endif
@@ -306,7 +307,7 @@ TfToken CanonicalColorSpace(std::string name)
         {"utility - linear - srgb", "lin_rec709_scene"},
         {"acescg", "lin_ap1_scene"}, {"lin_ap1", "lin_ap1_scene"}, {"aces - acescg", "lin_ap1_scene"},
         {"aces2065-1", "lin_ap0_scene"}, {"lin_ap0", "lin_ap0_scene"}, {"aces - aces2065-1", "lin_ap0_scene"},
-        {"utility - raw", "raw"}, {"data", "raw"}, {"identity", "raw"}, {"unknown", "raw"},
+        {"raw", "raw"}, {"utility - raw", "raw"}, {"data", "raw"}, {"identity", "raw"}, {"unknown", "raw"},
     };
     if (GfColorSpace::IsValid(TfToken(name))) {
         return TfToken(name == "data" || name == "identity" || name == "unknown" ? "raw" : name);
@@ -382,7 +383,16 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
     spec.format = format;
     spec.flipped = true;  // bottom row first, so st (0,0) is the first texel
     spec.data = src.data();
-    if (!image->Read(spec)) {
+    // Hio's OpenEXR reader can post Ar read errors for files it decodes
+    // fine (Houdini's pic/lookdev/colormap_ramps.exr): a warning instead,
+    // so hosts that fail on posted errors (usdrecord scripts) don't.
+    TfErrorMark mark;
+    const bool read = image->Read(spec);
+    if (read && !mark.IsClean()) {
+        mark.Clear();
+        TF_WARN("HdVk: texture '%s' decoded with read errors", path.c_str());
+    }
+    if (!read) {
         TF_WARN("HdVk: failed to decode texture '%s'", path.c_str());
         return nullptr;
     }
@@ -557,8 +567,9 @@ const std::vector<SurfaceInputs> &Surfaces()
              1.0f, 1.0f, 0.0f, 0.3f, _tokens->specular_weight, _tokens->specular_color},
             // glTF PBR 2.0.1: base colour, metallic and roughness 1;
             // emissive times emissive_strength; alpha by alpha_mode (ReadSurface).
+            // occlusion isn't read: MaterialX's graph doesn't use it (nor Karma).
             {_tokens->ND_gltf_pbr_surfaceshader, _tokens->base_color, TfToken(), _tokens->emissive,
-             _tokens->emissive_strength, _tokens->metallic, _tokens->roughness, _tokens->occlusion, _tokens->normal,
+             _tokens->emissive_strength, _tokens->metallic, _tokens->roughness, TfToken(), _tokens->normal,
              _tokens->alpha, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f, _tokens->specular, _tokens->specular_color, 1.0f},
             // Disney principled (MaterialX's bxdf): no emission, opacity or normal.
             {_tokens->ND_disney_principled, _tokens->baseColor, TfToken(), TfToken(), TfToken(), _tokens->metallic,
@@ -1865,9 +1876,11 @@ private:
         }
         if (id == "kma_color_hextiling" && (output.IsEmpty() || output == TfToken("out"))) {
             vkr::TextureRef ref;
-            std::string space = _String(n, "sourceColorSpace");
-            space = space.empty() ? "auto" : space;
-            LoadFile(n, false, _textures, &ref, CanonicalColorSpace(space));
+            // Its sourceColorSpace (UsdImaging hands it over as the file's
+            // colour space, as a UsdUVTexture's), "auto" by default.
+            const std::string space = _String(n, "sourceColorSpace");
+            LoadFile(n, false, _textures, &ref,
+                     space.empty() ? ParameterColorSpace(n.parameters, _tokens->file) : CanonicalColorSpace(space));
             const std::optional<Value> uv = _Uv(n, _tokens->texcoord, depth), size = kma("size", GfVec4f(1.0f));
             const std::optional<Value> rot = kma("rot", GfVec4f(0.0f)), randRot = kma("rand_rot", GfVec4f(0.5f));
             const std::optional<Value> scale = kma("scale", GfVec4f(1.0f)), randScale = kma("rand_scale", GfVec4f(0.0f));
@@ -2590,13 +2603,13 @@ HdVkRamp HdVkRamp::Read(HdMaterialNode2 const &node, bool color)
     const uint32_t n = floats(color ? "vvalues" : "fvalues", &values);
     size_t count = n ? std::min(keys.size(), values.size() / n) : 0;
     int num = 0;
-    if (Read(node.parameters, TfToken(color ? "vramp" : "framp"), &num) && num > 0) {
+    if (PXR_NS::Read(node.parameters, TfToken(color ? "vramp" : "framp"), &num) && num > 0) {
         count = std::min(count, size_t(num));
     }
     VtArray<TfToken> bases;
     VtArray<std::string> names;
     const TfToken basisName(color ? "vbasis" : "fbasis");
-    if (!Read(node.parameters, basisName, &bases) && Read(node.parameters, basisName, &names)) {
+    if (!PXR_NS::Read(node.parameters, basisName, &bases) && PXR_NS::Read(node.parameters, basisName, &names)) {
         for (const std::string &s : names) {
             bases.push_back(TfToken(s));
         }

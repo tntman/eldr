@@ -258,7 +258,7 @@ def kma_hextiling(stage, path):
     """Karma's hex tiling of a uniform texture: its colour, whatever the tiles' weights."""
     T = Sdf.ValueTypeNames
     h = usd_shader(stage, path + "/h", "kma_color_hextiling", file=(T.Asset, UNIFORM_PNG),
-                   sourceColorSpace=(T.String, "raw"), size=(T.Float, 0.3), contrast=(T.Float, 0.725))
+                   sourceColorSpace=(T.Token, "raw"), size=(T.Float, 0.3), contrast=(T.Float, 0.725))
     return emitting(stage, path, h, convert="ND_convert_color4_color3")
 
 

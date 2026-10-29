@@ -106,6 +106,10 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 `percentDone` is film samples over target (with adaptive sampling, the share of stopped pixels, whichever is further). Annotations read like "final 24/64 samples, 12% of pixels done" and "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". A pass that did not run has a blank row.
 
+## Materials
+
+Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; median dE 1.7 (docs/materialx.md).
+
 ## Volumes
 
 | Source | Support |
