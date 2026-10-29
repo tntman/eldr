@@ -609,8 +609,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     {
         static const TfToken karmaLimit("karma:global:colorlimit"), karmaIndirect("karma:global:colorlimitindirect"),
             karmaLinked("karma:global:colorlimitindlinked");
+        // Karma's names also from the active settings prim (usdview, usdrecord): only eldr: ones are
+        // copied into the delegate's settings above.
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
         auto number = [&](const TfToken &token, float fallback) {
-            const VtValue v = delegate->GetRenderSetting(token);
+            VtValue v = delegate->GetRenderSetting(token);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(token.GetString());
+                v = it != d.end() ? it->second : v;
+            }
             return v.IsHolding<double>() ? float(v.UncheckedGet<double>())
                    : v.IsHolding<float>() ? v.UncheckedGet<float>()
                    : v.IsHolding<int>()   ? float(v.UncheckedGet<int>()) : fallback;

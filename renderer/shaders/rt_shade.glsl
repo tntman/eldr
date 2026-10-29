@@ -184,6 +184,7 @@ vec3 Dome(vec3 dir, float lod)
 // Only for rays whose end no light sampling covers (traced refraction):
 // reflections, the final gather and the probes leave the sun to
 // mesh.frag's and ShadeHit's direct light, or it would count twice.
+// Limited by eldr:indirectClamp, as Karma's colour limit clamps such samples.
 // Karma's renderlightgeo hides lights from the camera only, so it isn't
 // read here. ponytail: hard-edged disc, no limb darkening.
 vec3 SunDiscs(vec3 dir)
@@ -196,7 +197,7 @@ vec3 SunDiscs(vec3 dir)
             sum += light.color.rgb * (light.shaping.w / (4.0 * PI * s * s));
         }
     }
-    return BrightnessClamp(sum, frame.lightClamp.x);
+    return BrightnessClamp(sum, frame.lightClamp.y);
 }
 
 // The dome's irradiance / pi, unoccluded (as mesh.frag's Irradiance).
