@@ -8,6 +8,11 @@ the dome tagged) are the direct light, so with the indirect splits they add
 up to the beauty too; the coat is part of glossy, the subsurface its own;
 the shadow AOV holds the sun's shadow on the wall, and on a holdout wall
 (eldr:object:holdoutmode) the holdout shadow does instead.
+Per-AOV sample filters: splits that ask for the beauty's filter by name
+(driver:parameters:aov:eldr:filter "beauty", Karma's ["ubox",{}]) still add
+up; one that asks for another warns; on the depth AOVs at a sphere's
+silhouette min and closest take the sphere, max and farthest the wall,
+nearest one sample, box a blend.
 Run: usdenv.cmd python tests\\test_aov_sums.py <exrinfo>"""
 import os
 import subprocess
@@ -58,7 +63,10 @@ VARS = [("C", "C.*[LO]", "color4f"), ("directdiffuse", "C<RD>L", "color3f"),
 CLOUD = (0, -4.8)
 
 
-def write_scene(holdoutWall):
+def write_scene(holdoutWall, filters=None, extraVars=()):
+    """filters: var name: (namespace, value) of its driver:parameters:aov:<ns>:filter."""
+    filters = filters or {}
+    allVars = VARS + list(extraVars)
     text = ['#usda 1.0\n(\n upAxis = "Y"\n)\n']
     text.append('def Camera "cam"\n{\n token projection = "orthographic"\n float horizontalAperture = 120\n'
                 ' float verticalAperture = 120\n float horizontalApertureOffset = 0\n float focalLength = 50\n'
@@ -91,10 +99,13 @@ def write_scene(holdoutWall):
                 ' int fieldIndex = 0\n }\n}\n')
     text.append('def RenderSettings "Render"\n{\n rel camera = </cam>\n rel products = </Render/product>\n'
                 f' def RenderProduct "product"\n {{\n uniform token productName = "{exrPath}"\n rel camera = </cam>\n int2 resolution = ({SIZE}, {SIZE})\n'
-                ' rel orderedVars = [' + ", ".join(f"</Render/Vars/{n}>" for n, *_ in VARS) + ']\n }\n def Scope "Vars"\n {\n')
-    for name, source, datatype in VARS:
+                ' rel orderedVars = [' + ", ".join(f"</Render/Vars/{n}>" for n, *_ in allVars) + ']\n }\n def Scope "Vars"\n {\n')
+    for name, source, datatype in allVars:
+        kind = "lpe" if (name, source, datatype) in VARS else "raw"
+        f = filters.get(name)
+        f = f' string driver:parameters:aov:{f[0]}:filter = "{f[1].replace(chr(34), chr(92) + chr(34))}"\n' if f else ""
         text.append(f' def RenderVar "{name}"\n {{\n uniform string sourceName = "{source}"\n'
-                    f' uniform token sourceType = "lpe"\n uniform token dataType = "{datatype}"\n }}\n')
+                    f' uniform token sourceType = "{kind}"\n uniform token dataType = "{datatype}"\n{f} }}\n')
     text.append(' }\n}\n')
     open(scenePath, "w").write("".join(text))
 
@@ -119,11 +130,16 @@ def pixel(x, y):
 
 
 def render(settings):
+    """Renders the scene; returns what the run printed (stderr: Eldr's warnings)."""
     if os.path.exists(exrPath):
         os.remove(exrPath)  # a variant that writes nothing fails, not reads the last one's
-    run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
-         scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
-        check=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
+    r = run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "exr_record.py"),
+             scenePath, "/Render", "/cam", "eldr:autoExposure=false"] + settings,
+            capture_output=True, text=True, env=dict(os.environ, EXR_SIZE=str(SIZE)))
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    r.check_returncode()
+    return r.stdout + r.stderr
 
 
 def rgb(p, var):
@@ -152,14 +168,20 @@ FOG = ["eldr:rtRefraction=0", "eldr:fog=true", "eldr:fogDensity=0.05"]
 VARIANTS.update({"fog": FOG, "intensityFog": FOG + INTENSITIES})
 BASE = {"intensity": "default", "intensityRt": "rtRefraction", "intensityDenoise": "ssrDenoise",
         "intensityFog": "fog"}
+# The splits asking for the beauty's filter by name, Eldr's and Karma's way.
+VARIANTS["beautyFilter"] = ["eldr:rtRefraction=0"]
+UBOX = ("karma", '["ubox",{}]')
+FILTERS = {"beautyFilter": {"directdiffuse": ("eldr", "beauty"), "indirectdiffuse": UBOX, "directglossy": ("eldr", "beauty"),
+                            "indirectglossy": UBOX, "transmission": ("eldr", "beauty"), "emission": UBOX,
+                            "volume": ("eldr", "beauty"), "sss": UBOX, "key": ("eldr", "beauty"), "env": UBOX}}
 pixels = {}  # (variant, sphere, dx, dy): the EXR's channels there
 # The beauty's splits; the subsurface holds direct and indirect light, so
 # under intensities its scale is somewhere between the two.
 SPLITS = ("directdiffuse", "indirectdiffuse", "directglossy", "indirectglossy", "transmission", "emission",
           "volume", "sss")
 GROUPED = ("key", "env", "indirectdiffuse", "indirectglossy", "transmission", "emission", "volume")
-write_scene(False)
 for variant, settings in VARIANTS.items():
+    write_scene(False, FILTERS.get(variant))
     scaled = INTENSITIES[0] in settings
     scale = {"directdiffuse": 1.6, "directglossy": 1.6, "indirectdiffuse": 0.5, "indirectglossy": 0.5,
              "transmission": 0.5, "emission": 1.0, "volume": 1.0} if scaled else dict.fromkeys(SPLITS, 1.0)
@@ -228,6 +250,41 @@ for variant, settings in VARIANTS.items():
         print(f"wall in shadow: shadow {s.get('shadow.G', 0):.3f} key {s.get('key.G', 0):.3f}")
         expect(s.get("shadow.G", 0) > 0.05, "wall: the sun's shadow is in shadow")
         expect(abs(s.get("holdoutshadow.G", 0)) < 1e-3, "wall: no holdout shadow on a visible wall")
+
+# Sample filters on three depth AOVs (Karma's depth, Hydra's cameraDepth
+# and P_camera's z are all the same depth, negated for the last two), in two
+# renders, at the diffuse sphere's silhouette against the wall.
+DEPTHS = [("depth", "ray:hitPz", "float"), ("camdepth", "cameraDepth", "float"), ("peye", "ray:hitP_camera", "vector3f")]
+FILTER_RUNS = [{"depth": ("eldr", "min"), "camdepth": ("karma", '["minmax",{"mode":"zmin"}]'), "peye": ("eldr", "farthest"),
+                "directdiffuse": ("eldr", "nearest")},
+               {"depth": ("karma", '["minmax",{"mode":"max"}]'), "camdepth": ("eldr", "nearest"), "peye": ("eldr", "box")}]
+depths = []
+for i, filters in enumerate(FILTER_RUNS):
+    write_scene(False, filters, DEPTHS)
+    log = render(["eldr:rtRefraction=0"])
+    if i == 0:
+        expect("no longer adds up" in log, "a light split with another filter warns")
+    x0, y0 = POSITIONS["diffuse"]
+    centre = (int((x0 + 6) / 12 * SIZE), int((6 - y0) / 12 * SIZE))
+    depths.append({(dx, dy): pixel(centre[0] + dx, centre[1] + dy) for dy in (-15, 3, 10) for dx in range(17, 26)})
+edges = 0
+blended = False
+for at, p in depths[0].items():
+    q = depths[1][at]
+    lo, hi = p.get("depth.Z", 0), q.get("depth.Z", 0)  # min, max
+    closest, farthest = -p.get("camdepth.Z", 0), -p.get("peye.B", 0)
+    nearest, box = -q.get("camdepth.Z", 0), -q.get("peye.B", 0)
+    if hi - lo < 1.0:
+        continue
+    edges += 1
+    print(f"edge {at}: min {lo:.3f} closest {closest:.3f} nearest {nearest:.3f} box {box:.3f} farthest {farthest:.3f} max {hi:.3f}")
+    expect(abs(closest - lo) < 1e-3, f"edge {at}: closest ({closest:.3f}) is the min ({lo:.3f})")
+    expect(abs(farthest - hi) < 1e-3, f"edge {at}: farthest ({farthest:.3f}) is the max ({hi:.3f})")
+    expect(abs(nearest - hi) < 0.01 or lo - 1e-3 <= nearest <= lo + 0.6, f"edge {at}: nearest ({nearest:.3f}) is one sample")
+    expect(lo - 1e-3 <= box <= hi + 1e-3, f"edge {at}: box ({box:.3f}) is within min and max")
+    blended = blended or lo + 0.05 < box < hi - 0.05
+expect(edges >= 2, f"the silhouette is found ({edges} edge pixels)")
+expect(blended, "box blends the sphere and the wall somewhere")
 
 # The wall as a holdout: black, its shadow in holdoutshadow only.
 write_scene(True)

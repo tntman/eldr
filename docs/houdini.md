@@ -66,7 +66,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags on objects (lights' tags are light groups), caustics, outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the limit controls (Volume Limit aside), the quality controls per object (Karma Render Settings' Diffuse, Reflection, SSS and Volume Quality and Light Sampling Quality are honoured globally, from the settings prim: `eldr:diffuseQuality` and its twins win), light-source scales, portals, LPE tags on objects (lights' tags are light groups), fake caustics (caustics themselves are honoured: Enable Caustics, Roughness Clamp, a light's Contributes to Caustics), outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 
@@ -130,6 +130,8 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 The Karma Render Settings LOP's AOV toggles and Render Var LOP presets fill these; set the same vars and Eldr and Karma write the same EXR layers.
 
+A Render Var's "Sample Blending" (Karma tab, `driver:parameters:aov:karma:filter`) is read: Sample Minimum/Maximum Value, Closest and Farthest work as in Karma; Average Sample Values (`ubox`, the default) keeps Eldr's per-AOV default; Adds Up and Stats aren't supported. Eldr's own `driver:parameters:aov:eldr:filter` (add it with an Edit Properties LOP) wins and adds `beauty`, `nearest`, `gauss` and `box` (features.md, Per-AOV sample filters).
+
 | Karma AOV | LPE | Eldr |
 |---|---|---|
 | beauty | `C.*[LO]` | The beauty |
@@ -144,6 +146,7 @@ The Karma Render Settings LOP's AOV toggles and Render Var LOP presets fill thes
 | shadow | `shadow;C.*[LO]` | The shadowed direct light |
 | holdout_shadow ("Holdout Shadows") | `holdouts;shadow;CDL` | Shadows on holdouts (`karma:object:holdoutmode`), diffuse |
 | per-light beauty ("Per LPE Tag" on beauty) | `C.*<L.'tag'>` | Light group: direct light of the lights tagged `tag` |
+| caustics (no Karma preset) | `C<RD>.+<TS>L`, `C<RD><TS>.*L`, `C<RD>[<TS><RS>].*L`; raw `caustics` | Caustic photons' light (`eldr:caustics`), part of indirect diffuse |
 | raw | `ray:hitP`, `ray:hitP_camera`, `ray:hitPz`, `ray:hitN`, `ray:hitN_facing`, `ray:primid`, `export_basecolor`, `primvars:st`, Cryptomatte | As listed in features.md |
 
 Against Karma (showcase `2026-10-29_06_light_groups`, husk `BRAY_HdKarma` with the same vars, 2026-10-29): image means of direct diffuse, subsurface, transmission and volume within ~25% (direct diffuse 0.054 vs 0.056, sss 0.012 vs 0.012); indirect diffuse follows Eldr's brighter GI. Differences by design: Karma's light groups include their indirect light (Eldr's are direct only); Karma's `shadow;` counts occluded indirect light too (in a closed room most of the image), Eldr's only the lights' and the dome's direct shadow, which is what a shadow matte needs; Karma's coat also reflects the room, Eldr's coat only the lights and dome (as its beauty).
@@ -186,6 +189,8 @@ step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto e
 | `ray:primid` | Id with coverage | Id + 1, no coverage |
 | Cryptomatte | `<name>00..02` + manifest | Same layout |
 | Volumes | Rendered | Rendered (OpenVDB files and SOP volumes) |
+| Light linking (`collection:lightLink`, `collection:shadowLink`, the Light Linker LOP's) | Honoured | Honoured: tests/scenes/lightlink.usda lum 0.95, worst region 0.16 (karma_golden) |
+| IES profiles (`shaping:ies:*`) | Candela as is; phi 0 at the light's -X | Same: tests/scenes/ies.usda within 3% per region, raw and normalized with `angleScale` |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s |
 
 ### ColorChecker, Eldr vs Karma (linear EXR, no tonemap)
