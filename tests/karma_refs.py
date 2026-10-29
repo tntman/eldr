@@ -51,9 +51,11 @@ def scene_path(name):
     return os.path.join(HERE, "scenes", name + ".usda").replace("\\", "/")
 
 
-def sha1(path):
+def sha1(path, crlf=False):
+    # Line endings normalised: git may check the scene out with CRLF.
     with open(path, "rb") as f:
-        return hashlib.sha1(f.read()).hexdigest()
+        data = f.read().replace(b"\r\n", b"\n")
+    return hashlib.sha1(data.replace(b"\n", b"\r\n") if crlf else data).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -176,7 +178,7 @@ def compare(names, exrinfo, update):
         if not ref or not os.path.exists(karma):
             print("%-12s no reference: skipped" % name)
             continue
-        if ref["sha1"] != sha1(scene_path(name)):
+        if ref["sha1"] not in (sha1(scene_path(name)), sha1(scene_path(name), crlf=True)):
             print("%-12s scene changed since its reference: skipped (rerun tests/karma_refs.py --scenes %s)"
                   % (name, name))
             continue
