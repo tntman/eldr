@@ -36,6 +36,10 @@ assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
+# Houdini's viewport may poll the stats before the first frame: no crash, sane defaults.
+engine.SetRendererSetting("houdini:viewport", True)
+early = engine.GetRenderStats()
+engine.SetRendererSetting("houdini:viewport", False)
 # A fresh film runs in final quality: "final", until it converges.
 engine.Render(stage.GetPseudoRoot(), params)
 first = engine.GetRenderStats()
@@ -56,6 +60,8 @@ def expect(ok, what):
 
 
 expect(stats.get("rendererName") == "Eldr", "rendererName")
+expect(early.get("rendererName") == "Eldr" and early.get("trianglesDrawn", 0) == 0
+       and early.get("rendererStage") in ("interactive", "converged"), "stats before the first frame: %s" % (dict(early),))
 expect(expect_first[0] == "final" and expect_first[1].startswith("final 1/"), "a fresh film is final: %s" % (expect_first,))
 expect(stats.get("trianglesTotal") == 24 and stats.get("trianglesDrawn") == 12, "triangles drawn after culling")
 expect(stats.get("instancesTotal") == 2 and stats.get("instancesDrawn") == 1, "instances drawn after culling")

@@ -261,6 +261,11 @@ if(WIN32)
         add_test(NAME viewport_overlap COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
                  ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --aovs color,depth,primId --overlap)
         set_tests_properties(viewport_overlap PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # GetRenderStats before the first frame (Houdini's viewport polls early): no crash.
+        add_test(NAME viewport_startup COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
+                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --houdini --startup)
+        set_tests_properties(viewport_startup PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
+                             FAIL_REGULAR_EXPRESSION "FAIL")
     endif()
     add_test(NAME purpose COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_purpose.py)
     set_tests_properties(purpose PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
