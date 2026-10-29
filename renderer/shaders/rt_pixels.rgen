@@ -62,10 +62,17 @@ void main()
     bool raster = texelFetch(sceneDepth, pixel, 0).r < 1.0;
     vec3 surface = PrepassPoint(pixel);
     float rasterT = distance(origin, surface);
+    // 0 rays for an effect (rt.params.yz, rt.gatherInfo.x; quality below 1
+    // under the film): its image stays as the last sample wrote it.
+    bool gather = rt.gather.y != 0.0 && rt.gatherInfo.x > 0.0;
     if (hit.t < 0.0 && !raster) {
-        imageStore(rtShadowImage, pixel, vec4(1.0));
-        imageStore(rtReflectionImage, pixel, vec4(0.0));
-        if (rt.gather.y != 0.0) {
+        if (rt.params.y != 0u) {
+            imageStore(rtShadowImage, pixel, vec4(1.0));
+        }
+        if (rt.params.z != 0u) {
+            imageStore(rtReflectionImage, pixel, vec4(0.0));
+        }
+        if (gather) {
             imageStore(rtGatherImage, pixel, vec4(0.0));
         }
         return;
@@ -91,7 +98,7 @@ void main()
     // takes a new point on every light's shape: the CPU's scrambled Sobol
     // point turned by blue noise (each light reading it elsewhere), so the
     // film converges to the exact penumbra.
-    if ((frame.features.x & kFeatureRtShadows) != 0u) {
+    if ((frame.features.x & kFeatureRtShadows) != 0u && rt.params.y != 0u) {
         uint perTexel = rt.shadowInfo.z;
         vec4 shadows = vec4(1.0);
         for (uint k = 0u; k < 16u; ++k) {
@@ -118,7 +125,7 @@ void main()
         }
     }
 
-    if ((frame.features.x & kFeatureRtReflections) != 0u) {
+    if ((frame.features.x & kFeatureRtReflections) != 0u && rt.params.z != 0u) {
         vec4 reflection = vec4(0.0);
         if (perceptual < kMaxRoughness) {
             float a = perceptual * perceptual;
@@ -144,7 +151,7 @@ void main()
         imageStore(rtReflectionImage, pixel, reflection);
     }
 
-    if (rt.gather.y != 0.0) {
+    if (gather) {
         vec3 t, b;
         Basis(n, t, b);
         vec3 o = OffsetRay(p, ng);

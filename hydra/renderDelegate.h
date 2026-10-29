@@ -209,10 +209,11 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
-    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
+    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))     ((effectDenoiseSamples, "eldr:effectDenoiseSamples")) ((rtShadowDenoise, "eldr:rtShadowDenoise")) ((rtReflectionDenoise, "eldr:rtReflectionDenoise")) \
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
     ((adaptiveTiles, "eldr:adaptiveTiles")) \
+    ((lightQuality, "eldr:lightQuality")) ((diffuseQuality, "eldr:diffuseQuality")) ((reflectQuality, "eldr:reflectQuality")) ((sssQuality, "eldr:sssQuality")) ((volumeQuality, "eldr:volumeQuality")) \
     ((caustics, "eldr:caustics")) \
     ((causticsPhotons, "eldr:causticsPhotons")) \
     ((causticsRadius, "eldr:causticsRadius"))
