@@ -123,6 +123,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 480)
         custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
         rel products = </Render/aovs>
     }
 
@@ -131,6 +132,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 480)
         custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
         custom bool eldr:holdouts = 0
         rel products = </Render/aovs>
     }

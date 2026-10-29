@@ -103,7 +103,6 @@ vec3 Colour(ivec2 q)
     }
     default: return Split(q, kGroupLayer + int(pc.kind - kLightGroup0)).rgb;
     }
-    }
 }
 
 // As film.comp: NaN/Inf (and negative colour) never enter the sums.

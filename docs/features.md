@@ -309,9 +309,9 @@ Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance
 | Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*L` or `.*[LO]` | Light splits (reflection; coat included, refraction not) |
 | Transmission | `lpe:C<TG>.*L` | What glass refracts (screen-space or traced) |
 | Subsurface | `lpe:C<TD>.*L` | The subsurface lobe's diffuse light, direct and indirect, blur and sun through thin parts included |
-| Coat | `lpe:C<...'coat'>.*L` | The coat's reflection of lights and dome (also in glossy) |
+| Coat | `lpe:C<...'coat'>.*L` | The coat's reflection of lights and dome (also in glossy; the coat reflects nothing else) |
 | Volume | `lpe:CV.*L`, `lpe:CVL` | Volumes' scattered and emitted light; the splits behind are seen through them |
-| Shadow | `lpe:shadow;C.*[LO]` | Direct light the shadows (and the dome's occlusion) took: unshadowed minus shadowed |
+| Shadow | `lpe:shadow;C.*[LO]` | Direct light the shadows (and the dome's occlusion) took: unshadowed minus shadowed. Karma's also counts occluded indirect light. |
 | Holdout shadow | `lpe:holdouts;shadow;CDL` | The same on holdouts, diffuse only (a shadow matte, Karma's holdout_shadow) |
 | Light group | `lpe:C.*<L.'tag'>` | Direct light of the lights tagged `tag` (`inputs:karma:light:lpetag`) |
 | Cryptomatte object | `primvars:__name` | Ids of the rprim path |
