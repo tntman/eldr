@@ -524,6 +524,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSR Hit Footprint Filter (mip by the ray's cone)", t2.ssrHitFilter, VtValue(frame.ssrHitFilter)},
         {"Ray-Traced Reflections (0 off, 1 final quality, 2 always; replace SSR)", t.rtReflections, VtValue(int(frame.rtReflections))},
         {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
+        {"Ray Tracing Compacts Static BLASes", t2.rtCompaction, VtValue(frame.rtCompaction)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
         {"Ray-Traced Reflection Denoise", t2.rtReflectionDenoise, VtValue(frame.rtReflectionDenoise)},

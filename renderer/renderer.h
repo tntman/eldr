@@ -519,6 +519,9 @@ public:
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
         bool rtDisplacement = true;
+        // Static BLASes are copied to their compacted size after the first
+        // build (about half the memory). Skinned and displaced ones refit.
+        bool rtCompaction = true;
         // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
         // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
         // through a ratio estimator, temporal reprojection through the
@@ -801,6 +804,7 @@ private:
     bool _prewarmMerge = false;        // the worker compiled something not yet merged into the device's cache
     uint32_t _prewarmFor = kNone;      // the features the queue was made around
     VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
+    bool _prewarmMerged = false;  // the worker's pipelines went into the device's cache
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)

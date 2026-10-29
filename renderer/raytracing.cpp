@@ -99,6 +99,8 @@ struct RayTracing::Functions {
     PFN_vkGetAccelerationStructureBuildSizesKHR getBuildSizes;
     PFN_vkGetAccelerationStructureDeviceAddressKHR getAddress;
     PFN_vkCmdBuildAccelerationStructuresKHR cmdBuild;
+    PFN_vkCmdWriteAccelerationStructuresPropertiesKHR writeProperties;
+    PFN_vkCmdCopyAccelerationStructureKHR copy;
     PFN_vkCreateRayTracingPipelinesKHR createPipelines;
     PFN_vkGetRayTracingShaderGroupHandlesKHR getGroupHandles;
     PFN_vkCmdTraceRaysKHR cmdTraceRays;
@@ -119,6 +121,8 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     load(_fn->getBuildSizes, "vkGetAccelerationStructureBuildSizesKHR");
     load(_fn->getAddress, "vkGetAccelerationStructureDeviceAddressKHR");
     load(_fn->cmdBuild, "vkCmdBuildAccelerationStructuresKHR");
+    load(_fn->writeProperties, "vkCmdWriteAccelerationStructuresPropertiesKHR");
+    load(_fn->copy, "vkCmdCopyAccelerationStructureKHR");
     load(_fn->createPipelines, "vkCreateRayTracingPipelinesKHR");
     load(_fn->getGroupHandles, "vkGetRayTracingShaderGroupHandlesKHR");
     load(_fn->cmdTraceRays, "vkCmdTraceRaysKHR");
@@ -506,19 +510,23 @@ void RayTracing::_DestroyBlas(Blas &blas)
 {
     _fn->destroyAccelerationStructure(_dev.device, blas.as, nullptr);
     _blocks[blas.block].ranges.Free(blas.offset, blas.units);
+    --_blocks[blas.block].used;
     blas = Blas();
 }
 
 // A BLAS's storage in a block (a new block when none has room) and the
 // acceleration structure over it.
-RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
+RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes, int onlyBlock)
 {
     Blas blas;
     blas.units = uint32_t((bytes + kUnit - 1) / kUnit);
     bool placed = false;
-    for (uint32_t b = 0; b < _blocks.size() && !placed; ++b) {
-        placed = _blocks[b].ranges.Allocate(blas.units, &blas.offset);
+    for (uint32_t b = onlyBlock >= 0 ? onlyBlock : 0; b < _blocks.size() && !placed; ++b) {
+        placed = _blocks[b].buffer.buffer && _blocks[b].ranges.Allocate(blas.units, &blas.offset);
         blas.block = b;
+        if (onlyBlock >= 0) {
+            break;
+        }
     }
     if (!placed) {
         Block block;
@@ -530,6 +538,7 @@ RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
         blas.block = uint32_t(_blocks.size());
         _blocks.push_back(std::move(block));
     }
+    ++_blocks[blas.block].used;
     VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
     ci.buffer = _blocks[blas.block].buffer.buffer;
     ci.offset = VkDeviceSize(blas.offset) * kUnit;
@@ -566,8 +575,10 @@ VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertic
 // One BLAS per traced slot geometry, built in batches (one submit each) as
 // soon as a mesh's geometry is new; unused ones are freed. Skinned meshes
 // get theirs per instance (_PrepareSkinned).
-// ponytail: no compaction (BLASes take about twice the memory they could),
-// and empty blocks are kept until Release.
+// Static BLASes are compacted after their build (_Compact); displaced and
+// skinned ones refit, so they keep the built size.
+// ponytail: blocks that compaction emptied are freed, other empty ones are
+// kept until Release.
 void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 {
     std::unordered_set<uint64_t> used;
@@ -648,6 +659,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
         std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
         std::vector<VkDeviceSize> scratchOffsets;
+        std::vector<uint64_t> versions;
         geometries.reserve(batch);  // infos point into it
         VkDeviceSize scratch = 0;
         while (infos.size() < batch && (infos.empty() || scratch < kScratchBudget)) {
@@ -658,7 +670,8 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             VkAccelerationStructureBuildGeometryInfoKHR info{
                 VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
             info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                         (_work.compaction ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0);
             info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
             info.geometryCount = 1;
             info.pGeometries = &geometries.back();
@@ -669,6 +682,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 
             const Blas blas = _CreateBlas(sizes.accelerationStructureSize);
             _blas[g.version] = blas;
+            versions.push_back(g.version);
 
             info.dstAccelerationStructure = blas.as;
             infos.push_back(info);
@@ -683,12 +697,94 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             infos[i].scratchData.deviceAddress = scratchBase + scratchOffsets[i];
             rangeInfos.push_back(&ranges[i]);
         }
+        // Compacted sizes, asked in the build's own submit.
+        VkQueryPool pool = VK_NULL_HANDLE;
+        if (_work.compaction) {
+            VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qci.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+            qci.queryCount = uint32_t(infos.size());
+            if (vkCreateQueryPool(_dev.device, &qci, nullptr, &pool) != VK_SUCCESS) {
+                pool = VK_NULL_HANDLE;  // no compaction queries: keep the built size
+            }
+        }
         _dev.Submit([&](VkCommandBuffer cmd) {
+            if (pool) {
+                vkCmdResetQueryPool(cmd, pool, 0, uint32_t(infos.size()));
+            }
             _fn->cmdBuild(cmd, uint32_t(infos.size()), infos.data(), rangeInfos.data());
+            if (pool) {
+                MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                              VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                              VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                              VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+                std::vector<VkAccelerationStructureKHR> handles;
+                for (const auto &info : infos) {
+                    handles.push_back(info.dstAccelerationStructure);
+                }
+                _fn->writeProperties(cmd, uint32_t(handles.size()), handles.data(),
+                                     VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, pool, 0);
+            }
         });
+        if (pool) {
+            std::vector<VkDeviceSize> sizes(infos.size());
+            if (vkGetQueryPoolResults(_dev.device, pool, 0, uint32_t(sizes.size()), sizes.size() * sizeof(VkDeviceSize),
+                                      sizes.data(), sizeof(VkDeviceSize),
+                                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
+                _Compact(versions, sizes);
+            }
+            vkDestroyQueryPool(_dev.device, pool, nullptr);
+        }
     }
     if (_displacedBuilds.empty()) {
         _dev.Destroy(_scratch);  // the TLAS needs far less
+    }
+}
+
+// Copies the just-built BLASes of `versions` to their compacted `sizes`,
+// frees the originals and the blocks that held only those.
+void RayTracing::_Compact(const std::vector<uint64_t> &versions, const std::vector<VkDeviceSize> &sizes)
+{
+    std::vector<size_t> copied;
+    uint64_t units = 0;
+    for (size_t i = 0; i < versions.size(); ++i) {
+        if (sizes[i] == 0 || (sizes[i] + kUnit - 1) / kUnit >= _blas[versions[i]].units) {
+            continue;  // no gain
+        }
+        units += (sizes[i] + kUnit - 1) / kUnit;
+        copied.push_back(i);
+    }
+    if (copied.empty()) {
+        return;
+    }
+    // The copies share a block of their own, exactly as large as they are,
+    // so the blocks holding the originals empty out and are freed.
+    Block block;
+    block.buffer = _dev.CreateDeviceBuffer(units * kUnit, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                                                              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    block.ranges.Grow(uint32_t(units));
+    _blocks.push_back(std::move(block));
+    std::vector<Blas> compact;
+    for (size_t i : copied) {
+        compact.push_back(_CreateBlas(sizes[i], int(_blocks.size()) - 1));
+    }
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        for (size_t k = 0; k < copied.size(); ++k) {
+            VkCopyAccelerationStructureInfoKHR ci{VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR};
+            ci.src = _blas[versions[copied[k]]].as;
+            ci.dst = compact[k].as;
+            ci.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+            _fn->copy(cmd, &ci);
+        }
+    });
+    for (size_t k = 0; k < copied.size(); ++k) {
+        Blas &old = _blas[versions[copied[k]]];
+        _DestroyBlas(old);
+        old = compact[k];
+    }
+    for (Block &b : _blocks) {
+        if (b.used == 0 && b.buffer.buffer) {
+            _dev.Destroy(b.buffer);
+        }
     }
 }
 

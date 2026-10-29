@@ -132,6 +132,8 @@ public:
         float causticSphere[4] = {};
         float causticRadius = 0.0f;
         float sceneExtent = 0.0f;
+        // Static BLASes are compacted after building (Frame::rtCompaction).
+        bool compaction = true;
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -174,6 +176,7 @@ private:
     struct Block {
         Buffer buffer;
         RangeAllocator ranges;
+        uint32_t used = 0;  // BLASes in it; a block compaction emptied is freed (no buffer)
     };
     // Skinned instances (rt_skin.comp poses their vertices): a BLAS each,
     // built once and refit every frame.
@@ -184,10 +187,11 @@ private:
         VkDeviceSize buildScratch = 0, updateScratch = 0;
         bool built = false;
     };
-    Blas _CreateBlas(VkDeviceSize bytes);
+    Blas _CreateBlas(VkDeviceSize bytes, int onlyBlock = -1);
     VkAccelerationStructureGeometryKHR _Triangles(VkDeviceAddress vertices, VkDeviceSize stride, uint32_t vertexCount,
                                                   VkDeviceAddress indices) const;
     void _BuildBlases(const Scene::Gpu &gpu);
+    void _Compact(const std::vector<uint64_t> &versions, const std::vector<VkDeviceSize> &sizes);
     void _DestroyBlas(Blas &blas);
     VkDeviceSize _PrepareSkinned(const Scene::Gpu &gpu);
     // A displaced BLAS to make: of mesh slot `slot`, for one instance slot

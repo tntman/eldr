@@ -1569,7 +1569,15 @@ void Renderer::_MergePrewarmCache()
         _prewarmMerge = false;
         save = _prewarmSave;
     }
-    if (vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) == VK_SUCCESS && save) {
+    // The worker's pipelines are appended to the driver's cache as
+    // duplicates of the seed's (the file grew by about 3 MB per run), so
+    // only a cache file this build never had takes them, once.
+    // ponytail: later sessions' prewarmed sets aren't persisted (the driver's
+    // own cache makes compiling them quick); persist by key if that hurts.
+    if (_dev.pipelineCacheBytes == 0 && !_prewarmMerged) {
+        _prewarmMerged = vkMergePipelineCaches(_dev.device, _dev.pipelineCache, 1, &_prewarmCache) == VK_SUCCESS;
+    }
+    if (save) {
         _dev.SavePipelineCache();
     }
 }
@@ -3454,6 +3462,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.causticRadius = std::sqrt(r2);
     }
     rt.displacementGraphs = frame.displacementGraphs;
+    rt.compaction = frame.rtCompaction;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on

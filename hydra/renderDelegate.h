@@ -221,7 +221,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((lightQuality, "eldr:lightQuality")) ((diffuseQuality, "eldr:diffuseQuality")) ((reflectQuality, "eldr:reflectQuality")) ((sssQuality, "eldr:sssQuality")) ((volumeQuality, "eldr:volumeQuality")) \
     ((caustics, "eldr:caustics")) \
     ((causticsPhotons, "eldr:causticsPhotons")) \
-    ((causticsRadius, "eldr:causticsRadius"))
+    ((causticsRadius, "eldr:causticsRadius")) \
+    ((rtCompaction, "eldr:rtCompaction"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
