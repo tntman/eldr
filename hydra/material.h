@@ -6,10 +6,12 @@
 #include "pxr/usd/sdf/path.h"
 #include "pxr/imaging/hd/material.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace vkr {
@@ -25,10 +27,17 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdVkTextureCache
 {
 public:
-    std::shared_ptr<vkr::Texture> Get(std::string const &path, TfToken const &sourceColorSpace);
+    // `compress`: 8-bit textures block-compressed (vkr::CompressTexture),
+    // cached on disk; materials pass `compress` below, lights false (the
+    // dome is read on the CPU).
+    std::shared_ptr<vkr::Texture> Get(std::string const &path, TfToken const &sourceColorSpace,
+                                      bool compress = false);
     // A path with <UDIM>: vkr::kUdimTiles tiles, null where none exists.
     std::vector<std::shared_ptr<vkr::Texture>> GetUdim(std::string const &path,
-                                                       TfToken const &sourceColorSpace);
+                                                       TfToken const &sourceColorSpace, bool compress = false);
+
+    // eldr:textureCompression, set by the render delegate.
+    std::atomic<bool> compress{true};
 
     // Milliseconds spent decoding since the last call (the load summary).
     double TakeLoadMs()
@@ -42,7 +51,7 @@ public:
 private:
     std::mutex _mutex;
     double _loadMs = 0;
-    std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
+    std::map<std::tuple<std::string, TfToken, bool>, std::weak_ptr<vkr::Texture>> _textures;
 };
 
 // An unconnected input of `node`: authored (colours converted to linear

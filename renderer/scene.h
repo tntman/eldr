@@ -32,12 +32,18 @@ constexpr uint32_t kWrapModes = 4;
 // One- and two-channel formats are gray and gray+alpha: sampling spreads
 // the gray to rgb (alpha 1 without one), as UsdUVTexture reads them.
 struct Texture {
-    enum class Format { R8, RG8, RGBA8, RGBA8_SRGB, R16, RG16, RGBA16, R16F, RG16F, RGBA16F, RGBA32F };
+    // BC*: block compressed (CompressTexture), gray, gray + alpha, colour.
+    // Values are stored in the texture cache on disk: append, don't reorder.
+    enum class Format { R8, RG8, RGBA8, RGBA8_SRGB, R16, RG16, RGBA16, R16F, RG16F, RGBA16F, RGBA32F,
+                        BC4, BC5, BC7, BC7_SRGB };
 
     uint32_t width = 0;
     uint32_t height = 0;
     Format format = Format::RGBA8;
     std::vector<uint8_t> pixels;
+    // Mip levels in pixels, each after the last: compressed textures hold
+    // their whole chain, others one level (the GPU makes the rest).
+    uint32_t levels = 1;
     // The file's own wrap modes (s, t) from its metadata, what UsdUVTexture's
     // "useMetadata" reads; Black where it has none, as in Storm.
     Wrap fileWrap[2] = {Wrap::Black, Wrap::Black};
@@ -57,6 +63,13 @@ private:
 
 uint32_t Channels(Texture::Format f);
 uint32_t BytesPerChannel(Texture::Format f);
+bool IsCompressed(Texture::Format f);
+// Bytes of one w x h level (BC: 4x4 blocks of 8 or 16 bytes).
+size_t LevelBytes(Texture::Format f, uint32_t w, uint32_t h);
+// Replaces an 8-bit texture's pixels by its block-compressed mip chain:
+// BC4 for gray, BC5 for gray + alpha, BC7 for colour (sRGB stays sRGB, its
+// mips filtered in linear). False (and untouched) for other formats.
+bool CompressTexture(Texture &t);
 
 // texel * scale + bias, then one channel (0..3) or all of them (-1).
 // UDIM tiles 1001..1100: tile 1001 + u + 10 v covers uv [u, u+1) x [v, v+1).

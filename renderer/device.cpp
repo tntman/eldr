@@ -68,6 +68,7 @@ static std::string MissingFeatures(VkPhysicalDevice pd)
     need(f.features.multiDrawIndirect, "multiDrawIndirect");
     need(f.features.drawIndirectFirstInstance, "drawIndirectFirstInstance");
     need(f.features.samplerAnisotropy, "samplerAnisotropy");
+    need(f.features.textureCompressionBC, "textureCompressionBC");  // eldr:textureCompression
     need(f.features.independentBlend, "independentBlend");  // translucency: blended colour, plain ids
     need(f.features.geometryShader, "geometryShader");  // gl_PrimitiveID in mesh.frag (uniform primvars)
     need(f.features.fragmentStoresAndAtomics, "fragmentStoresAndAtomics");  // mesh.frag's light splits and denoised SSR rays
@@ -194,6 +195,7 @@ Device::Device()
         f.features.multiDrawIndirect = VK_TRUE;
         f.features.drawIndirectFirstInstance = VK_TRUE;
         f.features.samplerAnisotropy = VK_TRUE;
+        f.features.textureCompressionBC = VK_TRUE;
         f.features.independentBlend = VK_TRUE;
         f.features.geometryShader = VK_TRUE;
         f.features.fragmentStoresAndAtomics = VK_TRUE;
@@ -500,16 +502,21 @@ void Device::Destroy(Buffer &b)
     b = Buffer();
 }
 
+std::filesystem::path CacheFolder()
+{
+    const char *dir = std::getenv("HDVK_PIPELINE_CACHE_DIR");
+    const char *local = std::getenv("LOCALAPPDATA");
+    return dir ? std::filesystem::path(dir)
+         : local ? std::filesystem::path(local) / "Eldr"
+                 : std::filesystem::temp_directory_path() / "Eldr";
+}
+
 void Device::LoadPipelineCache(uint64_t shaderHash)
 {
     if (pipelineCache) {
         return;
     }
-    const char *dir = std::getenv("HDVK_PIPELINE_CACHE_DIR");
-    const char *local = std::getenv("LOCALAPPDATA");
-    std::filesystem::path folder = dir ? std::filesystem::path(dir)
-                                 : local ? std::filesystem::path(local) / "Eldr"
-                                         : std::filesystem::temp_directory_path() / "Eldr";
+    const std::filesystem::path folder = CacheFolder();
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physical, &props);
     char name[96];

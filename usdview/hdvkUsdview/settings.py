@@ -20,7 +20,7 @@ GROUPS = [
      "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
     ("Advanced: Geometry and products", False,
      "lod lodBias lodFade subdivision maxRefineLevel screenDicing displacement curveRibbons pointSprites "
-     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
+     "displacementScale displacementGraphs anisotropy textureCompression splitDomeDirect cryptomatteSoft directIntensity "
      "indirectIntensity renderProducts productResolution"),
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "

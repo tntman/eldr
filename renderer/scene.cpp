@@ -167,6 +167,10 @@ VkFormat ToVk(Texture::Format f)
     case Texture::Format::RG16F:      return VK_FORMAT_R16G16_SFLOAT;
     case Texture::Format::RGBA16F:    return VK_FORMAT_R16G16B16A16_SFLOAT;
     case Texture::Format::RGBA32F:    return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case Texture::Format::BC4:        return VK_FORMAT_BC4_UNORM_BLOCK;
+    case Texture::Format::BC5:        return VK_FORMAT_BC5_UNORM_BLOCK;
+    case Texture::Format::BC7:        return VK_FORMAT_BC7_UNORM_BLOCK;
+    case Texture::Format::BC7_SRGB:   return VK_FORMAT_BC7_SRGB_BLOCK;
     }
     return VK_FORMAT_UNDEFINED;
 }
@@ -1529,10 +1533,12 @@ uint32_t Channels(Texture::Format f)
     switch (f) {
     case Texture::Format::R8:
     case Texture::Format::R16:
-    case Texture::Format::R16F: return 1;
+    case Texture::Format::R16F:
+    case Texture::Format::BC4: return 1;
     case Texture::Format::RG8:
     case Texture::Format::RG16:
-    case Texture::Format::RG16F: return 2;
+    case Texture::Format::RG16F:
+    case Texture::Format::BC5: return 2;
     default: return 4;
     }
 }
@@ -1549,10 +1555,35 @@ uint32_t BytesPerChannel(Texture::Format f)
     }
 }
 
+bool IsCompressed(Texture::Format f)
+{
+    return f >= Texture::Format::BC4;
+}
+
+size_t LevelBytes(Texture::Format f, uint32_t w, uint32_t h)
+{
+    if (IsCompressed(f)) {
+        return size_t((w + 3) / 4) * ((h + 3) / 4) * (f == Texture::Format::BC4 ? 8 : 16);
+    }
+    return size_t(w) * h * BytesPerPixel(f);
+}
+
+// What pixels must hold: t.levels levels from width x height down.
+static size_t ImageBytes(const Texture &t)
+{
+    size_t bytes = 0;
+    for (uint32_t i = 0; i < t.levels; ++i) {
+        bytes += LevelBytes(t.format, std::max(1u, t.width >> i), std::max(1u, t.height >> i));
+    }
+    return bytes;
+}
+
 void Scene::_Upload(Texture &t)
 {
     const VkFormat format = ToVk(t.format);
     const uint32_t levels = 1 + uint32_t(std::floor(std::log2(std::max(t.width, t.height))));
+    // A compressed texture brings its mips (blits can't write BC formats).
+    const bool premade = t.levels == levels;
     const VkDevice device = _device->device;
 
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
@@ -1594,11 +1625,24 @@ void Scene::_Upload(Texture &t)
                      VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkBufferImageCopy copy{};
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.imageExtent = {t.width, t.height, 1};
+        std::vector<VkBufferImageCopy> copies(t.levels);
+        VkDeviceSize offset = 0;
+        for (uint32_t i = 0; i < t.levels; ++i) {
+            const uint32_t w = std::max(1u, t.width >> i), h = std::max(1u, t.height >> i);
+            copies[i].bufferOffset = offset;
+            copies[i].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+            copies[i].imageExtent = {w, h, 1};
+            offset += LevelBytes(t.format, w, h);
+        }
         vkCmdCopyBufferToImage(cmd, _staging.buffer, t._image,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, uint32_t(copies.size()), copies.data());
+        if (premade) {
+            ImageBarrier(cmd, t._image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, levels, 0, 1},
+                         VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            return;
+        }
 
         // Each level is blitted from the previous one, then made shader-readable.
         for (uint32_t i = 1; i < levels; ++i) {
@@ -1632,8 +1676,8 @@ void Scene::_Upload(Texture &t)
 // view, another sampler).
 int32_t Scene::_TextureIndex(Texture *t, uint32_t wrap)
 {
-    if (!t || t->width == 0 || t->height == 0 ||
-        t->pixels.size() != size_t(t->width) * t->height * BytesPerPixel(t->format)) {
+    if (!t || t->width == 0 || t->height == 0 || t->pixels.size() != ImageBytes(*t) ||
+        t->levels != (IsCompressed(t->format) ? 1 + uint32_t(std::floor(std::log2(std::max(t->width, t->height)))) : 1)) {
         return -1;
     }
     const auto found = _textureSlots.find({t, wrap});
@@ -1670,7 +1714,7 @@ void Scene::_DestroyEnvironment()
 void Scene::_UpdateEnvironment(const Dome *dome)
 {
     const Texture *source = dome->texture.get();
-    const bool usable = source && source->width > 0 && source->height > 0 &&
+    const bool usable = source && source->width > 0 && source->height > 0 && !IsCompressed(source->format) &&
         source->pixels.size() == size_t(source->width) * source->height * BytesPerPixel(source->format);
     // The sun's threshold in texture units (the dome multiplies them).
     const float scale = 0.2126f * dome->radiance[0] + 0.7152f * dome->radiance[1] + 0.0722f * dome->radiance[2];

@@ -212,7 +212,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
-    ((adaptiveTiles, "eldr:adaptiveTiles"))
+    ((adaptiveTiles, "eldr:adaptiveTiles")) \
+    ((textureCompression, "eldr:textureCompression"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);

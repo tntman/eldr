@@ -25,6 +25,7 @@
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
 #include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
+#include "pxr/imaging/hd/materialSchema.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/xformSchema.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
@@ -538,6 +539,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
+        {"Texture Compression (8-bit textures as BC7/BC4/BC5; off: exact)", t2.textureCompression, VtValue(true)},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
@@ -656,6 +658,9 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens2;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    if (key == t2.textureCompression) {
+        _textures->compress = GetRenderSetting<bool>(key, true);
+    }
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
         debug && changed && !TfStringStartsWith(key.GetString(), "eldr:")) {
@@ -673,6 +678,9 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
         } else if (key == t2.curveRibbons) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
+        } else if (key == t2.textureCompression) {
+            // Materials fetch their textures again, in the other form.
+            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->material}, {HdMaterialSchema::GetDefaultLocator()});
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||

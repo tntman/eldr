@@ -145,7 +145,7 @@ add_custom_command(OUTPUT ${spv}
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
-    renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
+    renderer/device.cpp renderer/scene.cpp renderer/bc.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp renderer/ssr.cpp

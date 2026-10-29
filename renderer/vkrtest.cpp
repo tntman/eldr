@@ -703,6 +703,36 @@ int main()
                            std::abs(img.At(32, 32, 2) - r) < 0.01f,
                        "compact gray texture formats read as gray rgb");
             }
+
+            // eldr:textureCompression: gradients compressed (sRGB colour as
+            // BC7, gray as BC4, gray + alpha as BC5) with their mips render
+            // as the 8-bit originals within a few steps.
+            const std::pair<F, uint32_t> kinds[] = {{F::RGBA8_SRGB, 4}, {F::R8, 1}, {F::RG8, 2}};
+            for (const auto &[format, channels] : kinds) {
+                auto make = [&, format = format, channels = channels]() {
+                    auto t = std::make_shared<vkr::Texture>();
+                    t->width = t->height = 64;
+                    t->format = format;
+                    for (uint32_t y = 0; y < 64; ++y) {
+                        for (uint32_t x = 0; x < 64; ++x) {
+                            const uint8_t v[4] = {uint8_t(x * 4), uint8_t(y * 4), uint8_t((x + y) * 2), 255};
+                            t->pixels.insert(t->pixels.end(), v, v + channels);
+                        }
+                    }
+                    return t;
+                };
+                material->baseColorTex.texture = make();
+                scene.Commit();
+                const Image exact = Render(renderer, scene);
+                auto bc = make();
+                Expect(vkr::CompressTexture(*bc) && bc->levels == 7 && vkr::IsCompressed(bc->format),
+                       "CompressTexture makes a compressed mip chain");
+                material->baseColorTex.texture = bc;
+                scene.Commit();
+                const float diff = MaxDifference(Render(renderer, scene), exact);
+                std::printf("texture compression (format %d): max difference %.4f\n", int(format), diff);
+                Expect(diff < 0.03f, "compressed textures render as their originals");
+            }
         }
 
         {

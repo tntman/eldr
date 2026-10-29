@@ -1,0 +1,118 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Texture compression A/B: two quads show their texture as emission (no
+# lights), so pixels are texels. Left: detail.png, sRGB colour (BC7).
+# Right: rings.png, raw gray (BC4). /Render/compressed is the default,
+# /Render/exact turns eldr:textureCompression off.
+
+def Scope "Render"
+{
+    def RenderSettings "compressed"
+    {
+        rel camera = </cam>
+        int2 resolution = (1024, 512)
+        custom bool eldr:postProcess = 0
+    }
+
+    def RenderSettings "exact"
+    {
+        rel camera = </cam>
+        int2 resolution = (1024, 512)
+        custom bool eldr:postProcess = 0
+        custom bool eldr:textureCompression = 0
+    }
+}
+
+def Camera "cam"
+{
+    float focalLength = 50
+    float horizontalAperture = 41.4214
+    float verticalAperture = 20.7107
+    double3 xformOp:translate = (0, 0, 2.414)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "mtl"
+{
+    def Material "detail"
+    {
+        token outputs:surface.connect = </mtl/detail/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor.connect = </mtl/detail/tex.outputs:rgb>
+            float inputs:roughness = 1
+            float inputs:specular = 0
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./detail.png@
+            token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </mtl/detail/reader.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "rings"
+    {
+        token outputs:surface.connect = </mtl/rings/pbr.outputs:surface>
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor.connect = </mtl/rings/tex.outputs:rgb>
+            float inputs:roughness = 1
+            float inputs:specular = 0
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @./rings.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </mtl/rings/reader.outputs:result>
+            float3 outputs:rgb
+        }
+        def Shader "reader"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+}
+
+def Mesh "left" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -0.5, 0), (0, -0.5, 0), (0, 0.5, 0), (-1, 0.5, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    rel material:binding = </mtl/detail>
+}
+
+def Mesh "right" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(0, -0.5, 0), (1, -0.5, 0), (1, 0.5, 0), (0, 0.5, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    rel material:binding = </mtl/rings>
+}
