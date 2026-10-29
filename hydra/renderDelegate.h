@@ -187,6 +187,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((displacementGraphs, "eldr:displacementGraphs")) \
     ((splitDomeDirect, "eldr:splitDomeDirect")) \
     ((cryptomatteSoft, "eldr:cryptomatteSoft")) \
+    ((aovFilters, "eldr:aovFilters")) \
     ((directIntensity, "eldr:directIntensity")) \
     ((indirectIntensity, "eldr:indirectIntensity")) \
     ((sampledMotion, "eldr:sampledMotion")) \

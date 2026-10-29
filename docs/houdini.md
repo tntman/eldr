@@ -130,6 +130,8 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 The Karma Render Settings LOP's AOV toggles and Render Var LOP presets fill these; set the same vars and Eldr and Karma write the same EXR layers.
 
+A Render Var's "Sample Blending" (Karma tab, `driver:parameters:aov:karma:filter`) is read: Sample Minimum/Maximum Value, Closest and Farthest work as in Karma; Average Sample Values (`ubox`, the default) keeps Eldr's per-AOV default; Adds Up and Stats aren't supported. Eldr's own `driver:parameters:aov:eldr:filter` (add it with an Edit Properties LOP) wins and adds `beauty`, `nearest`, `gauss` and `box` (features.md, Per-AOV sample filters).
+
 | Karma AOV | LPE | Eldr |
 |---|---|---|
 | beauty | `C.*[LO]` | The beauty |

@@ -40,7 +40,12 @@ layout(push_constant) uniform Push {
     vec2 filmOffset;  // film samples: where this frame's are from their pixel centres
     float filmRadius; // the film's filter radius (pixels)
     uint film;        // film samples (the colour AOVs are filtered as the film's beauty): 1 add, 2 start over
+    uint mode;        // film samples: kNearest... (Aovs::Filter, aov.cpp's ShaderFilter)
+    float radius;     // its radius (pixels)
 } pc;
+
+const uint kNearest = 0u, kGauss = 1u, kBox = 2u, kMin = 3u, kMax = 4u, kClosest = 5u, kFarthest = 6u;
+const float kNothing = 1e30;  // the depth of a sample where nothing was drawn
 
 const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, kSt = 4u, kAlbedo = 5u,
            kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u, kPositionWorld = 9u, kDepth = 10u,
@@ -110,6 +115,43 @@ vec3 Colour(ivec2 q)
 vec3 Clean(vec3 c)
 {
     return any(isnan(c)) || any(isinf(c)) ? vec3(0.0) : max(c, vec3(0.0));
+}
+
+// The AOV's value at q from this sample (0 where nothing was drawn, the
+// colour AOVs' volumes over the background aside), and its depth along the
+// view axis (kNothing there). NaN/Inf are 0, negative colour too.
+vec4 Value(ivec2 q, out float z)
+{
+    vec4 v = vec4(0.0);
+    z = kNothing;
+    ivec2 size = textureSize(depth, 0);
+    int id = texelFetch(primId, q, 0).r;
+    if (id >= 0) {
+        vec4 g = texelFetch(normalSt, q, 0);
+        // Window depth to GL NDC (the renderer maps clip z [-w, w] to [0, w]).
+        vec2 ndc = (vec2(q) + 0.5) / vec2(size) * 2.0 - 1.0;
+        vec4 world = invViewProj * vec4(ndc, texelFetch(depth, q, 0).r * 2.0 - 1.0, 1.0);
+        vec3 eye = (view * vec4(world.xyz / world.w, 1.0)).xyz;
+        z = -eye.z;
+        uint crypto = uint(id) < pc.cryptomatteIds ? cryptomatte[uint(id) * 2u + (pc.kind == kCryptoMaterial ? 1u : 0u)]
+                                                   : 0u;
+        switch (pc.kind) {
+        case kNormal: v.xyz = OctDecode(g.xy); break;
+        case kNormalEye: v.xyz = normalize(mat3(view) * OctDecode(g.xy)); break;
+        case kPositionEye: v.xyz = eye; break;
+        case kCameraDepth: v.x = eye.z; break;
+        case kSt: v.xy = g.zw; break;
+        case kPositionWorld: v.xyz = world.xyz / world.w; break;
+        case kDepth: v.x = -eye.z; break;
+        case kCryptoObject:
+        case kCryptoMaterial:
+            v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;
+        }
+    }
+    if (IsColour(pc.kind)) {  // 0 where nothing was drawn, but volumes over the background
+        v.xyz = Clean(Colour(q));
+    }
+    return any(isnan(v)) || any(isinf(v)) ? vec4(0.0) : v;
 }
 
 void main()
@@ -199,21 +241,32 @@ void main()
         sums[s + 12u] = total;
         return;
     }
-    if (pc.film != 0u && IsColour(pc.kind)) {
-        // Film samples: film.comp's filter (Gaussian, 3x3 gather around the
-        // pixel, each sample at its jittered position), summed over frames.
-        // No id test: this sample's G-buffer and splits are 0 where nothing
-        // was drawn, and the ids in hand are the nearest sample's.
+    if (pc.mode != kNearest) {
+        // Film samples: the samples around the pixel (3x3, each at its
+        // jittered position) within the filter's radius, the pixel's own
+        // always, summed with their weights over frames (Gauss: film.comp's
+        // filter; box: weight 1), or the extreme kept: per component (min,
+        // max), or the sample with the least or most depth (closest,
+        // farthest; its depth in the weight's place). No id test: this
+        // sample's G-buffer and splits are 0 where nothing was drawn.
         uint s = pc.sumsOffset + uint(p.y * size.x + p.x) * (pc.components + 2u);
         float count = imageLoad(filmWeights, p).y;
         if (pc.film != 2u && count == sums[s + pc.components + 1u]) {
             return;
         }
         sums[s + pc.components + 1u] = count;
-        float radius = pc.filmRadius;
+        bool fresh = pc.film == 2u;
+        bool extreme = pc.mode >= kMin;
+        float radius = pc.radius;
         float k = -0.5 / max(0.284 * 0.284 * radius * radius, 1e-6);
-        vec3 sum = vec3(0.0);
+        vec4 sum = vec4(0.0);
         float weight = 0.0;
+        if (extreme && !fresh) {
+            for (uint c = 0u; c < min(pc.components, 4u); ++c) {
+                sum[c] = sums[s + c];
+            }
+            weight = sums[s + pc.components];
+        }
         for (int y = -1; y <= 1; ++y) {
             for (int x = -1; x <= 1; ++x) {
                 ivec2 q = p + ivec2(x, y);
@@ -221,50 +274,40 @@ void main()
                     continue;
                 }
                 vec2 d = vec2(x, y) + pc.filmOffset;
-                float r2 = dot(d, d);
-                float w = r2 < radius * radius ? exp(k * r2) : 0.0;
+                float w = pc.mode == kGauss ? (dot(d, d) < radius * radius ? exp(k * dot(d, d)) : 0.0)
+                                              : (all(lessThanEqual(abs(d), vec2(radius))) ? 1.0 : 0.0);
                 w = (x == 0 && y == 0) ? max(w, 1e-6) : w;
-                sum += Clean(Colour(q)) * w;
-                weight += w;
+                if (w <= 0.0) {
+                    continue;
+                }
+                float z;
+                vec4 v = Value(q, z);
+                if (!extreme) {
+                    sum += v * w;
+                    weight += w;
+                } else if (pc.mode == kMin || pc.mode == kMax) {
+                    sum = fresh ? v : pc.mode == kMin ? min(sum, v) : max(sum, v);
+                    fresh = false;
+                } else if (fresh || (pc.mode == kClosest ? z < weight : z > weight)) {
+                    sum = v;
+                    weight = z;
+                    fresh = false;
+                }
             }
         }
-        float old = pc.film == 2u ? 0.0 : 1.0;
-        float total = weight + old * sums[s + pc.components];
+        float old = pc.film == 2u || extreme ? 0.0 : 1.0;
+        float total = extreme ? weight : weight + old * sums[s + pc.components];
         sums[s + pc.components] = total;
         uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
         for (uint c = 0u; c < pc.components; ++c) {
-            float t = (c < 3u ? sum[c] : 0.0) + old * sums[s + c];
+            float t = (c < 4u ? sum[c] : 0.0) + old * sums[s + c];
             sums[s + c] = t;
-            values[base + c] = t / total;
+            values[base + c] = extreme ? t : t / total;
         }
         return;
     }
-    vec4 v = vec4(0.0);
-    int id = texelFetch(primId, p, 0).r;
-    if (id >= 0) {
-        vec4 g = texelFetch(normalSt, p, 0);
-        // Window depth to GL NDC (the renderer maps clip z [-w, w] to [0, w]).
-        vec2 ndc = (vec2(p) + 0.5) / vec2(size) * 2.0 - 1.0;
-        vec4 world = invViewProj * vec4(ndc, texelFetch(depth, p, 0).r * 2.0 - 1.0, 1.0);
-        vec3 eye = (view * vec4(world.xyz / world.w, 1.0)).xyz;
-        uint crypto = uint(id) < pc.cryptomatteIds ? cryptomatte[uint(id) * 2u + (pc.kind == kCryptoMaterial ? 1u : 0u)]
-                                                   : 0u;
-        switch (pc.kind) {
-        case kNormal: v.xyz = OctDecode(g.xy); break;
-        case kNormalEye: v.xyz = normalize(mat3(view) * OctDecode(g.xy)); break;
-        case kPositionEye: v.xyz = eye; break;
-        case kCameraDepth: v.x = eye.z; break;
-        case kSt: v.xy = g.zw; break;
-        case kPositionWorld: v.xyz = world.xyz / world.w; break;
-        case kDepth: v.x = -eye.z; break;
-        case kCryptoObject:
-        case kCryptoMaterial:
-            v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;
-        }
-    }
-    if (IsColour(pc.kind)) {  // 0 where nothing was drawn, but volumes over the background
-        v.xyz = Colour(p);
-    }
+    float z;
+    vec4 v = Value(p, z);
     uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
     // Ids (Cryptomatte) aren't averaged: the latest frame's, or (weight 0)
     // the nearest film sample's so far.

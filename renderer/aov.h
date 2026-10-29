@@ -65,6 +65,18 @@ public:
         kBeautyRaw = kLightGroup0 + kMaxLightGroups,
         kCount
     };
+    // How the film's samples make a pixel of an AOV (Params::filters,
+    // Karma's "Sample Blending" of a render var). kFilterDefault: the colour
+    // AOVs as the beauty, the rest kFilterNearest. Gauss and box weigh the
+    // samples within their radius (pixels; 0: Gauss 1.5, the others 0.5,
+    // the pixel's own sample); min and max keep the per-component extreme
+    // of those samples, closest and farthest the value of the sample with
+    // the least or most depth (nothing drawn: farthest). Only under the
+    // film; Cryptomatte keeps its own.
+    enum Filter : uint8_t {
+        kFilterDefault, kFilterBeauty, kFilterNearest, kFilterGauss, kFilterBox,
+        kFilterMin, kFilterMax, kFilterClosest, kFilterFarthest
+    };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:
     // missing ones are 0, extra ones dropped).
     static uint32_t Components(Kind kind);
@@ -128,6 +140,8 @@ public:
         bool cryptoSoft = true;  // Cryptomatte takes the film's samples (else the nearest one's id)
         float filmOffset[2] = {}, filmRadius = 0;
         VkImageView filmWeights = VK_NULL_HANDLE;  // the film's (TemporalAA::FilmWeights), GENERAL
+        uint8_t filters[kCount] = {};     // Filter per target (film samples only)
+        float filterRadius[kCount] = {};  // its radius (pixels, 0: the filter's default)
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set

@@ -36,6 +36,8 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <set>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -105,6 +107,55 @@ TfToken BoundAov(HdRenderPassAovBinding const &b, const HdRenderSettings *settin
     }
     // Karma's own names for what Hydra calls primId and its N-less raw vars.
     return source == TfToken("ray:primid") ? HdAovTokens->primId : source;
+}
+
+// An AOV's sample filter (vkr::Aovs::Filter) and radius (pixels, 0: the
+// filter's own) from its render var's text: Eldr's (beauty, nearest, gauss,
+// box, min, max, closest or farthest, then an optional radius, e.g.
+// "gauss 1") or Karma's sample blending (["minmax",{"mode":"zmin"}]...;
+// "ubox", Karma's default that Houdini authors on every var, is Eldr's
+// default: colour like the beauty, data nearest). False: not one Eldr
+// knows (default then).
+bool ParseAovFilter(const std::string &text, uint8_t *filter, float *radius)
+{
+    using A = vkr::Aovs;
+    *filter = A::kFilterDefault;
+    *radius = 0.0f;
+    if (text.empty()) {
+        return true;
+    }
+    if (text[0] == '[') {
+        if (text.find("\"ubox\"") != std::string::npos) {
+            return true;
+        }
+        if (text.find("\"minmax\"") == std::string::npos) {
+            return false;
+        }
+        for (auto [mode, f] : {std::pair{"\"zmin\"", A::kFilterClosest}, {"\"zmax\"", A::kFilterFarthest},
+                               {"\"min\"", A::kFilterMin}, {"\"max\"", A::kFilterMax}}) {
+            if (text.find(mode) != std::string::npos) {
+                *filter = f;
+                return true;
+            }
+        }
+        return false;
+    }
+    std::istringstream in(text);
+    std::string name;
+    float r = 0.0f;
+    in >> name;
+    if (in >> r) {
+        *radius = std::max(r, 0.0f);
+    }
+    for (auto [n, f] : {std::pair{"beauty", A::kFilterBeauty}, {"nearest", A::kFilterNearest}, {"gauss", A::kFilterGauss},
+                        {"box", A::kFilterBox}, {"min", A::kFilterMin}, {"max", A::kFilterMax},
+                        {"closest", A::kFilterClosest}, {"farthest", A::kFilterFarthest}}) {
+        if (name == n) {
+            *filter = f;
+            return true;
+        }
+    }
+    return false;
 }
 
 // HDVK_TIMING=2: a CSV row per render pass execute, for frame pacing in
@@ -214,12 +265,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     // husk's var name of the extra AOVs it binds ("driver:parameters:aov:husk:name").
     std::string huskName[vkr::Aovs::kCount];
+    // Their sample filters (eldr:aovFilters): the binding's settings (husk,
+    // Houdini), else the active settings prim's render var (usdrecord).
+    std::string filterText[vkr::Aovs::kCount], filterVar[vkr::Aovs::kCount];
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
         if (HdVkExtraAov aov; HdVkFindAov(aovName, &aov)) {
             extra[aov.kind] = b.renderBuffer;
             huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
+            for (const char *key : {"driver:parameters:aov:eldr:filter", "driver:parameters:aov:karma:filter"}) {
+                if (filterText[aov.kind].empty()) {
+                    filterText[aov.kind] = BindingText(b, key);
+                    filterVar[aov.kind] = b.aovName.GetString();
+                }
+            }
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -969,6 +1029,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    // Per-AOV sample filters (eldr:aovFilters). A light split filtered
+    // otherwise than the beauty no longer adds up to it: a warning.
+    if (delegate->GetRenderSetting<bool>(t2.aovFilters, true)) {
+        std::string text[vkr::Aovs::kCount], var[vkr::Aovs::kCount];
+        HdVkRenderProducts::GetFilters(vkDelegate->ActiveRenderSettings(), text, var);
+        static std::set<std::string> warned;
+        for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
+            const std::string &t = filterText[k].empty() ? text[k] : filterText[k];
+            const std::string &v = filterText[k].empty() ? var[k] : filterVar[k];
+            if (t.empty()) {
+                continue;
+            }
+            using A = vkr::Aovs;
+            const bool known = ParseAovFilter(t, &out.aovFilters[k], &out.aovFilterRadius[k]);
+            const uint8_t f = out.aovFilters[k];
+            const bool split = k == A::kEmission || (k >= A::kDirectDiffuse && k < A::kBeautyRaw &&
+                                                     k != A::kShadow && k != A::kHoldoutShadow);
+            const bool ids = k == A::kCryptoObject || k == A::kCryptoMaterial || k == A::kBeautyRaw;
+            const char *problem = !known ? "isn't a filter Eldr knows; default used"
+                                  : ids && f != A::kFilterDefault ? "is ignored: this AOV keeps its own"
+                                  : split && f != A::kFilterDefault && f != A::kFilterBeauty
+                                      ? "differs from the beauty's: this light split no longer adds up to it"
+                                      : nullptr;
+            if (problem && warned.insert(v + "|" + t).second) {
+                TF_WARN("Eldr: AOV filter '%s' of %s %s", t.c_str(), v.c_str(), problem);
+            }
+        }
+    }
     // Light groups: the tags the bindings and products asked for so far
     // (HdVkFindAov) split the lights from this frame on.
     if (_scene.SetLightGroups(HdVkLightGroups())) {

@@ -554,6 +554,10 @@ public:
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
         uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
+        // How the film's samples make each one's pixels (Aovs::Filter), and
+        // the filter's radius in pixels (0: its default).
+        uint8_t aovFilters[Aovs::kCount] = {};
+        float aovFilterRadius[Aovs::kCount] = {};
         // Render and Collect leave colour, depth, the ids and velocity in
         // the renderer's host memory (HostOutput) instead of copying them:
         // their pointers only say which to read back. Not Read's.
