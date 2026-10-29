@@ -95,7 +95,7 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3, 3, 3, 3, 3, 3, 3};
+    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3, 3, 3, 3, 3, 3, 3, 4};
     return components[kind];
 }
 

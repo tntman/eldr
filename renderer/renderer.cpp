@@ -68,6 +68,7 @@ struct FrameData {
                              // w: its capture holds joints (+1) and blend shape weights (+2)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
+    uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
 };
 
 namespace {
@@ -629,6 +630,7 @@ Renderer::~Renderer()
         _dev.Destroy(*img);
     }
     _dev.Destroy(_readback);
+    _dev.Destroy(_denoiseBuffer);
     _dev.Destroy(_frameReadback[0]);
     _dev.Destroy(_frameReadback[1]);
     _dev.Destroy(_frameData);
@@ -829,6 +831,8 @@ void Renderer::_CreateDescriptors()
         {62, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, kMaxShadowMinLevels, VK_SHADER_STAGE_COMPUTE_BIT},
         // Blue noise for the sample dimensions (frame.glsl's SampleNoise).
         {90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kLighting | kRt},
+        // The film's tile stamps (tiles.glsl: tile-based adaptive sampling).
+        {91, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
         // Light splits (aov.h), stored by the shading pass; last frame's for SSR.
         {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
         {76, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
@@ -1898,6 +1902,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentDepth);
     const VkDescriptorImageInfo blueNoise{_clampSampler, _blueNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &blueNoise);
+    const VkDescriptorBufferInfo filmTiles{_taa.Tiles(), 0, VK_WHOLE_SIZE};
+    write(91, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &filmTiles, nullptr);
     if (!images.empty()) {
         write(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, images.data(),
               uint32_t(images.size()));
@@ -2787,7 +2793,8 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
 
 bool Renderer::IsConverged() const
 {
-    return !_deferredOutputs && (!_adapting || _post.ExposureConverged()) && _taaConverged && (!_rt || _rt->Converged()) &&
+    return !_deferredOutputs && _denoiseState != 1 && (!_adapting || _post.ExposureConverged()) && _taaConverged &&
+           (!_rt || _rt->Converged()) &&
            !(_reflections && _reflections->ProbePending()) && _lodFadeLeft == 0;
 }
 
@@ -3046,6 +3053,18 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                   : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
                                                                     : 0.0f;
     _filmAdaptive = film && adaptiveThreshold > 0.0f;
+    // Denoising (and the raw beauty AOV): a film, once converged
+    // (_WaitInFlight), is denoised before the next frame records, and that
+    // image replaces the film's from then on (after RecordFilm, below).
+    _denoiseRun = film && (frame.denoise || out.aovs[Aovs::kBeautyRaw]);
+    if (!_denoiseRun || filmMode != 0) {
+        _denoiseState = 0;
+        _denoiseUpload = false;
+    }
+    if (_denoiseState == 1) {
+        _Denoise(frame.denoise);
+        _denoiseState = 2;
+    }
     // ponytail: a box shutter.
     float shutterU = 1.0f;
     ScrambledSobol(sobolIndex, kSeedShutter, &shutterU, 1);
@@ -4249,11 +4268,39 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
 
         if (film) {
+            // Tile-based adaptive sampling (tiles.glsl): this frame's shading
+            // and rays skipped the tiles whose neighbourhood took no sample
+            // last film frame, once every pixel took the minimum samples.
+            // Not where this frame's colour is gathered from further away
+            // than the tiles around: refraction's copy, subsurface blur,
+            // post depth of field (time samples have no adaptive sampling).
+            ++_filmStamp;
+            const bool tileSkip = frame.adaptiveTiles && _filmAdaptive && filmMode == 0 &&
+                                  _filmSamples > std::max(frame.adaptiveMinSamples, 2u) && !refraction && !dof &&
+                                  !(draw && frame.subsurface && frame.depthPrepass && !gpu.subsurface.empty());
+            fd.tiles[0] = tileSkip ? _filmStamp - 1 : 0;
+            fd.tiles[1] = _taa.TilesAcross();
+            fd.tiles[2] = (_height + 15) / 16;
             // From a TAA image: as much as 4 samples, a small bias that keeps
             // the switch from TAA from showing one sample's noise.
             _taa.RecordFilm(_cmd, filmOffset, std::clamp(frame.filmFilterRadius, 0.0f, 2.0f), filmMode, 4.0f,
                             adaptiveThreshold, frame.adaptiveMinSamples,
-                            frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation));
+                            frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation),
+                            _filmStamp);
+            if (_denoiseUpload) {  // the denoised image over the film's resolve (Frame::denoise)
+                const VkImage resolved = _taa.OutputImage();
+                ImageBarrier(_cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                             VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                copy.imageExtent = {_outWidth, _outHeight, 1};
+                vkCmdCopyBufferToImage(_cmd, _denoiseBuffer.buffer, resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                       &copy);
+                ImageBarrier(_cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_COPY_BIT,
+                             VK_ACCESS_2_TRANSFER_WRITE_BIT, kPostStages, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
             pass("film");
         } else {
             _taa.Record(_cmd, &reprojection.m[0][0], alpha, filmOffset);
@@ -4350,14 +4397,33 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _filmIdDistance = std::hypot(filmOffset[0], filmOffset[1]);
     }
 
-    // Extra AOVs (aov.h), before the lens bends depth and the ids.
-    if (frame.extraAovs && Aovs::Any(out.aovs)) {
+    // Extra AOVs (aov.h), before the lens bends depth and the ids. The
+    // denoiser's guides, the film's albedo and normal, in its own targets
+    // unless the app asked for those (copied after); the raw beauty is
+    // the renderer's (_Denoise).
+    float *aovTargets[Aovs::kCount] = {};
+    uint8_t aovComponents[Aovs::kCount] = {};
+    if (frame.extraAovs) {
+        std::copy(out.aovs, out.aovs + Aovs::kCount, aovTargets);
+        std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, aovComponents);
+    }
+    aovTargets[Aovs::kBeautyRaw] = nullptr;
+    const Aovs::Kind guideKinds[2] = {Aovs::kAlbedo, Aovs::kNormal};
+    for (int g = 0; g < 2 && _denoiseRun && frame.denoise; ++g) {
+        _guides[g].resize(size_t(_width) * _height * 3);
+        if (!aovTargets[guideKinds[g]]) {
+            aovTargets[guideKinds[g]] = _guides[g].data();
+            aovComponents[guideKinds[g]] = 3;
+        }
+    }
+    const bool anyAovs = Aovs::Any(aovTargets);
+    if (anyAovs) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
         params.cryptomatte = frame.cryptomatte;
         params.cryptomatteIds = frame.cryptomatteIds;
-        std::copy(out.aovComponents, out.aovComponents + Aovs::kCount, params.components);
+        std::copy(aovComponents, aovComponents + Aovs::kCount, params.components);
         std::copy(frame.viewProj, frame.viewProj + 16, params.viewProj);
         // Under the film the AOVs average its samples: they start over with it.
         params.version = film ? ~_filmRuns : gpu.version;
@@ -4368,7 +4434,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
         params.filmRadius = std::clamp(frame.filmFilterRadius, 0.0f, 2.0f);
         params.filmWeights = _taa.FilmWeights();
-        const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(out.aovs) ? _aovs.Pipelines(_layout) : nullptr;
+        const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(aovTargets) ? _aovs.Pipelines(_layout) : nullptr;
         std::function<void()> geometry;
         if (pipelines) {
             geometry = [&] {
@@ -4379,7 +4445,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                 DrawChunks(_cmd, gpu, _commands.buffer, 0, pipelines, pipelines, Aovs::kVariants);
             };
         }
-        _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, out.aovs,
+        _aovs.Record(_cmd, params, _width, _height, _depth.image, _depth.view, _primId.image, _primId.view, aovTargets,
                      geometry);
         pass("aovs");
     }
@@ -4443,7 +4509,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         {outImages[2]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.instanceId, 0},
         {outImages[3]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.velocity, 0},
     };
-    const bool defer = frame.deferReadback && std::none_of(out.aovs, out.aovs + Aovs::kCount, [](float *a) { return a; });
+    const bool defer = frame.deferReadback && std::none_of(aovTargets, aovTargets + Aovs::kCount, [](float *a) { return a; });
     // Not the slot the app may be reading (Targets::inPlace).
     const uint32_t slot = _deliveredSlot ^ 1u;
     Buffer &readback = _frameReadback[slot];
@@ -4538,12 +4604,88 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else {
         _WaitInFlight();
         _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
-        if (frame.extraAovs) {
-            _aovs.Read(out.aovs);
+        if (anyAovs) {
+            _aovs.Read(aovTargets);
+        }
+        // The app's own albedo or normal target is the guide's source.
+        for (int g = 0; g < 2 && anyAovs && _denoiseRun && frame.denoise; ++g) {
+            const float *from = aovTargets[guideKinds[g]];
+            const uint32_t n = aovComponents[guideKinds[g]] ? aovComponents[guideKinds[g]]
+                                                            : Aovs::Components(guideKinds[g]);
+            if (from && from != _guides[g].data() && _guides[g].size() == size_t(_width) * _height * 3) {
+                for (size_t p = 0; p < size_t(_width) * _height; ++p) {
+                    for (uint32_t c = 0; c < 3; ++c) {
+                        _guides[g][p * 3 + c] = c < n ? from[p * n + c] : 0.0f;
+                    }
+                }
+            }
+        }
+        // The raw beauty, linear and exposed as the beauty's linear output.
+        if (float *raw = out.aovs[Aovs::kBeautyRaw]; raw && _denoiseState == 2 &&
+                                                     _rawBeauty.size() == size_t(_outWidth) * _outHeight * 4) {
+            const uint32_t n = out.aovComponents[Aovs::kBeautyRaw] ? out.aovComponents[Aovs::kBeautyRaw] : 4;
+            const float exposure = frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation);
+            for (size_t p = 0; p < size_t(_outWidth) * _outHeight; ++p) {
+                for (uint32_t c = 0; c < n; ++c) {
+                    raw[p * n + c] = c < 4 ? HalfToFloat(_rawBeauty[p * 4 + c]) * (c < 3 ? exposure : 1.0f) : 0.0f;
+                }
+            }
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
     lap("submit and readback", 5.0);
+}
+
+// The converged film's image (the TAA resolve, last frame's) to the CPU,
+// kept raw (Aovs::kBeautyRaw) and with `oidn` denoised into _denoiseBuffer,
+// which the frames of this film run then copy over the film's image.
+void Renderer::_Denoise(bool oidn)
+{
+    const auto start = std::chrono::steady_clock::now();
+    const uint32_t width = _outWidth, height = _outHeight;
+    const VkDeviceSize bytes = VkDeviceSize(width) * height * 8;
+    if (_denoiseBuffer.size < bytes) {
+        _dev.Reserve(_denoiseBuffer, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                     VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    }
+    const VkImage resolved = _taa.OutputImage();
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        ImageBarrier(cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                     VK_ACCESS_2_MEMORY_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        copy.imageExtent = {width, height, 1};
+        vkCmdCopyImageToBuffer(cmd, resolved, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, _denoiseBuffer.buffer, 1, &copy);
+        ImageBarrier(cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_COPY_BIT, 0,
+                     VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        VkMemoryBarrier2 toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        toHost.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        toHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+        toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.memoryBarrierCount = 1;
+        dep.pMemoryBarriers = &toHost;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    });
+    auto *pixels = static_cast<uint16_t *>(_denoiseBuffer.mapped);
+    _rawBeauty.assign(pixels, pixels + size_t(width) * height * 4);
+    _denoiseUpload = false;
+    if (oidn) {
+        // The guides are the film's, at its size (no upscaling under the film).
+        const size_t guide = size_t(width) * height * 3;
+        float *albedo = _guides[0].size() == guide ? _guides[0].data() : nullptr;
+        float *normal = _guides[1].size() == guide ? _guides[1].data() : nullptr;
+        std::string error;
+        _denoiseUpload = _denoiser.Run(pixels, albedo, normal, width, height, &error);
+        if (!_denoiseUpload && !_denoiseWarned) {
+            _denoiseWarned = true;
+            std::fprintf(stderr, "Eldr: no denoising (eldr:denoise): %s\n", error.c_str());
+        }
+    }
+    _stats.denoiseMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
 // The frame in flight done: what Render's stats and convergence take from the GPU.
@@ -4594,6 +4736,10 @@ void Renderer::_WaitInFlight()
         _stats.filmActivePixels <= (1.0f - std::clamp(_deferred.adaptivePixelFraction, 0.0f, 1.0f)) *
                                         float(_width) * float(_height)) {
         _taaConverged = true;
+    }
+    // A converged final film to denoise: the next frame does (Render).
+    if (_denoiseRun && _denoiseState == 0 && IsConverged()) {
+        _denoiseState = 1;
     }
     // Time to converge: counts from the last change, stops at convergence.
     if (!_accumDone) {

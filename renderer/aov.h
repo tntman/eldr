@@ -48,6 +48,9 @@ public:
         // reflections); combined: both.
         kDirectDiffuse, kIndirectDiffuse, kCombinedDiffuse,
         kDirectGlossy, kIndirectGlossy, kCombinedGlossy,
+        // The film's beauty before Frame::denoise, linear and exposed, rgba:
+        // the Renderer's own (no pass here), once the film converged.
+        kBeautyRaw,
         kCount
     };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:

@@ -12,7 +12,7 @@ from .tooltips import Tooltips
 # docs/settings.md follows this order (tests/test_docs.py checks).
 GROUPS = [
     ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold finalShadows rtRefraction finalGather motionBlur "
+     "finalQuality filmSamples adaptiveFinalThreshold denoise finalShadows rtRefraction finalGather motionBlur "
      "motionBlurTimeSamples depthOfField"),
     ("Lighting and GI", True,
      "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
@@ -49,7 +49,7 @@ GROUPS = [
      "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
     ("Advanced: Camera and film", False,
      "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
-     "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "
+     "adaptivePixelFraction adaptiveMinSamples adaptiveTiles objectMotion blendShapeMotion dofJitter dofResidualBlur "
      "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
     ("Performance and debug", False,
      "depthPrepass frustumCulling cullPixels shadowCullPixels shareFrame overlapReadback inPlaceReadback staleMovingIds pipelineCache pipelinePrewarm lazyPipelines extraAovs lazyExtraAovs "

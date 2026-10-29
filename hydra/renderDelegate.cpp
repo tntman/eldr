@@ -86,6 +86,8 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.combinedGlossy, A::kCombinedGlossy, HdFormatFloat32Vec3},
         {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
+        // The beauty before eldr:denoise (once the film converged).
+        {k.beautyRaw, A::kBeautyRaw, HdFormatFloat32Vec4},
     };
     return aovs;
 }
@@ -494,6 +496,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Adaptive Sampling Converged Pixel Fraction", t2.adaptivePixelFraction, VtValue(frame.adaptivePixelFraction)},
         {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
          VtValue(int(frame.adaptiveMinSamples))},
+        {"Denoise (OIDN, once the film converged)", t2.denoise, VtValue(frame.denoise)},
+        {"Adaptive Sampling Skips Stopped Tiles", t2.adaptiveTiles, VtValue(frame.adaptiveTiles)},
         {"GI Preconverge (film waits for fresh probes)", t.giPreconverge, VtValue(frame.giPreconverge)},
         {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
         {"Jittered Light Shape per Sample (final quality: true soft shadows)", t2.shadowJitter, VtValue(frame.shadowJitter)},
@@ -875,6 +879,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
         passes[name] = ms;
     }
     stats["gpuPassMs"] = passes;
+    stats["denoiseMs"] = frame.denoiseMs;  // eldr:denoise's last run (CPU)
     stats["trianglesDrawn"] = size_t(frame.triangles);
     stats["trianglesTotal"] = size_t(gpu.triangleCount);
     stats["instancesDrawn"] = size_t(frame.instances);
