@@ -461,11 +461,12 @@ bool Scene::SetLightGroups(const std::vector<std::string> &tags)
     return changed;
 }
 
-bool Scene::SetEmissiveLights(bool on, float threshold)
+bool Scene::SetEmissiveLights(bool on, float threshold, float limit)
 {
-    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
+    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold || limit != _emissiveLimit;
     _emissiveLights = on;
     _emissiveThreshold = threshold;
+    _emissiveLimit = limit;
     return changed;
 }
 
@@ -517,6 +518,10 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
         float emitted[3];
         for (int k = 0; k < 3; ++k) {
             emitted[k] = mat->emissive[k] * mat->opacity;
+        }
+        const float peak = std::max({emitted[0], emitted[1], emitted[2]});
+        for (int k = 0; _emissiveLimit > 0.0f && peak > _emissiveLimit && k < 3; ++k) {
+            emitted[k] *= _emissiveLimit / peak;  // as BrightnessClamp: the bounce rays' limit
         }
         const float luminance = 0.2126f * emitted[0] + 0.7152f * emitted[1] + 0.0722f * emitted[2];
         for (uint32_t i = 0; i < m._instanceCount; ++i) {

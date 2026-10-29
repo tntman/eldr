@@ -41,16 +41,49 @@ SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass",
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
-        "eldr:domeCameraVisible=false"]  # Karma hides domes from the camera (renderlightgeo 0)
+        "eldr:domeCameraVisible=false",  # Karma hides domes from the camera (renderlightgeo 0)
+        "eldr:gi=true"]  # Karma path traces: Eldr's final recipe with its bounce light
+# Prims without a material get a plain UsdPreviewSurface of their displayColor in both renderers:
+# Karma shades bare prims as about 0.4 x displayColor with a steeper falloff (docs/testing.md), Eldr as
+# Lambert of displayColor (as Storm); the goldens compare materials, not that fallback.
+_BARE = """
+def Scope "goldenMtl" {{{mtls}
+}}{overs}"""
+_MTL = """
+    def Material "{name}" {{
+        token outputs:surface.connect = </goldenMtl/{name}/pbr.outputs:surface>
+        def Shader "pbr" {{
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = ({c}, {c}, {c})
+            token outputs:surface
+        }}
+    }}"""
+_BIND = """
+over "{prim}" (prepend apiSchemas = ["MaterialBindingAPI"]) {{
+    rel material:binding = </goldenMtl/{name}>
+}}"""
+
+
+def bare(binds):  # {prim: grey}
+    greys = sorted(set(binds.values()))
+    name = lambda c: "grey" + str(c).replace(".", "")
+    return _BARE.format(mtls="".join(_MTL.format(name=name(c), c=c) for c in greys),
+                        overs="".join(_BIND.format(prim=p, name=name(c)) for p, c in binds.items()))
+
+
+# displayColor 0.7 on the ground; the cubes and ball have none: a mid grey
+OVERS = {"sunangle": bare({"ground": 0.7, "postLeft": 0.5, "postRight": 0.5, "beam": 0.5, "ball": 0.5}),
+         "displacement": bare({"ground": 0.5})}
 
 
 def scene_path(name):
     return os.path.join(HERE, "scenes", name + ".usda").replace("\\", "/")
 
 
-def sha1(path):
+def sha1(path):  # the scene and its golden overs: either changing needs a new reference
     with open(path, "rb") as f:
-        return hashlib.sha1(f.read()).hexdigest()
+        name = os.path.splitext(os.path.basename(path))[0]
+        return hashlib.sha1(f.read() + OVERS.get(name, "").encode()).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -95,9 +128,11 @@ def Scope "Render" {{
         custom string eldr:tonemapper = "none"
         custom bool eldr:autoExposure = 0
         custom float eldr:bloomIntensity = 0
-        custom bool eldr:domeCameraVisible = 0{product}
+        custom bool eldr:domeCameraVisible = 0
+        custom bool eldr:gi = 1{product}
     }}
 }}
+{OVERS.get(name, "")}
 """)
     return path.replace("\\", "/")
 

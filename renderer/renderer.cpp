@@ -2938,6 +2938,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.rtRefraction[1] = frame.opacityMode ? 1u : 0u;
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
+    fd.lightClamp[2] = std::max(frame.colorLimit, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
     // SSR's back-face hits: their share of light (1 without Frame::screenBackface: as before).
     fd.screenTrace[1] = frame.screenBackface ? std::clamp(frame.screenBackfaceScale, 0.0f, 1.0f) : 1.0f;

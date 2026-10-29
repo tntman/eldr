@@ -623,6 +623,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                                                 : int(number(t2.colorLimitShared, -1.0f));
         const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
         frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
+        frame.colorLimit = shared;  // camera-seen emission, as Karma's colorlimit
     }
     // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
     {
@@ -730,7 +731,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // Either may change the light table: commit once.
-    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
+    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
+                                                    frame.indirectClamp);
     if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
         _scene.Commit(true);  // the frame's second: its motion stays
     }

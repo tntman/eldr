@@ -1165,6 +1165,7 @@ void main()
     vec3 f0 = base.metalW * base.metalF0 + base.dielW * base.dielF0;  // hair, multi-bounce, toon
     vec3 FssEss = BaseAlbedo(NoV, dfg);
 
+    emissive = BrightnessClamp(emissive, frame.lightClamp.z);  // Karma's colour limit (40 shows as 20)
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
         Light light = lights[i];
