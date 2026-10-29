@@ -48,8 +48,7 @@
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
-TF_DEFINE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
+TfStaticData<HdVkRenderSettingsTokensType> HdVkRenderSettingsTokens;
 TF_DEFINE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
 const std::vector<HdVkExtraAov> &HdVkExtraAovs()
@@ -345,235 +344,28 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
     const vkr::Renderer::Frame frame{};
     const vkr::PostProcess::Settings &defaults = frame.post;
     const auto &t = *HdVkRenderSettingsTokens;
-    const auto &t2 = *HdVkRenderSettingsTokens2;
-    // In usdview's order: pipeline, lighting, shadows, materials, motion,
-    // image (volumes last).
+    [[maybe_unused]] const auto &volume = frame.volume;
+    // In the groups' order (renderSettings.def).
     HdRenderSettingDescriptorList settings = {
-        {"Depth Prepass (off: no AO, SSR, refraction, subsurface)", t.depthPrepass, VtValue(frame.depthPrepass)},
-        {"Frustum Culling (GPU)", t.frustumCulling, VtValue(frame.frustumCulling)},
-        {"Small Object Culling (pixels, 0 = off)", t.cullPixels, VtValue(frame.cullPixels)},
-        {"Shadow Small Object Culling (shadow texels)", t.shadowCullPixels, VtValue(frame.shadowCullPixels)},
-        {"Subdivision Surfaces (Complexity menu)", t.subdivision, VtValue(kHdVkSubdivision)},
-        {"Subdivision Max Level (0-8)", t.maxRefineLevel, VtValue(kHdVkMaxRefineLevel)},
-        {"Dicing by Screen Size (final quality)", t2.screenDicing, VtValue(kHdVkScreenDicing)},
-        {"Levels of Detail (heavy meshes)", t.lod, VtValue(frame.lod)},
-        {"Level of Detail Bias (+1: coarser)", t.lodBias, VtValue(frame.lodBias)},
-        {"Level of Detail Crossfade (dithered)", t2.lodFade, VtValue(frame.lodFade)},
-        {"Curves as Camera-Facing Ribbons (else tubes)", t2.curveRibbons, VtValue(kHdVkCurveRibbons)},
-        {"Points as Camera-Facing Discs (else spheres)", t2.pointSprites, VtValue(kHdVkPointSprites)},
-        {"Prewarm Pipelines (compile toggles in the background)", t.pipelinePrewarm, VtValue(true)},
-        {"Pipeline Cache on Disk (save compiled shaders)", t.pipelineCache, VtValue(frame.pipelineCache)},
-        {"Dome Light Lighting (IBL)", t.imageBasedLighting, VtValue(frame.imageBasedLighting)},
-        {"Global Illumination (RTX probes)", t.gi, VtValue(frame.gi)},
-        {"GI Probes along the Scene (2-64)", t.giProbes, VtValue(int(frame.giProbes))},
-        {"GI Rays per Probe per Frame (16-512)", t.giRays, VtValue(int(frame.giRays))},
-        {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
-        {"GI Probe Relocation (out of walls)", t2.giRelocation, VtValue(frame.giRelocation)},
-        {"Final Gather (0 off, 1 final quality, 2 always)", t2.finalGather, VtValue(int(frame.finalGather))},
-        {"Final Gather Distance (world units)", t2.finalGatherDistance, VtValue(frame.finalGatherDistance)},
-        {"Final Gather Rays per Pixel (1-16)", t2.finalGatherRays, VtValue(int(frame.finalGatherRays))},
-        {"Final Gather Denoise (0-1)", t2.finalGatherDenoise, VtValue(frame.finalGatherDenoise)},
-        {"Screen-Space GI (replaces AO)", t.ssgi, VtValue(frame.ssgi)},
-        {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
-        {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
-        {"SSGI Resolution Divisor (1-2)", t.ssgiResolution, VtValue(int(frame.ssgiResolution))},
-        {"Screen-Space Thickness Estimator (SSGI, SSR)", t2.ssgiThickness, VtValue(frame.ssgiThickness)},
-        {"SSGI Visibility Bitmask (light behind thin objects)", t2.ssgiBitmask, VtValue(frame.ssgiBitmask)},
-        {"SSGI Tile Order (half resolution: traced pixel per frame)", t2.ssgiTileOrder, VtValue(frame.ssgiTileOrder)},
-        {"Screen-Space Back-Face Hits (SSR, SSGI)", t2.screenBackface, VtValue(frame.screenBackface)},
-        {"Screen-Space Back-Face Hit Scale (0-1)", t2.screenBackfaceScale, VtValue(frame.screenBackfaceScale)},
-        {"SSGI Bitmask Object Thickness (fraction of SSGI radius)", t2.ssgiBitmaskThickness,
-         VtValue(frame.ssgiBitmaskThickness)},
-        {"Emissive Surfaces as Lights (small, bright meshes)", t.emissiveLights, VtValue(frame.emissiveLights)},
-        {"Emissive Light Threshold (radiance)", t.emissiveLightThreshold, VtValue(frame.emissiveLightThreshold)},
-        {"Dome Sun Extraction (HDRI sun as a shadowed light)", t2.domeSun, VtValue(frame.domeSun)},
-        {"Dome Sun Threshold (radiance)", t2.domeSunThreshold, VtValue(frame.domeSunThreshold)},
-        {"Direct Light Clamp (radiance, 0 = off)", t2.directClamp, VtValue(frame.directClamp)},
-        {"Indirect Light Clamp (radiance, 0 = off, -1 = color limit)", t2.indirectClamp, VtValue(-1.0f)},
-        {"Color Limit (radiance, 0 = off, -1 = Karma's, else 20)", t2.colorLimit, VtValue(-1.0f)},
-        {"Opacity Mode Presence (UsdPreviewSurface; off: shaded as transparent)", t2.opacityMode, VtValue(frame.opacityMode)},
-        {"Indirect Clamp Shared with Color Limit (-1 unset, 0 off, 1 on)", t2.colorLimitShared, VtValue(-1)},
-        {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
-        {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
-        {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
-        {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
-        {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
-        {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
-        {"Screen Space Reflections", t.ssr, VtValue(frame.ssr)},
-        {"Reflection Ray Steps (1-256)", t.ssrSteps, VtValue(int(frame.ssrSteps))},
-        {"Denoised Glossy SSR (GGX rays, ratio estimator)", t2.ssrDenoise, VtValue(frame.ssrDenoise)},
-        {"SSR Hit Footprint Filter (mip by the ray's cone)", t2.ssrHitFilter, VtValue(frame.ssrHitFilter)},
-        {"Ray-Traced Reflections (0 off, 1 final quality, 2 always; replace SSR)", t.rtReflections, VtValue(int(frame.rtReflections))},
-        {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
-        {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
-         VtValue(int(frame.rtReflectionSamples))},
-        {"Ray-Traced Hit Shadows (all lights at reflection/refraction hits; 0 off, 1 final quality, 2 always)",
-         t2.rtHitShadows, VtValue(int(frame.rtHitShadows))},
-        {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
-        {"Reflection Probe Resolution (16-512)", t.probeResolution, VtValue(int(frame.probeResolution))},
-        {"Reflection Probe Position (x y z, empty = scene centre)", t.probePosition, VtValue(std::string())},
-        {"Authored Reflection Probes (primvars:eldr:reflectionProbe)", t2.authoredProbes, VtValue(frame.authoredProbes)},
-        {"Normalize Reflection Probes (by GI/SSGI light)", t2.probeNormalize, VtValue(frame.probeNormalize)},
-        {"Planar Reflections (flat glossy floors)", t.planarReflections, VtValue(frame.planarReflections)},
-        {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
-        {"Planar Reflection Mirrors (most)", t2.planarCount, VtValue(int(frame.planarCount))},
-        {"Planar Reflection Blur (0 = sharp)", t2.planarBlur, VtValue(frame.planarBlur)},
-        {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
-        {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
-        {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
-        {"Local Light Shadows", t.localShadows, VtValue(frame.localShadows)},
-        {"Local Light Shadow Resolution (64-2048)", t.localShadowResolution,
-         VtValue(int(frame.localShadowResolution))},
-        {"Soft Shadows (PCSS)", t.softShadows, VtValue(frame.softShadows)},
-        {"Soft Sun Shadows (distant light angle)", t.softSunShadows, VtValue(frame.softSunShadows)},
-        {"Volumetric Fog", t.fog, VtValue(frame.fog)},
-        {"Fog Density (extinction per unit)", t.fogDensity, VtValue(frame.fogDensity)},
-        {"Fog Height (base)", t.fogHeight, VtValue(frame.fogHeight)},
-        {"Fog Height Falloff (per unit, 0 = even)", t.fogHeightFalloff, VtValue(frame.fogHeightFalloff)},
-        {"Fog Anisotropy (phase g, -1..1)", t.fogAnisotropy, VtValue(frame.fogAnisotropy)},
-        {"Fog Ambient from GI Probes (occluded dome light)", t2.fogGiAmbient, VtValue(frame.fogGiAmbient)},
-        {"Fog Color (r g b)", t.fogColor,
-         VtValue(TfStringPrintf("%g %g %g", frame.fogColor[0], frame.fogColor[1], frame.fogColor[2]))},
-        {"Fog Max Distance (0 = scene)", t.fogMaxDistance, VtValue(frame.fogMaxDistance)},
-        {"Fog Grid Size (froxels across, 16-512)", t.fogGridSize, VtValue(int(frame.fogGridSize))},
-        {"Fog Height Along Z (Z-up stages)", t.fogZUp, VtValue(frame.fogZUp)},
-        {"Soft Shadow Samples (1-16)", t.softShadowSamples, VtValue(int(frame.softShadowSamples))},
-        {"Translucent Shadows (coloured, partial)", t.translucentShadows, VtValue(frame.translucentShadows)},
-        {"Translucent Shadow Resolution (1 = full, 2 = half, 4 = quarter)", t.translucentShadowDivisor,
-         VtValue(int(frame.translucentShadowDivisor))},
-        {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
-        {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
-        {"Ray-Traced Skinned Instances (largest on screen, 0-256)", t.rtSkinnedInstances,
-         VtValue(int(frame.rtSkinnedInstances))},
-        {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
-        {"Specular Workflow (UsdPreviewSurface specularColor)", t.specularWorkflow,
-         VtValue(frame.specularWorkflow)},
-        {"Clearcoat (coat layer)", t.clearcoat, VtValue(frame.clearcoat)},
-        {"Sheen (fabric, fuzz)", t.sheen, VtValue(frame.sheen)},
-        {"Thin Film Iridescence", t.thinFilm, VtValue(frame.thinFilm)},
-        {"Anisotropic Specular (brushed metal)", t.anisotropicSpecular, VtValue(frame.anisotropicSpecular)},
-        {"Hair Shading (curves)", t.hairShading, VtValue(frame.hairShading)},
-        {"Textured Lobe Inputs (coat, sheen, film, IORs)", t.texturedLobes, VtValue(frame.texturedLobes)},
-        {"Textured Transmission and Subsurface Inputs", t.texturedTransmission, VtValue(frame.texturedTransmission)},
-        {"Toon Shading (materials' eldr:toonBands)", t.toon, VtValue(frame.toon)},
-        {"Toon Bands for Every Material (0 = off)", t.toonBands, VtValue(int(frame.toonBands))},
-        {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
-        {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
-        {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
-        {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
-        {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
-        {"Displacement", t.displacement, VtValue(frame.displacement)},
-        {"Displacement Scale", t.displacementScale, VtValue(frame.displacementScale)},
-        {"Displacement Graphs (per vertex)", t2.displacementGraphs, VtValue(frame.displacementGraphs)},
-        {"Translucent Objects", t.translucency, VtValue(frame.translucency)},
-        {"Holdouts (matte objects: black, zero alpha)", t.holdouts, VtValue(frame.holdouts)},
-        {"Translucent Holdouts Cut Alpha (by opacity)", t.holdoutAlpha, VtValue(frame.holdoutAlpha)},
-        {"Order-Independent Transparency (off: sorted per mesh)", t.oit, VtValue(frame.oit)},
-        {"OIT Depth Weight (exponent, 0 = plain average)", t.oitDepthWeight, VtValue(frame.oitDepthWeight)},
-        {"Refraction (transmission, ior)", t.refraction, VtValue(frame.refraction)},
-        {"Refraction Blur Samples (screen-space refraction only, 1-16)", t.refractionSamples, VtValue(int(frame.refractionSamples))},
-        {"Refraction Back Faces (water from below, TIR)", t.refractionBackFaces, VtValue(frame.refractionBackFaces)},
-        {"Refraction Through Layers (glass behind glass)", t.multiRefraction, VtValue(frame.multiRefraction)},
-        {"Refraction Layers (copies, 1-16)", t.refractionLayers, VtValue(int(frame.refractionLayers))},
-        {"Ray-Traced Refraction (0 off, 1 final quality, 2 always)", t2.rtRefraction, VtValue(int(frame.rtRefraction))},
-        {"Ray-Traced Refraction Interfaces (1-16)", t2.rtRefractionBounces, VtValue(int(frame.rtRefractionBounces))},
-        {"Ray-Traced Refraction Sees Displacement", t2.rtRefractionDisplacement, VtValue(frame.rtRefractionDisplacement)},
-        {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
-        {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
-        {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
-        {"TAA Samples (still camera)", t.taaSamples, VtValue(int(frame.taaSamples))},
-        {"Render Scale (interactive: TAA upscales from it; < 1 = on, 0.25-1)", t2.renderScale,
-         VtValue(frame.renderScale)},
-        {"Film Accumulation (still camera: plain average, no TAA clipping)", t.filmAccumulation,
-         VtValue(frame.filmAccumulation)},
-        {"Film Samples (still camera, final frames)", t.filmSamples, VtValue(int(frame.filmSamples))},
-        {"Film Pixel Filter Radius (Gaussian, pixels, 0-2)", t.filmFilterRadius, VtValue(frame.filmFilterRadius)},
-        {"Final Quality (offline: also when enableInteractive is false)", t.finalQuality,
-         VtValue(frame.finalQuality)},
-        {"Sample Dimensions (blue noise per effect; off: IGN)", t.sampleDimensions, VtValue(frame.sampleDimensions)},
-        {"Interactive Noise Loop (samples while moving, 1-256)", t.interactiveSamples,
-         VtValue(int(frame.interactiveSamples))},
-        {"Adaptive Sampling Noise Threshold (0 = off)", t.adaptiveThreshold, VtValue(frame.adaptiveThreshold)},
-        {"Adaptive Sampling Threshold, Final Quality (0 = off)", t2.adaptiveFinalThreshold,
-         VtValue(frame.adaptiveFinalThreshold)},
-        {"Adaptive Sampling Converged Pixel Fraction", t2.adaptivePixelFraction, VtValue(frame.adaptivePixelFraction)},
-        {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
-         VtValue(int(frame.adaptiveMinSamples))},
-        {"GI Preconverge (film waits for fresh probes)", t.giPreconverge, VtValue(frame.giPreconverge)},
-        {"Fog Film Jitter (still: per-sample froxels, no history)", t.fogFilmJitter, VtValue(frame.fogFilmJitter)},
-        {"Jittered Light Shape per Sample (final quality: true soft shadows)", t2.shadowJitter, VtValue(frame.shadowJitter)},
-        {"Final Quality Shadows (maps, raytraced, auto)", t2.finalShadows, VtValue(std::string("maps"))},
-        {"Ray-Traced Shadows through Glass and Volumes", t2.rtTranslucentShadows, VtValue(frame.rtTranslucentShadows)},
-        {"Lens Jitter per Sample (film: depth of field without post)", t2.dofJitter, VtValue(frame.dofJitter)},
-        {"Residual DOF between Lens Samples (1/sqrt(samples))", t2.dofResidualBlur, VtValue(frame.dofResidualBlur)},
-        {"Depth of Field (camera fStop)", t.depthOfField, VtValue(frame.depthOfField)},
-        {"Motion Blur (camera shutter)", t.motionBlur, VtValue(frame.motionBlur)},
-        {"Motion Blur Time Samples (film: scene at shutter times)", t2.motionBlurTimeSamples,
-         VtValue(frame.motionBlurTimeSamples)},
-        {"Residual Motion Blur between Time Samples (shutter/samples)", t2.motionBlurResidual,
-         VtValue(frame.motionBlurResidual)},
-        {"Sampled Motion (shutter samples: first frames blur too)", t2.sampledMotion, VtValue(true)},
-        {"Deformation Blur (point caches through the shutter)", t2.deformationBlur, VtValue(frame.deformationBlur)},
-        {"Lens Distortion (camera lensDistortion:*)", t.lensDistortion, VtValue(frame.lensDistortion)},
-        {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
-        {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
-        {"Cryptomatte: Soft Edges and Ranks (film samples)", t2.cryptomatteSoft, VtValue(frame.cryptomatteSoft)},
-        {"Direct Light Intensity (final pixel only)", t2.directIntensity, VtValue(frame.directIntensity)},
-        {"Indirect Light Intensity (final pixel only)", t2.indirectIntensity, VtValue(frame.indirectIntensity)},
-        {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,
-         VtValue(frame.localVolumeShadows)},
-        {"Volume Mutual Shadows (volumes shadow each other)", t2.volumeMutualShadows,
-         VtValue(frame.volume.mutualShadows)},
-        {"Volume Default Fields (Cd, temperature without a volume material)", t2.volumeDefaultFields,
-         VtValue(frame.volume.defaultFields)},
-        {"Volume Multiple Scattering (octaves; off: single, as Karma's volume limit 0)",
-         t2.volumeMultipleScattering, VtValue(frame.volume.multipleScattering)},
-        {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
-         VtValue(frame.lightShapesVisible)},
-        {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},
-        {"Multiple Scattering (where the surface's spec has it: standard_surface, OpenPBR)", t2.multiScatter,
-         VtValue(frame.multiScatter)},
-        {"Share Frames with OpenGL (off: read back)", t.shareFrame, VtValue(frame.shareFrame)},
-        {"Overlap Readback while Moving (one frame behind)", t2.overlapReadback, VtValue(frame.overlapReadback)},
-        {"Read Back in Place (no copy)", t2.inPlaceReadback, VtValue(frame.inPlaceReadback)},
-        {"Offline Samples per Execute (seconds; husk, usdrecord; 0: one sample)", t2.offlineBatchSeconds,
-         VtValue(1.0f)},
-        {"Keep Ids while Moving (no readback)", t2.staleMovingIds, VtValue(frame.staleMovingIds)},
-        {"Compile Pipelines on Demand (fast start)", t2.lazyPipelines, VtValue(frame.lazyPipelines)},
-        {"Unread AOVs Once Converged", t2.lazyExtraAovs, VtValue(frame.lazyExtraAovs)},
-        {"Write Render Products (UsdRender, EXR)", t.renderProducts, VtValue(frame.renderProducts)},
-        {"Render Products at their Resolution", t2.productResolution, VtValue(frame.productResolution)},
-        {"Post Processing (exposure, bloom, tonemap)", t.postProcess, VtValue(frame.postProcess)},
-        {"Exposure Compensation (EV)", t.exposureCompensation, VtValue(defaults.exposureCompensation)},
-        {"Linear Beauty (Houdini viewport, husk products: no tonemapper, bloom or auto exposure)", t2.productLinear,
-         VtValue(frame.linearBeauty)},
-        {"Auto Exposure (Linear Beauty off)", t.autoExposure, VtValue(defaults.autoExposure)},
-        {"Tonemapper (Linear Beauty off) (aces, agx, agxPunchy, none)", t.tonemapper, VtValue(std::string("aces"))},
-        {"Bloom Intensity (Linear Beauty off) (0-1)", t.bloomIntensity, VtValue(defaults.bloomIntensity)},
-    };
+#define HDVK_GROUP(title, open)
+#define HDVK_SETTING(name, label, ...) {label, t.name, VtValue(__VA_ARGS__)},
 #ifdef HDVK_VOLUMES
-    const vkr::VolumePass::Settings &volume = frame.volume;
-    settings.insert(settings.end(), {
-        {"Volumes (OpenVDB)", t.volumes, VtValue(frame.volumes)},
-        {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
-        {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
-        {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
-        {"Volume Density Multiplier (on the material's)", t.volumeDensity, VtValue(volume.density)},
-        {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
-        {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
-        {"Volume Resolution (1 = full, 2 = half)", t.volumeResolution, VtValue(int(volume.resolution))},
-        {"Volumes under Transparency (glass dims and refracts them)", t.volumeUnderTransparency,
-         VtValue(volume.underTransparency)},
-        {"Volume Shadows (volumes shadow surfaces from the sun)", t.volumeShadows, VtValue(volume.shadows)},
-    });
+#define HDVK_VDB_SETTING HDVK_SETTING
+#else
+#define HDVK_VDB_SETTING(...)
 #endif
+#include "renderSettings.def"
+#undef HDVK_GROUP
+#undef HDVK_SETTING
+#undef HDVK_VDB_SETTING
+    };
     return settings;
 }
 
 void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &value)
 {
     const auto &t = *HdVkRenderSettingsTokens;
-    const auto &t2 = *HdVkRenderSettingsTokens2;
+    const auto &t2 = *HdVkRenderSettingsTokens;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
@@ -1018,7 +810,7 @@ bool HdVkRenderDelegate::Offline() const
 
 bool HdVkRenderDelegate::ScreenDicing() const
 {
-    return GetRenderSetting<bool>(HdVkRenderSettingsTokens2->screenDicing, kHdVkScreenDicing) &&
+    return GetRenderSetting<bool>(HdVkRenderSettingsTokens->screenDicing, kHdVkScreenDicing) &&
            (GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) || Offline());
 }
 
@@ -1040,7 +832,7 @@ void HdVkRenderDelegate::SetActiveCamera(SdfPath const &camera)
 
 bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)
 {
-    if (!GetRenderSetting<bool>(HdVkRenderSettingsTokens2->sampledMotion, true)) {
+    if (!GetRenderSetting<bool>(HdVkRenderSettingsTokens->sampledMotion, true)) {
         return false;
     }
     std::lock_guard<std::mutex> lock(_shutterMutex);

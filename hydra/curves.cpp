@@ -412,7 +412,7 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         out.velocities = !velocities.empty();
         m.hair = curves && BoolPrimvar(sceneDelegate, id, "eldr:hair", true);
         HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
-        const auto &t2 = *HdVkRenderSettingsTokens2;
+        const auto &t2 = *HdVkRenderSettingsTokens;
         // Render Curves As (flat ribbons, rounded curves, oriented ribbons,
         // USD default) and Render Points As (discs, spheres, oriented discs),
         // eldr:object:curve_style / point_style else Karma's; the older

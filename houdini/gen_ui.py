@@ -13,7 +13,7 @@ Houdini finds by the renderer's name through HOUDINI_SOHO_PATH:
 
 Attribute parms are named hou.text.encodeParm(<attribute>), each with a
 "<attribute>_control" menu (Do Nothing / Set or Create / Block) as Karma's.
-The groups are usdview's settings window's (GROUPS in settings.py): the
+The groups are usdview's settings window's (hydra/renderSettings.def): the
 important ones open, the rest folded. Every parm's help is the "What it does"
 column of docs/settings.md (usdview/hdvkUsdview/tooltips.py).
 """
@@ -105,15 +105,6 @@ SECTIONS = [
 ]
 
 
-def groups(settings_py):
-    """usdview's GROUPS [(title, open, "key key ...")], read without importing Qt."""
-    tree = ast.parse(open(settings_py, encoding="utf-8").read())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and node.targets[0].id == "GROUPS":
-            return ast.literal_eval(node.value)
-    raise SystemExit("no GROUPS in " + settings_py)
-
-
 def literal(py, name):
     """A module-level literal of a Python file, read without importing it (Qt)."""
     for node in ast.parse(open(py, encoding="utf-8").read()).body:
@@ -156,13 +147,25 @@ def label_help(name, tip=""):
     return re.sub(r"\s*\((?!Linear Beauty off)[^()]*\)", "", name), tip or name
 
 
-def tooltips(settings_py):
-    """{key: help} from docs/settings.md, through usdview's tooltips.py (loaded by path)."""
+def tooltips_py(settings_py):
+    """usdview's tooltips.py, loaded by path (no Qt)."""
     here = os.path.dirname(os.path.abspath(settings_py))
     spec = importlib.util.spec_from_file_location("eldr_tooltips", os.path.join(here, "tooltips.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.Tooltips(os.path.join(here, "..", "..", "docs", "settings.md"))
+    return mod
+
+
+def tooltips(settings_py):
+    """{key: help} from docs/settings.md."""
+    here = os.path.dirname(os.path.abspath(settings_py))
+    return tooltips_py(settings_py).Tooltips(os.path.join(here, "..", "..", "docs", "settings.md"))
+
+
+def groups(settings_py):
+    """The settings' groups [(title, open, "key key ...")] from hydra/renderSettings.def."""
+    here = os.path.dirname(os.path.abspath(settings_py))
+    return tooltips_py(settings_py).ReadGroups(os.path.join(here, "..", "..", "hydra", "renderSettings.def"))
 
 
 def entry(attr, label, kind, default, help_, scope, control=True, menu=None, rng=None):

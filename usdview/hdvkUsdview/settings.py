@@ -4,57 +4,11 @@ dialog lists them in one column that runs off the screen."""
 
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 
-from .tooltips import Tooltips
+from .tooltips import ReadGroups, Tooltips
 
-# (title, open, keys) in the order the window shows them: the settings people
-# change most first and open, the rarely touched ones folded, diagnostics last.
-# Every key appears once; settings not listed (new ones) land in "Other".
-# docs/settings.md follows this order (tests/test_docs.py checks).
-GROUPS = [
-    ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold finalShadows rtRefraction finalGather motionBlur "
-     "motionBlurTimeSamples depthOfField"),
-    ("Lighting and GI", True,
-     "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
-    ("Image", True,
-     "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
-    ("Advanced: Geometry and products", False,
-     "lod lodBias lodFade subdivision maxRefineLevel screenDicing displacement curveRibbons pointSprites "
-     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
-     "indirectIntensity renderProducts productResolution"),
-    ("Advanced: Lighting", False,
-     "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
-     "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise ssgiSteps "
-     "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
-     "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
-    ("Advanced: Shadows", False,
-     "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
-     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
-     "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
-    ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
-     "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur"),
-    ("Advanced: Materials", False,
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
-     "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Advanced: Transparency", False,
-     "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "
-     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement "
-     "holdoutAlpha opacityMode"),
-    ("Advanced: Fog and volumes", False,
-     "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
-     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
-     "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
-     "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
-    ("Advanced: Camera and film", False,
-     "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
-     "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "
-     "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
-    ("Performance and debug", False,
-     "depthPrepass frustumCulling cullPixels shadowCullPixels shareFrame overlapReadback inPlaceReadback offlineBatchSeconds staleMovingIds pipelineCache pipelinePrewarm lazyPipelines extraAovs lazyExtraAovs "
-     "renderScale interactiveSamples"),
-]
+# [(title, open, "key key ...")]: hydra/renderSettings.def's groups, in the
+# order the window shows them. docs/settings.md follows it (tests/test_docs.py).
+GROUPS = ReadGroups()
 
 
 def Groups(settings):
