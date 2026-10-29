@@ -78,6 +78,9 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
         // The beauty before eldr:denoise (once the film converged).
         {k.beautyRaw, A::kBeautyRaw, HdFormatFloat32Vec4},
+        // Caustic photons' light (eldr:caustics), part of indirect diffuse;
+        // Karma has no AOV of its own for it (its LPEs below).
+        {k.caustics, A::kCaustics, HdFormatFloat32Vec3},
     };
     return aovs;
 }
@@ -124,6 +127,9 @@ int LpeKind(std::string e)
         {"C<TD>.*L", A::kSubsurface}, {"C<TD>.*[LO]", A::kSubsurface},
         {"C<...'coat'>.*L", A::kCoat}, {"C<RG'coat'>.*L", A::kCoat},
         {"CV.*L", A::kVolume}, {"CVL", A::kVolume}, {"CV.*[LO]", A::kVolume},
+        // Caustics: diffuse seen, then glass or metal on the way to a light.
+        {"C<RD>.+<TS>L", A::kCaustics}, {"C<RD><TS>.*L", A::kCaustics}, {"C<RD>[<TS><RS>].*L", A::kCaustics},
+        {"C<RD>[<TS><RS>]+L", A::kCaustics},
         {"shadow;C.*[LO]", A::kShadow}, {"shadow;C.*L", A::kShadow},
         {"holdouts;shadow;CDL", A::kHoldoutShadow}, {"holdouts;shadow;C.*[LO]", A::kHoldoutShadow},
     };
@@ -477,9 +483,13 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
         {"GI Probe Relocation (out of walls)", t2.giRelocation, VtValue(frame.giRelocation)},
         {"Final Gather (0 off, 1 final quality, 2 always)", t2.finalGather, VtValue(int(frame.finalGather))},
+        {"Caustics (0 off, 1 final quality, 2 always; caster objects)", t2.caustics, VtValue(int(frame.caustics))},
+        {"Caustic Photons per Light and Sample", t2.causticsPhotons, VtValue(int(frame.causticsPhotons))},
+        {"Caustic Gather Radius (world units, 0 = auto)", t2.causticsRadius, VtValue(frame.causticsRadius)},
         {"Final Gather Distance (world units)", t2.finalGatherDistance, VtValue(frame.finalGatherDistance)},
         {"Final Gather Rays per Pixel (1-16)", t2.finalGatherRays, VtValue(int(frame.finalGatherRays))},
         {"Final Gather Denoise (0-1)", t2.finalGatherDenoise, VtValue(frame.finalGatherDenoise)},
+        {"Effect Denoise Fade (film samples; 0: never)", t2.effectDenoiseSamples, VtValue(int(frame.effectDenoiseSamples))},
         {"Screen-Space GI (replaces AO)", t.ssgi, VtValue(frame.ssgi)},
         {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
@@ -516,6 +526,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
+        {"Ray-Traced Reflection Denoise", t2.rtReflectionDenoise, VtValue(frame.rtReflectionDenoise)},
         {"Ray-Traced Hit Shadows (all lights at reflection/refraction hits; 0 off, 1 final quality, 2 always)",
          t2.rtHitShadows, VtValue(int(frame.rtHitShadows))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
@@ -552,6 +563,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.translucentShadowDivisor))},
         {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
         {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
+        {"Ray-Traced Shadow Denoise", t2.rtShadowDenoise, VtValue(frame.rtShadowDenoise)},
         {"Ray-Traced Skinned Instances (largest on screen, 0-256)", t.rtSkinnedInstances,
          VtValue(int(frame.rtSkinnedInstances))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
@@ -605,6 +617,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Adaptive Sampling Noise Threshold (0 = off)", t.adaptiveThreshold, VtValue(frame.adaptiveThreshold)},
         {"Adaptive Sampling Threshold, Final Quality (0 = off)", t2.adaptiveFinalThreshold,
          VtValue(frame.adaptiveFinalThreshold)},
+        // -1: not set, Karma's quality applies (else 1).
+        {"Diffuse Quality (GI, final gather, AO rays; -1 = Karma's)", t2.diffuseQuality, VtValue(-1.0f)},
+        {"Reflection Quality (traced reflection rays; -1 = Karma's)", t2.reflectQuality, VtValue(-1.0f)},
+        {"Light Quality (traced shadow rays; -1 = Karma's)", t2.lightQuality, VtValue(-1.0f)},
+        {"Subsurface Quality (taps; -1 = Karma's)", t2.sssQuality, VtValue(-1.0f)},
+        {"Volume Quality (shadow steps; -1 = Karma's)", t2.volumeQuality, VtValue(-1.0f)},
         {"Adaptive Sampling Converged Pixel Fraction", t2.adaptivePixelFraction, VtValue(frame.adaptivePixelFraction)},
         {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
          VtValue(int(frame.adaptiveMinSamples))},
@@ -629,6 +647,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
         {"Cryptomatte: Soft Edges and Ranks (film samples)", t2.cryptomatteSoft, VtValue(frame.cryptomatteSoft)},
+        {"Per-AOV Sample Filters (render var filter)", t2.aovFilters, VtValue(true)},
         {"Direct Light Intensity (final pixel only)", t2.directIntensity, VtValue(frame.directIntensity)},
         {"Indirect Light Intensity (final pixel only)", t2.indirectIntensity, VtValue(frame.indirectIntensity)},
         {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,

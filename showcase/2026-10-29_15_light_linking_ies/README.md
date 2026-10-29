@@ -17,8 +17,8 @@ These are the UsdLux collections Houdini's Light Linker LOP edits (`includeRoot`
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_09_light_linking_ies\scene.usda`, then pick a settings prim.
-- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_09_light_linking_ies/scene.usda -o linking.exr`; `-R BRAY_HdKarma` renders Karma's for comparison.
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_15_light_linking_ies\scene.usda`, then pick a settings prim.
+- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_15_light_linking_ies/scene.usda -o linking.exr`; `-R BRAY_HdKarma` renders Karma's for comparison.
 - Houdini: Sublayer LOP on the file, Eldr as the viewport renderer; a Light Linker LOP after it edits the same collections.
 
 Karma comparisons: `tests/karma_refs.py --scenes lightlink,ies` (numbers in docs/houdini.md).

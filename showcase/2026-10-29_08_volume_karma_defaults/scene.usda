@@ -1,0 +1,34 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/volume.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Volumes without a material now render as Karma's: white scattering, no
+# absorption, isotropic phase; the dome lights them from its upper half.
+# /Render/karma is the default; /Render/oldPhase is the old forward phase
+# (g 0.2); /Render/volumeLimit16 adds multiple scattering.
+
+def Scope "Render"
+{
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+
+    def RenderSettings "oldPhase"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float eldr:volumeAnisotropy = 0.2
+    }
+
+    def RenderSettings "volumeLimit16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float karma:object:volumelimit = 16
+    }
+}

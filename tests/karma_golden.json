@@ -41,9 +41,9 @@
       "mald": 0.2121
     },
     "volume": {
-      "lum": 1.1159,
-      "region": 0.8165,
-      "mald": 0.4134
+      "lum": 1.3857,
+      "region": 0.8487,
+      "mald": 0.2583
     },
     "displacement": {
       "lum": 1.9136,
@@ -54,6 +54,16 @@
       "lum": 0.9665,
       "region": 1.0281,
       "mald": 0.1896
+    },
+    "caustics": {
+      "lum": 1.015,
+      "region": 0.239,
+      "mald": 0.137
+    },
+    "transparency_order": {
+      "lum": 1.0276,
+      "region": 0.0567,
+      "mald": 0.0499
     }
   }
 }

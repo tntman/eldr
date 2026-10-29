@@ -58,11 +58,24 @@ public:
         kShadow,          // the direct light shadows took (shadow;C.*[LO]), holdouts' not
         kHoldoutShadow,   // the same on holdouts, diffuse only (Karma's holdouts;shadow;CDL)
         kVolume,          // volumes' light (CV.*L); the splits behind are attenuated by them
+        kCaustics,        // caustic photons' light, also in indirect diffuse (eldr:caustics, C<RD>.+<TS>L)
         kLightGroup0,     // a light group's direct light (C.*<L.'tag'>), kMaxLightGroups of them
         // The film's beauty before Frame::denoise, linear and exposed, rgba:
         // the Renderer's own (no pass here), once the film converged.
         kBeautyRaw = kLightGroup0 + kMaxLightGroups,
         kCount
+    };
+    // How the film's samples make a pixel of an AOV (Params::filters,
+    // Karma's "Sample Blending" of a render var). kFilterDefault: the colour
+    // AOVs as the beauty, the rest kFilterNearest. Gauss and box weigh the
+    // samples within their radius (pixels; 0: Gauss 1.5, the others 0.5,
+    // the pixel's own sample); min and max keep the per-component extreme
+    // of those samples, closest and farthest the value of the sample with
+    // the least or most depth (nothing drawn: farthest). Only under the
+    // film; Cryptomatte keeps its own.
+    enum Filter : uint8_t {
+        kFilterDefault, kFilterBeauty, kFilterNearest, kFilterGauss, kFilterBox,
+        kFilterMin, kFilterMax, kFilterClosest, kFilterFarthest
     };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:
     // missing ones are 0, extra ones dropped).
@@ -76,14 +89,14 @@ public:
     // layer per light group up to the last one asked for; 4 (direct and
     // indirect diffuse and glossy) without split AOVs.
     static uint32_t SplitLayers(float *const targets[kCount]);
-    static constexpr uint32_t kSplitLayers = 10;
+    static constexpr uint32_t kSplitLayers = 11;
 
     // The light splits' image (RGBA16F, GENERAL), layers: 0 direct diffuse
     // (a: the fog's transmittance), 1 indirect diffuse (both with the
     // subsurface light), 2 direct glossy, 3 indirect glossy (with what glass
     // refracts); then (SplitLayers) 4 refracted, 5 and 6 the subsurface's
     // direct and indirect, 7 coat, 8 shadow (a: 1 on holdouts), 9 volumes,
-    // 10... the light groups. Made at this size and layer count
+    // 10 caustics, 11... the light groups. Made at this size and layer count
     // (1 x 1 without splits) before the frame's descriptors are written;
     // ClearSplits zeroes it before the shading pass stores into it, with
     // `keepPrevious` first copying last frame's into PreviousSplitsView
@@ -127,6 +140,8 @@ public:
         bool cryptoSoft = true;  // Cryptomatte takes the film's samples (else the nearest one's id)
         float filmOffset[2] = {}, filmRadius = 0;
         VkImageView filmWeights = VK_NULL_HANDLE;  // the film's (TemporalAA::FilmWeights), GENERAL
+        uint8_t filters[kCount] = {};     // Filter per target (film samples only)
+        float filterRadius[kCount] = {};  // its radius (pixels, 0: the filter's default)
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set

@@ -3,6 +3,7 @@
 // material.glsl, rt.glsl, gi.glsl and volume.glsl.
 
 layout(set = 0, binding = 5) uniform samplerCube envCube;
+#include "caustics.glsl"
 
 layout(location = 0) rayPayloadEXT RtHit hit;
 layout(location = 1) rayPayloadEXT vec4 shadowRay;  // rt_shadow.rmiss, rt_shadow.rahit
@@ -181,6 +182,28 @@ vec3 Dome(vec3 dir, float lod)
     return textureLod(envCube, mat3(frame.envWorldToLocal) * dir, lod).rgb * frame.envRadiance.rgb;
 }
 
+// The suns' discs along dir: each distant light with an angle shows as a
+// disc of radiance irradiance / solid angle (normalize is in the
+// irradiance already, hydra/light.cpp), times its specular multiplier.
+// Only for rays whose end no light sampling covers (traced refraction):
+// reflections, the final gather and the probes leave the sun to
+// mesh.frag's and ShadeHit's direct light, or it would count twice.
+// Limited by eldr:indirectClamp, as Karma's colour limit clamps such samples.
+// Karma's renderlightgeo hides lights from the camera only, so it isn't
+// read here. ponytail: hard-edged disc, no limb darkening.
+vec3 SunDiscs(vec3 dir)
+{
+    vec3 sum = vec3(0.0);
+    for (uint i = 0u; i < frame.counts.x; ++i) {
+        Light light = lights[i];
+        float s = sin(0.5 * light.axis.w);  // 1 - cos(half angle) = 2 s^2, exact for a 0.5 degree sun
+        if (light.axis.w > 0.0 && dot(dir, light.position.xyz) >= cos(light.axis.w)) {
+            sum += light.color.rgb * (light.shaping.w / (4.0 * PI * s * s));
+        }
+    }
+    return BrightnessClamp(sum, frame.lightClamp.y);
+}
+
 // The dome's irradiance / pi, unoccluded (as mesh.frag's Irradiance).
 vec3 DomeDiffuse(vec3 n)
 {
@@ -267,6 +290,9 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     if ((frame.features.x & kFeatureGi) != 0u) {
         vec4 gi = GiIrradiance(p, n, -dir);
         indirect = mix(indirect, gi.rgb, gi.a);
+    }
+    if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
+        indirect += CausticDiffuse(p, n);  // seen in reflections, through glass (a pool's floor), by GI
     }
     vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
     radiance = BrightnessClamp(radiance, frame.lightClamp.y);
