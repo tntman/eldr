@@ -19,6 +19,9 @@
 //                      free camera) on the stage instead of a free camera
 //   --set name=value   a render setting (bool 0/1, int, float or string)
 //   --csv path         per-frame times (begin, execute, maps, frame)
+//   --warmup N         frames before timing (default 10; 0 times a final
+//                      quality film from its first sample)
+//   --pass-csv path    per-frame GPU pass times: frame,pass,ms
 //   --startup          instead of timing: a cold start (plugin, delegate,
 //                      scene, first frames) and frames to convergence
 //   --ids              check primId/instanceId against the render index
@@ -74,7 +77,8 @@ int main(int argc, char **argv)
     double appMs = 0;
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
     bool houdini = false, startup = false, renderPurpose = false;
-    std::string csvPath;
+    std::string csvPath, passCsvPath;
+    int warmupFrames = 10;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -100,6 +104,10 @@ int main(int argc, char **argv)
             sets.push_back(next), ++i;
         } else if (a == "--csv") {
             csvPath = next, ++i;
+        } else if (a == "--warmup") {
+            warmupFrames = std::atoi(next), ++i;
+        } else if (a == "--pass-csv") {
+            passCsvPath = next, ++i;
         } else if (a == "--still") {
             still = true;
         } else if (a == "--ids") {
@@ -556,7 +564,11 @@ int main(int argc, char **argv)
             std::map<std::string, double> mapMs, passMs;
             std::vector<double> times;  // per frame: their median resists other GPU users
             std::vector<std::array<double, 4>> rows;  // begin, execute, maps, frame
-            const int warmup = 10;
+            const int warmup = warmupFrames;
+            FILE *passCsv = passCsvPath.empty() ? nullptr : std::fopen(passCsvPath.c_str(), "w");
+            if (passCsv) {
+                std::fputs("frame,pass,ms\n", passCsv);
+            }
             const SdfPath camPath(argv[2]);
             UsdGeomCamera usdCam(stage->GetPrimAtPath(camPath));
             const GfMatrix4d camXform = usdCam.ComputeLocalToWorldTransform(UsdTimeCode::Default());
@@ -618,6 +630,9 @@ int main(int argc, char **argv)
                     if (it != stats.end() && it->second.IsHolding<VtDictionary>()) {
                         for (const auto &[name, ms] : it->second.UncheckedGet<VtDictionary>()) {
                             passMs[name] += ms.IsHolding<double>() ? ms.UncheckedGet<double>() : 0.0;
+                            if (passCsv && ms.IsHolding<double>()) {
+                                std::fprintf(passCsv, "%d,%s,%.4f\n", f - warmup, name.c_str(), ms.UncheckedGet<double>());
+                            }
                         }
                     }
                 }
@@ -625,6 +640,9 @@ int main(int argc, char **argv)
             if (const auto *c = houdini ? static_cast<const HdCamera *>(index->GetSprim(HdPrimTypeTokens->camera, camPath))
                                         : nullptr) {
                 std::printf("camera %s, shutter %g to %g\n", camPath.GetText(), c->GetShutterOpen(), c->GetShutterClose());
+            }
+            if (passCsv) {
+                std::fclose(passCsv);
             }
             std::printf("%dx%d, %d frames, aovs %s, shareFrame %d%s, app %.1f ms\n", width, height, frames,
                         TfStringJoin(aovs, ",").c_str(), share, still ? ", still" : "", appMs);

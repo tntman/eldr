@@ -14,5 +14,10 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-28 | `2026-10-28_06_eldr_geometry_tab` | Per-object eldr: attributes over karma:, image group | `holdoutmode`, `rendervisibility`, `width_scale`, `curve_style`, `point_style`; `eldr:productLinear`, `bloomIntensity` |
 | 2026-10-28 | `2026-10-28_07_shadow_cull` | Small-object culling in sun shadows | `eldr:shadowCullPixels` |
 | 2026-10-28 | `2026-10-28_08_render_stats` | Eldr's statistics in the Render Gallery panel, `husk:render_stats` in EXRs | `husk.metadata` in `UsdRenderers.json` |
+| 2026-10-29 | `2026-10-29_01_quick_fixes` | Colour limit, final-quality traced reflections, UsdPreviewSurface opacityMode, displacement graph bound | `eldr:colorLimit`, `indirectClamp`, `rtReflections`, `opacityMode`, `eldr:displacementBound` (material input) |
+| 2026-10-29 | `2026-10-29_02_offline_batch` | husk and usdrecord: film samples back to back in one execute | `eldr:offlineBatchSeconds` |
+| 2026-10-29 | `2026-10-29_03_planar_blur_lighttex` | Blurred planar mirrors, light textures in traced paths | `eldr:planarBlur`, `eldr:lightTextures` |
+| 2026-10-29 | `2026-10-29_04_screen_dicing` | Subdivision levels by size on screen in final quality, as Karma's dicing quality | `eldr:screenDicing`, `primvars:eldr:object:dicingquality` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
+

@@ -1,0 +1,44 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/blurred"
+    subLayers = [@../../tests/scenes/reflections.usda@]
+)
+
+# A wet floor: rougher than the test scene's polished one, so the blur shows.
+over "mtl"
+{
+    over "polished"
+    {
+        over "pbr"
+        {
+            float inputs:roughness = 0.4
+        }
+    }
+}
+
+# Rougher than the 0.3 a floor needs to be picked as the mirror on its own:
+# flag it.
+over "floor"
+{
+    bool primvars:eldr:planarReflection = 1 (
+        interpolation = "constant"
+    )
+}
+
+def Scope "Render"
+{
+    def RenderSettings "sharp"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:planarReflections = 1
+        custom float eldr:planarBlur = 0
+    }
+    def RenderSettings "blurred"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:planarReflections = 1
+        custom float eldr:planarBlur = 1
+    }
+}

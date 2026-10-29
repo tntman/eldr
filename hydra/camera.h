@@ -16,6 +16,9 @@ public:
 
     void Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *renderParam, HdDirtyBits *dirtyBits) override;
 
+    // Houdini's viewport camera (/__HoudiniFreeCamera__): where the user
+    // looks from, not a shot camera. It never blurs as a moving camera.
+    static bool IsViewportCamera(SdfPath const &id);
     // k3, k4, k5, k6, p1, p2 (0: none).
     const float *GetLensDistortionOpenCvTerms() const { return _terms; }
     // Sampled motion: the camera's transform one frame before, as its

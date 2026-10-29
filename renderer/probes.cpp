@@ -77,7 +77,8 @@ Renderer::Frame Nested(const Renderer::Frame &frame, uint32_t width, uint32_t he
     f.lensDistortion = f.extraAovs = false;
     // ponytail: reflections are shaded with shadow maps and the dome's
     // light; ray tracing and GI there would need their own TLAS and probes.
-    f.rtShadows = f.rtReflections = f.gi = false;
+    f.rtShadows = f.gi = false;
+    f.rtReflections = 0;
     f.finalShadows = Renderer::Frame::FinalShadows::Maps;
     // ponytail: no volumes in reflections; their stochastic march needs
     // TAA, which these renders don't run.

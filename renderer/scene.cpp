@@ -126,7 +126,7 @@ struct GpuMaterial {
     float transmission[4];  // Material::transmissionColor, transmission
     float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
     float subsurface[4];        // Material::subsurfaceColor, subsurface
-    float subsurfaceRadius[4];  // Material::subsurfaceRadius
+    float subsurfaceRadius[4];  // Material::subsurfaceRadius, w: opacityPresence
     float surface[4];  // Material::model, diffuseRoughness, coatAffectColor, coatAffectRoughness
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
@@ -2021,6 +2021,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
             g.subsurface[3] = m.subsurface;
             std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
+            g.subsurfaceRadius[3] = m.opacityPresence && m.opacityThreshold <= 0 ? 1.0f : 0.0f;
             appendProgram(m.program, g.program);
             materials.push_back(g);
         }
