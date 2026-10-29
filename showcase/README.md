@@ -20,9 +20,17 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_04_screen_dicing` | Subdivision levels by size on screen in final quality, as Karma's dicing quality | `eldr:screenDicing`, `primvars:eldr:object:dicingquality` |
 | 2026-10-29 | `2026-10-29_05_coloured_volume_shadows` | Coloured smoke casts coloured shadows (maps, traced, half resolution); multiple scattering fitted to Karma's Volume Limit | `eldr:volumeShadows`, `eldr:rtShadows`, `eldr:volumeResolution`, `karma:object:volumelimit` |
 | 2026-10-29 | `2026-10-29_07_oidn_adaptive_tiles` | Intel Open Image Denoise on the converged film, raw beauty AOV, adaptive sampling skipping stopped tiles | `eldr:denoise`, `karma:global:imagefilter`, `eldr:beautyRaw` AOV, `eldr:adaptiveTiles` |
+| 2026-10-29 | `2026-10-29_15_light_linking_ies` | UsdLux light and shadow linking (Houdini Light Linker), IES profiles | `eldr:lightLinking`, `eldr:lightIes`; `collection:lightLink`, `collection:shadowLink`, `shaping:ies:*` |
+| 2026-10-29 | `2026-10-29_13_caustics` | Caustics: photons through a glass ball onto the floor, sharper every sample; caustic AOV | `eldr:caustics`, `eldr:causticsPhotons`, `primvars:karma:object:causticsenable` |
 | 2026-10-29 | `2026-10-29_06_light_groups` | Karma's AOVs: light groups, transmission, subsurface, coat, volume, shadow mattes | `inputs:karma:light:lpetag`, `eldr:holdouts`; LPE render vars |
+| 2026-10-29 | `2026-10-29_09_transparency_order` | Glass and other translucent meshes in one depth order; smoke dimmed by every pane in front of it | `eldr:oit`, `eldr:refractionLayers`, `eldr:volumeUnderTransparency`, `eldr:finalQuality` |
 | 2026-10-29 | `2026-10-29_08_volume_karma_defaults` | Volumes without a material scatter as Karma's (white, no absorption, isotropic; dome from its upper half) | `eldr:volumeAnisotropy`, `karma:object:volumelimit` |
-| 2026-10-29 | `2026-10-29_09_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
+| 2026-10-29 | `2026-10-29_11_effect_denoise` | Ray-traced effects (final gather, shadows, reflections) denoised per signal, fading out over the film | `eldr:effectDenoiseSamples`, `eldr:rtShadowDenoise`, `eldr:rtReflectionDenoise`, `eldr:finalGatherDenoise` |
+| 2026-10-29 | `2026-10-29_12_quality_multipliers` | Per-component quality as in Karma: more rays for the noisy component (the final gather) instead of more film samples | `eldr:diffuseQuality`, `eldr:lightQuality`, `eldr:reflectQuality`, `karma:object:diffusequality` |
+| 2026-10-29 | `2026-10-29_14_aov_filters` | Per-AOV sample filters: min, max, closest, farthest, nearest, box, Gauss per render var (Karma's Sample Blending) | `driver:parameters:aov:eldr:filter`, `driver:parameters:aov:karma:filter`, `eldr:aovFilters` |
+| 2026-10-29 | `2026-10-29_16_mtlx_coverage` | MaterialX compositing nodes, glTF PBR / Disney / unlit surfaces, Karma's Ramp Const, Hex Tiled Texture and Voronoi | `eldr:materialGraphs`, `eldr:proceduralTextures` |
+| 2026-10-29 | `2026-10-29_17_karma_colour_limit` | Karma's colour limit on seen emitters and on emissive-mesh light; full-HDR emitters for comp | `eldr:colorLimit`, `eldr:indirectClamp` |
+| 2026-10-29 | `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 

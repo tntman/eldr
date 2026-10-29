@@ -36,6 +36,8 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <set>
+#include <sstream>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -105,6 +107,55 @@ TfToken BoundAov(HdRenderPassAovBinding const &b, const HdRenderSettings *settin
     }
     // Karma's own names for what Hydra calls primId and its N-less raw vars.
     return source == TfToken("ray:primid") ? HdAovTokens->primId : source;
+}
+
+// An AOV's sample filter (vkr::Aovs::Filter) and radius (pixels, 0: the
+// filter's own) from its render var's text: Eldr's (beauty, nearest, gauss,
+// box, min, max, closest or farthest, then an optional radius, e.g.
+// "gauss 1") or Karma's sample blending (["minmax",{"mode":"zmin"}]...;
+// "ubox", Karma's default that Houdini authors on every var, is Eldr's
+// default: colour like the beauty, data nearest). False: not one Eldr
+// knows (default then).
+bool ParseAovFilter(const std::string &text, uint8_t *filter, float *radius)
+{
+    using A = vkr::Aovs;
+    *filter = A::kFilterDefault;
+    *radius = 0.0f;
+    if (text.empty()) {
+        return true;
+    }
+    if (text[0] == '[') {
+        if (text.find("\"ubox\"") != std::string::npos) {
+            return true;
+        }
+        if (text.find("\"minmax\"") == std::string::npos) {
+            return false;
+        }
+        for (auto [mode, f] : {std::pair{"\"zmin\"", A::kFilterClosest}, {"\"zmax\"", A::kFilterFarthest},
+                               {"\"min\"", A::kFilterMin}, {"\"max\"", A::kFilterMax}}) {
+            if (text.find(mode) != std::string::npos) {
+                *filter = f;
+                return true;
+            }
+        }
+        return false;
+    }
+    std::istringstream in(text);
+    std::string name;
+    float r = 0.0f;
+    in >> name;
+    if (in >> r) {
+        *radius = std::max(r, 0.0f);
+    }
+    for (auto [n, f] : {std::pair{"beauty", A::kFilterBeauty}, {"nearest", A::kFilterNearest}, {"gauss", A::kFilterGauss},
+                        {"box", A::kFilterBox}, {"min", A::kFilterMin}, {"max", A::kFilterMax},
+                        {"closest", A::kFilterClosest}, {"farthest", A::kFilterFarthest}}) {
+        if (name == n) {
+            *filter = f;
+            return true;
+        }
+    }
+    return false;
 }
 
 // HDVK_TIMING=2: a CSV row per render pass execute, for frame pacing in
@@ -214,12 +265,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     HdRenderBuffer *extra[vkr::Aovs::kCount] = {};
     // husk's var name of the extra AOVs it binds ("driver:parameters:aov:husk:name").
     std::string huskName[vkr::Aovs::kCount];
+    // Their sample filters (eldr:aovFilters): the binding's settings (husk,
+    // Houdini), else the active settings prim's render var (usdrecord).
+    std::string filterText[vkr::Aovs::kCount], filterVar[vkr::Aovs::kCount];
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
         if (HdVkExtraAov aov; HdVkFindAov(aovName, &aov)) {
             extra[aov.kind] = b.renderBuffer;
             huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
+            for (const char *key : {"driver:parameters:aov:eldr:filter", "driver:parameters:aov:karma:filter"}) {
+                if (filterText[aov.kind].empty()) {
+                    filterText[aov.kind] = BindingText(b, key);
+                    filterVar[aov.kind] = b.aovName.GetString();
+                }
+            }
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -411,8 +471,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.pipelinePrewarm, &frame.pipelinePrewarm},
                                 {t2.ssgiThickness, &frame.ssgiThickness},
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
+                                {t2.rtCompaction, &frame.rtCompaction},
                                 {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
+                                {t2.rtShadowDenoise, &frame.rtShadowDenoise},
+                                {t2.rtReflectionDenoise, &frame.rtReflectionDenoise},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
                                 {t2.dofJitter, &frame.dofJitter},
@@ -421,6 +484,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.domeSun, &frame.domeSun},
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
                                 {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
+                                {t2.lightLinking, &frame.lightLinking}, {t2.lightIes, &frame.lightIes},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
@@ -554,7 +618,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiBitmaskThickness, &frame.ssgiBitmaskThickness}, {t2.directClamp, &frame.directClamp},
                                 {t2.screenBackfaceScale, &frame.screenBackfaceScale},
                                 {t2.finalGatherDistance, &frame.finalGatherDistance},
-                                {t2.finalGatherDenoise, &frame.finalGatherDenoise}}) {
+                                {t2.finalGatherDenoise, &frame.finalGatherDenoise},
+                                {t2.causticsRadius, &frame.causticsRadius}}) {
         *value = delegate->GetRenderSetting<float>(token, *value);
     }
     // Colours and positions: "x y z" (usdview edits strings) or a
@@ -606,8 +671,16 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     {
         static const TfToken karmaLimit("karma:global:colorlimit"), karmaIndirect("karma:global:colorlimitindirect"),
             karmaLinked("karma:global:colorlimitindlinked");
+        // Karma's names also from the active settings prim (usdview, usdrecord): only eldr: ones are
+        // copied into the delegate's settings above.
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
         auto number = [&](const TfToken &token, float fallback) {
-            const VtValue v = delegate->GetRenderSetting(token);
+            VtValue v = delegate->GetRenderSetting(token);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(token.GetString());
+                v = it != d.end() ? it->second : v;
+            }
             return v.IsHolding<double>() ? float(v.UncheckedGet<double>())
                    : v.IsHolding<float>() ? v.UncheckedGet<float>()
                    : v.IsHolding<int>()   ? float(v.UncheckedGet<int>()) : fallback;
@@ -623,6 +696,38 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                                                 : int(number(t2.colorLimitShared, -1.0f));
         const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
         frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
+        frame.colorLimit = shared;  // camera-seen emission, as Karma's colorlimit
+    }
+    // Per-component quality (Karma's): eldr:*Quality, else Karma's on the
+    // settings (husk) or the active settings prim (usdview), else 1. Rays
+    // per sample times it; the renderer spreads fractions over film samples.
+    {
+        static const TfToken karmaLight("karma:global:light_sampling_quality"),
+            karmaDiffuse("karma:object:diffusequality"), karmaReflect("karma:object:reflectquality"),
+            karmaSss("karma:object:sssquality"), karmaVolume("karma:object:volumequality");
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto number = [&](const TfToken &key) {
+            VtValue v = delegate->GetRenderSetting(key);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(key.GetString());
+                v = it != d.end() ? it->second : v;
+            }
+            return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
+                 : v.IsHolding<int>()   ? double(v.UncheckedGet<int>()) : -1.0;
+        };
+        auto quality = [&](const TfToken &eldr, const TfToken &karma) {
+            double q = number(eldr);
+            q = q >= 0.0 ? q : number(karma);
+            return float(q >= 0.0 ? std::clamp(q, 1.0 / 64.0, 16.0) : 1.0);
+        };
+        frame.lightQuality = quality(t2.lightQuality, karmaLight);
+        frame.diffuseQuality = quality(t2.diffuseQuality, karmaDiffuse);
+        frame.reflectQuality = quality(t2.reflectQuality, karmaReflect);
+        frame.subsurfaceSamples =
+            uint32_t(std::clamp(std::lround(frame.subsurfaceSamples * quality(t2.sssQuality, karmaSss)), 1l, 64l));
+        frame.volume.shadowSteps =
+            uint32_t(std::clamp(std::lround(frame.volume.shadowSteps * quality(t2.volumeQuality, karmaVolume)), 1l, 256l));
     }
     // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
     {
@@ -638,6 +743,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGather, int(frame.finalGather)), 0, 2));
     frame.finalGatherRays =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
+    frame.effectDenoiseSamples = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
+    frame.caustics = uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.caustics, int(frame.caustics)), 0, 2));
+    frame.causticsPhotons = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.causticsPhotons, int(frame.causticsPhotons)), 1024, 1 << 22));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
@@ -729,9 +839,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
-    // Either may change the light table: commit once.
-    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
-    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
+    // Any may change the light table: commit once.
+    const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
+                                                    frame.indirectClamp);
+    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes);
+    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive || lightOptions) {
         _scene.Commit(true);  // the frame's second: its motion stays
     }
     // The scene camera's lens; usdview's free camera has none.
@@ -922,6 +1034,34 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    // Per-AOV sample filters (eldr:aovFilters). A light split filtered
+    // otherwise than the beauty no longer adds up to it: a warning.
+    if (delegate->GetRenderSetting<bool>(t2.aovFilters, true)) {
+        std::string text[vkr::Aovs::kCount], var[vkr::Aovs::kCount];
+        HdVkRenderProducts::GetFilters(vkDelegate->ActiveRenderSettings(), text, var);
+        static std::set<std::string> warned;
+        for (uint32_t k = 0; k < vkr::Aovs::kCount; ++k) {
+            const std::string &t = filterText[k].empty() ? text[k] : filterText[k];
+            const std::string &v = filterText[k].empty() ? var[k] : filterVar[k];
+            if (t.empty()) {
+                continue;
+            }
+            using A = vkr::Aovs;
+            const bool known = ParseAovFilter(t, &out.aovFilters[k], &out.aovFilterRadius[k]);
+            const uint8_t f = out.aovFilters[k];
+            const bool split = k == A::kEmission || (k >= A::kDirectDiffuse && k < A::kBeautyRaw &&
+                                                     k != A::kShadow && k != A::kHoldoutShadow);
+            const bool ids = k == A::kCryptoObject || k == A::kCryptoMaterial || k == A::kBeautyRaw;
+            const char *problem = !known ? "isn't a filter Eldr knows; default used"
+                                  : ids && f != A::kFilterDefault ? "is ignored: this AOV keeps its own"
+                                  : split && f != A::kFilterDefault && f != A::kFilterBeauty
+                                      ? "differs from the beauty's: this light split no longer adds up to it"
+                                      : nullptr;
+            if (problem && warned.insert(v + "|" + t).second) {
+                TF_WARN("Eldr: AOV filter '%s' of %s %s", t.c_str(), v.c_str(), problem);
+            }
+        }
+    }
     // Light groups: the tags the bindings and products asked for so far
     // (HdVkFindAov) split the lights from this frame on.
     if (_scene.SetLightGroups(HdVkLightGroups())) {

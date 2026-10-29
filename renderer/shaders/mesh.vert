@@ -19,6 +19,7 @@ layout(push_constant) uniform PushConstants {
     uint listBase;  // which list of instance indices (kVisibleLists); kFreeSlot: all instances
     uint motion;    // main pass: 1 = write outPrevWorldPos, 2 = same without last frame's joints;
                     // + 4: with last frame's blend shape weights
+    uint shadowLink;  // shadow passes: the light's shadow link bit + 1 (0: every caster); light linking
 } pc;
 
 // Last frame's joint matrices (copied before skin.comp rebuilds them) and
@@ -214,6 +215,11 @@ void main()
     gl_Position = pc.viewProj * world;
     // Hydra hands us GL clip space (z in [-w, w]); Vulkan clips z to [0, w].
     gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);
+    // Light linking: casters outside the light's shadow link collapse to a
+    // point outside the clip volume (every vertex of the instance alike).
+    if (pc.shadowLink != 0u && (inst.linkMask & (1u << (pc.shadowLink - 1u))) == 0u) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    }
     outUv = inUv;
 #ifndef DEPTH_ONLY
     vec3 prevWorld = pc.motion != 0u ? (prevModel * vec4(prevPosition, 1.0)).xyz + facingOffset : world.xyz;

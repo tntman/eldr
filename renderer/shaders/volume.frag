@@ -35,8 +35,9 @@
 layout(set = 0, binding = 4) uniform sampler2DArrayShadow shadowMap;
 layout(set = 0, binding = 63) uniform sampler2D sceneDepth;  // window [0, 1], prepass or not
 #include "volume.glsl"
-// The nearest translucent surfaces' window depth (VolumePass::Part).
-layout(set = 0, binding = 68) uniform sampler2D translucentDepth;
+// The camera's translucent layers, nearest first (VolumePass::Part): the
+// colour each lets through, its distance along the ray (a < 0: none).
+layout(set = 0, binding = 77) uniform sampler2DArray translucentLayers;
 // Local lights' shadow atlas, as in mesh.frag.
 const float kSpotShadowCone = 1.3962634;
 struct ShadowTile {
@@ -74,12 +75,13 @@ layout(push_constant) uniform Params {
     float anisotropy;   // Henyey-Greenstein g of volumes whose material has none
     uint count;         // volumes[]
     uint scale;         // 1: every pixel; 2: half resolution, each pixel a 2 x 2 block
-    uint part;          // VolumePass::Part: 0 all, 1 behind the nearest translucent surface, 2 in front
+    uint part;          // VolumePass::Part: 0 all, 1 behind the translucent layers, 2 in front, 3 all through them
     uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
     uint mutual;        // 1: volumes shadow each other
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
     uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    int shadowLink;     // volume_shadow.frag's
 } params;
 
 #ifdef HALF
@@ -392,6 +394,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
 {
     vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
     vec3 lo = volumes[i].indexMin.xyz, hi = volumes[i].indexMax.xyz;
+    uint linkMask = floatBitsToUint(volumes[i].indexMin.w);  // light linking (GpuVolume)
     uvec4 grids = volumes[i].grids, types = volumes[i].types;
     uvec4 masks = volumes[i].factorMasks;
     if (volumes[i].medium.z > 0.0 && params.defaultFields == 0u) {
@@ -503,9 +506,15 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
+                if (!LightLinked(sun, linkMask)) {
+                    continue;
+                }
                 vec3 l = sun.position.xyz;
-                vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
-                                                      params.shadowSteps);
+                // Outside the sun's shadow link the volume doesn't shadow itself.
+                vec3 depth = ShadowLinked(sun, linkMask)
+                                 ? extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi,
+                                                            noise, params.shadowSteps)
+                                 : vec3(0.0);
                 if (mutual) {
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
                     depth += OthersDepth(i, x, l * 1e4, shadowNoise);
@@ -523,6 +532,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     uint base = ClusterIndex(fragCoord, viewDepth) * (kMaxClusterLights + 1u);
                     for (uint k = 0u; k < clusterLights[base]; ++k) {
                         uint index = clusterLights[base + 1u + k];
+                        if (!LightLinked(lights[index], linkMask)) {
+                            continue;
+                        }
                         vec3 e = LocalIrradiance(index, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))
@@ -531,6 +543,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     }
                 } else {
                     for (uint k = frame.counts.x; k < frame.counts.x + frame.localLights.x; ++k) {
+                        if (!LightLinked(lights[k], linkMask)) {
+                            continue;
+                        }
                         vec3 e = LocalIrradiance(k, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))
@@ -570,25 +585,32 @@ void main()
     vec3 dir = normalize(Unproject(vec3(ndc, 1.0)) - origin);
     float tEnd = depth < 1.0 ? length(Unproject(vec3(ndc, depth * 2.0 - 1.0)) - origin) : 3.0e38;
     // Under transparency: the translucency pass composites the part behind
-    // the nearest translucent surface (marched before it) and the part in
-    // front (after it) goes over that. Without a translucent surface nearer
-    // than the opaque one, all of the ray is behind.
+    // the farthest translucent layer (marched before it); the part in front
+    // goes over that after it, each stretch between layers seen through the
+    // layers in front of it (their colours times its light). kThrough: all
+    // of the ray so. Without a layer, all of the ray is behind.
+    const uint kMaxLayers = 4u;  // VolumePass::kMaxLayers
+    float layerT[kMaxLayers];
+    vec3 layerTint[kMaxLayers];
+    uint layers = 0u;
     float tStart = 0.0;
     if (params.part != 0u) {
-        float glass;
-        if (params.scale == 1u) {
-            glass = texelFetch(translucentDepth, ivec2(fragCoord), 0).r;
-        } else {
-            ivec2 block = ivec2(gl_FragCoord.xy) * 2, last = textureSize(translucentDepth, 0) - 1;
-            glass = min(min(texelFetch(translucentDepth, min(block, last), 0).r,
-                            texelFetch(translucentDepth, min(block + ivec2(1, 0), last), 0).r),
-                        min(texelFetch(translucentDepth, min(block + ivec2(0, 1), last), 0).r,
-                            texelFetch(translucentDepth, min(block + ivec2(1, 1), last), 0).r));
+        ivec3 size = textureSize(translucentLayers, 0);
+        ivec2 q = min(ivec2(fragCoord), size.xy - 1);
+        for (int k = 0; k < min(size.z, int(kMaxLayers)); ++k) {
+            vec4 l = texelFetch(translucentLayers, ivec3(q, k), 0);
+            if (l.a < 0.0 || l.a >= tEnd) {
+                break;
+            }
+            layerT[layers] = l.a;
+            layerTint[layers] = l.rgb;
+            ++layers;
         }
-        float split = glass < depth ? length(Unproject(vec3(ndc, glass * 2.0 - 1.0)) - origin) : 0.0;
+        float split = layers > 0u ? layerT[layers - 1u] : 0.0;
         if (params.part == 1u) {
             tStart = split;
-        } else {
+            layers = 0u;  // the translucency pass dims it
+        } else if (params.part == 2u) {
             tEnd = split;
         }
     }
@@ -633,7 +655,21 @@ void main()
     for (uint k = 0u; k < n && Max3(transmittance) > kOpaque; ++k) {
         vec3 before = radiance;
         vec3 transmittanceBefore = transmittance;
-        March(ids[k], origin, dir, spans[k].x, spans[k].y, noise, up, stepsLeft, radiance, transmittance);
+        // Stretches between translucent layers, each one's light through
+        // the layers in front of it.
+        float a = spans[k].x;
+        vec3 tint = vec3(1.0);
+        uint l = 0u;
+        for (uint stretch = 0u; stretch <= layers && a < spans[k].y; ++stretch) {
+            for (; l < layers && layerT[l] <= a; ++l) {
+                tint *= layerTint[l];
+            }
+            float b = l < layers ? min(layerT[l], spans[k].y) : spans[k].y;
+            vec3 stretchBefore = radiance;
+            March(ids[k], origin, dir, a, b, noise, up, stepsLeft, radiance, transmittance);
+            radiance = stretchBefore + (radiance - stretchBefore) * tint;
+            a = b;
+        }
         // Volumetric fog (fog.glsl): the image below carries it all the way
         // to the surface behind. The volume's light reaches the eye through
         // the fog in front of it, and that fog's own light isn't hidden by

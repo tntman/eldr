@@ -38,6 +38,8 @@ struct Push {  // mirror of aov.comp's
     uint32_t sumsOffset;
     float filmOffset[2], filmRadius;
     uint32_t film;
+    uint32_t filter;  // aov.comp's kNearest..kFarthest
+    float radius;     // its radius (pixels)
 };
 
 bool IsColour(uint32_t k)
@@ -53,6 +55,28 @@ bool IsCrypto(uint32_t k)
 // A Cryptomatte pixel's film state in the sums: 6 ids (float bits), their 6
 // weights, the pixel's total weight, the film's sample count (aov.comp).
 constexpr uint32_t kCryptoStride = 14;
+
+// Target k's filter in aov.comp (0 nearest, 1 Gauss, 2 box, 3 min, 4 max,
+// 5 closest, 6 farthest) and its radius, from Params::filters.
+// ponytail: aov.comp gathers 3x3 samples, so radii stop at 1.5 pixels.
+uint32_t ShaderFilter(uint32_t k, const Aovs::Params &p, float *radius)
+{
+    *radius = 0.0f;
+    if (!p.film || IsCrypto(k)) {
+        return 0;
+    }
+    uint8_t f = p.filters[k];
+    if (f == Aovs::kFilterDefault) {
+        f = IsColour(k) ? Aovs::kFilterBeauty : Aovs::kFilterNearest;
+    }
+    const float r = std::min(p.filterRadius[k], 1.5f);
+    switch (f) {
+    case Aovs::kFilterNearest: return 0;
+    case Aovs::kFilterBeauty: *radius = p.filmRadius; return 1;
+    case Aovs::kFilterGauss: *radius = r > 0.0f ? r : 1.5f; return 1;
+    default: *radius = r > 0.0f ? r : 0.5f; return uint32_t(f - Aovs::kFilterBox) + 2;
+    }
+}
 
 VkImageSubresourceRange Range(VkImageAspectFlags aspect)
 {
@@ -335,12 +359,15 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
         std::memcpy(params + kMatrixBytes, p.cryptomatte, cryptoBytes);
     }
     VkDeviceSize floats = 0, sumFloats = 0;
+    uint32_t filters[kCount];
+    float radii[kCount];
     for (uint32_t k = 0; k < kCount; ++k) {
         _offsets[k] = floats;
         _sumsOffsets[k] = sumFloats;
         _components[k] = p.components[k] ? std::min<uint32_t>(p.components[k], IsCrypto(k) ? 12 : 4) : Components(Kind(k));
+        filters[k] = ShaderFilter(k, p, &radii[k]);
         floats += targets[k] ? VkDeviceSize(_components[k]) * width * height : 0;
-        sumFloats += targets[k] && IsColour(k) ? VkDeviceSize(_components[k] + 2) * width * height : 0;
+        sumFloats += targets[k] && (IsColour(k) || filters[k] != 0) ? VkDeviceSize(_components[k] + 2) * width * height : 0;
         sumFloats += targets[k] && IsCrypto(k) && p.film && p.cryptoSoft ? VkDeviceSize(kCryptoStride) * width * height : 0;
     }
     // Shader writes to host memory crawl (~30 ms for a 480 x 270 AOV):
@@ -389,6 +416,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     // the running average turns into a moving one (1 / maxFrames).
     std::vector<uint32_t> layout(_offsets, _offsets + kCount);
     layout.insert(layout.end(), _components, _components + kCount);
+    layout.insert(layout.end(), filters, filters + kCount);  // another filter starts over
     const bool same = _frames > 0 && std::equal(p.viewProj, p.viewProj + 16, _viewProj) && p.version == _version &&
                       width == _accumWidth && height == _accumHeight && layout == _accumLayout && _output.buffer == _accumBuffer &&
                       _sums.buffer == _accumSums;
@@ -472,14 +500,14 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
-            const bool filtered = p.film && IsColour(k);
+            const bool filtered = filters[k] != 0;
             // Cryptomatte without the film's coverage keeps the nearest sample's id
             // (weight 0: this one isn't), else the latest frame's.
             const bool crypto = IsCrypto(k) && p.film && p.cryptoSoft;
             const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds,
                             filtered ? 1.0f : IsCrypto(k) ? (p.film ? weight : 1.0f) : weight,
                             uint32_t(_sumsOffsets[k]), {p.filmOffset[0], p.filmOffset[1]}, p.filmRadius,
-                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u};
+                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u, filters[k], radii[k]};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }

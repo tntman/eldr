@@ -16,8 +16,9 @@ rendered once, kept outside the repo, and Eldr is compared against them automati
    Karma takes about 2.5 min for all ten scenes (emissive gets 2048 samples, as its small emitters
    are noisy at 256).
 2. `ctest -R karma_golden` (label `slow`, about 1 min) renders the same scenes with Eldr (exr_record.py:
-   final quality, linear colour: no tonemap, bloom or auto exposure; `eldr:domeCameraVisible` off,
-   because Karma doesn't show domes to the camera by default) and prints per scene, Eldr / Karma:
+   final quality with GI (`eldr:gi`), linear colour: no tonemap, bloom or auto exposure;
+   `eldr:domeCameraVisible` off, because Karma doesn't show domes to the camera by default) and prints
+   per scene, Eldr / Karma:
 
    | Metric | Meaning |
    |---|---|
@@ -33,16 +34,41 @@ rendered once, kept outside the repo, and Eldr is compared against them automati
 
 Scenes: cornell, emissive (lighting and exposure), lights (sphere, spot, rect, dome), step4 (HDRI dome
 and sun), sunangle (sun and sky), mtlx (MaterialX standard_surface, UsdPreviewSurface), glass
-(transmission), volume, displacement, subsurface.
+(transmission), volume, displacement, subsurface, caustics, transparency_order, lightlink, ies.
 
-Baseline of 2026-10-29 (Eldr / Karma 22.0.466): lights 0.99, step4 1.07, glass 0.96, subsurface 0.97,
-volume 1.39 (1.12 before lane 30; its mald fell from 0.41 to 0.26 as the clouds now match; lum rose because darker clouds no longer offset the bare ground, see below), mtlx 1.16, cornell 0.76, emissive 1.74, displacement 1.91, sunangle 2.27 (mean luminance
-ratio; see `tests/karma_golden.json` for all metrics). In sunangle, the ground (displayColor 0.7, no
+Both renderers get the same wrapper layer, with three settings that keep the comparison about
+materials and light rather than defaults (lane 40, 2026-10-29):
+
+- **Eldr renders with GI.** Karma path traces; with GI off Eldr's Cornell ceiling was black (0 against
+  0.17-0.32), while its direct light matched the analytic value (back wall 0.621 against 0.629).
+- **Karma renders with `karma:object:diffuselimit` 10.** Karma's default is one diffuse bounce, and
+  Eldr's GI is every bounce. With 10 the Cornell box matches within 3% (ceiling 0.31 Eldr, 0.30 Karma);
+  with Karma's default Eldr is 1.27x brighter there. That is Karma's default, not a lighting difference:
+  a user matching Karma's look raises it in Karma or accepts the brighter bounce. The setting is part of
+  every reference's hash.
+- **Prims without a material get a plain UsdPreviewSurface of their displayColor** in sunangle and
+  displacement (`OVERS` in karma_refs.py, also hashed), because Karma's materialless surface differs
+  (below).
+
+Karma's colour limit, measured in the emissive scene: Karma clamps every camera sample at
+`karma:global:colorlimit` (20), keeping hue (the panel of 40 shows as 20, the (60, 30, 8) bulb as
+(20, 10, 2.7)). It reaches emissive meshes only by bounce rays, and clamps each such sample (radiance
+times albedo) at the indirect limit, so a white wall gets about 20/0.73 of the panel's 40. Eldr now does
+both, from the same settings (`eldr:colorLimit`, `eldr:indirectClamp`; docs/settings.md).
+
+Baseline of 2026-10-29 after lane 40 (Eldr / Karma 22.0.466, mean luminance ratio, before lane 40 in
+brackets): cornell 1.03 (0.76), emissive 1.01 (1.74), lights 1.01 (0.99), step4 1.11 (1.07), sunangle
+1.01 (2.27), mtlx 1.16, glass 0.95 (0.96), volume 1.40 (1.39), displacement 0.99 (1.91), subsurface
+0.96 (0.97), caustics 1.01, transparency_order 1.06 (1.03), lightlink 1.02 (0.95), ies 1.01; see
+`tests/karma_golden.json` for all metrics. ies's mald rose from 0.03 to 0.12 with GI: its near-black
+corners get 0.0002-0.0003 of bounce light in Eldr against 0.0001 in Karma, under the 1% eps; its lit
+cells match within 2%. Before lane 40, in sunangle, the ground (displayColor 0.7, no
 material, under sun and sky) is 0.65 in Eldr, which is the Lambert value (0.68), and 0.28 in Karma. The cause is Karma's surface for prims without a material (measured by lane 30): under the same sun a
 UsdPreviewSurface with diffuse 0.5 renders equally in both (0.270 Karma, 0.272 Eldr, Lambert 0.274),
 while bare displayColor 0.5 gives 0.110 in Karma. Karma does use displayColor, but scaled by about 0.4
 with a steeper falloff towards grazing light (about cos^1.45). That is not USD's displayColor fallback,
-so Eldr keeps Lambert of displayColor, as Storm does. Measure with materials bound when it matters.
+so Eldr keeps Lambert of displayColor, as Storm does. Measure with materials bound when it matters (the
+goldens now do).
 
 The point is catching regressions and tracking the distance to Karma, not pixel equality: the grids are
 coarse enough that sample noise stays well under the tolerances.

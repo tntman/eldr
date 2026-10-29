@@ -19,6 +19,9 @@ struct Light {
     vec4 halfHeight;  // rect: center to the +Y edge, disk: radius along Y; w: diffuse multiplier
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier
     vec4 focusTint;   // w: rect/disk: the texture's bindless index (-1: none)
+    vec4 ies;         // xyz: the light's +X (IES phi 180); w: its IES profile's bindless index (-1: none)
+    vec4 link;        // x: IES angle scale; y, z: light, shadow link bit of Instance::linkMask (-1: everything);
+                      // w: an emissive mesh's bounce clamp (EmitterClamp; 0: none)
 };
 const uint kLightTextures = 4u;  // frame.reflections.z: lights' textures on
 layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
@@ -30,6 +33,17 @@ layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 const uint kClustersX = 16u, kClustersY = 9u, kClustersZ = 24u;
 const uint kMaxClusterLights = 63u;
 layout(std430, set = 0, binding = 14) CLUSTER_ACCESS buffer Clusters { uint clusterLights[]; };
+
+// An emissive mesh as a light (Scene::SetEmissiveLights): Karma reaches
+// emitters by bounce rays only and clamps each such sample, radiance times
+// the albedo (the cosine-sampled diffuse weight), at its indirect colour
+// limit, keeping hue. The light's share of that, for a surface of `albedo`.
+float EmitterClamp(Light light, vec3 albedo)
+{
+    vec3 sample_ = light.color.rgb * albedo;
+    float peak = max(max(sample_.r, sample_.g), sample_.b);
+    return light.link.w > 0.0 && peak > light.link.w ? light.link.w / peak : 1.0;
+}
 
 // UsdLux lights have no range. A sphere/rect light is cut off where it
 // would light a white surface facing it with less than the cutoff radiance
@@ -91,18 +105,56 @@ float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
     return abs(sum) / (2.0 * PI);
 }
 
+// Light linking (UsdLux collection:lightLink): whether the light lights a
+// receiver of this link mask (Instance::linkMask, a volume's); and
+// (collection:shadowLink) whether a caster of it shadows the light.
+bool LightLinked(Light light, uint mask)
+{
+    int bit = int(light.link.y);
+    return bit < 0 || (mask & (1u << uint(bit))) != 0u;
+}
+
+bool ShadowLinked(Light light, uint mask)
+{
+    int bit = int(light.link.z);
+    return bit < 0 || (mask & (1u << uint(bit))) != 0u;
+}
+
+// The light's IES profile (UsdLux shaping:ies) towards p, relative to its
+// peak (Scene folds the peak into the colour): theta from the emission
+// axis, phi around it from the light's -X (Karma's), theta rescaled by
+// shaping:ies:angleScale as UsdLux says. 1 without a profile.
+float LightIes(Light light, vec3 p)
+{
+    int tex = int(light.ies.w);
+    if (tex < 0) {
+        return 1.0;
+    }
+    vec3 d = normalize(p - light.position.xyz);
+    vec3 z = -light.axis.xyz, x = light.ies.xyz, y = cross(z, x);
+    float theta = acos(clamp(-dot(d, z), -1.0, 1.0));
+    float phi = atan(-dot(d, y), -dot(d, x));  // 0 at -X, as Karma
+    float scale = light.link.x;
+    theta = scale > 0.0 ? theta / scale : scale < 0.0 ? (theta - PI) / -scale + PI : theta;
+    if (theta < 0.0) {
+        return 0.0;
+    }
+    return textureLod(textures[nonuniformEXT(tex)], vec2(phi / (2.0 * PI), min(theta, PI) / PI), 0.0).r;
+}
+
 // A textured rect/disk light's colour as seen from p: the texel above p's
 // foot on the light's plane, at the mip of the light seen from its height
 // (mesh.frag's diffuseTint). White for other lights or with light textures
-// off. Shared by the paths that treat the light as a point (traced hits,
-// probes, fog, volumes).
+// off; times its IES profile (LightIes). Shared by the paths that treat
+// the light as a point (traced hits, probes, fog, volumes).
 // ponytail: one tap, no filtered polygon integral; mesh.frag has the same.
 vec3 LightTint(Light light, vec3 p)
 {
     int tex = int(light.focusTint.w);
     uint type = uint(light.position.w);
+    float ies = LightIes(light, p);
     if (tex < 0 || (frame.reflections.z & kLightTextures) == 0u || (type != kLightRect && type != kLightDisk)) {
-        return vec3(1.0);
+        return vec3(ies);
     }
     vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz, toLight = light.position.xyz - p;
     vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
@@ -112,7 +164,7 @@ vec3 LightTint(Light light, vec3 p)
     float extent = length(hw) + length(hh);
     float height = abs(dot(toLight, light.axis.xyz));
     float lod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
-    return textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + foot * vec2(-0.5, 0.5), lod).rgb;
+    return ies * textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + foot * vec2(-0.5, 0.5), lod).rgb;
 }
 
 uint ClusterIndex(vec2 fragCoord, float viewDepth)

@@ -96,6 +96,7 @@ struct Volume {
     // float grids vel.x/.y/.z or vel_x/_y/_z); 0: none.
     float velocityScale = 0.0f;
     uint32_t tag = 1;  // render tag bit, as Mesh::tag
+    std::vector<uint32_t> linkCategories;  // light linking, as Mesh::linkCategories
 
 private:
     friend class Scene;
@@ -105,7 +106,7 @@ private:
 // std430 mirror of Volume in shaders/volume.frag: one per drawn instance.
 struct GpuVolume {
     float worldToIndex[3][4];   // density index = rows . (world, 1)
-    float indexMin[4];          // density index-space box around the active voxels
+    float indexMin[4];          // density index-space box around the active voxels; w: light link mask (bits)
     float indexMax[4];
     uint32_t grids[4];          // byte offsets in the grid pool: density, temperature, color, emission (kNone: none)
     uint32_t types[4];          // their PNANOVDB_GRID_TYPE_*
@@ -178,15 +179,31 @@ public:
         static constexpr float kDefaultVolumeLimit = 16.0f;
     };
 
-    // Which part of each ray Record marches: all of it, the part behind
-    // the nearest translucent surface (TranslucentDepth()), or in front.
-    enum Part : uint32_t { kAll, kBehind, kInFront };
+    // Which part of each ray Record marches: all of it; the part behind the
+    // farthest translucent layer (TranslucentLayers()), drawn before the
+    // translucency pass, which dims and refracts it; the part in front of
+    // it, after that pass, each stretch between layers seen through the
+    // layers in front of it; or (kThrough, under traced refraction, whose
+    // glass replaces what's behind it) all of it after that pass, so.
+    enum Part : uint32_t { kAll, kBehind, kInFront, kThrough };
+    static constexpr uint32_t kMaxLayers = 4;
 
-    // A depth target for the nearest translucent surfaces, `width` x
-    // `height` (made on first use and on resizes; the GPU must be idle),
-    // bound as binding 67 for kBehind and kInFront; null without one yet.
-    const Image &EnsureTranslucentDepth(uint32_t width, uint32_t height);
+    // The camera's translucent layers, nearest first, peeled by the
+    // Renderer (_RenderTranslucentDepth) for `width` x `height` frames:
+    // `layers` (1 to kMaxLayers) layers of the colour each lets through and
+    // its distance (rgb, a; a < 0: none), bound as binding 77; per layer
+    // views to render into; the peel's depth attachment, and the last
+    // layer's depth (binding 68) each peel reads. Made on first use and on
+    // changes (the GPU must be idle); null views without them yet.
+    static constexpr VkFormat kLayerFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    void EnsureTranslucentLayers(uint32_t width, uint32_t height, uint32_t layers);
     VkImageView TranslucentDepth() const { return _translucentDepth.view; }
+    const Image &TranslucentDepthImage() const { return _translucentDepth; }
+    const Image &PeelDepth() const { return _peelDepth; }
+    VkImageView TranslucentLayers() const { return _layers.view; }
+    const Image &TranslucentLayerImage() const { return _layers; }
+    VkImageView TranslucentLayer(uint32_t layer) const { return _layerViews[layer]; }
+    uint32_t TranslucentLayerCount() const { return _layerCount; }
 
     // The half resolution target for a `width` x `height` frame (made on
     // first use and on resizes; the GPU must be idle), bound as binding 66;
@@ -209,14 +226,15 @@ public:
     // `cascade`: multiplies the colour by the volumes' transmittance along
     // the light and writes the depth of their optical depth's mean, before
     // the translucent casters (which keep the nearer depth). Binds `set`
-    // with its own layout: rebind the renderer's after.
+    // with its own layout: rebind the renderer's after. shadowLink: the
+    // light's shadow link bit (volumes outside it cast none; -1: all do).
     void RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
-                      uint32_t mapSize, const Settings &settings);
+                      uint32_t mapSize, const Settings &settings, int32_t shadowLink = -1);
     // The same for a local light's atlas tile (index `tile` of the
     // renderer's ShadowTiles): rendering into the tint atlas with the
     // viewport and scissor on its rectangle (x, y, size texels).
     void RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile, uint32_t x,
-                          uint32_t y, uint32_t size, const Settings &settings);
+                          uint32_t y, uint32_t size, const Settings &settings, int32_t shadowLink = -1);
 
     // Frame::lightShapesVisible: the shapes of lights [first, first + count)
     // of the renderer's light buffer over `color` (as Record, with the
@@ -237,8 +255,10 @@ private:
     Image _half;
     VkSampler _halfSampler = VK_NULL_HANDLE;
     uint32_t _halfWidth = 0, _halfHeight = 0;
-    Image _translucentDepth;
-    uint32_t _depthWidth = 0, _depthHeight = 0;
+    Image _translucentDepth, _peelDepth, _layers;
+    VkImageView _layerViews[kMaxLayers] = {};
+    uint32_t _depthWidth = 0, _depthHeight = 0, _layerCount = 0;
+    void _DestroyLayers();
 };
 
 } // namespace vkr

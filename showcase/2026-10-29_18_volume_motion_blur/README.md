@@ -17,7 +17,7 @@ Try also: `primvars:karma:object:vblur` 0 on a volume (sharp), or `eldr:motionBl
 (the blur needs the film's time samples, so interactive frames are sharp).
 
 Open it:
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_09_volume_motion_blur\scene.usda`, then
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_18_volume_motion_blur\scene.usda`, then
   Eldr's final quality (the blur builds up over the film's samples)
 - usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/blur scene.usda out.png`
 - husk: `husk -R HdVkRendererPlugin -s /Render/blur scene.usda -o out.exr` (Karma: `-R BRAY_HdKarma`)

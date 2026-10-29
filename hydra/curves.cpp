@@ -361,7 +361,7 @@ HdDirtyBits HdVkTessellated<Base>::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyWidths | HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyTransform | HdChangeTracker::DirtyVisibility |
            HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyInstancer |
-           HdChangeTracker::DirtyInstanceIndex;
+           HdChangeTracker::DirtyInstanceIndex | HdChangeTracker::DirtyCategories;
 }
 
 template <typename Base>
@@ -449,6 +449,10 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
         HdVkSetTransforms(sceneDelegate, id, this->GetInstancerId(), m);
+    }
+    if ((*dirtyBits & HdChangeTracker::DirtyCategories) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        HdVkSetLinkCategories(sceneDelegate, id, this->GetInstancerId(), m);
     }
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         this->_UpdateVisibility(sceneDelegate, dirtyBits);

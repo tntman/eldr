@@ -148,6 +148,9 @@ struct GpuLight {        // mirror of Light in shaders/lights.glsl
     float halfHeight[4]; // rect; w: diffuse multiplier
     float shaping[4];    // soft cone angle, cone angle (radians), focus, specular multiplier
     float focusTint[4] = {0, 0, 0, -1};  // w: rect/disk: the texture's bindless index (-1: none)
+    float ies[4] = {1, 0, 0, -1};        // xyz: the light's +X (IES phi 0); w: the IES profile's bindless index (-1: none)
+    float link[4] = {0, -1, -1, 0};      // x: IES angle scale; y, z: light, shadow link bit (-1: everything);
+                                         // w: an emissive mesh's bounce clamp (lights.glsl's EmitterClamp; 0: none)
 };
 
 constexpr VkBufferUsageFlags kPoolUsage =
@@ -461,11 +464,30 @@ bool Scene::SetLightGroups(const std::vector<std::string> &tags)
     return changed;
 }
 
-bool Scene::SetEmissiveLights(bool on, float threshold)
+bool Scene::SetLightOptions(bool linking, bool ies)
 {
-    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold;
+    const bool changed = linking != _lightLinking || ies != _lightIes;
+    _lightLinking = linking;
+    _lightIes = ies;
+    return changed;
+}
+
+uint32_t Scene::_LinkMask(const std::vector<uint32_t> &categories) const
+{
+    uint32_t mask = 0;
+    for (const uint32_t c : categories) {
+        const auto it = _linkBits.find(c);
+        mask |= it == _linkBits.end() ? 0u : 1u << it->second;
+    }
+    return mask;
+}
+
+bool Scene::SetEmissiveLights(bool on, float threshold, float limit)
+{
+    const bool changed = on != _emissiveLights || threshold != _emissiveThreshold || limit != _emissiveLimit;
     _emissiveLights = on;
     _emissiveThreshold = threshold;
+    _emissiveLimit = limit;
     return changed;
 }
 
@@ -479,6 +501,7 @@ struct Scene::Emitter {
     float radius;                          // sphere
     float thin[3], wide[3], high[3];       // flat: half axes, thin one the faces' normal
     float radiance[3];                     // of the light's surface
+    float scale = 1;                       // radiance over the mesh's emission (a sphere's is spread wider)
     float power;                           // luminous, for picking the brightest
 };
 
@@ -565,6 +588,7 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
                 for (int k = 0; k < 3; ++k) {
                     e.radiance[k] = emitted[k] * area / (4.0f * 3.14159265f * e.radius * e.radius);
                 }
+                e.scale = area / (4.0f * 3.14159265f * e.radius * e.radius);
             }
             e.power = luminance * area;
             found.push_back(e);
@@ -1347,6 +1371,8 @@ void Scene::_UploadInstances(Mesh &m)
         inst.draw = uint32_t(m._slot);
         inst.index = int32_t(i);
         inst.joints = skinned ? m._jointBase + i * m.jointCount : kNone;
+        inst.linkMask = _LinkMask(m.linkCategories) |
+                        (i < m.instanceLinkCategories.size() ? _LinkMask(m.instanceLinkCategories[i]) : 0u);
     }
     _copies.push_back({_instances.buffer, VkDeviceSize(m._instanceBase) * sizeof(Instance),
                        _Stage(instances.data(), instances.size() * sizeof(Instance)),
@@ -1772,6 +1798,27 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                         false);
         _EnsureCapacity(_blendWeights, _weightAlloc, 0, sizeof(float), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
     }
+    // Light linking: a bit of Instance::linkMask per link category the
+    // visible lights name, in light order, the first kMaxLinkCategories
+    // (the rest light everything). When they change, every instance in a
+    // category is written again.
+    {
+        std::map<uint32_t, uint32_t> bits;
+        for (const auto &l : _lights) {
+            for (const uint32_t c : {l->lightLink, l->shadowLink}) {
+                if (_lightLinking && l->visible && c != 0 && bits.size() < kMaxLinkCategories) {
+                    bits.emplace(c, uint32_t(bits.size()));
+                }
+            }
+        }
+        if (bits != _linkBits) {
+            _linkBits = std::move(bits);
+            for (const auto &m : _meshes) {
+                m->transformsDirty = m->transformsDirty || !m->linkCategories.empty() ||
+                                     !m->instanceLinkCategories.empty();
+            }
+        }
+    }
 
     // Size the instance and index pools once for everything about to be
     // uploaded rather than growing them step by step: a huge instanced scene
@@ -2066,6 +2113,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     float hi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
                    std::numeric_limits<float>::lowest()};
     bool anyDrawable = false, facing = false;
+    float casterLo[3] = {std::numeric_limits<float>::max(), std::numeric_limits<float>::max(),
+                         std::numeric_limits<float>::max()};
+    float casterHi[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(),
+                         std::numeric_limits<float>::lowest()};
     for (size_t slot = 0; slot < slots; ++slot) {
         const Mesh &m = *_meshes[slot];
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
@@ -2139,7 +2190,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _gpu.translucentVariant.push_back(variant >> 2);
             _gpu.translucentFlags.push_back(
                 (m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0) |
-                (m.holdout ? Gpu::kHoldout : 0));
+                (m.holdout ? Gpu::kHoldout : 0) | (m.material->thinWalled ? Gpu::kThin : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
@@ -2151,6 +2202,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         kind[slot] |= variant;
         d.primId = m.primId;
         d.holdout = m.holdout ? 1u : 0u;
+        // Caustics: casters pass photons on, receivers gather them (by
+        // default every mesh but refracting glass).
+        const bool receives = m.causticsReceive >= 0 ? m.causticsReceive != 0 : !(m.material && m.material->Transmits());
+        d.caustics = (drawable && m.causticsCast ? 1u : 0u) | (receives ? 2u : 0u);
+        d.causticsRoughness = m.causticsRoughness;
         _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
         d.visible = drawable ? m.rays : 0u;  // cull.comp, tlas.comp
         d.skin = m._skinCount > 0 ? m._skinOffset : kNone;
@@ -2190,9 +2246,15 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             for (int k = 0; k < 3; ++k) {
                 lo[k] = std::min(lo[k], m._worldMin[k]);
                 hi[k] = std::max(hi[k], m._worldMax[k]);
+                if (m.causticsCast) {
+                    casterLo[k] = std::min(casterLo[k], m._worldMin[k]);
+                    casterHi[k] = std::max(casterHi[k], m._worldMax[k]);
+                }
             }
         }
     }
+    std::copy(casterLo, casterLo + 3, _gpu.causticMin);
+    std::copy(casterHi, casterHi + 3, _gpu.causticMax);
     // A call of 500 M triangles takes ~0.1 s on a GTX 1080 Ti; Moana's view
     // draws 11 G, which as one call ran ~2.2 s and reset the driver.
     // ponytail: a single slot over the budget stays one call; splitting it
@@ -2444,8 +2506,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
     uint32_t lightCount = 0, localLightCount = 0;
     _gpu.shadowLight = kNone;
+    _gpu.shadowLinkBit = 0;
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
+    _gpu.causticLights.clear();
     _gpu.sunRegion = false;
     // A light's group + 1 (0: none), as color.w's bits 2 and up.
     const auto group = [&](const std::string &tag) {
@@ -2463,10 +2527,21 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             // Bit 1: light_shapes.frag draws it; bit 2: it casts shadows (rt_shade.glsl's ShadeHit).
             g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f) + 4.0f * group(l->lpeTag);
             g.shaping[3] = l->specular;
+            const auto bit = [&](uint32_t category) {
+                const auto it = category ? _linkBits.find(category) : _linkBits.end();
+                return it == _linkBits.end() ? -1.0f : float(it->second);
+            };
+            g.link[1] = bit(l->lightLink);
+            g.link[2] = bit(l->shadowLink);
+            const uint32_t shadowLinkBit = uint32_t(g.link[2] + 1.0f);
+            if (l->caustics && l->type != Light::Type::Cylinder) {
+                _gpu.causticLights.push_back(lightCount + localLightCount);
+            }
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
                     _gpu.shadowLight = lightCount;
                     _gpu.shadowAngle = l->angle;
+                    _gpu.shadowLinkBit = shadowLinkBit;
                     std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
@@ -2495,10 +2570,22 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             const bool flat = l->type == Light::Type::Rect || l->type == Light::Type::Disk;
             const uint32_t clamp = uint32_t(Wrap::Clamp) * (1 + kWrapModes);
             g.focusTint[3] = flat ? float(_TextureIndex(l->texture.get(), clamp)) : -1.0f;  // its bindless index
+            // IES profile: repeats around the axis (phi), clamps along it.
+            // Its peak scales the colour (the clusters' range sees it).
+            if (_lightIes && l->ies) {
+                const uint32_t phiRepeat = uint32_t(Wrap::Repeat) + kWrapModes * uint32_t(Wrap::Clamp);
+                g.ies[3] = float(_TextureIndex(l->ies.get(), phiRepeat));
+                std::copy(l->iesX, l->iesX + 3, g.ies);
+                g.link[0] = l->iesAngleScale;
+                for (int k = 0; k < 3; ++k) {
+                    g.color[k] *= l->iesScale;
+                }
+            }
             if (l->castShadows) {
                 // Mirrors LightRange() in shaders/lights.glsl.
                 Scene::Gpu::ShadowCaster c{};
                 c.light = lightCount + localLightCount;
+                c.shadowLinkBit = shadowLinkBit;
                 std::copy(l->position, l->position + 3, c.position);
                 std::copy(l->direction, l->direction + 3, c.axis);
                 c.coneAngle = cone;
@@ -2509,7 +2596,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 std::copy(l->halfWidth, l->halfWidth + 3, c.halfWidth);
                 std::copy(l->halfHeight, l->halfHeight + 3, c.halfHeight);
                 const float radiance = std::max({l->radiance[0], l->radiance[1], l->radiance[2]}) *
-                                       std::max(l->diffuse, l->specular);
+                                       std::max(l->diffuse, l->specular) * (g.ies[3] >= 0.0f ? l->iesScale : 1.0f);  // the IES peak too
                 if (sphere) {
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;
@@ -2557,6 +2644,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.color[3] = 2.0f;  // casts shadows; the mesh draws itself
             g.halfHeight[3] = 1.0f;
             g.shaping[0] = g.shaping[1] = 3.14159265f;  // no cone; specular multiplier 0
+            g.link[3] = _emissiveLimit > 0.0f ? _emissiveLimit * e.scale : 0.0f;  // lights.glsl's EmitterClamp
             Scene::Gpu::ShadowCaster c{};
             c.light = lightCount + localLightCount;
             c.coneAngle = 3.14159265f;

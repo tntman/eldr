@@ -1,0 +1,83 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/caustics"
+    subLayers = [@../../tests/scenes/caustics.usda@]
+)
+
+# A glass ball (a caustic caster: primvars:karma:object:causticsenable) on a
+# white floor, backlit by the sun: the ball focuses it into a bright patch
+# in front of it.
+
+def Scope "Render"
+{
+    def RenderSettings "caustics"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = </Render/Products/causticsExr>
+        custom bool eldr:finalQuality = 1
+        custom int eldr:caustics = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:autoExposure = 0
+    }
+
+    def RenderSettings "noCaustics"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:caustics = 0
+        custom int eldr:filmSamples = 256
+        custom bool eldr:autoExposure = 0
+    }
+
+    def RenderSettings "caustics8"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:caustics = 1
+        custom int eldr:filmSamples = 8
+        custom bool eldr:autoExposure = 0
+    }
+
+    def RenderSettings "causticsFewPhotons"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:caustics = 1
+        custom int eldr:causticsPhotons = 16384
+        custom int eldr:filmSamples = 256
+        custom bool eldr:autoExposure = 0
+    }
+
+    def Scope "Products"
+    {
+        def RenderProduct "causticsExr"
+        {
+            uniform token productName = "caustics.exr"
+            rel camera = </cam>
+            int2 resolution = (960, 540)
+            rel orderedVars = [</Render/Products/C>, </Render/Products/caustics>, </Render/Products/indirectdiffuse>]
+        }
+        def RenderVar "C"
+        {
+            uniform string sourceName = "C.*[LO]"
+            uniform token sourceType = "lpe"
+            uniform token dataType = "color4f"
+        }
+        def RenderVar "caustics"
+        {
+            uniform string sourceName = "C<RD>.+<TS>L"
+            uniform token sourceType = "lpe"
+            uniform token dataType = "color3f"
+        }
+        def RenderVar "indirectdiffuse"
+        {
+            uniform string sourceName = "C<RD>.+L"
+            uniform token sourceType = "lpe"
+            uniform token dataType = "color3f"
+        }
+    }
+}
