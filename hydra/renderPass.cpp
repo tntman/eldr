@@ -483,6 +483,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.domeSun, &frame.domeSun},
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
                                 {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
+                                {t2.lightLinking, &frame.lightLinking}, {t2.lightIes, &frame.lightIes},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
@@ -836,9 +837,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
-    // Either may change the light table: commit once.
+    // Any may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold);
-    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive) {
+    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes);
+    if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive || lightOptions) {
         _scene.Commit(true);  // the frame's second: its motion stays
     }
     // The scene camera's lens; usdview's free camera has none.

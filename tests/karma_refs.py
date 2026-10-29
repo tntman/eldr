@@ -40,7 +40,7 @@ EXTRA_SCENE = {"caustics": "custom float karma:global:colorlimit = 100000"}
 CELLS, REGIONS = (32, 18), (4, 4)
 # lighting/exposure, materials, volumes, transmission, displacement, SSS, caustics
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
-          "subsurface", "caustics", "transparency_order"]
+          "subsurface", "caustics", "transparency_order", "lightlink", "ies"]
 CAMERA = "/cam"
 ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",

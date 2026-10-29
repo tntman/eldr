@@ -81,6 +81,7 @@ layout(push_constant) uniform Params {
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
     uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    int shadowLink;     // volume_shadow.frag's
 } params;
 
 #ifdef HALF
@@ -392,6 +393,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
 {
     vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
     vec3 lo = volumes[i].indexMin.xyz, hi = volumes[i].indexMax.xyz;
+    uint linkMask = floatBitsToUint(volumes[i].indexMin.w);  // light linking (GpuVolume)
     uvec4 grids = volumes[i].grids, types = volumes[i].types;
     uvec4 masks = volumes[i].factorMasks;
     if (volumes[i].medium.z > 0.0 && params.defaultFields == 0u) {
@@ -495,9 +497,15 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
+                if (!LightLinked(sun, linkMask)) {
+                    continue;
+                }
                 vec3 l = sun.position.xyz;
-                vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
-                                                      params.shadowSteps);
+                // Outside the sun's shadow link the volume doesn't shadow itself.
+                vec3 depth = ShadowLinked(sun, linkMask)
+                                 ? extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi,
+                                                            noise, params.shadowSteps)
+                                 : vec3(0.0);
                 if (mutual) {
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
                     depth += OthersDepth(i, x, l * 1e4, shadowNoise);
@@ -515,6 +523,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     uint base = ClusterIndex(fragCoord, viewDepth) * (kMaxClusterLights + 1u);
                     for (uint k = 0u; k < clusterLights[base]; ++k) {
                         uint index = clusterLights[base + 1u + k];
+                        if (!LightLinked(lights[index], linkMask)) {
+                            continue;
+                        }
                         vec3 e = LocalIrradiance(index, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))
@@ -523,6 +534,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     }
                 } else {
                     for (uint k = frame.counts.x; k < frame.counts.x + frame.localLights.x; ++k) {
+                        if (!LightLinked(lights[k], linkMask)) {
+                            continue;
+                        }
                         vec3 e = LocalIrradiance(k, x, l);
                         e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
                         e = mutual && any(greaterThan(e, vec3(0.0)))

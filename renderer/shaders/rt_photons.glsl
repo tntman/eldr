@@ -86,7 +86,14 @@ void main()
             flux *= pow(max(mediumColor, vec3(1e-4)), vec3(hit.t / mediumDepth));
         }
         DrawInfo d = draws[hit.slot];
-        bool receives = passed && (d.caustics & kCausticsReceive) != 0u;
+        // Light linking: only receivers in the light's link keep its
+        // photons; casters outside its shadow link don't bend them (they
+        // cast no shadow of it either).
+        uint linkMask = RtLinkMask(hit.instance);
+        if ((d.caustics & kCausticsCast) != 0u && !ShadowLinked(light, linkMask)) {
+            return;
+        }
+        bool receives = passed && (d.caustics & kCausticsReceive) != 0u && LightLinked(light, linkMask);
         vec2 u = Random2(seed + uvec3(0u, 0u, 7907u * (bounce + 1u)), 0u);
         vec2 uh = Random2(seed + uvec3(0u, 0u, 15731u * (bounce + 1u)), 0u);
         if ((d.caustics & kCausticsCast) == 0u) {

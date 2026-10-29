@@ -393,6 +393,11 @@ struct Mesh {
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
     uint32_t tag = 1;            // caller's render tag bit: drawn when in the scene's tag mask
+    // Light linking: the link categories (Light::lightLink/shadowLink ids)
+    // it is in, and per instance more (empty: none). Set transformsDirty
+    // after changing them.
+    std::vector<uint32_t> linkCategories;
+    std::vector<std::vector<uint32_t>> instanceLinkCategories;
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
     // Primvars the material's program reads, by name; vertex-rate ones are
@@ -553,6 +558,17 @@ struct Light {
     // Its light group (Karma's LPE tag, karma:light:lpetag): which of
     // Scene::SetLightGroups' groups its direct light is split into.
     std::string lpeTag;
+    // Light linking (UsdLux collection:lightLink, collection:shadowLink):
+    // the link category (Mesh::linkCategories) of what it lights and of
+    // what casts its shadows; 0: everything.
+    uint32_t lightLink = 0, shadowLink = 0;
+    // IES profile (UsdLux shaping:ies:*): intensity over (phi, theta) as
+    // width x height texels of one float, u = phi / 2 pi from iesX, v =
+    // theta / pi from the emission axis, times iesScale; null: none.
+    std::shared_ptr<Texture> ies;
+    float iesScale = 1.0f;
+    float iesAngleScale = 0.0f;
+    float iesX[3] = {1, 0, 0};           // the light's local +X (phi 180, as Karma), world space
     // Rect, disk: an image over the emitting surface (UsdLux
     // inputs:texture:file) multiplying the radiance; s = 0 at the +X side, the image's top row at +Y (as Karma; rows are stored bottom-up)
     // (the disk's square around it).
@@ -589,7 +605,7 @@ struct Instance {
     uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
     int32_t index;       // index into Mesh::transforms (instanceId AOV)
     uint32_t joints;     // skinned: first of the instance's joint matrices
-    uint32_t pad;
+    uint32_t linkMask;   // light linking: bit k = in the k-th linked category (Scene::_linkBits)
 };
 static_assert(sizeof(Instance) == 64, "std430 mirror in shaders/scene.glsl");
 struct DrawInfo {
@@ -728,6 +744,12 @@ public:
     // tags[g] split their direct light into group g (from the next
     // Commit). Returns whether they changed.
     bool SetLightGroups(const std::vector<std::string> &tags);
+    // Light linking and IES profiles on or off (from the next Commit).
+    // Returns whether they changed.
+    bool SetLightOptions(bool linking, bool ies);
+    // Light linking: at most this many link categories are honoured
+    // (Instance::linkMask); lights in more light everything.
+    static constexpr size_t kMaxLinkCategories = 32;
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -807,6 +829,7 @@ public:
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
         float shadowAngle = 0;              // its Light::angle (soft sun shadows)
+        uint32_t shadowLinkBit = 0;         // its shadow link's Instance::linkMask bit + 1 (0: every caster)
         // A distant light's disc is wide enough, or some material glossy
         // enough, for mesh.frag's sun region (kFeatureSunRegion): sun
         // tan^2 > 4e-4 a^2 of the least rough material (a: its roughness^2).
@@ -827,6 +850,7 @@ public:
             enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
             float halfWidth[3], halfHeight[3];
             float cylinderRadius;  // a cylinder's radius (jittered across its section)
+            uint32_t shadowLinkBit = 0;  // as Gpu::shadowLinkBit
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,
@@ -1007,6 +1031,10 @@ private:
     float _envThreshold = 0;          // the sun extraction it was built with (texture units, 0: none)
     bool _domeSunOn = false;
     std::vector<std::string> _lightGroups;
+    bool _lightLinking = true, _lightIes = true;
+    // Link category id -> its bit in the instances' linkMask (as uploaded).
+    std::map<uint32_t, uint32_t> _linkBits;
+    uint32_t _LinkMask(const std::vector<uint32_t> &categories) const;
     float _domeSunThreshold = 0;
     ExtractedSun _domeSun;            // of the environment built (dome-local, texture units)
     uint32_t _tagMask = ~0u;

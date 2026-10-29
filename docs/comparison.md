@@ -21,8 +21,8 @@
 |---|---|---|---|---|
 | Sphere, rect, disk, cylinder, distant and dome lights | Yes | Yes | Yes | |
 | Textured area lights | Yes | No | Yes | Eldr: rect and disk lights, oriented per UsdLux. |
-| IES profiles | No | No | Yes | Planned. |
-| Light linking | No | Yes | Partial | Unreal has lighting channels. Planned for Eldr. |
+| IES profiles | Yes | No | Yes | Eldr: UsdLux `shaping:ies:*`, type C. |
+| Light linking | Yes | Yes | Partial | Unreal has lighting channels. Eldr: UsdLux light and shadow links, 32 collections, not on domes. |
 | Light functions / gobos | No | No | Yes | |
 | Light shapes visible to the camera | Yes | Yes | Yes | Eldr: `eldr:lightShapesVisible`; Karma's `renderlightgeo` hides single lights. |
 | Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample in final quality. |

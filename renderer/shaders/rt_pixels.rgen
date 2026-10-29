@@ -50,6 +50,23 @@ vec3 PrepassPoint(ivec2 pixel)
 // light sample u, else its center): the sun's angle, or the light's size
 // over its distance from the blocker, times the blocker's from p. 0: no
 // blocker found. A hard sun or a contact shadow gets ~0 (no blur).
+// The nearest blocker of `light` along dir (hit.t from origin; < 0: none):
+// light linking skips surfaces outside its shadow link (up to 4).
+void TraceBlocker(Light light, vec3 origin, vec3 dir)
+{
+    TraceMask(origin, dir, 0.0, kRtMaskShadow);
+    float skipped = 0.0;
+    for (uint k = 0u; k < 4u && hit.t >= 0.0 && !ShadowLinked(light, RtLinkMask(hit.instance)); ++k) {
+        skipped += hit.t;
+        vec3 o = OffsetRay(hit.position, dot(dir, hit.geometric) > 0.0 ? hit.geometric : -hit.geometric);
+        TraceMask(o, dir, 0.0, kRtMaskShadow);
+        hit.t = hit.t < 0.0 ? hit.t : hit.t + skipped;
+    }
+    if (hit.t >= 0.0 && !ShadowLinked(light, RtLinkMask(hit.instance))) {
+        hit.t = -1.0;
+    }
+}
+
 float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
 {
     Light light = lights[index];
@@ -57,11 +74,11 @@ float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
     vec3 origin = OffsetRay(p, ng);
     float dist;
     vec3 dir = SampleLight(light, p, u, dist);
-    TraceMask(origin, dir, 0.0, kRtMaskShadow);
+    TraceBlocker(light, origin, dir);
     if (hit.t < 0.0 || hit.t >= dist) {
         dir = type == 0u ? light.position.xyz : normalize(light.position.xyz - p);
         dist = type == 0u ? 1e30 : distance(light.position.xyz, p) - (type == kLightSphere ? light.halfWidth.w : 0.0);
-        TraceMask(origin, dir, 0.0, kRtMaskShadow);
+        TraceBlocker(light, origin, dir);
         if (hit.t < 0.0 || hit.t >= dist) {
             return 0.0;
         }

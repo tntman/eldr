@@ -791,7 +791,8 @@ int main()
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 1.0f);
             white->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->material = white;
 
             // Sphere: reflected radiance L R^2 / d^2 * cos.
             vkr::Light *sphere = AddSphereLight(scene, 0, 0, 0, 0.1f, 10.0f);
@@ -808,6 +809,21 @@ int main()
             img = Render(renderer, scene);
             Expect(img.At(38, 32, 0) > 0.2f, "spot: lit inside the cone (22 degrees)");
             Expect(img.At(48, 32, 0) == 0.0f, "spot: dark outside the cone (46 degrees)");
+
+            // Light linking: a light linked to a category the wall isn't in leaves it dark;
+            // the wall in it (Mesh::linkCategories) is lit as before.
+            sphere->coneAngle = 180;
+            sphere->lightLink = 7;
+            scene.Commit();
+            Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "light linking: outside the light's link: dark");
+            wall->linkCategories = {7};
+            wall->transformsDirty = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) - 0.4f) < 0.01f,
+                   "light linking: in the light's link: lit");
+            wall->linkCategories.clear();
+            wall->transformsDirty = true;
+            sphere->lightLink = 0;
             scene.RemoveLight(sphere);
 
             // Rect: 0.5 x 0.5 square facing the wall. Form factor of a square

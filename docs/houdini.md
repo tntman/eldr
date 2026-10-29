@@ -189,6 +189,8 @@ step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto e
 | `ray:primid` | Id with coverage | Id + 1, no coverage |
 | Cryptomatte | `<name>00..02` + manifest | Same layout |
 | Volumes | Rendered | Rendered (OpenVDB files and SOP volumes) |
+| Light linking (`collection:lightLink`, `collection:shadowLink`, the Light Linker LOP's) | Honoured | Honoured: tests/scenes/lightlink.usda lum 0.95, worst region 0.16 (karma_golden) |
+| IES profiles (`shaping:ies:*`) | Candela as is; phi 0 at the light's -X | Same: tests/scenes/ies.usda within 3% per region, raw and normalized with `angleScale` |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s |
 
 ### ColorChecker, Eldr vs Karma (linear EXR, no tonemap)

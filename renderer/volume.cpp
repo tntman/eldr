@@ -48,6 +48,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t defaultFields;  // Settings::defaultFields
     uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    int32_t shadowLink;      // volume_shadow.frag: the light's shadow link bit (-1: every volume casts)
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -331,12 +332,13 @@ void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uin
 }
 
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
-                              uint32_t mapSize, const Settings &s)
+                              uint32_t mapSize, const Settings &s, int32_t shadowLink)
 {
     _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.cascade = cascade;
     p.mapSize = mapSize;
+    p.shadowLink = shadowLink;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -344,7 +346,7 @@ void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t
 }
 
 void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
-                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s)
+                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s, int32_t shadowLink)
 {
     _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
@@ -353,6 +355,7 @@ void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint
     p.mapSize = size;
     p.originX = x;
     p.originY = y;
+    p.shadowLink = shadowLink;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -538,6 +541,8 @@ void Scene::_CommitVolumes()
             g.indexMin[k] = float(lower[k] - 1);
             g.indexMax[k] = float(upper[k] + 1);
         }
+        const uint32_t linkMask = _LinkMask(d.volume->linkCategories);
+        std::memcpy(&g.indexMin[3], &linkMask, sizeof(linkMask));  // as bits (volume.frag's floatBitsToUint)
         const Affine indexToObject = density.IndexToObject();
         g.grids[0] = offsetOf(d.grids[0]);
         g.types[0] = PNANOVDB_GRID_TYPE_FLOAT;

@@ -11,6 +11,8 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/base/tf/token.h"
+#include "pxr/base/vt/array.h"
 
 #include <atomic>
 #include <memory>
@@ -168,6 +170,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtTranslucentShadows, "eldr:rtTranslucentShadows"))    \
     ((dofJitter, "eldr:dofJitter")) \
     ((lightTextures, "eldr:lightTextures")) \
+    ((lightLinking, "eldr:lightLinking")) \
+    ((lightIes, "eldr:lightIes")) \
     ((domeSun, "eldr:domeSun")) \
     ((domeSunThreshold, "eldr:domeSunThreshold")) \
     ((fogGiAmbient, "eldr:fogGiAmbient")) \
@@ -260,6 +264,12 @@ bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
 // gets -1 and a warning). Process-wide.
 int HdVkLightGroup(const std::string &tag);
 std::vector<std::string> HdVkLightGroups();
+// Light linking: Hydra's link categories (HdsiLightLinkingSceneIndex's ids
+// of UsdLux collection:lightLink / shadowLink) as vkr ids (Mesh::
+// linkCategories, Light::lightLink), the empty one 0. A light naming
+// (`light`) more than vkr::Scene::kMaxLinkCategories warns. Process-wide.
+uint32_t HdVkLinkCategory(TfToken const &category, bool light = false);
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).

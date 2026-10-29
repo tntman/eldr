@@ -233,7 +233,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         // Skinned posed vertices and table: hits, and rt_refraction.rgen's.
         {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
-        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits | VK_SHADER_STAGE_ANY_HIT_BIT_KHR},  // + rt_shadow.rahit's RtLinkMask
         {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         // Per instance slot, the BLAS of its own (per-instance displacement).

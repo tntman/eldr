@@ -71,6 +71,7 @@ layout(location = 4) flat in uint inEntry;
 #define inMaterial (draws[instances[inSlot].draw].material)
 #define inPrimId (draws[instances[inSlot].draw].primId)
 #define inInstanceId (instances[inSlot].index)
+#define inLinkMask (instances[inSlot].linkMask)  // light linking (lights.glsl's LightLinked)
 #ifdef GRAPH
 // Material programs: vertex-rate primvars (mesh.vert) and the interpreter.
 layout(location = 5) in vec4 inPrimvars;
@@ -575,10 +576,10 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 toLight = light.position.xyz - p;
     float d = length(toLight);
     float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
-    if (window <= 0.0 || d <= 0.0) {
+    if (window <= 0.0 || d <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * window * window;
+    vec3 radiance = light.color.rgb * window * window * LightIes(light, p);
     float cosOff = dot(-toLight / d, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
@@ -1172,7 +1173,7 @@ void main()
         Light light = lights[i];
         vec3 l = light.position.xyz;
         float NoL = dot(n, l);
-        if (NoL <= 0.0) {
+        if (NoL <= 0.0 || !LightLinked(light, inLinkMask)) {
             continue;
         }
         // The sun's disc (angular radius axis.w) as a sphere at distance 1,
