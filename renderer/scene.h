@@ -741,9 +741,10 @@ public:
     // small rigid mesh whose material emits at least `threshold` (a constant
     // emissiveColor's brightest channel, scene-referred radiance) also
     // lights the scene as a sphere light around it, of the same power
-    // (pi x radiance x area), casting shadows. Its radiance is capped at
-    // `limit` (brightest channel, keeping hue; 0: off): Karma reaches
-    // emitters by bounce rays only, under its indirect colour limit.
+    // (pi x radiance x area), casting shadows. Its light on a surface is
+    // capped where radiance x albedo passes `limit` (brightest channel,
+    // keeping hue; 0: off): Karma reaches emitters by bounce rays only and
+    // clamps each such sample at its indirect colour limit.
     // Returns whether it changed.
     bool SetEmissiveLights(bool on, float threshold, float limit = 0.0f);
     // Dome sun extraction: the dome texture's light over `threshold` (scene

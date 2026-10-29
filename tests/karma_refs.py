@@ -46,6 +46,9 @@ ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=fal
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
         "eldr:domeCameraVisible=false",  # Karma hides domes from the camera (renderlightgeo 0)
         "eldr:gi=true"]  # Karma path traces: Eldr's final recipe with its bounce light
+# Karma's default diffuse limit is 1 bounce; Eldr's GI is every bounce. With 10, Karma's Cornell box matches
+# Eldr's within 3% (it is 1.27x Karma's default there). Part of every reference's hash.
+KARMA_ALL = "custom int karma:object:diffuselimit = 10"
 # Prims without a material get a plain UsdPreviewSurface of their displayColor in both renderers:
 # Karma shades bare prims as about 0.4 x displayColor with a steeper falloff (docs/testing.md), Eldr as
 # Lambert of displayColor (as Storm); the goldens compare materials, not that fallback.
@@ -89,7 +92,8 @@ def sha1(path, crlf=False):
     with open(path, "rb") as f:
         data = f.read().replace(b"\r\n", b"\n")
     name = os.path.splitext(os.path.basename(path))[0]
-    return hashlib.sha1((data.replace(b"\n", b"\r\n") if crlf else data) + OVERS.get(name, "").encode()).hexdigest()
+    extra = KARMA_ALL + OVERS.get(name, "")
+    return hashlib.sha1((data.replace(b"\n", b"\r\n") if crlf else data) + extra.encode()).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -136,6 +140,7 @@ def Scope "Render" {{
         custom float eldr:bloomIntensity = 0
         custom bool eldr:domeCameraVisible = 0
         custom bool eldr:gi = 1
+        {KARMA_ALL}
         {EXTRA_SCENE.get(name, "")}{product}
     }}
 }}
@@ -158,7 +163,8 @@ def render_refs(names):
     work = tempfile.mkdtemp(prefix="eldr_karma_refs_")
     manifest.update(husk=husk, houdini=os.path.basename(HFS), resolution=[W, H],
                     settings={"renderer": "BRAY_HdKarma", "karma:global:convergence_mode": "Path Traced",
-                              "karma:global:pathtracedsamples": SPP, "per scene": SPP_SCENE})
+                              "karma:global:pathtracedsamples": SPP, "karma:object:diffuselimit": 10,
+                              "per scene": SPP_SCENE})
     for name in names:
         exr = os.path.join(REFS, name + ".exr")
         t = time.time()
