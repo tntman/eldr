@@ -37,6 +37,7 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <thread>
 #ifdef _WIN32
@@ -71,23 +72,100 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.hitPCamera, A::kPositionEye, HdFormatFloat32Vec3},
         {k.hitPz, A::kDepth, HdFormatFloat32},
         {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
-        {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
-        {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
-        // Light splits as Karma's light path expressions name them. Eldr's
-        // "direct" is its lights' (distant, sphere, rect, disk); the dome,
-        // probes, reflections and GI count as indirect (Karma counts the
-        // dome as a light). Emission seen in reflections isn't tracked.
-        {k.combinedEmission, A::kEmission, HdFormatFloat32Vec3},
-        {k.directDiffuse, A::kDirectDiffuse, HdFormatFloat32Vec3},
-        {k.indirectDiffuse, A::kIndirectDiffuse, HdFormatFloat32Vec3},
-        {k.combinedDiffuse, A::kCombinedDiffuse, HdFormatFloat32Vec3},
-        {k.directGlossy, A::kDirectGlossy, HdFormatFloat32Vec3},
-        {k.indirectGlossy, A::kIndirectGlossy, HdFormatFloat32Vec3},
-        {k.combinedGlossy, A::kCombinedGlossy, HdFormatFloat32Vec3},
+        // Light path expressions: HdVkFindAov.
         {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
     };
     return aovs;
+}
+
+namespace {
+
+std::mutex lightGroupsMutex;
+std::vector<std::string> lightGroups;
+
+// The Aovs::Kind of a light path expression as Karma writes them (its
+// Render Settings LOP's AOVs, husd/karmautils.py), -1 for any other. Not a
+// general LPE engine: the forms Karma writes, spaces ignored. A per-light
+// variant (Karma replaces L, or [LO], with <L.'tag'>) of the beauty is that
+// tag's light group.
+// ponytail: per-light variants of the other splits (C<RD><L.'tag'>) aren't
+// split by group; ask for them and the var warns.
+int LpeKind(std::string e)
+{
+    using A = vkr::Aovs;
+    e.erase(std::remove(e.begin(), e.end(), ' '), e.end());
+    std::string tag;
+    if (const size_t at = e.find("<L.'"); at != std::string::npos) {
+        const size_t end = e.find("'>", at + 4);
+        if (end == std::string::npos) {
+            return -1;
+        }
+        tag = e.substr(at + 4, end - at - 4);
+        e = e.substr(0, at) + "L" + e.substr(end + 2);
+    }
+    if (!tag.empty()) {
+        const int group = e == "C.*L" ? HdVkLightGroup(tag) : -1;
+        return group < 0 ? -1 : int(A::kLightGroup0) + group;
+    }
+    // Eldr's "direct" is its lights' and (eldr:splitDomeDirect, Karma's
+    // convention) the dome's unblocked light; GI, probes and reflections
+    // are indirect. Emission seen in reflections isn't tracked.
+    static const std::map<std::string, A::Kind> kinds = {
+        {"CDA", A::kDiffuseAlbedo}, {"C[DV]A", A::kDiffuseAlbedo},
+        {"CO", A::kEmission}, {"C.*O", A::kEmission},
+        {"C<RD>L", A::kDirectDiffuse}, {"C<RD>.+L", A::kIndirectDiffuse}, {"C<RD>.*L", A::kCombinedDiffuse},
+        {"C<RG>L", A::kDirectGlossy}, {"C<RG>.+L", A::kIndirectGlossy},
+        {"C<RG>.*L", A::kCombinedGlossy}, {"C<RG>.*[LO]", A::kCombinedGlossy},
+        {"C<TG>.*L", A::kTransmission}, {"C<TG>.*[LO]", A::kTransmission},
+        {"C<TD>.*L", A::kSubsurface}, {"C<TD>.*[LO]", A::kSubsurface},
+        {"C<...'coat'>.*L", A::kCoat}, {"C<RG'coat'>.*L", A::kCoat},
+        {"CV.*L", A::kVolume}, {"CVL", A::kVolume}, {"CV.*[LO]", A::kVolume},
+        {"shadow;C.*[LO]", A::kShadow}, {"shadow;C.*L", A::kShadow},
+        {"holdouts;shadow;CDL", A::kHoldoutShadow}, {"holdouts;shadow;C.*[LO]", A::kHoldoutShadow},
+    };
+    const auto it = kinds.find(e);
+    return it == kinds.end() ? -1 : int(it->second);
+}
+
+} // namespace
+
+int HdVkLightGroup(const std::string &tag)
+{
+    std::lock_guard<std::mutex> lock(lightGroupsMutex);
+    const auto it = std::find(lightGroups.begin(), lightGroups.end(), tag);
+    if (it != lightGroups.end()) {
+        return int(it - lightGroups.begin());
+    }
+    if (lightGroups.size() >= vkr::Aovs::kMaxLightGroups) {
+        TF_WARN("Eldr: light group '%s' left out: at most %u light groups", tag.c_str(), vkr::Aovs::kMaxLightGroups);
+        return -1;
+    }
+    lightGroups.push_back(tag);
+    return int(lightGroups.size()) - 1;
+}
+
+std::vector<std::string> HdVkLightGroups()
+{
+    std::lock_guard<std::mutex> lock(lightGroupsMutex);
+    return lightGroups;
+}
+
+bool HdVkFindAov(TfToken const &name, HdVkExtraAov *found)
+{
+    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+        if (aov.name == name) {
+            *found = aov;
+            return true;
+        }
+    }
+    const std::string &text = name.GetString();
+    const int kind = TfStringStartsWith(text, "lpe:") ? LpeKind(text.substr(4)) : -1;
+    if (kind < 0) {
+        return false;
+    }
+    *found = {name, uint32_t(kind), HdFormatFloat32Vec3};
+    return true;
 }
 
 bool HdVkRenderVarSource(const HdRenderSettings *settings, TfToken const &var, std::string *name, std::string *type)
@@ -328,13 +406,11 @@ HdAovDescriptor HdVkRenderDelegate::KnownAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
-    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-        if (name == aov.name) {
-            const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
-                               : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
-                                                                   : VtValue(GfVec3f(0.0f));
-            return HdAovDescriptor(aov.format, false, zero);
-        }
+    if (HdVkExtraAov aov; HdVkFindAov(name, &aov)) {
+        const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
+                           : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
+                                                               : VtValue(GfVec3f(0.0f));
+        return HdAovDescriptor(aov.format, false, zero);
     }
     return HdAovDescriptor();
 }

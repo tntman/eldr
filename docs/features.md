@@ -184,7 +184,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Refraction | `eldr:refraction` | [prepass] Transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or authored `ior` refract a mip-chained copy of the opaque colour. Thickness estimate places the exit point; roughness blurs (`eldr:refractionSamples`); Fresnel splits; absorption at the surface or Beer-Lambert over `transmission_depth`. |
 | From inside | `eldr:refractionBackFaces` | Back faces first with inverted ior: Snell's window, total internal reflection (48.8 degrees for water) |
 | Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied after each layer: glass behind glass |
-| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as indirect glossy in the light splits. Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
+| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as transmission in the light splits (Karma's `C<TG>.*L`). Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
 | Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
 | Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
 | Subsurface | `eldr:subsurface` | See Materials |
@@ -305,8 +305,15 @@ Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance
 | Base colour | `export_basecolor` | Base colour |
 | Diffuse albedo | `lpe:CDA` | Base colour x (1 - metallic) |
 | Emission | `lpe:CO`, `lpe:C.*O` | Emitted radiance (not in reflections) |
-| Diffuse | `lpe:C<RD>L` direct, `lpe:C<RD>.+L` indirect, `lpe:C<RD>.*L` combined | Light splits |
-| Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*[LO]` | Light splits |
+| Diffuse | `lpe:C<RD>L` direct, `lpe:C<RD>.+L` indirect, `lpe:C<RD>.*L` combined | Light splits, without subsurface |
+| Glossy | `lpe:C<RG>L`, `lpe:C<RG>.+L`, `lpe:C<RG>.*L` or `.*[LO]` | Light splits (reflection; coat included, refraction not) |
+| Transmission | `lpe:C<TG>.*L` | What glass refracts (screen-space or traced) |
+| Subsurface | `lpe:C<TD>.*L` | The subsurface lobe's diffuse light, direct and indirect, blur and sun through thin parts included |
+| Coat | `lpe:C<...'coat'>.*L` | The coat's reflection of lights and dome (also in glossy; the coat reflects nothing else) |
+| Volume | `lpe:CV.*L`, `lpe:CVL` | Volumes' scattered and emitted light; the splits behind are seen through them |
+| Shadow | `lpe:shadow;C.*[LO]` | Direct light the shadows (and the dome's occlusion) took: unshadowed minus shadowed. Karma's also counts occluded indirect light. |
+| Holdout shadow | `lpe:holdouts;shadow;CDL` | The same on holdouts, diffuse only (a shadow matte, Karma's holdout_shadow) |
+| Light group | `lpe:C.*<L.'tag'>` | Direct light of the lights tagged `tag` (`inputs:karma:light:lpetag`) |
 | Cryptomatte object | `primvars:__name` | Ids of the rprim path |
 | Cryptomatte material | `primvars:__materialname` | Ids of the material path |
 
@@ -319,10 +326,14 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 | Direct | Lights' light; also the dome's unblocked light (`eldr:splitDomeDirect`): diffuse under AO/SSGI visibility, reflection where no probe, mirror, SSR or traced hit replaced it |
 | Indirect | GI, SSGI, multi-bounce, probes, reflections beyond that |
 | Sum | Direct + indirect = combined; with emission = the linear beauty, within 3%, for diffuse, coat, sheen, emissive, subsurface, transmission, under GI, denoised SSR and traced refraction |
-| Refraction | Counts as indirect glossy (no separate AOV) |
+| Transmission | Refracted light, its own split (Karma's `C<TG>`); not in indirect glossy |
 | Denoised SSR | Indirect glossy |
-| Subsurface | Moves light within the diffuse splits |
-| Sun through thin subsurface | Direct diffuse |
+| Subsurface | Its own split (Karma's `C<TD>`): the subsurface weight's share of the diffuse light, the blur's moves and the sun through thin parts; not in diffuse |
+| Coat | Part of glossy (Karma counts it as a glossy reflection labelled `coat`) |
+| Volumes | Their light is the volume split; every split behind a volume is multiplied by its transmittance, as Karma's paths through a medium |
+| Holdouts | No light in any split (they are black); their shadow goes to the holdout shadow |
+| Sum | Diffuse + glossy + transmission + subsurface + volume + emission = the linear beauty (tests/test_aov_sums.py) |
+| Light groups | Up to 8 tags (`inputs:karma:light:lpetag`, Eldr's twin `inputs:eldr:light:lpetag` wins), each the direct light (diffuse, glossy, coat, subsurface) of its lights; a tagged dome adds its unblocked light (`eldr:splitDomeDirect`) and its extracted sun. All lights tagged: groups + indirect diffuse + indirect glossy + transmission + emission + volume = the beauty (subsurface materials aside: their indirect light is in the subsurface split). Indirect light isn't split per light (GI, probes and reflections gather all lights at once). Groups past 8 warn and stay black. Each group is a 16-bit RGBA layer (16 MB at 1080p). |
 | Cost | Compiled in only when an AOV asks: lights scene 0.92 vs 0.62 ms |
 | Accumulation | Like colour: TAA frames or film |
 
@@ -385,6 +396,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | `float primvars:eldr:object:volumelimit`, `karma:object:volumelimit` | volume (also a render setting of that name) | Above 0, volumes scatter more than once: octaves fitted to Karma at that limit (the largest in the frame counts for all volumes) |
 | `bool primvars:eldr:renderAsSubdivision` | polygon mesh (subdivisionScheme none) | Renders it as Catmull-Clark without changing the mesh, as Mesh Edit would; then `refineLevel` applies. Needs `eldr:subdivision`. |
 | `bool inputs:eldr:light:renderlightgeo`, `inputs:karma:light:renderlightgeo` | light | Light geometry visible to the camera (false hides it) |
+| `string inputs:eldr:light:lpetag`, `inputs:karma:light:lpetag` | light, dome | Light group (LPE tag): `lpe:C.*<L.'tag'>` holds its lights' direct light |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |
 | `eldr:<setting>` | active UsdRenderSettings | Sets that render setting |

@@ -101,6 +101,33 @@ bool LightSplits()
     return (kCompiledFeatures & kCompiledLightSplits) != 0u && (frame.aovs.x != 0u || frame.lightPath.z != 0.0);
 }
 vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
+// The splits' layers past the 4 (Aovs::EnsureSplits): what the shadows
+// took (all of it, the diffuse), the coat's light, each light group's
+// direct light (Light::color.w / 4 - 1 its group).
+vec3 splitShadow = vec3(0.0), splitShadowDiffuse = vec3(0.0), splitCoat = vec3(0.0);
+const uint kMaxLightGroups = 8u;  // Aovs::kMaxLightGroups
+const int kGroupLayer = 10;       // Aovs::kSplitLayers
+vec3 splitGroups[kMaxLightGroups] = vec3[](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0),
+                                           vec3(0.0), vec3(0.0));
+int LightGroup(Light light)
+{
+    return int(uint(light.color.w) >> 2u) - 1;
+}
+void SplitGroup(int group, vec3 light)
+{
+    if (group >= 0 && group < int(kMaxLightGroups)) {
+        splitGroups[group] += light;
+    }
+}
+// A light's share of them: `lit` its direct light, `unlit` the same
+// without its shadow, the diffuse of both, the coat's (lit).
+void SplitLight(Light light, vec3 lit, vec3 unlit, vec3 diffuseLit, vec3 diffuseUnlit, vec3 coat)
+{
+    splitShadow += unlit - lit;
+    splitShadowDiffuse += diffuseUnlit - diffuseLit;
+    splitCoat += coat;
+    SplitGroup(LightGroup(light), lit);
+}
 float fogTransmittance = 1.0;  // of the fog in front of the surface (main, below)
 
 #include "brdf.glsl"
@@ -638,10 +665,14 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                     light.shaping.w;
     specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
     specular *= specularTint;
+    vec3 shadow = LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
     if (LightSplits()) {
-        splitDirectDiffuse += radiance * diffuse * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+        splitDirectDiffuse += radiance * diffuse * shadow;
+        SplitLight(light, radiance * (diffuse + specular) * shadow, radiance * (diffuse + specular),
+                   radiance * diffuse * shadow, radiance * diffuse,
+                   radiance * gCoatLight * specularE * light.shaping.w * specularTint * shadow);
     }
-    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+    return radiance * (diffuse + specular) * shadow;
 }
 
 // Soft sun shadows: PCSS in the cascade's light space, as LocalShadow()
@@ -1144,14 +1175,16 @@ void main()
                          (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * sunNorm +
                           LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
                         light.color.rgb;
+        vec3 shadow = vec3(1.0);
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
+            shadow = Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
         }
-        color += radiance;
+        color += radiance * shadow;
         if (LightSplits()) {
             vec3 d = sunDiffuse / PI * NoL * light.halfHeight.w * light.color.rgb;
-            splitDirectDiffuse += i == frame.counts.y
-                ? d * Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l) : d;
+            splitDirectDiffuse += d * shadow;
+            SplitLight(light, radiance * shadow, radiance, d * shadow, d,
+                       gCoatLight * light.shaping.w * light.color.rgb * shadow);
         }
     }
 
@@ -1173,7 +1206,12 @@ void main()
 
     if (frame.lightClamp.x > 0.0) {
         const vec3 lit = color - emissive, clamped = BrightnessClamp(lit, frame.lightClamp.x);
-        splitDirectDiffuse *= dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the split follows
+        float kept = dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the splits follow
+        splitDirectDiffuse *= kept;
+        splitCoat *= kept;
+        for (uint g = 0u; g < kMaxLightGroups; ++g) {
+            splitGroups[g] *= kept;
+        }
         color = emissive + clamped;
     }
     vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
@@ -1289,9 +1327,13 @@ void main()
     // reflection under the specular occlusion where no probe, mirror, SSR
     // or traced reflection replaced it. At most the whole (where the probes
     // see less of the dome than the AO does), so the splits still add up.
-    vec3 splitDomeGlossy = vec3(0.0);
+    vec3 splitDomeGlossy = vec3(0.0), domeDirect = vec3(0.0);
     if (LightSplits() && frame.aovs.y != 0u) {
-        vec3 domeDirect = min(kd * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        domeDirect = min(kd * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        // What its occlusion took is its shadow (Karma's shadow;, the
+        // dome's light unoccluded minus occluded).
+        splitShadow += kd * domeDiffuse - domeDirect;
+        splitShadowDiffuse += kd * domeDiffuse - domeDirect;
         splitDirectDiffuse += domeDirect;
         splitDirect += domeDirect;  // layer 2 is splitDirect - splitDirectDiffuse
         splitIndirectDiffuse -= domeDirect;
@@ -1305,6 +1347,7 @@ void main()
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        splitCoat += gCoatAmbient;
         // ponytail: the lobes' dome light (coat, sheen, hair) all one way;
         // a sheen under GI's probes counts their light as the dome's too.
         if (frame.aovs.y != 0u) {
@@ -1350,10 +1393,33 @@ void main()
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         // a: the fog's transmittance in front of it (the splits are
         // unfogged; what is copied or reflected of the colour is fogged).
-        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, fogTransmittance));
-        imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse + splitDomeGlossy, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy + gRefractedLight, 1.0));
+        // Holdouts are black: none of their light, but their shadow
+        // (Karma's holdouts;shadow;CDL, a shadow matte).
+        bool holdout = Feature(kFeatureHoldouts) && draws[instances[inSlot].draw].holdout != 0u;
+        float keep = holdout ? 0.0 : 1.0;
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(keep * (splitDirectDiffuse + splitThrough), fogTransmittance));
+        imageStore(lightSplits, ivec3(pixel, 1), vec4(keep * splitIndirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 2), vec4(keep * (splitDirect - splitDirectDiffuse + splitDomeGlossy), 1.0));
+        imageStore(lightSplits, ivec3(pixel, 3), vec4(keep * (splitIndirectGlossy + gRefractedLight), 1.0));
+        int splitLayers = imageSize(lightSplits).z;
+        if (splitLayers > 4) {  // the split AOVs (aov.comp takes 4..6 out of diffuse and glossy)
+            // The groups: the dome's direct light (Karma's convention) and
+            // the sun's through thin subsurface parts too.
+            if (frame.aovs.y != 0u) {
+                SplitGroup(int(frame.aovs.z) - 1, domeDirect + splitDomeGlossy);
+            }
+            if (frame.counts.y != kNone) {
+                SplitGroup(LightGroup(lights[frame.counts.y]), splitThrough);
+            }
+            imageStore(lightSplits, ivec3(pixel, 4), vec4(keep * gRefractedLight, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 5), vec4(keep * (gSubsurfaceShare * splitDirectDiffuse + splitThrough), 1.0));
+            imageStore(lightSplits, ivec3(pixel, 6), vec4(keep * gSubsurfaceShare * splitIndirectDiffuse, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 7), vec4(keep * splitCoat, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 8), holdout ? vec4(splitShadowDiffuse, 1.0) : vec4(splitShadow, 0.0));
+            for (int g = 0; g < min(splitLayers - kGroupLayer, int(kMaxLightGroups)); ++g) {
+                imageStore(lightSplits, ivec3(pixel, kGroupLayer + g), vec4(keep * splitGroups[g], 1.0));
+            }
+        }
     }
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;

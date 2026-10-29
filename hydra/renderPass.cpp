@@ -217,11 +217,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
-        for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            if (aovName == aov.name) {
-                extra[aov.kind] = b.renderBuffer;
-                huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
-            }
+        if (HdVkExtraAov aov; HdVkFindAov(aovName, &aov)) {
+            extra[aov.kind] = b.renderBuffer;
+            huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -903,6 +901,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    // Light groups: the tags the bindings and products asked for so far
+    // (HdVkFindAov) split the lights from this frame on.
+    if (_scene.SetLightGroups(HdVkLightGroups())) {
+        _scene.Commit(true);  // the frame's second: its motion stays
+    }
     // husk writes its colour AOV itself: it gets the linear beauty too.
     const bool huskLinear = !colorHalf.empty() && frame.linearBeauty;
     frame.linearColor = frame.linearBeauty && (_products.HasBeauty() || huskLinear);

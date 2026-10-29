@@ -57,7 +57,8 @@ struct FrameData {
     // stochastic effect (kDim*); x of sampleInfo 1 with them on.
     float sampleDims[3][4];
     uint32_t sampleInfo[4];
-    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
+    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct,
+                             // z the dome's light group + 1 (0: none)
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
     float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light, SSR hit filter on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
@@ -3508,12 +3509,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool ssrUnscale = lightPath && fd.ssr[0] > 0.0f;
     const bool splits =
         (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || (lightPath && (refraction || ssrUnscale));
-    const bool splitsNew = _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    const bool splitsNew = _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1,
+                                              splits && frame.extraAovs ? Aovs::SplitLayers(out.aovs) : 4);
     _keepSplits = splits && ssrUnscale && _splitsStored && !splitsNew;
     fd.ssr[3] = _keepSplits ? 1.0f : 0.0f;
     _splitsStored = splits;
     fd.aovs[0] = splits ? 1u : 0u;
     fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
+    fd.aovs[2] = uint32_t(gpu.environmentLightGroup + 1);  // the dome's light group + 1 (0: none)
     fd.scene[0] = frame.sceneTime[0];
     fd.scene[1] = frame.sceneTime[1];
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);

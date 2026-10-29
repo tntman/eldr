@@ -5,6 +5,10 @@
 // through thin parts of subsurface materials.
 const uint kFeatureSubsurface = 16384u;
 
+// The subsurface lobe's share of the diffuse light, per channel (the light
+// splits' subsurface).
+vec3 gSubsurfaceShare = vec3(0.0);
+
 // Before shading: the diffuse albedo mixes in the subsurface colour by
 // its weight (standard_surface, OpenPBR). The subsurface pass
 // (kShadingPass 2) keeps only that lobe, without highlights or emission,
@@ -21,7 +25,9 @@ void SubsurfaceBegin(inout vec3 baseColor, inout vec3 emissive, inout float meta
         metallic = 0.0;
         specularTint = vec3(0.0);
     } else {
-        baseColor = mix(baseColor, m.subsurface.rgb, m.subsurface.w);
+        vec3 mixed = mix(baseColor, m.subsurface.rgb, m.subsurface.w);
+        gSubsurfaceShare = clamp(m.subsurface.rgb * m.subsurface.w / max(mixed, vec3(1e-6)), 0.0, 1.0);
+        baseColor = mixed;
     }
 }
 
