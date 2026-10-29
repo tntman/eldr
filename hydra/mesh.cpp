@@ -259,15 +259,6 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             geometryDirty = true;
         }
     }
-    // Subdivision surfaces: refined to the display style's level (usdview's
-    // Complexity) or the mesh's own primvar when flattened. The render
-    // delegate re-dirties the display style when the subdivision settings
-    // change.
-    if (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id) || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
-        const int level = _RefineLevel(sceneDelegate);
-        geometryDirty |= level != _refineLevel && _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
-        _refineLevel = level;
-    }
     const bool pointsDirty = HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points);
     if (pointsDirty) {
         const VtValue value = GetPoints(sceneDelegate);
@@ -278,6 +269,23 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             _points = std::move(points);
             geometryDirty = true;
         }
+    }
+    // Instancers are synced by the rprims that use them (as in hdEmbree);
+    // the helper locks, so parallel rprim syncs are fine. Before the refine
+    // level: dicing by screen size measures every instance.
+    _UpdateInstancer(sceneDelegate, dirtyBits);
+    HdInstancer::_SyncInstancerAndParents(sceneDelegate->GetRenderIndex(), GetInstancerId());
+    // Subdivision surfaces: refined to the display style's level (usdview's
+    // Complexity), the mesh's own primvar, or for its size on screen
+    // (eldr:screenDicing) when flattened. The render delegate re-dirties the
+    // display style when the subdivision settings or the dicing view change.
+    if (_topology.GetScheme() != PxOsdOpenSubdivTokens->none &&
+        (HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id) || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id) ||
+         HdChangeTracker::IsTopologyDirty(*dirtyBits, id) || HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
+         HdChangeTracker::IsInstancerDirty(*dirtyBits, id))) {
+        const int level = _RefineLevel(sceneDelegate);
+        geometryDirty |= level != _refineLevel;
+        _refineLevel = level;
     }
     // DirtyPrimvar is all primvars at once, and a skinned mesh gets it every
     // frame for its skinning transforms: re-flatten only what really changed.
@@ -419,10 +427,6 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _SplitSubsets();
     }
 
-    // Instancers are synced by the rprims that use them (as in hdEmbree);
-    // the helper locks, so parallel rprim syncs are fine.
-    _UpdateInstancer(sceneDelegate, dirtyBits);
-    HdInstancer::_SyncInstancerAndParents(sceneDelegate->GetRenderIndex(), GetInstancerId());
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {

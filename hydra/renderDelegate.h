@@ -7,12 +7,15 @@
 #include "pxr/imaging/hd/sceneIndex.h"
 #include "pxr/imaging/hd/dataSourceLocator.h"
 
+#include "subdivision.h"
+
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
 
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -206,7 +209,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
-    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))
+    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
+    ((screenDicing, "eldr:screenDicing"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -353,6 +357,19 @@ public:
     static void NoteSceneEdit(HdSceneDelegate *sceneDelegate);
     uint64_t SceneEdits() const { return _sceneEdits; }
 
+    // Who renders: Houdini's viewport (houdini:viewport or
+    // houdini:interactive), or an offline renderer (husk's
+    // rasterRenderProducts, enableInteractive false): final quality.
+    bool HoudiniViewport() const;
+    bool Offline() const;
+    // eldr:screenDicing in final quality (eldr:finalQuality or offline):
+    // subdivision surfaces dice for DicingView, the view the render pass
+    // last re-diced for (null before the first). SetDicingView re-syncs the
+    // meshes; only the render pass calls it, between syncs.
+    bool ScreenDicing() const;
+    const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
+    void SetDicingView(std::optional<HdVkDicingView> const &view);
+
     // The descriptor of an AOV Eldr knows by `name`; invalid otherwise.
     static HdAovDescriptor KnownAovDescriptor(TfToken const &name);
 
@@ -390,6 +407,7 @@ private:
     std::unordered_map<SdfPath, GfVec2f, SdfPath::Hash> _shutters;
     SdfPath _activeCamera, _lastOpenCamera;
     bool _activeKnown = false;  // a render pass named its camera
+    std::optional<HdVkDicingView> _dicingView;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE
