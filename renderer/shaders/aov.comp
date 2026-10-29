@@ -40,7 +40,7 @@ layout(push_constant) uniform Push {
     vec2 filmOffset;  // film samples: where this frame's are from their pixel centres
     float filmRadius; // the film's filter radius (pixels)
     uint film;        // film samples (the colour AOVs are filtered as the film's beauty): 1 add, 2 start over
-    uint filter;      // film samples: kNearest... (Aovs::Filter, aov.cpp's ShaderFilter)
+    uint mode;        // film samples: kNearest... (Aovs::Filter, aov.cpp's ShaderFilter)
     float radius;     // its radius (pixels)
 } pc;
 
@@ -241,7 +241,7 @@ void main()
         sums[s + 12u] = total;
         return;
     }
-    if (pc.filter != kNearest) {
+    if (pc.mode != kNearest) {
         // Film samples: the samples around the pixel (3x3, each at its
         // jittered position) within the filter's radius, the pixel's own
         // always, summed with their weights over frames (Gauss: film.comp's
@@ -256,7 +256,7 @@ void main()
         }
         sums[s + pc.components + 1u] = count;
         bool fresh = pc.film == 2u;
-        bool extreme = pc.filter >= kMin;
+        bool extreme = pc.mode >= kMin;
         float radius = pc.radius;
         float k = -0.5 / max(0.284 * 0.284 * radius * radius, 1e-6);
         vec4 sum = vec4(0.0);
@@ -274,7 +274,7 @@ void main()
                     continue;
                 }
                 vec2 d = vec2(x, y) + pc.filmOffset;
-                float w = pc.filter == kGauss ? (dot(d, d) < radius * radius ? exp(k * dot(d, d)) : 0.0)
+                float w = pc.mode == kGauss ? (dot(d, d) < radius * radius ? exp(k * dot(d, d)) : 0.0)
                                               : (all(lessThanEqual(abs(d), vec2(radius))) ? 1.0 : 0.0);
                 w = (x == 0 && y == 0) ? max(w, 1e-6) : w;
                 if (w <= 0.0) {
@@ -285,10 +285,10 @@ void main()
                 if (!extreme) {
                     sum += v * w;
                     weight += w;
-                } else if (pc.filter == kMin || pc.filter == kMax) {
-                    sum = fresh ? v : pc.filter == kMin ? min(sum, v) : max(sum, v);
+                } else if (pc.mode == kMin || pc.mode == kMax) {
+                    sum = fresh ? v : pc.mode == kMin ? min(sum, v) : max(sum, v);
                     fresh = false;
-                } else if (fresh || (pc.filter == kClosest ? z < weight : z > weight)) {
+                } else if (fresh || (pc.mode == kClosest ? z < weight : z > weight)) {
                     sum = v;
                     weight = z;
                     fresh = false;
