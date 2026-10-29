@@ -18,6 +18,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_02_offline_batch` | husk and usdrecord: film samples back to back in one execute | `eldr:offlineBatchSeconds` |
 | 2026-10-29 | `2026-10-29_03_planar_blur_lighttex` | Blurred planar mirrors, light textures in traced paths | `eldr:planarBlur`, `eldr:lightTextures` |
 | 2026-10-29 | `2026-10-29_04_screen_dicing` | Subdivision levels by size on screen in final quality, as Karma's dicing quality | `eldr:screenDicing`, `primvars:eldr:object:dicingquality` |
+| 2026-10-29 | `2026-10-29_05_coloured_volume_shadows` | Coloured smoke casts coloured shadows (maps, traced, half resolution); multiple scattering fitted to Karma's Volume Limit | `eldr:volumeShadows`, `eldr:rtShadows`, `eldr:volumeResolution`, `karma:object:volumelimit` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 

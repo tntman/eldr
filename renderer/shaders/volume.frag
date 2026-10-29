@@ -14,9 +14,10 @@
 // (VolumeShading: scattering and absorption per unit of density, phase,
 // emission), the settings multiply it. Henyey-Greenstein phase. At scale 2
 // each invocation marches a 2 x 2 block's middle into a half resolution
-// target (volume_upsample.frag). With params.multiple, multiple scattering
-// of the distant lights is approximated by octaves of ever weaker, less attenuated and less
-// directional single scattering (Wrenninge 2015). Each pixel starts at a
+// target (volume_upsample.frag). With params.octaves above 1, multiple
+// scattering of the distant lights and the dome is approximated by octaves
+// of ever weaker and less attenuated single scattering (Wrenninge 2015),
+// fitted to Karma's Volume Limit (VolumePass::Settings::volumeLimit). Each pixel starts at a
 // different fraction of a step every frame, which TAA averages. Steps skip
 // tiles (and the background) of zero density.
 // Volumes shadow each other (params.mutual): the light towards each step
@@ -61,8 +62,7 @@ layout(push_constant) uniform Params {
     uint mutual;        // 1: volumes shadow each other
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
     uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
-    float octaveLight, octaveDepth, octaveAnisotropy;  // each octave's times the last's
-    uint domeOctaves;
+    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
 } params;
 
 #ifdef HALF
@@ -332,6 +332,21 @@ vec3 Factor(uint i, uint k, vec3 p, float rho, uvec4 types, inout pnanovdb_reada
     return Lut(volumes[i].lutOffsets[k], volumes[i].lutLow[k], volumes[i].lutScale[k], v);
 }
 
+// Light through optical depth `depth` with multiple scattering: octave o
+// weighs params.octaveLight^o and sees the depth times params.octaveDepth^o
+// (Wrenninge 2015, the phase function kept); one octave: exp(-depth).
+vec3 Octaves(vec3 depth)
+{
+    vec3 sum = vec3(0.0);
+    float a = 1.0, b = 1.0;
+    for (uint o = 0u; o < params.octaves; ++o) {
+        sum += a * exp(-b * depth);
+        a *= params.octaveLight;
+        b *= params.octaveDepth;
+    }
+    return sum;
+}
+
 // The density (bit 3 of mask m) times the factors (bit k: fk) it names.
 vec3 Scale(uint m, float rho, vec3 f0, vec3 f1, vec3 f2)
 {
@@ -446,15 +461,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 if (mutual) {
                     depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
                 }
-                // Octave o (multiple scattering): light, optical depth and
-                // anisotropy times params.octave*^o; one octave: single scattering.
-                float a = 1.0, b = 1.0, c = 1.0;
-                for (uint o = 0u; o < params.domeOctaves; ++o) {
-                    light += a * exp(-0.5 * b * depth) * (o == 0u ? dome : DomeScatter(dir, g * c));
-                    a *= params.octaveLight;
-                    b *= params.octaveDepth;
-                    c *= params.octaveAnisotropy;
-                }
+                light = dome * Octaves(0.5 * depth);
             }
             for (uint k = 0u; k < frame.counts.x; ++k) {
                 Light sun = lights[k];
@@ -465,15 +472,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
                     depth += OthersDepth(i, x, l * 1e4, shadowNoise);
                 }
-                // Octaves as the dome's.
-                vec3 scattered = vec3(0.0);
-                float a = 1.0, b = 1.0, c = 1.0;
-                for (uint o = 0u; o < params.octaves; ++o) {
-                    scattered += a * exp(-b * depth) * Phase(dot(dir, l), g * c);
-                    a *= params.octaveLight;
-                    b *= params.octaveDepth;
-                    c *= params.octaveAnisotropy;
-                }
+                vec3 scattered = Octaves(depth) * Phase(dot(dir, l), g);
                 if (k == frame.counts.y) {
                     scattered *= SunShadow(x, l);
                 }

@@ -8,8 +8,6 @@
 #include <atomic>
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #define PNANOVDB_C
@@ -49,8 +47,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t mutual;  // Settings::mutualShadows
     uint32_t defaultFields;  // Settings::defaultFields
     uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
-    float octave[3];         // each octave's light, optical depth and anisotropy times the last's
-    uint32_t domeOctaves;    // the dome's (CALIBRATION)
+    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -65,17 +62,15 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.count = count;
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
-    // Octaves for Karma's Volume Limit (bounces), calibrated against Karma.
+    // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
+    // gain over single scattering at limits 1, 4 and 16 (within 7% on
+    // volume.usda's and fog.usda's clouds, sun and dome; docs/features.md).
+    // Less directional octaves lost the backlit clouds' gain: the phase stays.
     const float limit = s.volumeLimit > 0.0f ? s.volumeLimit
                       : s.multipleScattering ? VolumePass::Settings::kDefaultVolumeLimit : 0.0f;
-    p.octaves = limit > 0.0f ? 3 : 1;
-    p.octave[0] = p.octave[1] = p.octave[2] = 0.5f;
-    p.domeOctaves = p.octaves;
-    if (const char *e = std::getenv("HDVK_VOLUME_MS"); e && limit > 0.0f) {  // CALIBRATION, remove
-        p.domeOctaves = 0;
-        std::sscanf(e, "%u,%f,%f,%f,%u", &p.octaves, &p.octave[0], &p.octave[1], &p.octave[2], &p.domeOctaves);
-        p.domeOctaves = p.domeOctaves ? p.domeOctaves : p.octaves;
-    }
+    p.octaves = limit > 0.0f ? uint32_t(std::min(2.0f * std::ceil(limit), 6.0f)) : 1;
+    p.octaveLight = 0.5f + 0.1f * std::clamp((limit - 4.0f) / 12.0f, 0.0f, 1.0f);
+    p.octaveDepth = 0.25f;
     return p;
 }
 

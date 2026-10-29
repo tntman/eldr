@@ -1041,7 +1041,8 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     while (work.shadows && lights < kMaxRtShadowLights && work.shadowLights[lights] != kNone) {
         ++lights;
     }
-    const uint32_t perTexel = work.shadowColor ? 1 : 4;
+    // A colour per light behind glass or (coloured) volumes, else four lights a texel.
+    const uint32_t perTexel = work.shadowColor || work.shadowVolumes > 0 ? 1 : 4;
     const uint32_t layers = std::max((lights + perTexel - 1) / perTexel, std::max(_shadowLayers, 1u));
     if ((work.shadows || work.reflections || work.refraction || work.gather) &&
         (width != _width || height != _height || layers != _shadowLayers ||

@@ -456,9 +456,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
                  : v.IsHolding<int>() ? double(v.UncheckedGet<int>()) : -1.0;
         };
-        double limit = number(delegate->GetRenderSetting(eldrLimit));
+        // husk hands the settings prim's attributes over as settings; usdview
+        // and usdrecord don't, so read the active prim too.
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto setting = [&](const TfToken &key) {
+            VtValue v = delegate->GetRenderSetting(key);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(key.GetString());
+                v = it != d.end() ? it->second : v;
+            }
+            return v;
+        };
+        double limit = number(setting(eldrLimit));
         if (limit < 0.0) {
-            limit = number(delegate->GetRenderSetting(karmaLimit));
+            limit = number(setting(karmaLimit));
         }
         frame.volume.volumeLimit = std::max(float(limit), _scene.MaxVolumeLimit());
     }

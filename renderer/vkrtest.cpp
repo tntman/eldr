@@ -4492,8 +4492,7 @@ int main()
                 frame.volume.resolution = 1;
                 ball->shading = nullptr;
                 scene.Commit();
-                std::printf("half resolution coloured transmittance %.3f %.3f %.3f, full %.3f %.3f %.3f
-",
+                std::printf("half resolution coloured transmittance %.3f %.3f %.3f, full %.3f %.3f %.3f\n",
                             halfColour.At(36, 32, 0), halfColour.At(36, 32, 1), halfColour.At(36, 32, 2),
                             fullColour.At(36, 32, 0), fullColour.At(36, 32, 1), fullColour.At(36, 32, 2));
                 bool same = fullColour.At(36, 32, 0) > 3.0f * fullColour.At(36, 32, 2);
@@ -4598,8 +4597,7 @@ int main()
                     std::printf(" %.3f (expected %.3f)", r, e);
                     match = match && std::abs(r - e) < 0.05f;
                 }
-                std::printf("
-");
+                std::printf("\n");
                 Expect(match, traced ? "translucent shadows traced: coloured smoke casts coloured shadows"
                                      : "coloured smoke casts coloured shadows");
             }
@@ -4642,8 +4640,7 @@ int main()
             const Image lampColoured = Render(renderer, lamp, frame);
             const float lampRed = lampColoured.At(3, 32, 0) / lampUnlit.At(3, 32, 0),
                         lampBlue = lampColoured.At(3, 32, 2) / lampUnlit.At(3, 32, 2);
-            std::printf("coloured local volume shadow %.3f %.3f (expected %.3f %.3f)
-", lampRed, lampBlue,
+            std::printf("coloured local volume shadow %.3f %.3f (expected %.3f %.3f)\n", lampRed, lampBlue,
                         std::exp(-1.48f * soot[0]), std::exp(-1.48f * soot[2]));
             Expect(std::abs(lampRed - std::exp(-1.48f * soot[0])) < 0.06f &&
                        std::abs(lampBlue - std::exp(-1.48f * soot[2])) < 0.06f,
