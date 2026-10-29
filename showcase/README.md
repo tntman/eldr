@@ -16,5 +16,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-28 | `2026-10-28_08_render_stats` | Eldr's statistics in the Render Gallery panel, `husk:render_stats` in EXRs | `husk.metadata` in `UsdRenderers.json` |
 | 2026-10-29 | `2026-10-29_01_quick_fixes` | Colour limit, final-quality traced reflections, UsdPreviewSurface opacityMode, displacement graph bound | `eldr:colorLimit`, `indirectClamp`, `rtReflections`, `opacityMode`, `eldr:displacementBound` (material input) |
 | 2026-10-29 | `2026-10-29_02_offline_batch` | husk and usdrecord: film samples back to back in one execute | `eldr:offlineBatchSeconds` |
+| 2026-10-29 | `2026-10-29_03_planar_blur_lighttex` | Blurred planar mirrors, light textures in traced paths | `eldr:planarBlur`, `eldr:lightTextures` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
+

@@ -171,6 +171,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((authoredProbes, "eldr:authoredProbes")) \
     ((probeNormalize, "eldr:probeNormalize")) \
     ((planarCount, "eldr:planarCount")) \
+    ((planarBlur, "eldr:planarBlur")) \
     ((motionBlurTimeSamples, "eldr:motionBlurTimeSamples")) \
     ((renderScale, "eldr:renderScale")) \
     ((productLinear, "eldr:productLinear")) \

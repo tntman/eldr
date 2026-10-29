@@ -408,13 +408,13 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | Hydra | Volumes are not pickable; a field prim's own transform is ignored; OpenVDB assets only. |
 | Hydra | Dome `poleAxis`, portals, shadow colour/distance and IES profiles are ignored. One frame in flight. |
 | Lights | 63 lights per cluster (the rest are dropped); every cluster tests every light. |
-| Lights | Textured lights use two taps, not a filtered polygon; fog, ray-traced reflections and emissive-as-light ignore the texture. |
+| Lights | Textured lights use two taps, not a filtered polygon; traced hits, probes, fog and volumes read one tap above the shaded point (no highlight tint); emissive-as-light ignores the texture. |
 | Lights | Emissive surfaces become lights only when constant, rigid, small and at most 32; others light via GI only. |
 | Shadows | Sun: no blend between cascades; kernels clamp to 5% of a cascade. Local lights: redraw is all-or-nothing when a caster moves; kernels clamp at cube-face seams. |
 | Fog | Single-tap shadows; the dome's light in fog is unoccluded without GI. |
 | GI | Probes can't tell a single-sided wall from the inside of a closed object; meshes without normals use winding. |
 | SSGI, SSR | No depth mip chain (large radii sample sparsely); SSR runs at full resolution with one ray and reflects only what is on screen. |
-| Probes, planar | Probe reflections lack screen-space effects and volumes; CPU prefilter; no seam filtering. Planar: one sharp reflection for rough mirrors; coplanar mirrors don't share renders. |
+| Probes, planar | Probe reflections lack screen-space effects and volumes; CPU prefilter; no seam filtering. Planar: rough mirrors blur by a fixed disc (no contact hardening), refraction through planar water not done; coplanar mirrors don't share renders. |
 | Ray tracing | Translucent meshes don't block rays (except tinting shadows and refraction); skinned instances capped; no BLAS compaction (about 2x memory); local lights unshadowed at hit points; closest-hit normal on displaced meshes is the rest triangle's. |
 | Transparency | OIT and sorting are per mesh. Holdouts cut everything at the pixel, from constants or textures (not programs). Subsurface is a per-channel Gaussian (not Burley). |
 | Refraction | Screen space outside final quality. Traced refraction follows only the nearest refracting surface's ray; skinned glass beyond `eldr:rtSkinnedInstances` isn't traced. Volume transparency splits only the nearest layer. |

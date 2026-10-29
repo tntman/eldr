@@ -45,7 +45,7 @@ struct FrameData {
     uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
     float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
     // Reflection probe and planar reflections (shaders/probes.glsl).
-    uint32_t reflections[4];     // probes, -, flags (kProbeNormalize, kFogGiAmbient, kLightTextures)
+    uint32_t reflections[4];     // probes, planar blur (float bits), flags (kProbeNormalize, kFogGiAmbient, kLightTextures)
     float probeCenter[8][4];     // capture position, prefiltered levels - 1
     float probeMin[8][4];        // influence box, blend distance (0: everywhere)
     float probeMax[8][4];
@@ -3491,6 +3491,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _gtao.SetSsgi(ssgi, frame.ssgiResolution);
     fd.features[0] |= ssgi ? kFeatureSsgi : 0;
     // Probe normalization needs local ambient light: GI's or SSGI's.
+    const float planarBlur = std::max(frame.planarBlur, 0.0f);
+    std::memcpy(&fd.reflections[1], &planarBlur, 4);
     fd.reflections[2] = frame.probeNormalize && (fd.features[0] & (kFeatureGi | kFeatureSsgi)) ? 1u : 0u;
     fd.reflections[2] |= frame.fogGiAmbient && (fd.features[0] & kFeatureGi) ? 2u : 0u;  // kFogGiAmbient
     fd.reflections[2] |= frame.lightTextures ? 4u : 0u;  // kLightTextures

@@ -90,17 +90,36 @@ int OnMirror(uint draw, vec3 p)
 }
 
 // The mirrored scene at this pixel, shifted by the normal's tilt from the
-// plane (normal maps ripple it), over `specular` where it shows nothing;
-// faded out from roughness 0.3 to 0.6 like SSR.
-// ponytail: one sharp reflection, no blur for rougher mirrors.
+// plane (normal maps ripple it), over `specular` where it shows nothing.
+// Rough mirrors blur it: 12 taps of a disc (rotated per pixel, TAA and
+// film samples average the noise) whose radius grows with roughness squared
+// (eldr:planarBlur scales it, 0 = sharp); faded out from roughness 0.3 to
+// 0.6 (0.9 blurred) like SSR.
+// ponytail: a fixed screen-space radius, no contact hardening (blur does not
+// grow with the reflected object's distance from the mirror) and no mip chain.
 vec3 PlanarSpecular(int i, vec3 specular, vec3 p, vec3 n, float perceptual)
 {
     vec3 tilt = n - frame.planarPlane[i].xyz * dot(n, frame.planarPlane[i].xyz);
     vec4 a = frame.viewProj * vec4(p, 1.0);
     vec4 b = frame.viewProj * vec4(p + tilt * (0.1 * length(p - frame.cameraPos.xyz)), 1.0);
     vec2 uv = gl_FragCoord.xy / frame.viewport.xy + (b.xy / b.w - a.xy / a.w) * 0.5;
-    vec4 hit = textureLod(planarReflections[nonuniformEXT(i)], uv, 0.0);
-    float w = 1.0 - smoothstep(0.3, 0.6, perceptual);
+    float blur = uintBitsToFloat(frame.reflections.y);
+    float radius = blur * perceptual * perceptual * 0.15;
+    vec4 hit;
+    if (radius * frame.viewport.y < 1.0) {
+        hit = textureLod(planarReflections[nonuniformEXT(i)], uv, 0.0);
+    } else {
+        float spin = 6.2831853 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        vec2 scale = radius * vec2(frame.viewport.y / frame.viewport.x, 1.0);
+        hit = vec4(0.0);
+        for (int k = 0; k < 12; ++k) {
+            float ang = 2.39996323 * float(k) + spin;
+            hit += textureLod(planarReflections[nonuniformEXT(i)],
+                              uv + vec2(cos(ang), sin(ang)) * sqrt((float(k) + 0.5) / 12.0) * scale, 0.0);
+        }
+        hit /= 12.0;
+    }
+    float w = 1.0 - smoothstep(0.3, blur > 0.0 ? 0.9 : 0.6, perceptual);
     domeKept *= 1.0 - w * hit.a;
     return mix(specular, hit.rgb + (1.0 - hit.a) * specular, w);
 }
