@@ -10,7 +10,7 @@ A/B: `/Render/graphsOn` (default) vs `/Render/graphsOff` (`eldr:materialGraphs` 
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_09_mtlx_coverage\scene.usda` (Storm doesn't read the Karma-context bottom row)
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_16_mtlx_coverage\scene.usda` (Storm doesn't read the Karma-context bottom row)
 - Houdini: Sublayer LOP on the file, Eldr as the viewport renderer; compare with Karma on the same stage
-- husk: `husk -R Eldr -s /Render/graphsOn showcase/2026-10-29_09_mtlx_coverage/scene.usda`
-- usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam showcase\2026-10-29_09_mtlx_coverage\scene.usda out.png`
+- husk: `husk -R Eldr -s /Render/graphsOn showcase/2026-10-29_16_mtlx_coverage/scene.usda`
+- usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam showcase\2026-10-29_16_mtlx_coverage\scene.usda out.png`

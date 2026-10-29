@@ -249,6 +249,38 @@ bool HdVkInstancer::ComputeInstancePrimvar(SdfPath const &prototypeId, TfToken c
     return true;
 }
 
+std::vector<std::vector<uint32_t>> HdVkInstancer::ComputeInstanceCategories(SdfPath const &prototypeId)
+{
+    HdSceneDelegate *delegate = GetDelegate();
+    const VtIntArray indices = delegate->GetInstanceIndices(GetId(), prototypeId);
+    const std::vector<VtArray<TfToken>> all = delegate->GetInstanceCategories(GetId());
+    std::vector<std::vector<uint32_t>> own(indices.size());
+    bool any = false;
+    for (size_t i = 0; i < indices.size(); ++i) {
+        if (indices[i] >= 0 && size_t(indices[i]) < all.size()) {
+            own[i] = HdVkLinkCategories(all[indices[i]]);
+            any = any || !own[i].empty();
+        }
+    }
+    auto *parent = GetParentId().IsEmpty()
+                       ? nullptr
+                       : static_cast<HdVkInstancer *>(delegate->GetRenderIndex().GetInstancer(GetParentId()));
+    const std::vector<std::vector<uint32_t>> outer = parent ? parent->ComputeInstanceCategories(GetId())
+                                                            : std::vector<std::vector<uint32_t>>();
+    if (outer.empty()) {
+        return any ? own : std::vector<std::vector<uint32_t>>();
+    }
+    std::vector<std::vector<uint32_t>> result(outer.size() * own.size());
+    for (size_t i = 0; i < outer.size(); ++i) {
+        for (size_t j = 0; j < own.size(); ++j) {
+            std::vector<uint32_t> &r = result[i * own.size() + j];
+            r = own[j];
+            r.insert(r.end(), outer[i].begin(), outer[i].end());
+        }
+    }
+    return result;
+}
+
 bool HdVkToFloats(VtValue const &v, std::vector<float> *out, uint32_t *components)
 {
     out->clear();
@@ -283,6 +315,21 @@ std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const 
         std::copy(world.data(), world.data() + 16, transforms.data() + i * 16);
     }
     return transforms;
+}
+
+void HdVkSetLinkCategories(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &m)
+{
+    std::vector<uint32_t> own = HdVkLinkCategories(delegate->GetCategories(id));
+    auto *instancer = instancerId.IsEmpty()
+                          ? nullptr
+                          : static_cast<HdVkInstancer *>(delegate->GetRenderIndex().GetInstancer(instancerId));
+    std::vector<std::vector<uint32_t>> instances =
+        instancer ? instancer->ComputeInstanceCategories(id) : std::vector<std::vector<uint32_t>>();
+    if (own != m.linkCategories || instances != m.instanceLinkCategories) {
+        m.linkCategories = std::move(own);
+        m.instanceLinkCategories = std::move(instances);
+        m.transformsDirty = true;
+    }
 }
 
 void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &m)

@@ -219,7 +219,7 @@ vec3 TintLookup(sampler2DArray tint, sampler2DArray tintDepth, sampler2D atlas, 
 vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 {
     vec3 traced;
-    if (RtShadowTint(frame.counts.y, traced)) {
+    if (RtShadowTint(frame.counts.y, p, ng, traced)) {
         return traced;
     }
     if (!Feature(kFeatureTranslucentShadows)) {
@@ -245,7 +245,7 @@ vec3 ShadowTint(vec3 p, vec3 ng, vec3 l)
 vec3 LocalShadowTint(uint index, Light light, vec3 p, vec3 ng)
 {
     vec3 traced;
-    if (RtShadowTint(index, traced)) {
+    if (RtShadowTint(index, p, ng, traced)) {
         return traced;
     }
     uint tile = lightShadow[index];

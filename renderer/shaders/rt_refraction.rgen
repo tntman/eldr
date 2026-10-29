@@ -3,6 +3,9 @@
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_GOOGLE_include_directive : require
 #define RAY_TRACING
+#ifdef PHOTONS
+#define CAUSTICS_WRITE  // caustics.glsl's storing side (rt_photons.glsl)
+#endif
 #include "frame.glsl"
 #include "lights.glsl"
 #include "scene.glsl"
@@ -30,7 +33,8 @@
 // on its own diffuse surface; a medium absorbs by Beer-Lambert over its
 // transmission depth (the one at its entry point), a surface without one
 // or a thin wall tints on entry. What the ray hits at last is shaded as
-// traced reflections shade their hits (ShadeHit), a miss sees the dome.
+// traced reflections shade their hits (ShadeHit), a miss sees the dome and
+// the suns' discs (SunDiscs).
 // The first interface's Fresnel, weight and surface tint are the shading
 // pass's.
 // rgb: the light arriving along the refracted ray, a: the distance from
@@ -188,6 +192,9 @@ Surface Evaluate(vec3 dir, float cone)
     return s;
 }
 
+#ifdef PHOTONS
+#include "rt_photons.glsl"
+#else
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -272,7 +279,7 @@ void main()
         }
         if (hit.t < 0.0) {
             bool dome = frame.envRadiance.w > 0.0;
-            imageStore(rtRefractionImage, pixel, vec4(throughput * Dome(dir, 0.0), dome ? first : -first));
+            imageStore(rtRefractionImage, pixel, vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), dome ? first : -first));
             return;
         }
         if ((hit.flags & kHitTranslucent) == 0u) {
@@ -282,5 +289,6 @@ void main()
         }
     }
     // Out of interfaces inside glass: the dome along the last direction.
-    imageStore(rtRefractionImage, pixel, vec4(throughput * Dome(dir, 0.0), first));
+    imageStore(rtRefractionImage, pixel, vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), first));
 }
+#endif
