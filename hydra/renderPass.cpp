@@ -217,11 +217,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     bool huskPrimId = false;
     for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
         const TfToken aovName = BoundAov(b, static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->RenderSettingsWithVar(b.aovName));
-        for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-            if (aovName == aov.name) {
-                extra[aov.kind] = b.renderBuffer;
-                huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
-            }
+        if (HdVkExtraAov aov; HdVkFindAov(aovName, &aov)) {
+            extra[aov.kind] = b.renderBuffer;
+            huskName[aov.kind] = BindingText(b, "driver:parameters:aov:husk:name");
         }
         if (aovName == HdAovTokens->color) {
             color = b.renderBuffer;
@@ -415,6 +413,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
                                 {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
+                                {t2.rtShadowDenoise, &frame.rtShadowDenoise},
+                                {t2.rtReflectionDenoise, &frame.rtReflectionDenoise},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
                                 {t2.dofJitter, &frame.dofJitter},
@@ -444,8 +444,29 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lazyExtraAovs, &frame.lazyExtraAovs},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
-                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
+                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}, {t2.denoise, &frame.denoise},
+                                {t2.adaptiveTiles, &frame.adaptiveTiles}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    // eldr:denoise, else Karma's: its viewport toggle (karma:hydra:denoise)
+    // or a "denoise" image filter (karma:global:imagefilter, its final
+    // renders), from the delegate's settings or the settings prim's. An
+    // eldr:denoise authored on the prim (false too) overrides them.
+    if (!frame.denoise && !_appliedSettings.count(t2.denoise)) {
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto karma = [&](const char *name) {
+            VtValue v = delegate->GetRenderSetting(TfToken(name));
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &settings = prim->GetNamespacedSettings();
+                const auto it = settings.find(name);
+                v = it != settings.end() ? it->second : VtValue();
+            }
+            return v;
+        };
+        const VtValue toggle = VtValue::Cast<bool>(karma("karma:hydra:denoise"));
+        const VtValue filter = VtValue::Cast<std::string>(karma("karma:global:imagefilter"));
+        frame.denoise = (!toggle.IsEmpty() && toggle.UncheckedGet<bool>()) ||
+                        (!filter.IsEmpty() && filter.UncheckedGet<std::string>().find("\"denoise\"") != std::string::npos);
     }
     // Volume Limit, the largest on a volume (HdVkVolume::Sync) or in the
     // render settings (eldr:object:volumelimit set before
@@ -650,6 +671,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGather, int(frame.finalGather)), 0, 2));
     frame.finalGatherRays =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
+    frame.effectDenoiseSamples = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
@@ -934,6 +957,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // UsdRender products (renderProducts.h) of the active render settings.
     _products.Prepare(frame.renderProducts ? vkDelegate->ActiveRenderSettings() : nullptr, frame.width, frame.height,
                       &out);
+    // Light groups: the tags the bindings and products asked for so far
+    // (HdVkFindAov) split the lights from this frame on.
+    if (_scene.SetLightGroups(HdVkLightGroups())) {
+        _scene.Commit(true);  // the frame's second: its motion stays
+    }
     // husk writes its colour AOV itself: it gets the linear beauty too.
     const bool huskLinear = !colorHalf.empty() && frame.linearBeauty;
     frame.linearColor = frame.linearBeauty && (_products.HasBeauty() || huskLinear);

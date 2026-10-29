@@ -1080,6 +1080,8 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     }
     d.gatherInfo[0] = float(gatherRays);
     d.gatherInfo[1] = std::clamp(work.gatherDenoise, 0.0f, 1.0f);
+    d.denoise[0] = work.shadowDenoise;
+    d.denoise[1] = work.reflectionDenoise;
     if (!work.gi) {
         return;
     }

@@ -63,14 +63,17 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
     // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
-    // gain over single scattering at limits 1, 4 and 16 (within 7% on
-    // volume.usda's and fog.usda's clouds, sun and dome; docs/features.md).
-    // Less directional octaves lost the backlit clouds' gain: the phase stays.
+    // gain over single scattering at limits 1, 4 and 16 (within 9% on
+    // volume.usda's and fog.usda's clouds, front and back lit, sun and dome;
+    // docs/features.md). Less directional octaves lost the backlit clouds'
+    // gain: the phase stays.
     const float limit = s.volumeLimit > 0.0f ? s.volumeLimit
                       : s.multipleScattering ? VolumePass::Settings::kDefaultVolumeLimit : 0.0f;
     p.octaves = limit > 0.0f ? uint32_t(std::min(2.0f * std::ceil(limit), 6.0f)) : 1;
-    p.octaveLight = 0.5f + 0.1f * std::clamp((limit - 4.0f) / 12.0f, 0.0f, 1.0f);
-    p.octaveDepth = 0.25f;
+    const float early = std::clamp((limit - 1.0f) / 3.0f, 0.0f, 1.0f);  // limit 1 .. 4
+    const float late = std::clamp((limit - 4.0f) / 12.0f, 0.0f, 1.0f);   // limit 4 .. 16
+    p.octaveLight = 0.6f - 0.1f * early + 0.15f * late;
+    p.octaveDepth = 0.4f + 0.15f * late;
     return p;
 }
 
@@ -255,6 +258,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     dep.memoryBarrierCount = 1;
     dep.pMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
+    StorageBarrier(cmd);  // the light splits volume.frag attenuates (aov.h)
 
     VolumeParams p = Params(s, volumeCount);
     p.part = part;

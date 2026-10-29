@@ -10,7 +10,9 @@
 // Adaptive sampling: per pixel the samples' mean and variance of their
 // exposed, compressed luma; a pixel whose mean's standard error fell under
 // the threshold (after the minimum samples) takes no more samples, and the
-// pixels still taking them are counted.
+// pixels still taking them are counted, and each 16 x 16 tile with one is
+// stamped with this film frame's number (tiles.glsl: next frame's shading
+// and ray tracing skip tiles whose neighbourhood has none).
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -22,6 +24,7 @@ layout(set = 0, binding = 4, rgba16f) uniform writeonly image2D resolved;
 layout(set = 0, binding = 5) buffer Active {
     uint activePixels;  // pixels still taking samples this frame
 };
+layout(set = 0, binding = 6) buffer Tiles { uint tileStamps[]; };
 
 layout(push_constant) uniform FilmParams {
     // xy: where this frame's samples are, from their pixel centres (pixels);
@@ -30,6 +33,7 @@ layout(push_constant) uniform FilmParams {
     vec4 params;
     vec4 seed;      // x: weight of the history a film starts from
     vec4 adaptive;  // x: noise threshold (0: off), y: minimum samples, z: exposure
+    uvec4 tiles;    // x: this film frame's stamp (0: none), y: tiles across
 } pc;
 
 // NaN/Inf (and negative colour) never enter the sums.
@@ -97,5 +101,8 @@ void main()
     imageStore(resolved, p, total / totalWeight);
     if (pc.adaptive.x > 0.0) {
         atomicAdd(activePixels, 1u);
+    }
+    if (pc.tiles.x != 0u) {
+        atomicMax(tileStamps[uint(p.y >> 4) * pc.tiles.y + uint(p.x >> 4)], pc.tiles.x);
     }
 }

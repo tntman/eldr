@@ -56,6 +56,10 @@ struct Base {
     float specularWeight;
 };
 Base base;
+// The coat's share of the last LayerLight (times the light's specular
+// energy as the rest) and of LayerAmbient: the light splits' coat.
+float gCoatLight = 0.0;
+vec3 gCoatAmbient = vec3(0.0);
 
 // Unpolarized Fresnel reflectance of a dielectric of relative index eta at
 // cos theta c (MaterialX's mx_fresnel_dielectric); total internal
@@ -640,11 +644,13 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     vec3 h = normalize(v + l);
     float NoH = max(dot(n, h), 0.0);
+    gCoatLight = 0.0;
     if (layers.coat > 0.0) {
         float a = layers.coatPerceptual * layers.coatPerceptual;
         float F = CoatFresnel(max(dot(l, h), 0.0));
-        c += layers.coat * D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F *
-             (1.0 + F * layers.coatMsK) * NoL * (a * a) / (a * a + regionArea);
+        gCoatLight = layers.coat * D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F *
+                     (1.0 + F * layers.coatMsK) * NoL * (a * a) / (a * a + regionArea);
+        c += gCoatLight;
     }
     if (layers.sheen != vec3(0.0)) {
         c += layers.sheen * (layers.fuzz ? layers.sheenAlbedo * ZeltnerLobe(n, v, l, NoV, layers.sheenRoughness)
@@ -667,7 +673,8 @@ vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
     if (layers.coat > 0.0) {
         vec3 r = normalize(mat3(frame.envWorldToLocal) * reflect(-v, n));
         float lod = layers.coatPerceptual * float(frame.counts.z - 1u);
-        c += layers.coat * layers.coatAlbedo * textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb * specularAO;
+        gCoatAmbient = layers.coat * layers.coatAlbedo * textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb * specularAO;
+        c += gCoatAmbient;
     }
     c += layers.sheen * layers.sheenAlbedo * Lavg * diffuseAO;
     if (layers.hair) {

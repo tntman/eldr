@@ -31,6 +31,7 @@ struct FilmParams {  // mirror of the push block in film.comp
     float params[4];
     float seed[4];
     float adaptive[4];
+    uint32_t tiles[4];
 };
 
 constexpr VkFormat kSumFormat = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -80,15 +81,16 @@ TemporalAA::TemporalAA(Device &device)
     _pipeline = CreateFullscreenPipeline(_dev, _layout, kTaaFrag, sizeof(kTaaFrag), kFormat);
     _upscale = CreateFullscreenPipeline(_dev, _layout, kTaaUpscaleFrag, sizeof(kTaaUpscaleFrag), kFormat);
 
-    const VkDescriptorSetLayoutBinding film[6] = {
+    const VkDescriptorSetLayoutBinding film[7] = {
         {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
+        {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT},
     };
-    slci.bindingCount = 6;
+    slci.bindingCount = 7;
     slci.pBindings = film;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_filmSetLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange filmRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(FilmParams)};
@@ -132,6 +134,7 @@ void TemporalAA::_Destroy()
     _dev.Destroy(_history);
     _dev.Destroy(_sums);
     _dev.Destroy(_weights);
+    _dev.Destroy(_tiles);
 }
 
 void TemporalAA::Resize(uint32_t width, uint32_t height)
@@ -141,7 +144,8 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
     _height = height;
     _resolved = _dev.CreateImage(kFormat, width, height, 1, 1,
                                  VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
+                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                     VK_IMAGE_USAGE_STORAGE_BIT,  // TRANSFER_DST: the denoised image (Frame::denoise)
                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _historyMips = 1;
     while (_historyMips < kHistoryMips && (std::max(width, height) >> _historyMips) > 0) {
@@ -155,9 +159,12 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
         *sums = _dev.CreateImage(kSumFormat, width, height, 1, 1, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
                                  VK_IMAGE_VIEW_TYPE_2D);
     }
+    const VkDeviceSize tileBytes = VkDeviceSize(TilesAcross()) * ((height + 15) / 16) * sizeof(uint32_t);
+    _tiles = _dev.CreateDeviceBuffer(tileBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     // The resolve shader always binds the history, so give it a defined
     // layout; the film's sums live in GENERAL.
     _dev.Submit([&](VkCommandBuffer cmd) {
+        vkCmdFillBuffer(cmd, _tiles.buffer, 0, VK_WHOLE_SIZE, 0);
         for (const Image *sums : {&_sums, &_weights}) {
             ImageBarrier(cmd, sums->image, Color(), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                          VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
@@ -177,7 +184,7 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
 
     const VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
-                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+                                           {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 2;
     pci.poolSizeCount = 3;
@@ -201,10 +208,12 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
                                            {VK_NULL_HANDLE, _sums.view, general},
                                            {VK_NULL_HANDLE, _weights.view, general},
                                            {VK_NULL_HANDLE, _resolved.view, general}};
-    const VkDescriptorBufferInfo active{_active.buffer, 0, VK_WHOLE_SIZE};
-    VkWriteDescriptorSet filmWrites[5] = {};
+    const VkDescriptorBufferInfo active{_active.buffer, 0, VK_WHOLE_SIZE}, tiles{_tiles.buffer, 0, VK_WHOLE_SIZE};
+    VkWriteDescriptorSet filmWrites[6] = {};
     filmWrites[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _filmSet, 5, 0, 1,
                      VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &active};
+    filmWrites[5] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, _filmSet, 6, 0, 1,
+                     VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &tiles};
     for (uint32_t i = 1; i < 5; ++i) {
         filmWrites[i - 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         filmWrites[i - 1].dstSet = _filmSet;
@@ -214,7 +223,7 @@ void TemporalAA::Resize(uint32_t width, uint32_t height)
                                                  : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         filmWrites[i - 1].pImageInfo = &film[i];
     }
-    vkUpdateDescriptorSets(_dev.device, 5, filmWrites, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 6, filmWrites, 0, nullptr);
 }
 
 void TemporalAA::SetInput(uint32_t width, uint32_t height, VkImageView color, VkImageView depth,
@@ -263,17 +272,19 @@ void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float
 }
 
 void TemporalAA::RecordFilm(VkCommandBuffer cmd, const float offset[2], float radius, uint32_t mode, float seed,
-                            float threshold, uint32_t minSamples, float exposure)
+                            float threshold, uint32_t minSamples, float exposure, uint32_t tileStamp)
 {
     const FilmParams params{{offset[0], offset[1], radius, float(mode)}, {seed, 0, 0, 0},
-                            {threshold, float(minSamples), exposure, 0}};
+                            {threshold, float(minSamples), exposure, 0}, {tileStamp, TilesAcross(), 0, 0}};
     // The count of pixels still sampling starts at 0 (last frame's host read is done).
     vkCmdFillBuffer(cmd, _active.buffer, 0, sizeof(uint32_t), 0);
     ImageBarrier(cmd, _resolved.image, Color(), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                  VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-    // Last frame's film writes come before this one's reads.
+    // Last frame's film writes come before this one's reads; this frame's
+    // shading read the tile stamps (tiles.glsl; ray tracing ran before it).
     VkMemoryBarrier2 sums{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
-    sums.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    sums.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT |
+                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
     sums.dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
     sums.srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
     sums.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
@@ -291,6 +302,10 @@ void TemporalAA::RecordFilm(VkCommandBuffer cmd, const float offset[2], float ra
     toHost.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
     toHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
     dep.pMemoryBarriers = &toHost;
+    vkCmdPipelineBarrier2(cmd, &dep);
+    // The tile stamps for next frame's shading and ray tracing.
+    toHost.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    toHost.dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT;
     vkCmdPipelineBarrier2(cmd, &dep);
     _CopyToHistory(cmd, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                    VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);

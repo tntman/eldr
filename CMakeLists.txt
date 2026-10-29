@@ -36,7 +36,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
-        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/post.glsl
+        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
@@ -52,7 +52,7 @@ foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shad
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
-        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
                 renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
                 renderer/shaders/program.glsl renderer/shaders/noise.glsl
@@ -92,7 +92,7 @@ foreach(shader mesh.vert mesh.frag aov.frag matte.frag)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DGRAPH -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
-        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+        DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
@@ -111,7 +111,7 @@ foreach(variant layers graph_layers)
     add_custom_command(OUTPUT ${spv}
         COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
-        DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/scene.glsl
+        DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
@@ -149,10 +149,40 @@ add_library(vkrenderer STATIC
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp renderer/ssr.cpp
-    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp
+    renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp renderer/denoise.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
+# Intel Open Image Denoise (eldr:denoise), optional: its release package in
+# OIDN_ROOT or on CMAKE_PREFIX_PATH (default C:/dev/oidn-2.5.1 if there).
+# Without it Eldr builds and eldr:denoise only warns.
+if(NOT OIDN_ROOT AND EXISTS C:/dev/oidn-2.5.1)
+    set(OIDN_ROOT C:/dev/oidn-2.5.1)
+endif()
+find_package(OpenImageDenoise 2 CONFIG QUIET HINTS ${OIDN_ROOT})
+if(TARGET OpenImageDenoise)
+    message(STATUS "HdVk: Intel Open Image Denoise ${OpenImageDenoise_VERSION} on")
+    target_compile_definitions(vkrenderer PRIVATE HDVK_OIDN)
+    target_link_libraries(vkrenderer PRIVATE OpenImageDenoise)
+    # Loaded on first use (denoise.cpp: the host's, Houdini's 2.3, else the
+    # copy here), so Eldr loads where neither is on the DLL search path.
+    if(MSVC)
+        target_link_options(vkrenderer INTERFACE /DELAYLOAD:OpenImageDenoise.dll)
+        target_link_libraries(vkrenderer PRIVATE delayimp)
+    endif()
+    # Its DLLs next to hdVk.dll and vkrtest: the library, its core, the CPU
+    # and CUDA devices (loaded by the core from its own folder) and the
+    # oneTBB it was built with (a host's own tbb12.dll, Houdini's, wins).
+    get_target_property(oidnDll OpenImageDenoise IMPORTED_LOCATION_RELEASE)
+    get_filename_component(oidnBin ${oidnDll} DIRECTORY)
+    foreach(dll OpenImageDenoise OpenImageDenoise_core OpenImageDenoise_device_cpu OpenImageDenoise_device_cuda tbb12)
+        if(EXISTS ${oidnBin}/${dll}.dll)
+            file(COPY ${oidnBin}/${dll}.dll DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+        endif()
+    endforeach()
+else()
+    message(STATUS "HdVk: Intel Open Image Denoise off (set OIDN_ROOT)")
+endif()
 
 add_executable(vkrtest renderer/vkrtest.cpp)
 target_link_libraries(vkrtest PRIVATE vkrenderer)
@@ -315,9 +345,17 @@ if(WIN32)
         add_test(NAME macbeth COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/macbeth_compare.py
                  --exrinfo $<TARGET_FILE:exrinfo> --variants white --no-karma --check)
         set_tests_properties(macbeth PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # Eldr against Karma references rendered once by tests/karma_refs.py (skipped without them).
+        add_test(NAME karma_golden COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/karma_refs.py
+                 --compare --exrinfo $<TARGET_FILE:exrinfo>)
+        set_tests_properties(karma_golden PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
+                             LABELS slow SKIP_RETURN_CODE 77 TIMEOUT 1800)
         add_test(NAME motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_motion.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()
+    # eldr:denoise (Intel Open Image Denoise; passes as a skip without it).
+    add_test(NAME denoise COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_denoise.py)
+    set_tests_properties(denoise PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME aovs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aovs.py)
     set_tests_properties(aovs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME interop COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_interop.py)

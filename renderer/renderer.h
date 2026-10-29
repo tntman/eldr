@@ -1,6 +1,7 @@
 #pragma once
 
 #include "aov.h"
+#include "denoise.h"
 #include "device.h"
 #include "distortion.h"
 #include "fog.h"
@@ -210,6 +211,10 @@ public:
         // and refit every frame).
         bool rtShadows = false;
         uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16); final quality: 1 per film sample
+        // Traced shadows' denoise (gi.glsl's RtTraced): the visibility
+        // averaged over a few pixels in the receiver's plane, the radius
+        // fading out over the film (effectDenoiseSamples).
+        bool rtShadowDenoise = true;
         // Shadows of final quality's film runs (_filmFinal) without
         // rtShadows: shadow maps, traced (then the sun and up to 15 local
         // lights, not 3), or traced when likely cheaper (Renderer::Render's
@@ -226,6 +231,10 @@ public:
         // quality (film runs started fresh), 2 always.
         uint32_t rtReflections = 1;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        // Traced reflections' denoise (gi.glsl's RtAround): rough ones
+        // averaged over up to 12 pixels in their plane, the radius fading
+        // out over the film (effectDenoiseSamples).
+        bool rtReflectionDenoise = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
@@ -261,6 +270,13 @@ public:
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;
+        // Per-effect denoise (final gather, traced shadows and reflections):
+        // film samples over which the filters fade out, linearly from the
+        // first (full) to none from this one on, so the early samples are
+        // clean and the converged film stays sharp and unbiased; 0: they
+        // filter every sample. Interactive frames always filter; with
+        // denoise (OIDN) none of them run.
+        uint32_t effectDenoiseSamples = 64;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
@@ -398,6 +414,16 @@ public:
         // ones would only run it to filmSamples).
         float adaptiveFinalThreshold = 0.0f;  // off: final frames take every film sample (opt in, e.g. 0.01)
         float adaptivePixelFraction = 0.999f;
+        // Tile-based adaptive sampling: once pixels stop, 16 x 16 tiles whose
+        // pixels and neighbours all stopped skip shading and per-pixel rays
+        // (shaders/tiles.glsl); off: every sample shades the whole frame.
+        bool adaptiveTiles = true;
+        // Denoising (Intel Open Image Denoise, denoise.h): once the film
+        // converged (final or not), one more frame denoises its image on the CPU
+        // with the film's albedo and normal as guides, and shows that until
+        // the film starts over (post, AOVs from it: the light splits stay
+        // raw; Aovs::kBeautyRaw: the image before).
+        bool denoise = false;
         // GI preconverge: with gi, the film waits until fresh probes have
         // settled (RayTracing::Converged), so no sample sees half-filled ones.
         bool giPreconverge = true;
@@ -587,6 +613,7 @@ public:
         bool moving = false;
         bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
         double accumSeconds = 0;  // wall time since the image last changed; stops once converged
+        double denoiseMs = 0;     // the last denoise (Frame::denoise): readback and OIDN, on the CPU
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
@@ -701,6 +728,7 @@ private:
     double _accumSeconds = 0;  // Stats::accumSeconds
     bool _accumDone = false;
     bool _filmAdaptive = false;
+    uint32_t _filmStamp = 0;  // film frames so far (tiles.glsl's stamps)
     bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
     bool _freshRun = false;
     bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
@@ -863,6 +891,20 @@ private:
     bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
     float _prevCameraPos[3] = {};   // with _prevViewProj
     Aovs _aovs{_dev};  // extra AOVs
+    // Frame::denoise and the raw beauty AOV: the final film run wants them
+    // (_denoiseRun); its state: 0 accumulating, 1 converged (the next frame
+    // denoises), 2 done (_denoiseBuffer replaces the film's image while the
+    // run goes on). The guides are the film's albedo and normal (3 floats).
+    void _Denoise(bool oidn, float exposure);
+    void _FillRawBeauty(const Targets &out) const;
+    Denoiser _denoiser;
+    bool _denoiseRun = false, _denoiseUpload = false, _denoiseWarned = false;
+    uint32_t _denoiseState = 0;
+    Buffer _denoiseBuffer;             // the film's image, half RGBA, then denoised
+    std::vector<uint16_t> _rawBeauty;  // the film's image before denoising (Aovs::kBeautyRaw)
+    std::vector<float> _guides[2];     // albedo, normal
+    uint32_t _guideComponents[2] = {};  // floats per pixel the last frame recorded them with (0: not)
+    float _rawExposure = 1.0f;
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback: Read's)
     // Frame::deferReadback: the frame in flight (its fence not waited for;

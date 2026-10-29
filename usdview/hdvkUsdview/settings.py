@@ -12,7 +12,7 @@ from .tooltips import Tooltips
 # docs/settings.md follows this order (tests/test_docs.py checks).
 GROUPS = [
     ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
+     "finalQuality filmSamples adaptiveFinalThreshold denoise diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
      "finalShadows rtRefraction finalGather motionBlur "
      "motionBlurTimeSamples depthOfField"),
     ("Lighting and GI", True,
@@ -26,15 +26,15 @@ GROUPS = [
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise ssgiSteps "
+     "finalGatherRays finalGatherDenoise effectDenoiseSamples ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
      "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
     ("Advanced: Shadows", False,
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
-     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
+     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples rtShadowDenoise "
      "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtReflectionDenoise rtHitShadows reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur"),
     ("Advanced: Materials", False,
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
@@ -50,7 +50,7 @@ GROUPS = [
      "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
     ("Advanced: Camera and film", False,
      "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
-     "adaptivePixelFraction adaptiveMinSamples objectMotion blendShapeMotion dofJitter dofResidualBlur "
+     "adaptivePixelFraction adaptiveMinSamples adaptiveTiles objectMotion blendShapeMotion dofJitter dofResidualBlur "
      "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
     ("Performance and debug", False,
      "depthPrepass frustumCulling cullPixels shadowCullPixels shareFrame overlapReadback inPlaceReadback offlineBatchSeconds staleMovingIds pipelineCache pipelinePrewarm lazyPipelines extraAovs lazyExtraAovs "
