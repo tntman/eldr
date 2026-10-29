@@ -44,6 +44,14 @@
 // ponytail: skinned meshes' programs see posed world space as object space;
 // uniform primvars read face 0.
 layout(set = 0, binding = 86, rgba16f) uniform writeonly image2D rtRefractionImage;
+layout(set = 0, binding = 13) uniform sampler2D sceneDepth;  // the prepass depth (opaque), window [0, 1]
+
+// TraceMask up to tMax.
+void TraceReach(vec3 origin, vec3 dir, float cone, uint mask, float tMax)
+{
+    hit.t = cone;
+    traceRayEXT(tlas, gl_RayFlagsNoneEXT, mask, 0, 0, 0, origin, 0.0, dir, tMax, 0);
+}
 
 // Material programs (program.glsl) at a hit: their inputs, set by Evaluate,
 // and per-point geometry as in the vertex stage (no screen derivatives).
@@ -197,7 +205,20 @@ void main()
     vec3 dir = normalize(farPoint.xyz / farPoint.w - origin);
     float cone = 1.0 / frame.viewport.y;
     const uint kMaskAll = kRtMaskSurfaces | kRtMaskTranslucent;
-    TraceMask(origin, dir, cone, kMaskAll);
+    // With rt.refraction.z the first rays see glass only (kRtMaskTranslucent
+    // is the translucent meshes' alone, tlas.comp), up to the prepass's
+    // opaque surface (2% on: depth precision): glass behind it draws no
+    // fragment to read this. Pixels without glass then skip the opaque
+    // meshes' BLASes.
+    bool clip = rt.refraction.z != 0u;
+    uint firstMask = clip ? kRtMaskTranslucent : kMaskAll;
+    float reach = 1e30;
+    float depth = texelFetch(sceneDepth, pixel, 0).r;
+    if (clip && depth < 1.0) {
+        vec4 q = frame.invViewProj * vec4(ndc, depth * 2.0 - 1.0, 1.0);
+        reach = distance(origin, q.xyz / q.w) * 1.02 + 1e-4;
+    }
+    TraceReach(origin, dir, cone, firstMask, reach);
     uint interfaces = rt.refraction.x;
     Surface s;
     // The nearest refracting surface, through translucent ones that don't
@@ -212,7 +233,8 @@ void main()
             break;
         }
         --interfaces;
-        TraceMask(OffsetRay(hit.position, -s.ng), dir, cone, kMaskAll);
+        TraceReach(OffsetRay(hit.position, -s.ng), dir, cone, firstMask,
+                   max(reach - distance(origin, hit.position), 0.0));
     }
     float first = max(distance(hit.position, frame.cameraPos.xyz), 1e-6);
     uvec3 seed = uvec3(pixel, rt.params.x);

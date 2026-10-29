@@ -40,11 +40,11 @@ GROUPS = [
      "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
     ("Advanced: Transparency", False,
      "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "
-     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement "
+     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement rtRefractionClip "
      "holdoutAlpha opacityMode"),
     ("Advanced: Fog and volumes", False,
      "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
-     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
+     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeLocalShadowStride volumeDensity volumeEmission "
      "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
      "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
     ("Advanced: Camera and film", False,

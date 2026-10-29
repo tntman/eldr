@@ -3247,6 +3247,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refractionBounces = frame.rtRefractionBounces;
     rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
+    rt.refractionClip = frame.rtRefractionClip;
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's

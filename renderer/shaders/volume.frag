@@ -23,7 +23,8 @@
 // Volumes shadow each other (params.mutual): the light towards each step
 // also marches the other volumes' boxes on its way (OthersDepth).
 // ponytail: volumes are composited one after another along the ray (in
-// entry order, not interleaved where they overlap); local lights get one atlas tap per step, the
+// entry order, not interleaved where they overlap); local lights get one atlas tap per
+// params.localShadowStride steps (the steps between reuse its shadowed fraction), the
 // dome's light only comes down from above (its upper half, through the
 // optical depth straight up; geometry doesn't block it), through the other
 // volumes too.
@@ -80,6 +81,7 @@ layout(push_constant) uniform Params {
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
     uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    uint localShadowStride;  // local lights' shadows every this many steps (1: each)
 } params;
 
 #ifdef HALF
@@ -420,6 +422,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     pnanovdb_readaccessor_t emission = Accessor(grids.w != kNone ? grids.w : grids.x);
     const bool mutual = params.mutual != 0u && params.count > 1u && params.shadowSteps > 0u;
     float t = t0 + noise * dt;
+    // Local lights' shadowed fraction at the last tap, and the steps since.
+    vec3 lit = vec3(1.0);
+    uint sinceTap = params.localShadowStride;
     while (t < t1 && stepsLeft > 0u && Max3(transmittance) > kOpaque) {
         --stepsLeft;
         vec3 p = oi + t * di;
@@ -435,6 +440,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             vec3 exits = (cell - oi) / safe;
             float exit = min(min(exits.x, exits.y), exits.z);
             t = max(t + dt, t0 + (ceil((exit - t0) / dt - noise) + noise) * dt);
+            sinceTap = params.localShadowStride;  // past empty space: tap afresh
             continue;
         }
         float rho = Density(density, p, fract(noise + vec3(0.8191725, 0.6710436, 0.5497005) * float(stepsLeft)));
@@ -508,27 +514,37 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 light += sun.color.rgb * sun.halfHeight.w * scattered;
             }
             if (frame.localLights.x > 0u) {
-                vec3 l;
-                if ((frame.features.x & kFeatureClusters) != 0u) {
+                // Shadows (atlas tap, other volumes) every localShadowStride
+                // steps; the steps between take the last tap's shadowed
+                // fraction of the unshadowed light.
+                bool tap = sinceTap >= params.localShadowStride;
+                sinceTap = tap ? 1u : sinceTap + 1u;
+                bool clusters = (frame.features.x & kFeatureClusters) != 0u;
+                uint base = 0u, n = frame.localLights.x;
+                if (clusters) {
                     float viewDepth = dot(x - frame.cameraPos.xyz, frame.cameraForward.xyz);
-                    uint base = ClusterIndex(fragCoord, viewDepth) * (kMaxClusterLights + 1u);
-                    for (uint k = 0u; k < clusterLights[base]; ++k) {
-                        uint index = clusterLights[base + 1u + k];
-                        vec3 e = LocalIrradiance(index, x, l);
-                        e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(index, x) : e;
-                        e = mutual && any(greaterThan(e, vec3(0.0)))
-                                ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, shadowNoise)) : e;
-                        light += e * Phase(dot(dir, l), g);
+                    base = ClusterIndex(fragCoord, viewDepth) * (kMaxClusterLights + 1u);
+                    n = clusterLights[base];
+                }
+                vec3 open = vec3(0.0), shadowed = vec3(0.0), l;
+                for (uint k = 0u; k < n; ++k) {
+                    uint index = clusters ? clusterLights[base + 1u + k] : frame.counts.x + k;
+                    vec3 e = LocalIrradiance(index, x, l);
+                    if (!any(greaterThan(e, vec3(0.0)))) {
+                        continue;
                     }
-                } else {
-                    for (uint k = frame.counts.x; k < frame.counts.x + frame.localLights.x; ++k) {
-                        vec3 e = LocalIrradiance(k, x, l);
-                        e = any(greaterThan(e, vec3(0.0))) ? e * LocalShadow(k, x) : e;
-                        e = mutual && any(greaterThan(e, vec3(0.0)))
-                                ? e * exp(-OthersDepth(i, x, lights[k].position.xyz - x, shadowNoise)) : e;
-                        light += e * Phase(dot(dir, l), g);
+                    e *= Phase(dot(dir, l), g);
+                    open += e;
+                    if (tap) {
+                        e *= LocalShadow(index, x);
+                        e = mutual ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, shadowNoise)) : e;
+                        shadowed += e;
                     }
                 }
+                if (tap) {
+                    lit = mix(vec3(1.0), shadowed / max(open, vec3(1e-30)), greaterThan(open, vec3(0.0)));
+                }
+                light += tap ? shadowed : open * lit;
             }
             // In-scattering integrated over the step (Hillaire 2015).
             vec3 stepT = exp(-sigma * dt);

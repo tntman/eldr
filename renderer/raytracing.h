@@ -59,6 +59,9 @@ public:
         bool refraction = false;
         uint32_t refractionBounces = 4;
         bool refractionDisplacement = false;  // displaced glass bends them (needs displacement)
+        // The first ray looks for glass only, in front of the prepass depth
+        // (eldr:rtRefractionClip); off: through every surface, as before.
+        bool refractionClip = true;
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
         // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):

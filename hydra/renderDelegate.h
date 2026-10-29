@@ -126,6 +126,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeStepSize, "eldr:volumeStepSize"))                \
     ((volumeMaxSteps, "eldr:volumeMaxSteps"))                \
     ((volumeShadowSteps, "eldr:volumeShadowSteps"))          \
+    ((volumeLocalShadowStride, "eldr:volumeLocalShadowStride")) \
     ((volumeDensity, "eldr:volumeDensity"))                  \
     ((volumeEmission, "eldr:volumeEmission"))                \
     ((volumeAnisotropy, "eldr:volumeAnisotropy"))            \
@@ -208,7 +209,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
-    ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
+    ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) ((rtRefractionClip, "eldr:rtRefractionClip")) \
     ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \

@@ -185,7 +185,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Refraction | `eldr:refraction` | [prepass] Transmission (standard_surface `transmission*`, OpenPBR `transmission_*`) or authored `ior` refract a mip-chained copy of the opaque colour. Thickness estimate places the exit point; roughness blurs (`eldr:refractionSamples`); Fresnel splits; absorption at the surface or Beer-Lambert over `transmission_depth`. |
 | From inside | `eldr:refractionBackFaces` | Back faces first with inverted ior: Snell's window, total internal reflection (48.8 degrees for water) |
 | Layers | `eldr:multiRefraction`, `eldr:refractionLayers` | Background re-copied after each layer: glass behind glass |
-| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as transmission in the light splits (Karma's `C<TG>.*L`). Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). |
+| Ray-traced refraction | `eldr:rtRefraction` | [RT] On in final quality. Traces the nearest refracting surface through up to `eldr:rtRefractionBounces` interfaces (total internal reflection, Fresnel choice, absorption, GGX normal per sample for rough glass). Materials are evaluated at each hit (textures, programs, normal maps); shaded like traced reflections, so off-screen content shows. Counts as transmission in the light splits (Karma's `C<TG>.*L`). Displaced glass bends rays by its displaced triangles and height-map bump (`eldr:rtRefractionDisplacement`). The first ray of a pixel looks for glass only, up to the opaque depth (`eldr:rtRefractionClip`). |
 | Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
 | Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
 | Subsurface | `eldr:subsurface` | See Materials |
@@ -212,6 +212,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Volumes shadow each other (sun, local lights, dome); a lone volume pays nothing | `eldr:volumeMutualShadows` |
 | Glass tints fog; volumes behind glass are dimmed and refracted | `eldr:volumeUnderTransparency` |
 | Half-resolution march, about 3x cheaper | `eldr:volumeResolution` 2 |
+| Local lights' shadows (atlas tap, other volumes) every second march step, the steps between reuse the last tap's shadowed fraction | `eldr:volumeLocalShadowStride` |
 
 ## Materials
 

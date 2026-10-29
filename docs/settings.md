@@ -203,6 +203,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most copies per frame (1-16); more layers share the last. | |
 | Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced triangles and height-map bump (with `eldr:rtDisplacement`). Off: flat glass look. | Displaced glass only |
+| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] The first ray of each pixel looks only for glass (translucent meshes) in front of the prepass depth; pixels without glass cost one cheap ray. Same image. Off: it traces every surface, as before. | RESULT_CLIP |
 | Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A translucent holdout cuts colour and alpha by its opacity. | Small pass when present |
 | Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" scales the highlights with the opacity and never refracts; "transparent" keeps them. Off: presence shades as transparent. | Free |
 
@@ -225,6 +226,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Step Size<br>`eldr:volumeStepSize` | float 1 | March step in voxels; larger is faster, coarser. | |
 | Volume Max Steps<br>`eldr:volumeMaxSteps` | int 256 | Steps per pixel and volume box. | |
 | Volume Shadow Steps<br>`eldr:volumeShadowSteps` | int 8 | Steps of the light-direction march. | volume.usda 21 ms at 8, about 17 at 4, about 11 at 1 |
+| Volume Local Shadow Stride<br>`eldr:volumeLocalShadowStride` | int 2 | Local lights' shadows in volumes (atlas tap, other volumes) every this many march steps (1-16); the steps between scale the unshadowed light by the last tap's shadowed fraction. 1: every step. | RESULT_STRIDE |
 | Volume Density Multiplier<br>`eldr:volumeDensity` | float 1 | Scales density (extinction). | |
 | Volume Emission Multiplier<br>`eldr:volumeEmission` | float 1 | Scales emission. | |
 | Volume Phase Anisotropy<br>`eldr:volumeAnisotropy` | float 0 | Phase g for volumes without a MaterialX volume material (0: isotropic, as Karma). | |

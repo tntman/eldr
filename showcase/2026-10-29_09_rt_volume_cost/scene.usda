@@ -1,0 +1,54 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/volume.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Cheaper local-light shadows in volumes: tests/scenes/volume.usda's three
+# volumes with three sphere lights. /Render/stride2 is the default (one
+# shadow-atlas tap per light every second march step); /Render/stride1 taps
+# every step, as before. The two should look the same. glass.usda in this
+# folder is the A/B of eldr:rtRefractionClip.
+
+def SphereLight "warm"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 40
+    color3f inputs:color = (1, 0.6, 0.3)
+    double3 xformOp:translate = (-1.2, 1.6, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "cool"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 40
+    color3f inputs:color = (0.3, 0.6, 1)
+    double3 xformOp:translate = (1.4, 0.6, 1.0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "low"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 40
+    double3 xformOp:translate = (0.2, -0.8, 0.6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "Render"
+{
+    def RenderSettings "stride2"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+
+    def RenderSettings "stride1"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom int eldr:volumeLocalShadowStride = 1
+    }
+}
