@@ -5,6 +5,8 @@
 #include "renderDelegate.h"
 #include "scene.h"
 
+#include "pxr/base/gf/matrix4f.h"
+#include "pxr/base/gf/vec4d.h"
 #include "pxr/base/trace/trace.h"
 #include "pxr/imaging/hd/meshUtil.h"
 #include "pxr/imaging/hd/renderIndex.h"
@@ -21,6 +23,7 @@
 #include <cmath>
 #include <cstring>
 #include <numeric>
+#include <optional>
 #include <unordered_map>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -411,24 +414,118 @@ void HdVkSplitIndexed(vkr::Mesh const &m, std::vector<size_t> const &tris, vkr::
     }
 }
 
-// The display style's refine level (usdview's Complexity, Houdini's
-// Level of Detail), or the mesh's own primvars:eldr:refineLevel, at most
-// primvars:eldr:object:dicingdepthmax, else Karma's karma:object:dicingdepthmax (-1: no limit), within the
-// render settings' limit; 0 draws the cage.
+int HdVkScreenRefineLevel(HdVkDicingView const &view, HdMeshTopology const &topology, VtVec3fArray const &points,
+                          std::vector<float> const &transforms, float quality, int maxLevel)
+{
+    // Per cage face (object space): centre, radius and area (a fan).
+    struct Face {
+        GfVec3d centre;
+        double radius, area;
+    };
+    std::vector<Face> faces;
+    const VtIntArray &counts = topology.GetFaceVertexCounts();
+    const VtIntArray &indices = topology.GetFaceVertexIndices();
+    faces.reserve(counts.size());
+    size_t k = 0;
+    for (const int n : counts) {
+        const size_t first = k;
+        k += size_t(std::max(n, 0));
+        if (n < 3 || k > indices.size()) {
+            continue;
+        }
+        auto p = [&](int i) {
+            const int v = indices[first + i];
+            return v >= 0 && size_t(v) < points.size() ? GfVec3d(points[v]) : GfVec3d(0.0);
+        };
+        Face f{GfVec3d(0.0), 0.0, 0.0};
+        for (int i = 0; i < n; ++i) {
+            f.centre += p(i);
+        }
+        f.centre /= double(n);
+        for (int i = 0; i < n; ++i) {
+            f.radius = std::max(f.radius, (p(i) - f.centre).GetLength());
+            if (i >= 2) {
+                f.area += 0.5 * GfCross(p(i - 1) - p(0), p(i) - p(0)).GetLength();
+            }
+        }
+        faces.push_back(f);
+    }
+    if (faces.empty() || quality <= 0.0f || view.width <= 0 || view.height <= 0 || maxLevel <= 0) {
+        return 0;
+    }
+    // Polygons a cage face needs; each level splits it in 4.
+    const double enough = std::pow(4.0, maxLevel), q2 = double(quality) * quality;
+    constexpr double kOffscreen = 0.1 * 0.1;  // Karma's offscreen quality, squared
+    const size_t instances = transforms.size() / 16;
+    // ponytail: every face under every instance; past ~4M pairs only every
+    // n-th instance (a nearby one may be skipped).
+    const size_t step = std::max<size_t>(1, faces.size() * instances / (size_t(1) << 22));
+    double need = 0.0;
+    for (size_t t = 0; t < instances; t += step) {
+        const GfMatrix4d m(GfMatrix4f(reinterpret_cast<const float(*)[4]>(transforms.data() + t * 16)));
+        const double scale = std::cbrt(std::abs(m.GetDeterminant3()));  // its uniform part
+        for (const Face &f : faces) {
+            const GfVec3d c = m.Transform(f.centre);
+            const double r = f.radius * scale;
+            double perUnit = view.pixels;  // pixels per unit of size there
+            if (!view.ortho) {
+                const double distance = (c - view.eye).GetLength() - r;
+                if (distance <= 1e-9) {
+                    return maxLevel;  // the eye is at the face
+                }
+                perUnit /= distance;
+            }
+            // On screen: the face's sphere reaches into the frame.
+            const GfVec4d clip = GfVec4d(c[0], c[1], c[2], 1.0) * view.viewProj;
+            const double rx = 2.0 * r * perUnit / view.width, ry = 2.0 * r * perUnit / view.height;
+            const bool on = clip[3] > 0.0 ? std::abs(clip[0] / clip[3]) <= 1.0 + rx &&
+                                                std::abs(clip[1] / clip[3]) <= 1.0 + ry
+                                          : clip[3] > -r;
+            need = std::max(need, f.area * scale * scale * perUnit * perUnit * q2 * (on ? 1.0 : kOffscreen));
+            if (need >= enough) {
+                return maxLevel;
+            }
+        }
+    }
+    return need <= 1.0 ? 0 : std::min(maxLevel, int(std::ceil(0.5 * std::log2(need))));
+}
+
+// The display style's refine level (usdview's Complexity, Houdini's Level of
+// Detail) or, with eldr:screenDicing in final quality, the level for the
+// mesh's size on screen (primvars:eldr:object:dicingquality, else Karma's,
+// 0.5); the mesh's own primvars:eldr:refineLevel wins over both. At least
+// eldr:object:dicingdepthmin, at most eldr:object:dicingdepthmax (else
+// Karma's; -1: none), within the render settings' limit; 0 draws the cage.
 int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
 {
-    HdRenderDelegate *delegate = sceneDelegate->GetRenderIndex().GetRenderDelegate();
+    auto *delegate = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     const auto &t = *HdVkRenderSettingsTokens;
     if (!delegate->GetRenderSetting<bool>(t.subdivision, kHdVkSubdivision)) {
         return 0;
     }
+    const SdfPath &id = GetId();
+    const int limit = std::clamp(delegate->GetRenderSetting<int>(t.maxRefineLevel, kHdVkMaxRefineLevel), 0, 8);
     static const TfToken own("eldr:refineLevel");
-    int level = HdVkPrimvar<int>(sceneDelegate, GetId(), own, sceneDelegate->GetDisplayStyle(GetId()).refineLevel);
-    const int karmaMax = HdVkObjectPrimvar<int>(sceneDelegate, GetId(), "object:dicingdepthmax", -1);
+    int level = sceneDelegate->GetDisplayStyle(id).refineLevel;
+    if (const std::optional<int> fixed = HdVkPrimvarIfSet<int>(sceneDelegate, id, own)) {
+        level = *fixed;
+    } else if (delegate->ScreenDicing()) {
+        // Before a frame named the camera: the cage offline (husk renders
+        // only after the re-dice), else the display style's level.
+        if (const HdVkDicingView *view = delegate->DicingView()) {
+            level = HdVkScreenRefineLevel(*view, _topology, _points,
+                                          HdVkWorldTransforms(sceneDelegate, id, GetInstancerId()),
+                                          HdVkObjectPrimvar<float>(sceneDelegate, id, "object:dicingquality", 0.5f),
+                                          limit);
+        } else if (delegate->Offline()) {
+            level = 0;
+        }
+    }
+    level = std::max(level, HdVkObjectPrimvar<int>(sceneDelegate, id, "object:dicingdepthmin", -1));
+    const int karmaMax = HdVkObjectPrimvar<int>(sceneDelegate, id, "object:dicingdepthmax", -1);
     if (karmaMax >= 0) {
         level = std::min(level, karmaMax);
     }
-    const int limit = std::clamp(delegate->GetRenderSetting<int>(t.maxRefineLevel, kHdVkMaxRefineLevel), 0, 8);
     return std::clamp(level, 0, limit);
 }
 

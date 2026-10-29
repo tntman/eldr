@@ -8,10 +8,12 @@
 #include "pxr/base/vt/value.h"
 
 #include "renderProducts.h"
+#include "subdivision.h"
 
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 
 namespace vkr {
 class Renderer;
@@ -41,6 +43,7 @@ private:
     float _lastViewProj[16] = {};  // the last frame's camera: moving or still
     GfMatrix4d _lastView, _lastProjection;  // the last real camera's (a missing camera keeps it)
     bool _hasLastCamera = false;
+    SdfPath _lastCameraId;  // the camera the last frame looked through (a switch: no camera motion)
     // eldr:overlapReadback: the buffers (colour, depth, ids) and size last
     // frame read back into, and its depth AOV's constants.
     std::array<uintptr_t, 6> _lastReadback = {};
@@ -48,6 +51,8 @@ private:
     bool _lastDeferred = false;  // last frame was left to Collect
     bool _extraStale = false;    // unread extra AOVs were left out of the last frame (eldr:lazyExtraAovs)
     bool _failed = false;        // the last frame's Render threw: not converged, no products
+    bool _redicing = false;      // eldr:screenDicing: the meshes re-dice for the last frame's view
+    std::optional<HdVkDicingView> _lastDicing;  // the last frame's view (still or moving)
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

@@ -97,6 +97,35 @@ expect(triangles(1.1) == expected(1) + 2 * (4 - 1), "primvars:eldr:renderAsSubdi
 ground.CreatePrimvar("eldr:renderAsSubdivision", Sdf.ValueTypeNames.Bool).Set(False)
 expect(triangles(1.1) == expected(1), "renderAsSubdivision off again")
 
+# Dicing by screen size (eldr:screenDicing) in final quality: at 64 pixels
+# the objects are small, so they refine less than the display style's 3.
+# An interactive view re-dices once the camera stood still for a frame.
+def settled(complexity):
+    for _ in range(3):
+        n = triangles(complexity)
+    return n
+
+
+engine.SetRendererSetting("eldr:finalQuality", True)
+coarse = settled(1.3)
+expect(0 < coarse < expected(3), f"screen dicing at {SIZE} px: {coarse} triangles, under {expected(3)}")
+loop.CreatePrimvar("eldr:object:dicingquality", Sdf.ValueTypeNames.Float).Set(100.0)
+fine = settled(1.3)
+expect(fine > coarse, "primvars:eldr:object:dicingquality 100 refines the loop further")
+loop.CreatePrimvar("eldr:refineLevel", Sdf.ValueTypeNames.Int).Set(0)
+expect(settled(1.3) == fine - 8 * (4**3 - 1), "primvars:eldr:refineLevel 0 wins over screen dicing")
+loop.RemovePrimvar("eldr:refineLevel")
+loop.RemovePrimvar("eldr:object:dicingquality")
+loop.CreatePrimvar("karma:object:dicingdepthmin", Sdf.ValueTypeNames.Int).Set(3)
+expect(settled(1.3) > coarse, "primvars:karma:object:dicingdepthmin 3 raises the loop's level")
+loop.RemovePrimvar("karma:object:dicingdepthmin")
+expect(settled(1.3) == coarse, "back to the screen's levels")
+engine.SetRendererSetting("eldr:screenDicing", False)
+expect(settled(1.3) == expected(3), "screen dicing off: the display style's level")
+engine.SetRendererSetting("eldr:screenDicing", True)
+engine.SetRendererSetting("eldr:finalQuality", False)
+expect(settled(1.3) == expected(3), "not final quality: the display style's level")
+
 del engine  # release GL resources while the context is still current
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

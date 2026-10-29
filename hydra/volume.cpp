@@ -889,7 +889,7 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     }
     // Volume Limit (eldr:object:volumelimit, else karma:object:volumelimit).
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
-        v.multipleScattering = HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", 0.0f) > 0.0f;
+        v.volumeLimit = std::max(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", 0.0f), 0.0f);
     }
     *dirtyBits &= ~HdChangeTracker::AllSceneDirtyBits;
 }

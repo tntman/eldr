@@ -126,7 +126,7 @@ struct GpuMaterial {
     float transmission[4];  // Material::transmissionColor, transmission
     float refraction[4];    // Material::ior, thinWalled, transmissionDepth, opacityRefracts
     float subsurface[4];        // Material::subsurfaceColor, subsurface
-    float subsurfaceRadius[4];  // Material::subsurfaceRadius
+    float subsurfaceRadius[4];  // Material::subsurfaceRadius, w: opacityPresence
     float surface[4];  // Material::model, diffuseRoughness, coatAffectColor, coatAffectRoughness
 };
 static_assert(sizeof(GpuTexRef) == 5 * 16, "kImage reads GpuTexRefs as five vec4 constants");
@@ -451,6 +451,13 @@ bool Scene::SetDomeSun(bool on, float threshold)
     const bool changed = on != _domeSunOn || (on && threshold != _domeSunThreshold);
     _domeSunOn = on;
     _domeSunThreshold = threshold;
+    return changed;
+}
+
+bool Scene::SetLightGroups(const std::vector<std::string> &tags)
+{
+    const bool changed = tags != _lightGroups;
+    _lightGroups = tags;
     return changed;
 }
 
@@ -2021,6 +2028,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             std::copy(m.subsurfaceColor, m.subsurfaceColor + 3, g.subsurface);
             g.subsurface[3] = m.subsurface;
             std::copy(m.subsurfaceRadius, m.subsurfaceRadius + 3, g.subsurfaceRadius);
+            g.subsurfaceRadius[3] = m.opacityPresence && m.opacityThreshold <= 0 ? 1.0f : 0.0f;
             appendProgram(m.program, g.program);
             materials.push_back(g);
         }
@@ -2422,6 +2430,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         domeSun.angle = std::max(_domeSun.angle, 0.1f);
         domeSun.castShadows = true;
+        domeSun.lpeTag = (*dome)->lpeTag;
     }
     std::vector<const Light *> sceneLights;
     for (const auto &l : _lights) {
@@ -2438,6 +2447,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
     _gpu.sunRegion = false;
+    // A light's group + 1 (0: none), as color.w's bits 2 and up.
+    const auto group = [&](const std::string &tag) {
+        const auto it = tag.empty() ? _lightGroups.end() : std::find(_lightGroups.begin(), _lightGroups.end(), tag);
+        return it == _lightGroups.end() ? 0 : int(it - _lightGroups.begin()) + 1;
+    };
     for (const bool distant : {true, false}) {  // distant lights first
         for (const Light *l : sceneLights) {
             if (!l->visible || (l->type == Light::Type::Distant) != distant) {
@@ -2447,7 +2461,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g = GpuLight{};
             g.halfHeight[3] = l->diffuse;
             // Bit 1: light_shapes.frag draws it; bit 2: it casts shadows (rt_shade.glsl's ShadeHit).
-            g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f);
+            g.color[3] = (l->cameraVisible ? 1.0f : 0.0f) + (l->castShadows ? 2.0f : 0.0f) + 4.0f * group(l->lpeTag);
             g.shaping[3] = l->specular;
             if (distant) {
                 if (l->castShadows && _gpu.shadowLight == kNone) {
@@ -2598,6 +2612,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         _gpu.environmentLatlong = index < 0 ? kNone : uint32_t(index);
         _gpu.environmentCameraVisible = (*dome)->cameraVisible;
     }
+    _gpu.environmentLightGroup = dome != _domes.end() ? group((*dome)->lpeTag) - 1 : -1;
 
     // What lighting depends on besides geometry (FNV-1a, a word at a time).
     uint64_t hash = 1469598103934665603ull;

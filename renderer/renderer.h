@@ -61,6 +61,7 @@ public:
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
         bool objectMotion = true;        // moving objects' motion vectors (TAA, motion blur); off: camera only
         bool translucency = true;        // off: translucent objects aren't drawn
+        bool opacityMode = true;         // off: UsdPreviewSurface opacityMode "presence" shades as "transparent"
         // Quality against speed.
         uint32_t shadowResolution = 2048;      // sun cascades, texels square (256..8192)
         uint32_t shadowCascades = kCascades;   // 1..kCascades
@@ -91,6 +92,10 @@ public:
         // prevTransforms (Mesh::shutterMotion); the camera one frame before
         // is here (viewProj and cameraPos when it doesn't move).
         bool sampledMotion = false;
+        // Without sampled motion: the camera has no motion from the frame
+        // before (an app's viewport camera, or a switch to another camera),
+        // so the blur never runs from another camera's pose to this one.
+        bool stillCamera = false;
         // Deformation blur (eldr:deformationBlur): meshes with
         // Mesh::velocities (point caches, sampled through the shutter)
         // move along them in time samples and motion vectors. Off: they
@@ -218,7 +223,9 @@ public:
         // their transmittance, marched as volume_shadow.frag does); off:
         // translucent meshes cast none, volumes neither.
         bool rtTranslucentShadows = true;
-        bool rtReflections = false;
+        // Traced reflections (needs Device::rayTracing): 0 off, 1 in final
+        // quality (film runs started fresh), 2 always.
+        uint32_t rtReflections = 1;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
@@ -309,6 +316,7 @@ public:
         float probePosition[4] = {0, 0, 0, 0};  // where it is captured if w = 1, else the scene's centre
         bool planarReflections = false;  // the mirror mesh reflects the scene rendered mirrored
         float planarScale = 0.5f;        // that render's size, of the frame's (0.1..1)
+        float planarBlur = 1.0f;         // roughness blur of the mirror image, a multiplier (0: sharp)
         uint32_t planarCount = 4;        // mirrors rendered, the largest first (at most 4)
         bool probeNormalize = true;     // probes scaled by local (GI/SSGI) over captured ambient light
         bool authoredProbes = true;     // meshes flagged primvars:eldr:reflectionProbe are the probes (probes.h)
@@ -442,7 +450,7 @@ public:
         // traced reflection hits, GI probe rays; not the dome), scaled down
         // to at most this scene-referred radiance. 0: off.
         float directClamp = 0.0f;
-        float indirectClamp = 10.0f;
+        float indirectClamp = 20.0f;  // Karma's colour limit default
         // Thickness estimator in SSR and SSGI (EEVEE's): steps spread
         // quadratically, each at least a pixel on, objects at least a pixel's
         // footprint thick (deep at grazing angles) and a ray that crosses a
@@ -516,6 +524,10 @@ public:
         // the renderer's host memory (HostOutput) instead of copying them:
         // their pointers only say which to read back. Not Read's.
         bool inPlace = false;
+        // false: Render records the frame as usual (the extra AOVs still
+        // accumulate) but copies nothing back; Read fetches the last one's,
+        // extra AOVs included. Offline film samples in one execute.
+        bool readback = true;
     };
 
     static constexpr VkFormat kColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -850,6 +862,7 @@ private:
         uint32_t instanceCapacity = 0;
         float viewProj[16] = {};
         float cameraPos[3] = {};
+        float endViewProj[16] = {};  // the camera the motion ended at: the shutter's only while it stays
     } _shutter;
     Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
     bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
@@ -859,13 +872,16 @@ private:
     // (_denoiseRun); its state: 0 accumulating, 1 converged (the next frame
     // denoises), 2 done (_denoiseBuffer replaces the film's image while the
     // run goes on). The guides are the film's albedo and normal (3 floats).
-    void _Denoise(bool oidn);
+    void _Denoise(bool oidn, float exposure);
+    void _FillRawBeauty(const Targets &out) const;
     Denoiser _denoiser;
     bool _denoiseRun = false, _denoiseUpload = false, _denoiseWarned = false;
     uint32_t _denoiseState = 0;
     Buffer _denoiseBuffer;             // the film's image, half RGBA, then denoised
     std::vector<uint16_t> _rawBeauty;  // the film's image before denoising (Aovs::kBeautyRaw)
     std::vector<float> _guides[2];     // albedo, normal
+    uint32_t _guideComponents[2] = {};  // floats per pixel the last frame recorded them with (0: not)
+    float _rawExposure = 1.0f;
     VkImage _frameColor = VK_NULL_HANDLE;  // GPU sharing: ColorImage()
     std::mutex _frameMutex;                // Render vs Read (_cmd, _fence, _readback: Read's)
     // Frame::deferReadback: the frame in flight (its fence not waited for;
@@ -879,6 +895,7 @@ private:
     // renderer would each need their own pair.
     Buffer _frameReadback[2];
     uint32_t _deliveredSlot = 0;
+    bool _aovsRecorded = false;  // the last Render's extra AOVs, for Read
     void *_delivered[5] = {};
     void _Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height, const Targets &out);
     static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);

@@ -7,12 +7,15 @@
 #include "pxr/imaging/hd/sceneIndex.h"
 #include "pxr/imaging/hd/dataSourceLocator.h"
 
+#include "subdivision.h"
+
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
 
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -153,6 +156,9 @@ PXR_NAMESPACE_OPEN_SCOPE
 #define HDVK_RENDER_SETTING_TOKENS2                          \
     ((directClamp, "eldr:directClamp"))                      \
     ((indirectClamp, "eldr:indirectClamp"))                  \
+    ((colorLimit, "eldr:colorLimit"))                        \
+    ((colorLimitShared, "eldr:colorLimitShared"))            \
+    ((opacityMode, "eldr:opacityMode"))                      \
     ((ssgiThickness, "eldr:ssgiThickness"))                  \
     ((ssgiBitmask, "eldr:ssgiBitmask"))                      \
     ((rtDisplacement, "eldr:rtDisplacement"))                \
@@ -168,6 +174,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((authoredProbes, "eldr:authoredProbes")) \
     ((probeNormalize, "eldr:probeNormalize")) \
     ((planarCount, "eldr:planarCount")) \
+    ((planarBlur, "eldr:planarBlur")) \
     ((motionBlurTimeSamples, "eldr:motionBlurTimeSamples")) \
     ((renderScale, "eldr:renderScale")) \
     ((productLinear, "eldr:productLinear")) \
@@ -194,6 +201,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((multiScatter, "eldr:multiScatter")) \
     ((overlapReadback, "eldr:overlapReadback")) \
     ((inPlaceReadback, "eldr:inPlaceReadback")) \
+    ((offlineBatchSeconds, "eldr:offlineBatchSeconds")) \
     ((staleMovingIds, "eldr:staleMovingIds")) \
     ((lazyPipelines, "eldr:lazyPipelines")) \
     ((lazyExtraAovs, "eldr:lazyExtraAovs")) \
@@ -201,16 +209,18 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
+    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
+    ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
-    ((adaptiveTiles, "eldr:adaptiveTiles")) \
-    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))
+    ((adaptiveTiles, "eldr:adaptiveTiles"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
 
 // Karma's names for what Eldr's extra AOVs hold: the source names of the
 // render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
-// hands them to Hydra (raw names, "lpe:" and "primvars:" ones).
+// hands them to Hydra (raw names and "primvars:" ones; light path
+// expressions: HdVkFindAov).
 #define HDVK_AOV_TOKENS                                     \
     ((hitN, "ray:hitN"))                                    \
     ((hitNFacing, "ray:hitN_facing"))                       \
@@ -219,15 +229,6 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
     ((hitPCamera, "ray:hitP_camera"))                       \
     ((hitPz, "ray:hitPz"))                                  \
     ((baseColor, "export_basecolor"))                       \
-    ((diffuseAlbedo, "lpe:CDA"))                            \
-    ((directEmission, "lpe:CO"))                            \
-    ((combinedEmission, "lpe:C.*O"))                        \
-    ((directDiffuse, "lpe:C<RD>L"))                         \
-    ((indirectDiffuse, "lpe:C<RD>.+L"))                     \
-    ((combinedDiffuse, "lpe:C<RD>.*L"))                     \
-    ((directGlossy, "lpe:C<RG>L"))                          \
-    ((indirectGlossy, "lpe:C<RG>.+L"))                      \
-    ((combinedGlossy, "lpe:C<RG>.*[LO]"))                   \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))           \
     ((beautyRaw, "eldr:beautyRaw"))
@@ -244,6 +245,15 @@ struct HdVkExtraAov {
     HdFormat format;
 };
 const std::vector<HdVkExtraAov> &HdVkExtraAovs();
+// The extra AOV a name binds: one of HdVkExtraAovs, or a light path
+// expression ("lpe:...") of the forms Karma writes (renderDelegate.cpp's
+// LpeKind; format Float32Vec3). False for any other name.
+bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
+// Light groups: Karma's LPE tags (inputs:karma:light:lpetag) in the order
+// AOVs first asked for them, at most vkr::Aovs::kMaxLightGroups (another
+// gets -1 and a warning). Process-wide.
+int HdVkLightGroup(const std::string &tag);
+std::vector<std::string> HdVkLightGroups();
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
@@ -351,6 +361,19 @@ public:
     static void NoteSceneEdit(HdSceneDelegate *sceneDelegate);
     uint64_t SceneEdits() const { return _sceneEdits; }
 
+    // Who renders: Houdini's viewport (houdini:viewport or
+    // houdini:interactive), or an offline renderer (husk's
+    // rasterRenderProducts, enableInteractive false): final quality.
+    bool HoudiniViewport() const;
+    bool Offline() const;
+    // eldr:screenDicing in final quality (eldr:finalQuality or offline):
+    // subdivision surfaces dice for DicingView, the view the render pass
+    // last re-diced for (null before the first). SetDicingView re-syncs the
+    // meshes; only the render pass calls it, between syncs.
+    bool ScreenDicing() const;
+    const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
+    void SetDicingView(std::optional<HdVkDicingView> const &view);
+
     // The descriptor of an AOV Eldr knows by `name`; invalid otherwise.
     static HdAovDescriptor KnownAovDescriptor(TfToken const &name);
 
@@ -388,6 +411,7 @@ private:
     std::unordered_map<SdfPath, GfVec2f, SdfPath::Hash> _shutters;
     SdfPath _activeCamera, _lastOpenCamera;
     bool _activeKnown = false;  // a render pass named its camera
+    std::optional<HdVkDicingView> _dicingView;
 };
 
 PXR_NAMESPACE_CLOSE_SCOPE

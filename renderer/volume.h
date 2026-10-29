@@ -79,9 +79,10 @@ struct Volume {
     // One world transform per instance, 16 floats each, USD row-vector order.
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bool visible = true;
-    // Karma's Volume Limit above 0 on this volume (primvars:eldr:object:volumelimit,
-    // else karma:object:volumelimit): the frame scatters more than once.
-    bool multipleScattering = false;
+    // Karma's Volume Limit on this volume (primvars:eldr:object:volumelimit,
+    // else karma:object:volumelimit): above 0 the frame scatters more than
+    // once, as Settings::volumeLimit (the largest of the frame's).
+    float volumeLimit = 0.0f;
     uint32_t tag = 1;  // render tag bit, as Mesh::tag
 
 private:
@@ -106,7 +107,7 @@ struct GpuVolume {
     float fieldEmission[4];     // rgb: times the emission field (scale times tint)
     uint32_t factorMasks[4];    // VolumeShading's masks (scattering, absorption, emission); w: roles read
                                 // (1 temperature as blackbody, 2 colour tint, 4 emission field)
-    uint32_t lutOffsets[4];     // factors' tables in the grid pool (32-bit words; kNone: none); w: the extinction's (floats)
+    uint32_t lutOffsets[4];     // factors' tables in the grid pool (32-bit words; kNone: none); w: the extinction's (rgb, mean)
     uint32_t lutSlots[4];       // the grid (0..3, as grids) each factor reads
     float lutLow[4];            // table i = (value - low) * scale, 0..kVolumeLut - 1
     float lutScale[4];
@@ -151,11 +152,14 @@ public:
         // (colour) and emission fields with VolumeShading's defaults; off:
         // only density, as Karma renders them.
         bool defaultFields = false;
-        // Multiple scattering of distant lights, approximated by octaves of
-        // weaker, less attenuated and less directional single scattering
-        // (Wrenninge 2015). Off: single scattering, as Karma renders with
-        // its default volume limit 0.
+        // Multiple scattering of distant lights and the dome, approximated
+        // by octaves of weaker, less attenuated and less directional single
+        // scattering (Wrenninge 2015), calibrated against Karma's Volume
+        // Limit: volumeLimit bounces (0: single scattering, as Karma's
+        // default); multipleScattering alone stands for kDefaultVolumeLimit.
         bool multipleScattering = false;
+        float volumeLimit = 0.0f;
+        static constexpr float kDefaultVolumeLimit = 16.0f;
     };
 
     // Which part of each ray Record marches: all of it, the part behind
@@ -173,6 +177,7 @@ public:
     // a null view without one yet.
     VkImageView EnsureHalf(uint32_t width, uint32_t height);
     VkImageView Half() const { return _half.view; }
+    VkSampler HalfSampler() const { return _halfSampler; }  // nearest: Half() holds integers
 
     // Blends the volumes over `color` (COLOR_ATTACHMENT_OPTIMAL, stays so);
     // `set` must hold the scene's depth (binding 63) in
@@ -214,6 +219,7 @@ private:
     VkPipeline _shadowPipeline = VK_NULL_HANDLE;  // volume_shadow.frag into the tint map
     VkPipeline _shapePipeline = VK_NULL_HANDLE;   // light_shapes.frag over the image
     Image _half;
+    VkSampler _halfSampler = VK_NULL_HANDLE;
     uint32_t _halfWidth = 0, _halfHeight = 0;
     Image _translucentDepth;
     uint32_t _depthWidth = 0, _depthHeight = 0;

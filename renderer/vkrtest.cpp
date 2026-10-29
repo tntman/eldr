@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.rtReflections = 0;    // tests turn traced reflections on themselves (the default is final quality)
     frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
@@ -2120,7 +2121,7 @@ int main()
             scene.Commit();
             vkr::Renderer::Frame frame = IdentityFrame();
             const float off = Render(renderer, scene, frame).At(32, 41, 1);
-            frame.rtReflections = true;
+            frame.rtReflections = 2;
             const float on = Render(renderer, scene, frame).At(32, 41, 1);
             Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
 
@@ -2267,11 +2268,10 @@ int main()
         }
 
         if (device.rayTracing) {
-            // GI sees emission unclamped: the GI test's panel, emitting 40
-            // instead of lit (not a light: emissiveLights off), lights the
-            // wall the same through an indirect clamp of 10 as without one
-            // (the clamp is for bounced light; emissive.usda's room was lit
-            // at a quarter).
+            // GI sees emission under the colour limit (Karma's: the indirect
+            // clamp, 20): the GI test's panel, emitting 40 instead of lit
+            // (not a light: emissiveLights off), lights the wall less
+            // through a clamp of 20 than without one.
             vkr::Scene scene(&device);
             scene.SetEmissiveLights(false, 4.0f);
             auto white = std::make_shared<vkr::Material>();
@@ -2296,10 +2296,10 @@ int main()
                 }
                 return img.At(28, 32, 0);
             };
-            const float clamped = lit(10.0f), unclamped = lit(0.0f);
-            std::printf("GI emission: clamp 10 %.3f, off %.3f\n", clamped, unclamped);
-            Expect(unclamped > 0.5f && std::abs(clamped - unclamped) < 0.03f * unclamped,
-                   "the indirect clamp leaves the emission GI rays see");
+            const float clamped = lit(20.0f), unclamped = lit(0.0f);
+            std::printf("GI emission: clamp 20 %.3f, off %.3f\n", clamped, unclamped);
+            Expect(unclamped > 0.5f && clamped > 0.3f * unclamped && clamped < 0.8f * unclamped,
+                   "the colour limit caps the emission GI rays see");
         }
 
         if (device.rayTracing) {
@@ -4476,6 +4476,31 @@ int main()
             Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
                    "half resolution volumes stop at nearer surfaces");
             frame.volume.resolution = 1;
+            {
+                // Coloured absorption (0.2, 1, 1.8, no scattering) in front of
+                // the white emitter: half resolution keeps each channel's
+                // transmittance, not their mean.
+                auto smoky = std::make_shared<vkr::VolumeShading>();
+                std::fill(smoky->scattering, smoky->scattering + 3, 0.0f);
+                const float sooty[3] = {0.2f, 1.0f, 1.8f};
+                std::copy(sooty, sooty + 3, smoky->absorption);
+                ball->shading = smoky;
+                scene.Commit();
+                const Image fullColour = Render(renderer, scene, frame);
+                frame.volume.resolution = 2;
+                const Image halfColour = Render(renderer, scene, frame);
+                frame.volume.resolution = 1;
+                ball->shading = nullptr;
+                scene.Commit();
+                std::printf("half resolution coloured transmittance %.3f %.3f %.3f, full %.3f %.3f %.3f\n",
+                            halfColour.At(36, 32, 0), halfColour.At(36, 32, 1), halfColour.At(36, 32, 2),
+                            fullColour.At(36, 32, 0), fullColour.At(36, 32, 1), fullColour.At(36, 32, 2));
+                bool same = fullColour.At(36, 32, 0) > 3.0f * fullColour.At(36, 32, 2);
+                for (int c = 0; c < 3; ++c) {
+                    same = same && std::abs(halfColour.At(36, 32, c) - fullColour.At(36, 32, c)) < 0.05f;
+                }
+                Expect(same, "half resolution volumes keep coloured transmittance");
+            }
 
             // Under transparency: black glass (opacity 0.5) in front of the
             // glowing ball's left half dims it to half; glass behind its
@@ -4552,6 +4577,32 @@ int main()
                 frame.rtTranslucentShadows = true;
                 frame.rtShadows = false;
             }
+            // Coloured smoke: absorption (0.2, 1, 1.8) per unit of density
+            // (mean 1, no scattering) shadows each channel by its own
+            // transmittance, exp(-2 * 0.74 * a), in the maps and traced.
+            auto tinted = std::make_shared<vkr::VolumeShading>();
+            std::fill(tinted->scattering, tinted->scattering + 3, 0.0f);
+            const float soot[3] = {0.2f, 1.0f, 1.8f};
+            std::copy(soot, soot + 3, tinted->absorption);
+            smoke->shading = tinted;
+            shadowed.Commit();
+            for (int traced = 0; traced <= (device.rayTracing ? 1 : 0); ++traced) {
+                frame.rtShadows = traced != 0;
+                const Image coloured = Render(renderer, shadowed, frame);
+                frame.rtShadows = false;
+                bool match = true;
+                std::printf("coloured volume shadow (%s):", traced ? "traced" : "maps");
+                for (int c = 0; c < 3; ++c) {
+                    const float r = coloured.At(3, 32, c) / uncast.At(3, 32, c), e = std::exp(-1.48f * soot[c]);
+                    std::printf(" %.3f (expected %.3f)", r, e);
+                    match = match && std::abs(r - e) < 0.05f;
+                }
+                std::printf("\n");
+                Expect(match, traced ? "translucent shadows traced: coloured smoke casts coloured shadows"
+                                     : "coloured smoke casts coloured shadows");
+            }
+            smoke->shading = nullptr;
+            shadowed.Commit();
 
             // The same from a small sphere light on the sun's line, 8 away
             // from the ground point (the ray to pixel 3 crosses the ball
@@ -4584,6 +4635,16 @@ int main()
                 Expect(std::abs(tracedLamp - lampRatio) < 0.06f,
                        "translucent shadows traced: a volume shadows a local light's light as the maps do");
             }
+            puff->shading = tinted;  // coloured smoke in the atlas tiles' tint too
+            lamp.Commit();
+            const Image lampColoured = Render(renderer, lamp, frame);
+            const float lampRed = lampColoured.At(3, 32, 0) / lampUnlit.At(3, 32, 0),
+                        lampBlue = lampColoured.At(3, 32, 2) / lampUnlit.At(3, 32, 2);
+            std::printf("coloured local volume shadow %.3f %.3f (expected %.3f %.3f)\n", lampRed, lampBlue,
+                        std::exp(-1.48f * soot[0]), std::exp(-1.48f * soot[2]));
+            Expect(std::abs(lampRed - std::exp(-1.48f * soot[0])) < 0.06f &&
+                       std::abs(lampBlue - std::exp(-1.48f * soot[2])) < 0.06f,
+                   "coloured smoke casts coloured shadows from local lights");
         }
 
         {
@@ -4780,7 +4841,7 @@ int main()
             };
             const float full = wall(0.0f), quarter = wall(0.5f);
             Expect(quarter > 0.0f && quarter < 0.5f * full, "the indirect clamp caps SSGI's incoming light");
-            Expect(vkr::Renderer::Frame().indirectClamp == 10.0f, "the indirect clamp is 10 by default");
+            Expect(vkr::Renderer::Frame().indirectClamp == 20.0f, "the indirect clamp is 20 (Karma's colour limit) by default");
         }
 
         {

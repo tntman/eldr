@@ -93,14 +93,10 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
                 } else if (aov == HdAovTokens->instanceId) {
                     var.source = Source::InstanceId;
                 } else {
-                    bool found = false;
-                    for (const HdVkExtraAov &extra : HdVkExtraAovs()) {
-                        if (extra.name == aov) {
-                            var.kind = extra.kind;
-                            found = true;
-                        }
-                    }
-                    if (!found) {
+                    HdVkExtraAov extra;
+                    if (HdVkFindAov(aov, &extra)) {
+                        var.kind = extra.kind;
+                    } else {
                         TF_WARN("HdVk: render var <%s> (%s) has no Eldr AOV; left out of %s", rv.varPath.GetText(),
                                 aov.GetText(), rp.name.GetText());
                         continue;

@@ -7,6 +7,7 @@
 
 #include <future>
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <memory>
@@ -230,6 +231,9 @@ struct Material {
     float occlusion = 1;
     float opacity = 1;           // below 1 (or a texture) without a threshold: translucent
     float opacityThreshold = 0;  // > 0: a cutout, no surface where opacity is below it
+    // UsdPreviewSurface opacityMode "presence" (without a threshold): opacity scales the whole lighting
+    // response, highlights too, and never refracts; "transparent" scales the diffuse light and emission.
+    bool opacityPresence = false;
     // The surface model whose spec the shading follows (shaders/brdf.glsl's
     // SetupBase): its Fresnel, layering and multiple scattering.
     enum class Model : uint32_t { kPreviewSurface, kStandardSurface, kOpenPbr };
@@ -537,6 +541,9 @@ struct Light {
     bool cameraVisible = true;           // its shape shows to the camera (Frame::lightShapesVisible)
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
+    // Its light group (Karma's LPE tag, karma:light:lpetag): which of
+    // Scene::SetLightGroups' groups its direct light is split into.
+    std::string lpeTag;
     // Rect, disk: an image over the emitting surface (UsdLux
     // inputs:texture:file) multiplying the radiance; s = 0 at the +X side, the image's top row at +Y (as Karma; rows are stored bottom-up)
     // (the disk's square around it).
@@ -554,6 +561,7 @@ struct Dome {
     float worldToLocal[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // USD order
     bool visible = true;
     bool cameraVisible = true;           // the camera sees its texture (Karma: renderlightgeo); lighting and reflections always do
+    std::string lpeTag;                  // its light group, as Light::lpeTag (its extracted sun's too)
 
 private:
     friend class Scene;
@@ -678,15 +686,14 @@ public:
     // changed since the last commit (no material, light, visibility or
     // tag edit), so a commit with no dirty mesh returns at once.
     void Commit(bool keepMotion = false, bool unchanged = false);
-    // Some volume has a Volume Limit above 0 (Volume::multipleScattering).
-    bool AnyVolumeMultipleScattering() const
+    // The largest Volume Limit of the visible volumes (Volume::volumeLimit).
+    float MaxVolumeLimit() const
     {
+        float limit = 0.0f;
         for (const auto &v : _volumes) {
-            if (v->multipleScattering && v->visible) {
-                return true;
-            }
+            limit = v->visible ? std::max(limit, v->volumeLimit) : limit;
         }
-        return false;
+        return limit;
     }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
@@ -706,6 +713,10 @@ public:
     // scene as a distant light with shadows, of the texels' size. Returns
     // whether it changed (Commit again).
     bool SetDomeSun(bool on, float threshold);
+    // Light groups (Aovs::kLightGroup0...): the lights whose lpeTag is
+    // tags[g] split their direct light into group g (from the next
+    // Commit). Returns whether they changed.
+    bool SetLightGroups(const std::vector<std::string> &tags);
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -820,6 +831,7 @@ public:
         float environmentSh[9][3] = {};
         float environmentRadiance[3] = {};
         float environmentWorldToLocal[16] = {};
+        int32_t environmentLightGroup = -1;  // the dome's (SetLightGroups), -1 none
         // Blend shape motion: bytes of blendWeights (the renderer keeps a copy).
         VkDeviceSize blendWeightsBytes = 0;
         // Sampled motion of skinned meshes: the joint matrices and blend
@@ -978,6 +990,7 @@ private:
     bool _envBuilt = false;
     float _envThreshold = 0;          // the sun extraction it was built with (texture units, 0: none)
     bool _domeSunOn = false;
+    std::vector<std::string> _lightGroups;
     float _domeSunThreshold = 0;
     ExtractedSun _domeSun;            // of the environment built (dome-local, texture units)
     uint32_t _tagMask = ~0u;

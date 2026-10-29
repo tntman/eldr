@@ -45,7 +45,7 @@ struct FrameData {
     uint32_t fogGrid[4];     // froxels x, y, z; heights along Z
     float fogTemporal[4];    // slice jitter, history weight, last frame's froxel depth, orthographic
     // Reflection probe and planar reflections (shaders/probes.glsl).
-    uint32_t reflections[4];     // probes, -, flags (kProbeNormalize, kFogGiAmbient, kLightTextures)
+    uint32_t reflections[4];     // probes, planar blur (float bits), flags (kProbeNormalize, kFogGiAmbient, kLightTextures)
     float probeCenter[8][4];     // capture position, prefiltered levels - 1
     float probeMin[8][4];        // influence box, blend distance (0: everywhere)
     float probeMax[8][4];
@@ -57,7 +57,8 @@ struct FrameData {
     // stochastic effect (kDim*); x of sampleInfo 1 with them on.
     float sampleDims[3][4];
     uint32_t sampleInfo[4];
-    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct
+    uint32_t aovs[4];        // light splits (aov.h): x 1 = the shading pass stores them, y 1 = the dome's visible light is direct,
+                             // z the dome's light group + 1 (0: none)
     float lightClamp[4];     // brightness limits of direct, indirect light (0: off)
     float screenTrace[4];    // thickness estimator (SSR) on, back-face hits' share of light, SSR hit filter on
     uint32_t shadowJitter[4];  // x 1: light shapes jittered this sample (Frame::shadowJitter), hard lookups
@@ -66,7 +67,7 @@ struct FrameData {
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
-    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction)
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
 };
@@ -1886,7 +1887,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
     write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
     // Without half resolution volumes yet, the LUT stands in.
-    const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
+    const VkDescriptorImageInfo halfVolumes{_volumePass->Half() ? _volumePass->HalfSampler() : _clampSampler,
+                                            _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
     const VkDescriptorImageInfo ssrImages[4] = {{VK_NULL_HANDLE, _ssr.Rays(), VK_IMAGE_LAYOUT_GENERAL},
@@ -2933,6 +2935,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.geometry[0] = frame.displacementScale;
         fd.geometry[3] = frame.displacementGraphs ? 1.0f : 0.0f;
     }
+    fd.rtRefraction[1] = frame.opacityMode ? 1u : 0u;
     fd.lightClamp[0] = std::max(frame.directClamp, 0.0f);
     fd.lightClamp[1] = std::max(frame.indirectClamp, 0.0f);
     fd.screenTrace[0] = frame.ssgiThickness ? 1.0f : 0.0f;
@@ -2961,8 +2964,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool cameraMoved = _historyValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
     // The camera the motion starts from: the last frame's, or with sampled
     // motion the scene's own one frame before (then no history is needed).
-    const float *motionViewProj = frame.sampledMotion ? appFrame.prevViewProj : _prevViewProj;
-    const float *motionCameraPos = frame.sampledMotion ? appFrame.prevCameraPos : _prevCameraPos;
+    // A still camera (a viewport's, a switch) has none.
+    const float *motionViewProj = frame.sampledMotion ? appFrame.prevViewProj
+                                : frame.stillCamera   ? appFrame.viewProj
+                                                      : _prevViewProj;
+    const float *motionCameraPos = frame.sampledMotion ? appFrame.prevCameraPos
+                                 : frame.stillCamera   ? appFrame.cameraPos
+                                                       : _prevCameraPos;
     const bool motionHistory = _historyValid || frame.sampledMotion;
     const bool cameraMotion = motionHistory && std::memcmp(appFrame.viewProj, motionViewProj, sizeof(_prevViewProj)) != 0;
     const bool motionBlur = frame.postProcess && frame.motionBlur && frame.shutter > 0 && motionHistory &&
@@ -3006,6 +3014,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // fresh history (filmMode 1 without either), stays interactive.
     _filmFinal = film && (filmMode != 0 ? (frame.finalQuality || _freshRun) : _filmFinal);
     _filmRuns += filmMode != 0 ? 1 : 0;
+    // eldr:rtReflections: 2 always, 1 in final quality.
+    const bool tracedReflections = frame.rtReflections >= 2 || (frame.rtReflections == 1 && film && _filmFinal);
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
     // resolves (the camera or the scene moves) a loop of the first
@@ -3035,7 +3045,20 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _shutter.instanceCapacity = gpu.instanceCapacity;
         std::memcpy(_shutter.viewProj, motionViewProj, sizeof(_shutter.viewProj));
         std::memcpy(_shutter.cameraPos, motionCameraPos, sizeof(_shutter.cameraPos));
+        std::memcpy(_shutter.endViewProj, appFrame.viewProj, sizeof(_shutter.endViewProj));
     }
+    // The shutter's camera: with sampled motion this frame's own (its
+    // samples, whatever camera it is now); else the capture's while the
+    // camera stays where that motion ended. The scene's motion outlives
+    // camera-only frames, the camera's must not: a camera moved or switched
+    // since (Houdini's free camera taking over) would blur from the old pose.
+    const bool keptCamera = std::memcmp(appFrame.viewProj, _shutter.endViewProj, sizeof(_shutter.endViewProj)) == 0;
+    const float *shutterViewProj = frame.sampledMotion ? appFrame.prevViewProj
+                                 : keptCamera          ? _shutter.viewProj
+                                                       : appFrame.viewProj;
+    const float *shutterCameraPos = frame.sampledMotion ? appFrame.prevCameraPos
+                                  : keptCamera          ? _shutter.cameraPos
+                                                        : appFrame.cameraPos;
     _shutter.valid = _shutter.valid && shutterOn && gpu.version == _shutter.version &&
                      gpu.instances == _shutter.instances && gpu.joints == _shutter.jointPool &&
                      gpu.blendWeights == _shutter.weightPool && gpu.instanceCapacity == _shutter.instanceCapacity;
@@ -3062,7 +3085,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _denoiseUpload = false;
     }
     if (_denoiseState == 1) {
-        _Denoise(frame.denoise);
+        _Denoise(frame.denoise, frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation));
         _denoiseState = 2;
     }
     // ponytail: a box shutter.
@@ -3078,13 +3101,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     Mat4 shutterInvViewProj;  // the time sample's camera, before lens jitter
     if (timeSample) {
         for (int i = 0; i < 16; ++i) {  // linear in the view while the projection stays
-            lensed.viewProj[i] = _shutter.viewProj[i] + (appFrame.viewProj[i] - _shutter.viewProj[i]) * shutterT;
+            lensed.viewProj[i] = shutterViewProj[i] + (appFrame.viewProj[i] - shutterViewProj[i]) * shutterT;
         }
         const Mat4 inv = Inverse(ToMat4(lensed.viewProj));
         std::memcpy(lensed.invViewProj, inv.m, sizeof(lensed.invViewProj));
         shutterInvViewProj = inv;
         for (int i = 0; i < 3; ++i) {
-            lensed.cameraPos[i] = _shutter.cameraPos[i] + (appFrame.cameraPos[i] - _shutter.cameraPos[i]) * shutterT;
+            lensed.cameraPos[i] = shutterCameraPos[i] + (appFrame.cameraPos[i] - shutterCameraPos[i]) * shutterT;
         }
         std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
     }
@@ -3168,7 +3191,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.screenTrace[2] = ssrHitFilter ? 1.0f : 0.0f;
         // Denoised: the shading pass writes its rays (traced reflections
         // replace SSR where they apply: no denoiser then).
-        if (frame.ssrDenoise && !(frame.rtReflections && _rt && frame.depthPrepass)) {
+        if (frame.ssrDenoise && !(tracedReflections && _rt && frame.depthPrepass)) {
             fd.ssr[2] = 1.0f;
             _ssr.Prepare();
         }
@@ -3210,7 +3233,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
                       (frame.finalShadows == FinalShadows::Auto && autoTraced())));
     rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
-    rt.reflections = rtScene && frame.depthPrepass && frame.rtReflections;
+    rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
     // Traced refraction: in final quality (or always), for scenes with
     // refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
@@ -3221,7 +3244,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
-    // shadow (a texel per light), volumes are marched (grey).
+    // shadow (a texel per light), volumes are marched (per channel).
     const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
     rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows
@@ -3489,6 +3512,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _gtao.SetSsgi(ssgi, frame.ssgiResolution);
     fd.features[0] |= ssgi ? kFeatureSsgi : 0;
     // Probe normalization needs local ambient light: GI's or SSGI's.
+    const float planarBlur = std::max(frame.planarBlur, 0.0f);
+    std::memcpy(&fd.reflections[1], &planarBlur, 4);
     fd.reflections[2] = frame.probeNormalize && (fd.features[0] & (kFeatureGi | kFeatureSsgi)) ? 1u : 0u;
     fd.reflections[2] |= frame.fogGiAmbient && (fd.features[0] & kFeatureGi) ? 2u : 0u;  // kFogGiAmbient
     fd.reflections[2] |= frame.lightTextures ? 4u : 0u;  // kLightTextures
@@ -3503,12 +3528,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool ssrUnscale = lightPath && fd.ssr[0] > 0.0f;
     const bool splits =
         (frame.extraAovs && Aovs::NeedsSplits(out.aovs)) || (lightPath && (refraction || ssrUnscale));
-    const bool splitsNew = _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1);
+    const bool splitsNew = _aovs.EnsureSplits(splits ? _width : 1, splits ? _height : 1,
+                                              splits && frame.extraAovs ? Aovs::SplitLayers(out.aovs) : 4);
     _keepSplits = splits && ssrUnscale && _splitsStored && !splitsNew;
     fd.ssr[3] = _keepSplits ? 1.0f : 0.0f;
     _splitsStored = splits;
     fd.aovs[0] = splits ? 1u : 0u;
     fd.aovs[1] = frame.splitDomeDirect ? 1u : 0u;
+    fd.aovs[2] = uint32_t(gpu.environmentLightGroup + 1);  // the dome's light group + 1 (0: none)
     fd.scene[0] = frame.sceneTime[0];
     fd.scene[1] = frame.sceneTime[1];
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
@@ -4180,7 +4207,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     Lens::Params lens{};
     if (dof || postBlur || residualBlur) {
         const Mat4 back = postBlur       ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj)
-                          : residualBlur ? shutterInvViewProj * ToMat4(_shutter.viewProj)
+                          : residualBlur ? shutterInvViewProj * ToMat4(shutterViewProj)
                                          : Mat4();
         std::memcpy(lens.reprojection, &back.m[0][0], sizeof(lens.reprojection));
         std::copy(frame.depthToDistance, frame.depthToDistance + 4, lens.depthToDistance);
@@ -4398,9 +4425,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
 
     // Extra AOVs (aov.h), before the lens bends depth and the ids. The
-    // denoiser's guides, the film's albedo and normal, in its own targets
-    // unless the app asked for those (copied after); the raw beauty is
-    // the renderer's (_Denoise).
+    // denoiser's guides, the film's albedo and normal, in the renderer's
+    // own targets unless the app asked for those (_Denoise reads them back
+    // once); the raw beauty is the renderer's (_FillRawBeauty).
     float *aovTargets[Aovs::kCount] = {};
     uint8_t aovComponents[Aovs::kCount] = {};
     if (frame.extraAovs) {
@@ -4409,15 +4436,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     aovTargets[Aovs::kBeautyRaw] = nullptr;
     const Aovs::Kind guideKinds[2] = {Aovs::kAlbedo, Aovs::kNormal};
-    for (int g = 0; g < 2 && _denoiseRun && frame.denoise; ++g) {
-        _guides[g].resize(size_t(_width) * _height * 3);
-        if (!aovTargets[guideKinds[g]]) {
-            aovTargets[guideKinds[g]] = _guides[g].data();
-            aovComponents[guideKinds[g]] = 3;
+    for (int g = 0; g < 2; ++g) {
+        const Aovs::Kind k = guideKinds[g];
+        if (_denoiseRun && frame.denoise && !aovTargets[k]) {
+            _guides[g].resize(size_t(_width) * _height * 3);
+            aovTargets[k] = _guides[g].data();
+            aovComponents[k] = 3;
         }
+        _guideComponents[g] = !aovTargets[k] ? 0 : aovComponents[k] ? aovComponents[k] : Aovs::Components(k);
     }
-    const bool anyAovs = Aovs::Any(aovTargets);
-    if (anyAovs) {
+    _aovsRecorded = Aovs::Any(aovTargets);
+    if (_aovsRecorded) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
         std::memcpy(params.invViewProj, frame.invViewProj, sizeof(params.invViewProj));
@@ -4523,7 +4552,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _deferred.adaptivePixelFraction = frame.adaptivePixelFraction;
     VkDeviceSize offset = 0;
     for (Output &o : outputs) {
-        if (!o.dst) {
+        if (!o.dst || !out.readback) {
             continue;
         }
         o.offset = offset;
@@ -4603,33 +4632,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _deferredOutputs = true;
     } else {
         _WaitInFlight();
-        _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
-        if (anyAovs) {
-            _aovs.Read(aovTargets);
-        }
-        // The app's own albedo or normal target is the guide's source.
-        for (int g = 0; g < 2 && anyAovs && _denoiseRun && frame.denoise; ++g) {
-            const float *from = aovTargets[guideKinds[g]];
-            const uint32_t n = aovComponents[guideKinds[g]] ? aovComponents[guideKinds[g]]
-                                                            : Aovs::Components(guideKinds[g]);
-            if (from && from != _guides[g].data() && _guides[g].size() == size_t(_width) * _height * 3) {
-                for (size_t p = 0; p < size_t(_width) * _height; ++p) {
-                    for (uint32_t c = 0; c < 3; ++c) {
-                        _guides[g][p * 3 + c] = c < n ? from[p * n + c] : 0.0f;
-                    }
-                }
+        if (out.readback) {
+            _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
+            if (_aovsRecorded) {
+                _aovs.Read(aovTargets);
             }
-        }
-        // The raw beauty, linear and exposed as the beauty's linear output.
-        if (float *raw = out.aovs[Aovs::kBeautyRaw]; raw && _denoiseState == 2 &&
-                                                     _rawBeauty.size() == size_t(_outWidth) * _outHeight * 4) {
-            const uint32_t n = out.aovComponents[Aovs::kBeautyRaw] ? out.aovComponents[Aovs::kBeautyRaw] : 4;
-            const float exposure = frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation);
-            for (size_t p = 0; p < size_t(_outWidth) * _outHeight; ++p) {
-                for (uint32_t c = 0; c < n; ++c) {
-                    raw[p * n + c] = c < 4 ? HalfToFloat(_rawBeauty[p * 4 + c]) * (c < 3 ? exposure : 1.0f) : 0.0f;
-                }
-            }
+            _FillRawBeauty(out);
         }
     }
     _stats.cpuMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cpuStart).count();
@@ -4639,8 +4647,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
 // The converged film's image (the TAA resolve, last frame's) to the CPU,
 // kept raw (Aovs::kBeautyRaw) and with `oidn` denoised into _denoiseBuffer,
 // which the frames of this film run then copy over the film's image.
-void Renderer::_Denoise(bool oidn)
+void Renderer::_Denoise(bool oidn, float exposure)
 {
+    _rawExposure = exposure;
     const auto start = std::chrono::steady_clock::now();
     const uint32_t width = _outWidth, height = _outHeight;
     const VkDeviceSize bytes = VkDeviceSize(width) * height * 8;
@@ -4674,10 +4683,28 @@ void Renderer::_Denoise(bool oidn)
     _rawBeauty.assign(pixels, pixels + size_t(width) * height * 4);
     _denoiseUpload = false;
     if (oidn) {
-        // The guides are the film's, at its size (no upscaling under the film).
-        const size_t guide = size_t(width) * height * 3;
-        float *albedo = _guides[0].size() == guide ? _guides[0].data() : nullptr;
-        float *normal = _guides[1].size() == guide ? _guides[1].data() : nullptr;
+        // The guides: the film's albedo and normal, as the last frame
+        // recorded them (its size: no upscaling under the film), 3 floats.
+        const size_t count = size_t(width) * height;
+        float *guides[2] = {};
+        for (int g = 0; g < 2; ++g) {
+            const uint32_t n = _guideComponents[g];
+            if (!_aovsRecorded || n == 0) {
+                continue;
+            }
+            float *targets[Aovs::kCount] = {};
+            std::vector<float> read(count * n);
+            targets[g == 0 ? Aovs::kAlbedo : Aovs::kNormal] = read.data();
+            _aovs.Read(targets);
+            _guides[g].resize(count * 3);
+            for (size_t p = 0; p < count; ++p) {
+                for (uint32_t c = 0; c < 3; ++c) {
+                    _guides[g][p * 3 + c] = c < n ? read[p * n + c] : 0.0f;
+                }
+            }
+            guides[g] = _guides[g].data();
+        }
+        float *albedo = guides[0], *normal = guides[1];
         std::string error;
         _denoiseUpload = _denoiser.Run(pixels, albedo, normal, width, height, &error);
         if (!_denoiseUpload && !_denoiseWarned) {
@@ -4839,6 +4866,26 @@ void Renderer::Read(const Targets &out)
     for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             std::memcpy(outputs[i].second, src + offsets[i], bytesPerPixel[i] * _outWidth * _outHeight);
+        }
+    }
+    if (_aovsRecorded) {  // their copy is in the last Render's commands
+        _aovs.Read(out.aovs);
+    }
+    _FillRawBeauty(out);
+}
+
+// Aovs::kBeautyRaw: the film's image before denoising, exposed as the
+// linear beauty, once the film run was denoised (_Denoise).
+void Renderer::_FillRawBeauty(const Targets &out) const
+{
+    float *raw = out.aovs[Aovs::kBeautyRaw];
+    if (!raw || _denoiseState != 2 || _rawBeauty.size() != size_t(_outWidth) * _outHeight * 4) {
+        return;
+    }
+    const uint32_t n = out.aovComponents[Aovs::kBeautyRaw] ? out.aovComponents[Aovs::kBeautyRaw] : 4;
+    for (size_t p = 0; p < size_t(_outWidth) * _outHeight; ++p) {
+        for (uint32_t c = 0; c < n; ++c) {
+            raw[p * n + c] = c < 4 ? HalfToFloat(_rawBeauty[p * 4 + c]) * (c < 3 ? _rawExposure : 1.0f) : 0.0f;
         }
     }
 }
