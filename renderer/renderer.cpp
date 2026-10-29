@@ -3250,7 +3250,19 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     for (uint32_t i = 0; i < rt.gatherRays; ++i) {
         ScrambledSobol(sobolIndex * rt.gatherRays + i, kSeedRtGather, rt.gatherSamples[i], 2);
     }
-    rt.gatherDenoise = frame.finalGatherDenoise;
+    // Per-effect denoise: full on the film's first sample, fading out
+    // linearly over effectDenoiseSamples (none after), so few samples are
+    // clean while the converged film keeps the unfiltered average.
+    // ponytail: a fixed fade per sample count; a per-pixel one by the
+    // film's variance would stop where each pixel has converged.
+    const float denoiseFade =
+        film && frame.effectDenoiseSamples > 0
+            ? std::clamp(1.0f - float(_filmSamples - 1) / float(frame.effectDenoiseSamples), 0.0f, 1.0f)
+            : 1.0f;
+    rt.gatherDenoise = frame.finalGatherDenoise * denoiseFade;
+    constexpr float kShadowDenoiseRadius = 3.0f;  // pixels, on the first sample
+    rt.shadowDenoise = frame.rtShadowDenoise ? kShadowDenoiseRadius * denoiseFade : 0.0f;
+    rt.reflectionDenoise = frame.rtReflectionDenoise ? denoiseFade : 0.0f;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     rt.displacementGraphs = frame.displacementGraphs;
     const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;

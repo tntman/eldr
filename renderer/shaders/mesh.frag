@@ -202,7 +202,7 @@ float ShadowDistance(float depth, float n, float f)
 float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
 {
     float traced;
-    if (RtShadow(index, traced)) {
+    if (RtShadow(index, p, ng, traced)) {
         return traced;
     }
     uint tile = lightShadow[index];
@@ -720,7 +720,7 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
 float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
 {
     float traced;
-    if (RtShadow(frame.counts.y, traced)) {
+    if (RtShadow(frame.counts.y, p, ng, traced)) {
         return traced;
     }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);

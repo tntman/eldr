@@ -415,6 +415,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
                                 {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
+                                {t2.rtShadowDenoise, &frame.rtShadowDenoise},
+                                {t2.rtReflectionDenoise, &frame.rtReflectionDenoise},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
                                 {t2.dofJitter, &frame.dofJitter},
@@ -619,6 +621,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGather, int(frame.finalGather)), 0, 2));
     frame.finalGatherRays =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
+    frame.effectDenoiseSamples = uint32_t(
+        std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));

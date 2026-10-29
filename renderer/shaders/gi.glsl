@@ -26,6 +26,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
     vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
+    vec4 denoise;        // x: traced shadows' filter radius in pixels (RtTraced), y: traced reflections'
+                         // filter scale (RtReflection); 0: off
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
@@ -212,19 +214,29 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
     return sum / weights;
 }
 
+// Traced shadow k's texel at `pixel` (rt.shadowInfo.z lights per texel).
+vec3 RtShadowTexel(ivec2 pixel, uint k)
+{
+    uint perTexel = rt.shadowInfo.z;
+    vec4 v = imageLoad(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
+    return perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
+}
+
 // The traced shadow of `light` (its colour: what reaches p through
 // translucent casters and volumes), if it has one, on opaque pixels (the
 // traced image's). Translucent surfaces fall back to the maps: the sun keeps
 // its cascades for them, traced local lights their atlas tiles.
-// ponytail: unfiltered (a fixed blur would soften hard and small shadows
-// alike); a filter sized by the penumbra needs the blockers' distances.
-bool RtTraced(uint light, out vec3 visibility)
+// Denoised (rt.denoise.x: Frame::rtShadowDenoise, fading over the film):
+// averaged with up to 8 taps within that many pixels (kPoisson, turned per
+// pixel and sample) whose surfaces lie in p's plane (normal ng).
+// ponytail: one radius for every shadow (it softens hard ones on the
+// early samples only); a radius by the penumbra needs the blockers' distances.
+bool RtTraced(uint light, vec3 p, vec3 ng, out vec3 visibility)
 {
     visibility = vec3(1.0);
     if (!Feature(kFeatureRtShadows)) {
         return false;
     }
-    uint perTexel = rt.shadowInfo.z;
     for (uint k = 0u; k < 16u; ++k) {
         uint traced = rt.shadowLights[k >> 2u][k & 3u];
         if (traced == kNone) {
@@ -234,8 +246,26 @@ bool RtTraced(uint light, out vec3 visibility)
             if (!RtOpaque()) {
                 return false;
             }
-            vec4 v = imageLoad(rtShadowImage, ivec2(gl_FragCoord.xy) + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
-            visibility = perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
+            ivec2 pixel = ivec2(gl_FragCoord.xy);
+            visibility = RtShadowTexel(pixel, k);
+            float radius = rt.denoise.x;
+            if (radius >= 1.0) {
+                float weights = 1.0;
+                float angle = 6.2831853 * SampleNoise(kDimShadow, gl_FragCoord.xy, float(frame.localLights.y));
+                mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+                float tolerance = 0.02 * distance(p, frame.cameraPos.xyz);
+                ivec2 size = textureSize(sceneDepth, 0);
+                for (int i = 0; i < 8; ++i) {
+                    ivec2 tap = clamp(pixel + ivec2(rotation * kPoisson[i] * radius), ivec2(0), size - 1);
+                    vec4 q = frame.invViewProj * vec4((vec2(tap) + 0.5) / vec2(size) * 2.0 - 1.0,
+                                                      texelFetch(sceneDepth, tap, 0).r * 2.0 - 1.0, 1.0);
+                    if (abs(dot(q.xyz / q.w - p, ng)) < tolerance) {
+                        visibility += RtShadowTexel(tap, k);
+                        weights += 1.0;
+                    }
+                }
+                visibility /= weights;
+            }
             return true;
         }
     }
@@ -244,18 +274,18 @@ bool RtTraced(uint light, out vec3 visibility)
 
 // Split for mesh.frag's Shadow() and ShadowTint(): the brightest channel,
 // and the colour over it.
-bool RtShadow(uint light, out float visibility)
+bool RtShadow(uint light, vec3 p, vec3 ng, out float visibility)
 {
     vec3 v;
-    bool traced = RtTraced(light, v);
+    bool traced = RtTraced(light, p, ng, v);
     visibility = max(max(v.r, v.g), v.b);
     return traced;
 }
 
-bool RtShadowTint(uint light, out vec3 tint)
+bool RtShadowTint(uint light, vec3 p, vec3 ng, out vec3 tint)
 {
     vec3 v;
-    bool traced = RtTraced(light, v);
+    bool traced = RtTraced(light, p, ng, v);
     float m = max(max(v.r, v.g), v.b);
     tint = m > 0.0 ? v / m : vec3(1.0);
     return traced;
@@ -263,14 +293,15 @@ bool RtShadowTint(uint light, out vec3 tint)
 
 // Traced reflections replace the dome's (and SSR) by their weight (a),
 // which fades out over rough surfaces; rough ones are averaged over up to
-// 12 pixels around.
+// 12 pixels around (times rt.denoise.y: Frame::rtReflectionDenoise, fading
+// over the film).
 vec3 RtReflection(vec3 specular, vec3 p, vec3 n, float perceptual)
 {
     if (!Feature(kFeatureRtReflections) || !RtOpaque()) {
         return specular;
     }
     float weight = imageLoad(rtReflectionImage, ivec2(gl_FragCoord.xy)).a;
-    return mix(specular, RtAround(p, n, 12.0 * smoothstep(0.05, 0.5, perceptual)).rgb, weight);
+    return mix(specular, RtAround(p, n, 12.0 * smoothstep(0.05, 0.5, perceptual) * rt.denoise.y).rgb, weight);
 }
 
 // Diffuse light from the probes where they cover p, else `fallback` (the

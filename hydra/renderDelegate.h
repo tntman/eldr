@@ -209,7 +209,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
-    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
+    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))     ((effectDenoiseSamples, "eldr:effectDenoiseSamples")) ((rtShadowDenoise, "eldr:rtShadowDenoise")) ((rtReflectionDenoise, "eldr:rtReflectionDenoise")) \
     ((screenDicing, "eldr:screenDicing"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
