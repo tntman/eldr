@@ -210,7 +210,9 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
     ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
-    ((screenDicing, "eldr:screenDicing"))
+    ((screenDicing, "eldr:screenDicing")) \
+    ((denoise, "eldr:denoise")) \
+    ((adaptiveTiles, "eldr:adaptiveTiles"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -228,7 +230,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
     ((hitPz, "ray:hitPz"))                                  \
     ((baseColor, "export_basecolor"))                       \
     ((cryptoObject, "primvars:__name"))                     \
-    ((cryptoMaterial, "primvars:__materialname"))
+    ((cryptoMaterial, "primvars:__materialname"))           \
+    ((beautyRaw, "eldr:beautyRaw"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 

@@ -19,19 +19,6 @@ Mat4 ToMat4(const float *m)
     return r;
 }
 
-float HalfToFloat(uint16_t h)
-{
-    const int exponent = (h >> 10) & 0x1F, mantissa = h & 0x3FF;
-    const float sign = (h & 0x8000) ? -1.0f : 1.0f;
-    if (exponent == 0) {
-        return sign * std::ldexp(float(mantissa), -24);
-    }
-    if (exponent == 31) {
-        return mantissa ? 0.0f : sign * 65504.0f;
-    }
-    return sign * std::ldexp(float(mantissa | 0x400), exponent - 25);
-}
-
 // Vulkan's cube faces (+X, -X, +Y, -Y, +Z, -Z): the direction through the
 // face's centre and those its s and t coordinates grow along (ibl.cpp's
 // CubeDir).

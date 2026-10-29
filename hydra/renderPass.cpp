@@ -442,8 +442,29 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.lazyExtraAovs, &frame.lazyExtraAovs},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
-                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}}) {
+                                {t2.ssgiTileOrder, &frame.ssgiTileOrder}, {t2.denoise, &frame.denoise},
+                                {t2.adaptiveTiles, &frame.adaptiveTiles}}) {
         *value = delegate->GetRenderSetting<bool>(token, *value);
+    }
+    // eldr:denoise, else Karma's: its viewport toggle (karma:hydra:denoise)
+    // or a "denoise" image filter (karma:global:imagefilter, its final
+    // renders), from the delegate's settings or the settings prim's. An
+    // eldr:denoise authored on the prim (false too) overrides them.
+    if (!frame.denoise && !_appliedSettings.count(t2.denoise)) {
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto karma = [&](const char *name) {
+            VtValue v = delegate->GetRenderSetting(TfToken(name));
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &settings = prim->GetNamespacedSettings();
+                const auto it = settings.find(name);
+                v = it != settings.end() ? it->second : VtValue();
+            }
+            return v;
+        };
+        const VtValue toggle = VtValue::Cast<bool>(karma("karma:hydra:denoise"));
+        const VtValue filter = VtValue::Cast<std::string>(karma("karma:global:imagefilter"));
+        frame.denoise = (!toggle.IsEmpty() && toggle.UncheckedGet<bool>()) ||
+                        (!filter.IsEmpty() && filter.UncheckedGet<std::string>().find("\"denoise\"") != std::string::npos);
     }
     // Volume Limit, the largest on a volume (HdVkVolume::Sync) or in the
     // render settings (eldr:object:volumelimit set before

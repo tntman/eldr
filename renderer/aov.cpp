@@ -96,7 +96,7 @@ uint32_t CryptomatteHash(const std::string &name)
 uint32_t Aovs::Components(Kind kind)
 {
     constexpr uint32_t components[kDirectDiffuse] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3};
-    return kind < kDirectDiffuse ? components[kind] : 3;  // the splits: rgb
+    return kind == kBeautyRaw ? 4 : kind < kDirectDiffuse ? components[kind] : 3;  // the splits: rgb
 }
 
 bool Aovs::Any(float *const targets[kCount])
@@ -106,7 +106,7 @@ bool Aovs::Any(float *const targets[kCount])
 
 bool Aovs::NeedsSplits(float *const targets[kCount])
 {
-    return std::any_of(targets + kDirectDiffuse, targets + kCount, [](const float *t) { return t; });
+    return std::any_of(targets + kDirectDiffuse, targets + kBeautyRaw, [](const float *t) { return t; });
 }
 
 uint32_t Aovs::SplitLayers(float *const targets[kCount])
@@ -573,7 +573,7 @@ void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
 void Aovs::Read(float *const targets[kCount]) const
 {
     for (uint32_t k = 0; k < kCount; ++k) {
-        if (targets[k]) {
+        if (targets[k] && k != kBeautyRaw) {  // the Renderer's own
             std::memcpy(targets[k], static_cast<const float *>(_readback.mapped) + _offsets[k],
                         sizeof(float) * _components[k] * _width * _height);
         }

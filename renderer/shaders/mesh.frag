@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "frame.glsl"
+#include "tiles.glsl"
 #include "fog.glsl"
 #include "lights.glsl"
 #include "probes.glsl"
@@ -1080,6 +1081,17 @@ vec3 Irradiance(vec3 d)
 
 void main()
 {
+    // Tile-based adaptive sampling: a stopped tile keeps its ids and motion
+    // but isn't shaded (whole 2 x 2 quads: tiles are 16 pixels).
+    if (kShadingPass == 0u && TileSkipped(ivec2(gl_FragCoord.xy))) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        outPrimId = inPrimId;
+        outInstanceId = inInstanceId;
+        vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
+        vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
+        outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
+        return;
+    }
     vec3 baseColor = inColor;
     vec3 emissive = vec3(0.0);
     float metallic = 0.0, roughness = 0.5, occlusion = 1.0;

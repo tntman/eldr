@@ -59,7 +59,10 @@ public:
         kHoldoutShadow,   // the same on holdouts, diffuse only (Karma's holdouts;shadow;CDL)
         kVolume,          // volumes' light (CV.*L); the splits behind are attenuated by them
         kLightGroup0,     // a light group's direct light (C.*<L.'tag'>), kMaxLightGroups of them
-        kCount = kLightGroup0 + kMaxLightGroups
+        // The film's beauty before Frame::denoise, linear and exposed, rgba:
+        // the Renderer's own (no pass here), once the film converged.
+        kBeautyRaw = kLightGroup0 + kMaxLightGroups,
+        kCount
     };
     // Floats per pixel each kind has (a target may ask for 1..4 instead:
     // missing ones are 0, extra ones dropped).

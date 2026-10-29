@@ -63,6 +63,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // w: its capture holds joints (+1) and blend shape weights (+2)
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl), y 1: opacity presence on
     vec4 scene;          // x: the scene's frame, y: in seconds (program.glsl's kOpTime)
+    uvec4 tiles;         // tile-based adaptive sampling (tiles.glsl): x the stamp a tile needs, 0 off; y, z tiles
 } frame;
 
 // Unit direction from p towards the viewer: the camera's position, or for
