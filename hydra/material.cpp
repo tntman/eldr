@@ -2618,21 +2618,20 @@ HdVkRamp HdVkRamp::Read(HdMaterialNode2 const &node, bool color)
 
 namespace {
 
-// Clamped uniform B-spline weights of m control points, degree p, at u in
-// [0, 1] (Cox-de Boor), into w.
-void BSplineWeights(int m, int p, float u, std::vector<float> *w)
+// Uniform cubic B-spline weights of m control points, the end ones
+// tripled (Houdini's ramps: the curve starts and ends at them, m + 1
+// segments), at u in [0, 1], into w.
+void BSplineWeights(int m, float u, std::vector<float> *w)
 {
-    auto knot = [&](int j) { return j <= p ? 0.0f : j >= m ? 1.0f : float(j - p) / float(m - p); };
-    const int span = std::min(int(u * float(m - p)) + p, m - 1);  // knot[span] <= u < knot[span + 1]
-    std::vector<float> n(m + p, 0.0f);
-    n[span] = 1.0f;
-    for (int d = 1; d <= p; ++d) {
-        for (int j = 0; j + d < m + p; ++j) {
-            const float a = knot(j + d) - knot(j), b = knot(j + d + 1) - knot(j + 1);
-            n[j] = (a > 0 ? (u - knot(j)) / a * n[j] : 0.0f) + (b > 0 ? (knot(j + d + 1) - u) / b * n[j + 1] : 0.0f);
-        }
+    const float x = u * float(m + 1);
+    const int seg = std::min(int(x), m);
+    const float s = x - float(seg), s2 = s * s, s3 = s2 * s;
+    const float basis[4] = {(1 - s) * (1 - s) * (1 - s) / 6, (3 * s3 - 6 * s2 + 4) / 6,
+                            (-3 * s3 + 3 * s2 + 3 * s + 1) / 6, s3 / 6};
+    w->assign(m, 0.0f);
+    for (int j = 0; j < 4; ++j) {
+        (*w)[std::clamp(seg + j - 2, 0, m - 1)] += basis[j];
     }
-    w->assign(n.begin(), n.begin() + m);
 }
 
 // Bernstein weights of a Bezier spline through every third of m control
@@ -2687,7 +2686,7 @@ GfVec4f HdVkRamp::operator()(float t) const
         std::vector<float> w;
         auto weights = [&](float u) {
             if (b == "bspline") {
-                BSplineWeights(m, std::min(3, m - 1), u, &w);
+                BSplineWeights(m, u, &w);
             } else {
                 BezierWeights(m, u, &w);
             }
@@ -2712,8 +2711,16 @@ GfVec4f HdVkRamp::operator()(float t) const
     if (b != "catmull-rom" && b != "monotonecubic" && b != "hermite") {
         return values[i] + s * (values[i + 1] - values[i]);  // linear, and unknown bases
     }
-    // Cubic Hermite in the keys' units: Catmull-Rom (central difference) or
-    // Fritsch-Carlson monotone slopes inside, flat at the end keys.
+    const float s2 = s * s, s3 = s2 * s;
+    if (b != "monotonecubic") {
+        // Uniform Catmull-Rom per segment, the end keys repeated.
+        // ponytail: hermite (value and slope keys) is read as Catmull-Rom.
+        const GfVec4f &k0 = values[std::max(i - 1, 0)], &k3 = values[std::min(i + 2, n - 1)];
+        return 0.5f * ((2 * s2 - s3 - s) * k0 + (3 * s3 - 5 * s2 + 2) * values[i] + (4 * s2 - 3 * s3 + s) * values[i + 1] +
+                       (s3 - s2) * k3);
+    }
+    // Monotone cubic: Fritsch-Carlson slopes in the keys' units, flat at the
+    // end keys.
     auto slope = [&](int j) {
         GfVec4f m(0.0f);
         if (j == 0 || j == n - 1) {
@@ -2721,17 +2728,12 @@ GfVec4f HdVkRamp::operator()(float t) const
         }
         const float h0 = keys[j] - keys[j - 1], h1 = keys[j + 1] - keys[j];
         for (int c = 0; c < 4; ++c) {
-            if (b != "monotonecubic") {
-                m[c] = h0 + h1 > 0 ? (values[j + 1][c] - values[j - 1][c]) / (h0 + h1) : 0.0f;
-                continue;
-            }
             const float d0 = h0 > 0 ? (values[j][c] - values[j - 1][c]) / h0 : 0.0f;
             const float d1 = h1 > 0 ? (values[j + 1][c] - values[j][c]) / h1 : 0.0f;
             m[c] = d0 * d1 > 0 ? 3.0f * (h0 + h1) / ((2.0f * h1 + h0) / d0 + (h1 + 2.0f * h0) / d1) : 0.0f;
         }
         return m;
     };
-    const float s2 = s * s, s3 = s2 * s;
     return (2 * s3 - 3 * s2 + 1) * values[i] + (s3 - 2 * s2 + s) * dt * slope(i) + (3 * s2 - 2 * s3) * values[i + 1] +
            (s3 - s2) * dt * slope(i + 1);
 }

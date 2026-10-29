@@ -61,10 +61,11 @@ struct HdVkRamp {
     // kma_rampconst's fkeys/fvalues/fbasis (vkeys/... with `color`), the
     // first framp/vramp keys where that count is authored.
     static HdVkRamp Read(HdMaterialNode2 const &node, bool color);
-    // At t: the end values outside the keys; constant, linear, Catmull-Rom
-    // and monotone cubic (flat at the end keys) between two keys, bezier and
-    // bspline over each run of keys with that basis as a curve through
-    // (key, value) control points.
+    // At t, as Houdini's ramps (hou.Ramp.lookup, checked to 1e-6): the end
+    // values outside the keys; constant, linear, uniform Catmull-Rom (end
+    // keys repeated) and monotone cubic (flat at the end keys) between two
+    // keys; bezier and bspline (uniform, end keys tripled) over each run of
+    // keys with that basis as a curve through (key, value) control points.
     GfVec4f operator()(float t) const;
 };
 
