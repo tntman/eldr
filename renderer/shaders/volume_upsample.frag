@@ -16,6 +16,21 @@ layout(set = 0, binding = 66) uniform sampler2D halfVolumes;  // premultiplied r
 
 layout(location = 0) out vec4 outColor;
 
+// The light splits seen through the volumes, as volume.frag's VolumeSplits.
+layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
+void VolumeSplits(vec3 radiance, vec3 transmittance)
+{
+    int layers = imageSize(lightSplits).z;
+    if (frame.aovs.x == 0u || layers <= 4) {
+        return;
+    }
+    ivec2 q = ivec2(gl_FragCoord.xy);
+    for (int i = 0; i < layers; ++i) {
+        vec4 s = imageLoad(lightSplits, ivec3(q, i));
+        imageStore(lightSplits, ivec3(q, i), vec4(s.rgb * transmittance + (i == 9 ? radiance : vec3(0.0)), s.a));
+    }
+}
+
 // Distance from the camera to the depth at full resolution pixel p.
 float Distance(vec2 p, float depth)
 {
@@ -51,4 +66,5 @@ void main()
         weights += w;
     }
     outColor = sum / weights;
+    VolumeSplits(outColor.rgb, vec3(1.0 - outColor.a));
 }

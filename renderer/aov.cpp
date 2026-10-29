@@ -42,7 +42,7 @@ struct Push {  // mirror of aov.comp's
 
 bool IsColour(uint32_t k)
 {
-    return k == Aovs::kAlbedo || k == Aovs::kEmission || (k >= Aovs::kDiffuseAlbedo && k <= Aovs::kCombinedGlossy);
+    return k == Aovs::kAlbedo || k == Aovs::kEmission || k >= Aovs::kDiffuseAlbedo;
 }
 
 bool IsCrypto(uint32_t k)
@@ -95,8 +95,8 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3, 3, 3, 3, 3, 3, 3};
-    return components[kind];
+    constexpr uint32_t components[kDirectDiffuse] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3};
+    return kind < kDirectDiffuse ? components[kind] : 3;  // the splits: rgb
 }
 
 bool Aovs::Any(float *const targets[kCount])
@@ -106,7 +106,16 @@ bool Aovs::Any(float *const targets[kCount])
 
 bool Aovs::NeedsSplits(float *const targets[kCount])
 {
-    return std::any_of(targets + kDirectDiffuse, targets + kCombinedGlossy + 1, [](const float *t) { return t; });
+    return std::any_of(targets + kDirectDiffuse, targets + kCount, [](const float *t) { return t; });
+}
+
+uint32_t Aovs::SplitLayers(float *const targets[kCount])
+{
+    uint32_t groups = 0;
+    for (uint32_t g = 0; g < kMaxLightGroups; ++g) {
+        groups = targets[kLightGroup0 + g] ? g + 1 : groups;
+    }
+    return NeedsSplits(targets) ? kSplitLayers + groups : 4;
 }
 
 bool Aovs::NeedsGeometry(float *const targets[kCount])
@@ -499,14 +508,14 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 }
 
-bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
+bool Aovs::EnsureSplits(uint32_t width, uint32_t height, uint32_t layers)
 {
-    if (_splits.image && width == _splitsWidth && height == _splitsHeight) {
+    if (_splits.image && width == _splitsWidth && height == _splitsHeight && layers == _splitsLayers) {
         return false;
     }
     _dev.Destroy(_splits);
     _dev.Destroy(_prevSplits);
-    _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 4, 1,
+    _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, layers, 1,
                                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -515,8 +524,9 @@ bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
                                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     _splitsWidth = width;
     _splitsHeight = height;
+    _splitsLayers = layers;
     _dev.Submit([&](VkCommandBuffer cmd) {
-        ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
+        ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers}, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         ImageBarrier(cmd, _prevSplits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
@@ -528,14 +538,16 @@ bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
 
 void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
 {
-    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
+    // Last frame's are the first 4 layers (SSR's direct and indirect).
+    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, _splitsLayers},
+        first{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
     if (keepPrevious) {
         // Last frame's writers (shading, SSR, subsurface, AOV reads) are
         // done; this frame's shading samples the copy.
         ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
                      VK_IMAGE_LAYOUT_GENERAL);
-        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+        ImageBarrier(cmd, _prevSplits.image, first, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageCopy copy{};
@@ -543,7 +555,7 @@ void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
         copy.extent = {_splitsWidth, _splitsHeight, 1};
         vkCmdCopyImage(cmd, _splits.image, VK_IMAGE_LAYOUT_GENERAL, _prevSplits.image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        ImageBarrier(cmd, _prevSplits.image, first, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }

@@ -239,6 +239,7 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     dep.memoryBarrierCount = 1;
     dep.pMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
+    StorageBarrier(cmd);  // the light splits volume.frag attenuates (aov.h)
 
     VolumeParams p = Params(s, volumeCount);
     p.part = part;

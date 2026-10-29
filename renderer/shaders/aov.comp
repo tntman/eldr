@@ -16,8 +16,7 @@ layout(std430, set = 0, binding = 5) readonly buffer Params {
     uint cryptomatte[]; // per primId: object, material
 };
 layout(std430, set = 0, binding = 6) buffer Output { float values[]; };
-// Light splits stored by the shading pass: direct diffuse, indirect diffuse,
-// direct glossy, indirect glossy.
+// Light splits stored by the shading pass, layers as Aovs::EnsureSplits.
 layout(set = 0, binding = 7) uniform sampler2DArray splits;
 // Film samples of the colour AOVs: per pixel `components` sums of
 // weight * value, the weights' sum (film.comp's), then the film's count of
@@ -46,7 +45,9 @@ layout(push_constant) uniform Push {
 const uint kNormal = 0u, kNormalEye = 1u, kPositionEye = 2u, kCameraDepth = 3u, kSt = 4u, kAlbedo = 5u,
            kEmission = 6u, kCryptoObject = 7u, kCryptoMaterial = 8u, kPositionWorld = 9u, kDepth = 10u,
            kDiffuseAlbedo = 11u, kDirectDiffuse = 12u, kIndirectDiffuse = 13u, kCombinedDiffuse = 14u,
-           kDirectGlossy = 15u, kIndirectGlossy = 16u, kCombinedGlossy = 17u;
+           kDirectGlossy = 15u, kIndirectGlossy = 16u, kCombinedGlossy = 17u, kTransmission = 18u,
+           kSubsurface = 19u, kCoat = 20u, kShadow = 21u, kHoldoutShadow = 22u, kVolume = 23u, kLightGroup0 = 24u;
+const int kGroupLayer = 10;  // Aovs::kSplitLayers
 
 vec3 OctDecode(vec2 e)
 {
@@ -64,30 +65,43 @@ bool IsCrypto(uint kind)
 
 bool IsColour(uint kind)
 {
-    return kind == kAlbedo || kind == kEmission || (kind >= kDiffuseAlbedo && kind <= kCombinedGlossy);
+    return kind == kAlbedo || kind == kEmission || kind >= kDiffuseAlbedo;
+}
+
+// A layer of the splits (0 past the ones made).
+vec4 Split(ivec2 q, int layer)
+{
+    return layer < textureSize(splits, 0).z ? texelFetch(splits, ivec3(q, layer), 0) : vec4(0.0);
 }
 
 // The colour AOVs' value at q, from this sample's G-buffer and splits.
+// Diffuse takes out the subsurface light (layers 5, 6), indirect glossy
+// the refracted (4).
 vec3 Colour(ivec2 q)
 {
     switch (pc.kind) {
     case kAlbedo: return texelFetch(albedo, q, 0).rgb;
     case kEmission: return texelFetch(emission, q, 0).rgb;
-    case kDirectDiffuse:
-    case kIndirectDiffuse:
-    case kDirectGlossy:
-    case kIndirectGlossy: {
-        int layer = int(pc.kind - kDirectDiffuse) - (pc.kind >= kDirectGlossy ? 1 : 0);
-        return texelFetch(splits, ivec3(q, layer), 0).rgb;
+    case kDirectDiffuse: return Split(q, 0).rgb - Split(q, 5).rgb;
+    case kIndirectDiffuse: return Split(q, 1).rgb - Split(q, 6).rgb;
+    case kCombinedDiffuse: return Split(q, 0).rgb + Split(q, 1).rgb - Split(q, 5).rgb - Split(q, 6).rgb;
+    case kDirectGlossy: return Split(q, 2).rgb;
+    case kIndirectGlossy: return Split(q, 3).rgb - Split(q, 4).rgb;
+    case kCombinedGlossy: return Split(q, 2).rgb + Split(q, 3).rgb - Split(q, 4).rgb;
+    case kTransmission: return Split(q, 4).rgb;
+    case kSubsurface: return Split(q, 5).rgb + Split(q, 6).rgb;
+    case kCoat: return Split(q, 7).rgb;
+    case kShadow:
+    case kHoldoutShadow: {
+        vec4 s = Split(q, 8);
+        return (s.a > 0.5) == (pc.kind == kHoldoutShadow) ? s.rgb : vec3(0.0);
     }
-    case kCombinedDiffuse:
-    case kCombinedGlossy: {
-        int layer = pc.kind == kCombinedDiffuse ? 0 : 2;
-        return texelFetch(splits, ivec3(q, layer), 0).rgb + texelFetch(splits, ivec3(q, layer + 1), 0).rgb;
-    }
-    default: {  // kDiffuseAlbedo: base colour * (1 - metallic)
+    case kVolume: return Split(q, 9).rgb;
+    case kDiffuseAlbedo: {  // base colour * (1 - metallic)
         vec4 a = texelFetch(albedo, q, 0);
         return a.rgb * (1.0 - a.a);
+    }
+    default: return Split(q, kGroupLayer + int(pc.kind - kLightGroup0)).rgb;
     }
     }
 }
@@ -241,15 +255,15 @@ void main()
         case kPositionEye: v.xyz = eye; break;
         case kCameraDepth: v.x = eye.z; break;
         case kSt: v.xy = g.zw; break;
-        case kAlbedo: case kEmission: case kDiffuseAlbedo: case kDirectDiffuse: case kIndirectDiffuse:
-        case kCombinedDiffuse: case kDirectGlossy: case kIndirectGlossy: case kCombinedGlossy:
-            v.xyz = Colour(p); break;
         case kPositionWorld: v.xyz = world.xyz / world.w; break;
         case kDepth: v.x = -eye.z; break;
         case kCryptoObject:
         case kCryptoMaterial:
             v = crypto != 0u ? vec4(uintBitsToFloat(crypto), 1.0, 0.0, 0.0) : vec4(0.0); break;
         }
+    }
+    if (IsColour(pc.kind)) {  // 0 where nothing was drawn, but volumes over the background
+        v.xyz = Colour(p);
     }
     uint base = pc.offset + uint(p.y * size.x + p.x) * pc.components;
     // Ids (Cryptomatte) aren't averaged: the latest frame's, or (weight 0)

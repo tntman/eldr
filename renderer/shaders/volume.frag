@@ -46,6 +46,22 @@ layout(set = 0, binding = 17) uniform sampler2DShadow shadowAtlas;
 layout(std430, set = 0, binding = 18) readonly buffer LightShadows { uint lightShadow[]; };
 layout(std430, set = 0, binding = 19) readonly buffer ShadowTiles { ShadowTile shadowTiles[]; };
 
+// The light splits (aov.h) behind a volume are seen through it, as in
+// Karma's LPEs; its light is layer 9's. As volume_upsample.frag's.
+layout(set = 0, binding = 67, rgba16f) uniform image2DArray lightSplits;
+void VolumeSplits(vec3 radiance, vec3 transmittance)
+{
+    int layers = imageSize(lightSplits).z;
+    if (frame.aovs.x == 0u || layers <= 4) {
+        return;
+    }
+    ivec2 q = ivec2(gl_FragCoord.xy);
+    for (int i = 0; i < layers; ++i) {
+        vec4 s = imageLoad(lightSplits, ivec3(q, i));
+        imageStore(lightSplits, ivec3(q, i), vec4(s.rgb * transmittance + (i == 9 ? radiance : vec3(0.0)), s.a));
+    }
+}
+
 layout(push_constant) uniform Params {
     float stepSize;     // density voxels per step
     uint maxSteps;      // per pixel
@@ -576,4 +592,7 @@ void main()
     float mean = dot(transmittance, vec3(1.0 / 3.0));
     outColor = vec4(radiance, 1.0 - mean);
     outTransmittance = vec4(transmittance, mean);
+    if (params.scale == 1u) {
+        VolumeSplits(radiance, transmittance);
+    }
 }

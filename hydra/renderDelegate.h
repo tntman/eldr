@@ -208,7 +208,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
 
 // Karma's names for what Eldr's extra AOVs hold: the source names of the
 // render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
-// hands them to Hydra (raw names, "lpe:" and "primvars:" ones).
+// hands them to Hydra (raw names and "primvars:" ones; light path
+// expressions: HdVkFindAov).
 #define HDVK_AOV_TOKENS                                     \
     ((hitN, "ray:hitN"))                                    \
     ((hitNFacing, "ray:hitN_facing"))                       \
@@ -217,15 +218,6 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
     ((hitPCamera, "ray:hitP_camera"))                       \
     ((hitPz, "ray:hitPz"))                                  \
     ((baseColor, "export_basecolor"))                       \
-    ((diffuseAlbedo, "lpe:CDA"))                            \
-    ((directEmission, "lpe:CO"))                            \
-    ((combinedEmission, "lpe:C.*O"))                        \
-    ((directDiffuse, "lpe:C<RD>L"))                         \
-    ((indirectDiffuse, "lpe:C<RD>.+L"))                     \
-    ((combinedDiffuse, "lpe:C<RD>.*L"))                     \
-    ((directGlossy, "lpe:C<RG>L"))                          \
-    ((indirectGlossy, "lpe:C<RG>.+L"))                      \
-    ((combinedGlossy, "lpe:C<RG>.*[LO]"))                   \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))
 
@@ -241,6 +233,15 @@ struct HdVkExtraAov {
     HdFormat format;
 };
 const std::vector<HdVkExtraAov> &HdVkExtraAovs();
+// The extra AOV a name binds: one of HdVkExtraAovs, or a light path
+// expression ("lpe:...") of the forms Karma writes (renderDelegate.cpp's
+// LpeKind; format Float32Vec3). False for any other name.
+bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
+// Light groups: Karma's LPE tags (inputs:karma:light:lpetag) in the order
+// AOVs first asked for them, at most vkr::Aovs::kMaxLightGroups (another
+// gets -1 and a warning). Process-wide.
+int HdVkLightGroup(const std::string &tag);
+std::vector<std::string> HdVkLightGroups();
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
