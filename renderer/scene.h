@@ -7,6 +7,7 @@
 
 #include <future>
 
+#include <algorithm>
 #include <array>
 #include <map>
 #include <memory>
@@ -681,15 +682,14 @@ public:
     // changed since the last commit (no material, light, visibility or
     // tag edit), so a commit with no dirty mesh returns at once.
     void Commit(bool keepMotion = false, bool unchanged = false);
-    // Some volume has a Volume Limit above 0 (Volume::multipleScattering).
-    bool AnyVolumeMultipleScattering() const
+    // The largest Volume Limit of the visible volumes (Volume::volumeLimit).
+    float MaxVolumeLimit() const
     {
+        float limit = 0.0f;
         for (const auto &v : _volumes) {
-            if (v->multipleScattering && v->visible) {
-                return true;
-            }
+            limit = v->visible ? std::max(limit, v->volumeLimit) : limit;
         }
-        return false;
+        return limit;
     }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }

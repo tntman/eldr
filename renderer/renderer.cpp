@@ -1882,7 +1882,8 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumeGrids, nullptr);
     write(65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &volumes, nullptr);
     // Without half resolution volumes yet, the LUT stands in.
-    const VkDescriptorImageInfo halfVolumes{_clampSampler, _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
+    const VkDescriptorImageInfo halfVolumes{_volumePass->Half() ? _volumePass->HalfSampler() : _clampSampler,
+                                            _volumePass->Half() ? _volumePass->Half() : _brdfLut.view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &halfVolumes);
     const VkDescriptorImageInfo ssrImages[4] = {{VK_NULL_HANDLE, _ssr.Rays(), VK_IMAGE_LAYOUT_GENERAL},
@@ -3223,7 +3224,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
-    // shadow (a texel per light), volumes are marched (grey).
+    // shadow (a texel per light), volumes are marched (per channel).
     const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
     rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
     rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows

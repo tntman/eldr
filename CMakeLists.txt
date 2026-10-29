@@ -118,6 +118,15 @@ foreach(variant layers graph_layers)
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Half resolution volumes: volume.frag packing radiance and coloured transmittance (HALF).
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/volume_half.frag.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DHALF
+            -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/volume.frag
+    DEPENDS renderer/shaders/volume.frag renderer/shaders/frame.glsl renderer/shaders/lights.glsl
+            renderer/shaders/fog.glsl renderer/shaders/noise.glsl renderer/shaders/volume.glsl
+            third_party/nanovdb/PNanoVDB.h)
+list(APPEND shader_incs ${spv})
 # Upscaling (TAAU): taa.frag reconstructing a larger history (UPSCALE).
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/taa_upscale.frag.inc)
 add_custom_command(OUTPUT ${spv}

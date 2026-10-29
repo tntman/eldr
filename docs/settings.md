@@ -233,7 +233,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
 | Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
-| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Distant lights scatter more than once (octaves, Wrenninge 2015). Off: single scattering, as Karma's default Volume Limit 0. Also on for a volume with `primvars:eldr:object:volumelimit` (else `karma:object:volumelimit`) above 0. | About 1.2x Karma at Volume Limit 16 |
+| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Sun and dome light scatters more than once (octaves), as Karma's Volume Limit 16. Off: single scattering (Karma's default, limit 0). A Volume Limit above 0 (`eldr:` or `karma:object:volumelimit`, on a volume or the settings prim) sets the octaves for that limit. | Fitted to Karma at limits 1, 4, 16: within 7% of its gain over single scattering (sun, dome); up to 6 octaves per sun and step |
 
 ### Camera and film
 
