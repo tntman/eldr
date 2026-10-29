@@ -577,6 +577,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Adaptive Sampling Noise Threshold (0 = off)", t.adaptiveThreshold, VtValue(frame.adaptiveThreshold)},
         {"Adaptive Sampling Threshold, Final Quality (0 = off)", t2.adaptiveFinalThreshold,
          VtValue(frame.adaptiveFinalThreshold)},
+        // -1: not set, Karma's quality applies (else 1).
+        {"Diffuse Quality (GI, final gather, AO rays; -1 = Karma's)", t2.diffuseQuality, VtValue(-1.0f)},
+        {"Reflection Quality (traced reflection rays; -1 = Karma's)", t2.reflectQuality, VtValue(-1.0f)},
+        {"Light Quality (traced shadow rays; -1 = Karma's)", t2.lightQuality, VtValue(-1.0f)},
+        {"Subsurface Quality (taps; -1 = Karma's)", t2.sssQuality, VtValue(-1.0f)},
+        {"Volume Quality (shadow steps; -1 = Karma's)", t2.volumeQuality, VtValue(-1.0f)},
         {"Adaptive Sampling Converged Pixel Fraction", t2.adaptivePixelFraction, VtValue(frame.adaptivePixelFraction)},
         {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
          VtValue(int(frame.adaptiveMinSamples))},

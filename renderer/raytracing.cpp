@@ -1063,15 +1063,17 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowVolume[0] = work.volumeStep;
     d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;
-    d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
-    d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);
+    // 0 rays (quality multipliers below 1, film samples between traced
+    // ones): rt_pixels.rgen leaves that image as the last sample wrote it.
+    d.params[1] = std::min(work.shadowSamples, 16u);
+    d.params[2] = std::min(work.reflectionSamples, 16u);
     d.params[3] = work.sun;
     d.skinned[0] = gpu.instanceCapacity;
     d.skinned[1] = uint32_t(_skinnedOrder.size());
     d.refraction[0] = std::clamp(work.refractionBounces, 1u, 16u);
     d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
     d.gather[1] = work.gather && work.gi ? 1.0f : 0.0f;
-    const uint32_t gatherRays = std::clamp(work.gatherRays, 1u, kMaxGatherRays);
+    const uint32_t gatherRays = std::min(work.gatherRays, kMaxGatherRays);
     for (uint32_t i = 0; i < gatherRays; ++i) {
         d.gatherSamples[i / 2][i % 2 * 2] = work.gatherSamples[i][0];
         d.gatherSamples[i / 2][i % 2 * 2 + 1] = work.gatherSamples[i][1];
@@ -1348,7 +1350,9 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
-        if (_work.shadows || _work.reflections || _work.gather) {
+        const bool traced = (_work.shadows && _work.shadowSamples > 0) ||
+                            (_work.reflections && _work.reflectionSamples > 0) || (_work.gather && _work.gatherRays > 0);
+        if (traced) {
             _fn->cmdTraceRays(cmd, &_raygen, &_miss, &_hit, &_callable, _width, _height, 1);
         }
         if (_work.refraction) {
@@ -1356,7 +1360,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
             _fn->cmdTraceRays(cmd, &_raygenRefraction, &_miss, &_hit, &_callable, _width, _height, 1);
         }
         VkPipelineStageFlags2 written = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
-        if (_work.gather && _work.gatherDenoise > 0.0f) {
+        if (_work.gather && _work.gatherRays > 0 && _work.gatherDenoise > 0.0f) {  // in place: once per traced image
             // The gathered light's denoise (gather_denoise.comp), two passes.
             for (VkPipeline p : _gatherDenoise) {
                 MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,

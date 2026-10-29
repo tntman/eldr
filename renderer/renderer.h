@@ -259,6 +259,14 @@ public:
         // directions are the next points of a scrambled Sobol sequence,
         // turned per pixel by blue noise.
         uint32_t finalGatherRays = 1;
+        // Per-component quality, as Karma's (eldr:lightQuality, ...): rays
+        // per sample times this. Light: traced shadow rays per light;
+        // reflect: traced reflection rays; diffuse: final gather rays, GI
+        // probe rays, AO/SSGI directions. Under the film a fraction spreads
+        // over the samples (0.5: the traced effect every other sample, the
+        // others keep its image; 1.5: 1, 2, 1, 2 rays), so the film averages
+        // base x quality rays per sample. Interactive: rounded, at least 1.
+        float lightQuality = 1.0f, reflectQuality = 1.0f, diffuseQuality = 1.0f;
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;

@@ -405,6 +405,26 @@ void ScrambledSobol(uint32_t index, uint32_t seed, float *out, uint32_t dims)
     }
 }
 
+// Rays this sample when an effect averages `rays` per sample (its count
+// times Frame's quality). Film: sample i takes floor((i + 1) n + c) -
+// floor(i n + c) (c just under 1, so sample 0 always traces): 0.5 traces
+// every other sample (0 rays: the effect keeps the last sample's image),
+// 1.5 alternates 2, 1. `first` is the film's index of this sample's first
+// ray, so Sobol points run on across samples. Else round(n), at least 1.
+uint32_t SampleRays(double rays, bool film, uint32_t sample, uint32_t max, uint32_t *first)
+{
+    rays = std::clamp(rays, 1.0 / 64.0, double(max));
+    if (!film) {
+        const uint32_t count = std::clamp(uint32_t(std::lround(rays)), 1u, max);
+        *first = sample * count;
+        return count;
+    }
+    constexpr double c = 0.999;
+    const double before = std::floor(sample * rays + c);
+    *first = uint32_t(before);
+    return std::min(uint32_t(std::floor((sample + 1.0) * rays + c) - before), max);
+}
+
 // Blue noise (Ulichney's void-and-cluster, Gaussian sigma 1.5, toroidal):
 // a rank per texel, 0..255 in 4 independent channels (RGBA8).
 std::vector<uint8_t> BuildBlueNoise()
@@ -3247,7 +3267,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refractionBounces = frame.rtRefractionBounces;
     rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
-    rt.shadowSamples = finalRun ? 1 : frame.rtShadowSamples;
+    // Rays per sample times the quality multipliers (SampleRays; 0: the
+    // effect keeps the last sample's image this sample).
+    // Not across time samples: the kept image would be of another time.
+    const bool spread = film && !timeSample;
+    uint32_t shadowFirst = 0, reflectionFirst = 0, gatherFirst = 0;
+    rt.shadowSamples = SampleRays(double(finalRun ? 1 : frame.rtShadowSamples) * frame.lightQuality, spread, sobolIndex,
+                                  16, &shadowFirst);
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
     // shadow (a texel per light), volumes are marched (per channel).
@@ -3257,12 +3283,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                            ? gpu.volumeCount : 0;
     rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
     rt.volumeDensity = std::max(frame.volume.density, 0.0f);
-    ScrambledSobol(sobolIndex, kSeedRtShadow, rt.shadowSample, 2);
-    rt.reflectionSamples = frame.rtReflectionSamples;
+    // One light point per traced sample (more rays per light: R2 steps from it).
+    ScrambledSobol(spread && frame.lightQuality * (finalRun ? 1 : frame.rtShadowSamples) < 1.0f ? shadowFirst : sobolIndex,
+                   kSeedRtShadow, rt.shadowSample, 2);
+    rt.reflectionSamples = SampleRays(double(frame.rtReflectionSamples) * frame.reflectQuality, spread, sobolIndex, 16,
+                                      &reflectionFirst);
     rt.sun = gpu.shadowLight;
     rt.gi = rtScene && frame.gi;
     rt.giProbes = frame.giProbes;
-    rt.giRays = frame.giRays;
+    rt.giRays = uint32_t(std::lround(double(frame.giRays) * std::max(frame.diffuseQuality, 0.0f)));  // clamped in Prepare
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     rt.giRelocation = frame.giRelocation;
@@ -3272,9 +3301,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.gatherDistance = frame.finalGatherDistance;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
-    rt.gatherRays = std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays);
+    rt.gatherRays = SampleRays(double(std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays)) * frame.diffuseQuality, spread,
+                               sobolIndex, kMaxGatherRays, &gatherFirst);
     for (uint32_t i = 0; i < rt.gatherRays; ++i) {
-        ScrambledSobol(sobolIndex * rt.gatherRays + i, kSeedRtGather, rt.gatherSamples[i], 2);
+        ScrambledSobol(gatherFirst + i, kSeedRtGather, rt.gatherSamples[i], 2);
     }
     // Per-effect denoise: full on the film's first sample, fading out
     // linearly over effectDenoiseSamples (none after), so few samples are
@@ -4006,11 +4036,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
-    // SSGI replaces it (its visibility is the AO).
+    // SSGI replaces it (its visibility is the AO). Directions: times the diffuse quality.
+    const uint32_t aoSlices = std::clamp(uint32_t(std::lround(frame.aoSlices * frame.diffuseQuality)), 1u, 8u);
     if (ssgi && draw) {
         _gtao.RecordSsgi(_cmd, fd.invViewProj, fd.prevViewProj, frame.cameraPos, frame.ssgiRadius,
                          frame.sampleDimensions ? dims[kDimSsgi] : float(sample + 1),
-                         std::clamp(frame.aoSlices, 1u, 8u), std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
+                         aoSlices, std::clamp(frame.ssgiSteps, 1u, 32u), _taa.History(),
                          _historyValid,
                          std::min(4.0f / float(frame.postProcess ? _post.Exposure() : 1.0),
                                   frame.indirectClamp > 0.0f ? frame.indirectClamp : FLT_MAX),
@@ -4022,7 +4053,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     } else if (frame.ambientOcclusion && frame.depthPrepass && draw && ibl) {
         _gtao.Record(_cmd, fd.invViewProj, frame.cameraPos, frame.aoRadius,
                      frame.sampleDimensions ? dims[kDimAo] : float(sample + 1),
-                     std::clamp(frame.aoSlices, 1u, 8u));
+                     aoSlices);
         pass("ambientOcclusion");
     } else {
         _gtao.Clear(_cmd);

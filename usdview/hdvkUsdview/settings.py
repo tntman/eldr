@@ -12,7 +12,8 @@ from .tooltips import Tooltips
 # docs/settings.md follows this order (tests/test_docs.py checks).
 GROUPS = [
     ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold denoise finalShadows rtRefraction finalGather motionBlur "
+     "finalQuality filmSamples adaptiveFinalThreshold denoise diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
+     "finalShadows rtRefraction finalGather motionBlur "
      "motionBlurTimeSamples depthOfField"),
     ("Lighting and GI", True,
      "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
