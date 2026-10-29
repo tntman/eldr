@@ -29,7 +29,8 @@ struct RayTracingData {
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
     float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
     float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
-    float denoise[4];           // x: traced shadows' filter radius (pixels), y: traced reflections' filter scale
+    float denoise[4];           // x: traced shadows' largest filter radius (pixels), y: traced reflections'
+                                // filter scale, z: the shadow image's first layer of penumbra radii
     // Caustics (Work::caustics): x this sample's gather radius, y the hash
     // grid's cell size, z how far before the casters' sphere photons start
     float caustics[4];

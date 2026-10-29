@@ -26,8 +26,9 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
     vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
-    vec4 denoise;        // x: traced shadows' filter radius in pixels (RtTraced), y: traced reflections'
-                         // filter scale (RtReflection); 0: off
+    vec4 denoise;        // x: traced shadows' largest filter radius in pixels (RtTraced), y: traced
+                         // reflections' filter scale (RtReflection); 0: off. z: the shadow image's
+                         // first layer of penumbra radii (rt_pixels.rgen PenumbraRadius)
     // Caustics (caustics.glsl): x this sample's gather radius, y the hash grid's cell size, z how far
     // before the casters' sphere a sun's photons start.
     vec4 caustics;
@@ -232,11 +233,15 @@ vec3 RtShadowTexel(ivec2 pixel, uint k)
 // translucent casters and volumes), if it has one, on opaque pixels (the
 // traced image's). Translucent surfaces fall back to the maps: the sun keeps
 // its cascades for them, traced local lights their atlas tiles.
-// Denoised (rt.denoise.x: Frame::rtShadowDenoise, fading over the film):
-// averaged with up to 8 taps within that many pixels (kPoisson, turned per
-// pixel and sample) whose surfaces lie in p's plane (normal ng).
-// ponytail: one radius for every shadow (it softens hard ones on the
-// early samples only); a radius by the penumbra needs the blockers' distances.
+// Denoised (rt.denoise.x: Frame::rtShadowDenoise, the largest radius in
+// pixels, fading over the film): PCSS-style, the penumbra's radius
+// (rt_pixels.rgen PenumbraRadius, from the blocker's distance and the
+// light's size; layers from rt.denoise.z on) averaged over the pixel and 8
+// taps around it that found a blocker (a blocker search), then up to 8 taps
+// within that radius (kPoisson, turned per pixel and sample) averaged with
+// the pixel. Hard shadows (a small sun, contacts) get no blur. Taps count
+// only on p's plane (normal ng) within about a pixel per pixel of offset:
+// not across depth or normal edges, nor on the shadowing object.
 bool RtTraced(uint light, vec3 p, vec3 ng, out vec3 visibility)
 {
     visibility = vec3(1.0);
@@ -254,23 +259,46 @@ bool RtTraced(uint light, vec3 p, vec3 ng, out vec3 visibility)
             }
             ivec2 pixel = ivec2(gl_FragCoord.xy);
             visibility = RtShadowTexel(pixel, k);
-            float radius = rt.denoise.x;
-            if (radius >= 1.0) {
-                float weights = 1.0;
+            float maxRadius = rt.denoise.x;
+            if (maxRadius >= 1.0) {
                 float angle = 6.2831853 * SampleNoise(kDimShadow, gl_FragCoord.xy, float(frame.localLights.y));
                 mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
-                float tolerance = 0.02 * distance(p, frame.cameraPos.xyz);
                 ivec2 size = textureSize(sceneDepth, 0);
-                for (int i = 0; i < 8; ++i) {
-                    ivec2 tap = clamp(pixel + ivec2(rotation * kPoisson[i] * radius), ivec2(0), size - 1);
-                    vec4 q = frame.invViewProj * vec4((vec2(tap) + 0.5) / vec2(size) * 2.0 - 1.0,
-                                                      texelFetch(sceneDepth, tap, 0).r * 2.0 - 1.0, 1.0);
-                    if (abs(dot(q.xyz / q.w - p, ng)) < tolerance) {
-                        visibility += RtShadowTexel(tap, k);
-                        weights += 1.0;
+                vec2 ndc = gl_FragCoord.xy / vec2(size) * 2.0 - 1.0;
+                vec4 q1 = frame.invViewProj * vec4(ndc + vec2(2.0 / float(size.x), 0.0), gl_FragCoord.z * 2.0 - 1.0, 1.0);
+                float footprint = distance(q1.xyz / q1.w, p);
+                ivec2 blockerRow = ivec2(0, int(rt.denoise.z + float(k >> 2u)) * int(rt.shadowSample.w));
+                float found = imageLoad(rtShadowImage, pixel + blockerRow)[k & 3u];
+                float blockers = found > 0.0 ? 1.0 : 0.0;
+                for (int pass = 0; pass < 2; ++pass) {
+                    // Pass 0: the blocker search over maxRadius; 1: the filter over the penumbra's radius.
+                    float radius = pass == 0 ? maxRadius : maxRadius * found / max(blockers, 1.0);
+                    if (pass == 1 && radius < 1.0) {
+                        break;
+                    }
+                    vec3 sum = visibility;
+                    float weights = 1.0;
+                    for (int i = 0; i < 8; ++i) {
+                        vec2 offset = rotation * kPoisson[i] * radius;
+                        ivec2 tap = clamp(pixel + ivec2(offset), ivec2(0), size - 1);
+                        vec4 q = frame.invViewProj * vec4((vec2(tap) + 0.5) / vec2(size) * 2.0 - 1.0,
+                                                          texelFetch(sceneDepth, tap, 0).r * 2.0 - 1.0, 1.0);
+                        if (abs(dot(q.xyz / q.w - p, ng)) > footprint * (0.5 + 0.25 * length(offset))) {
+                            continue;  // off p's plane
+                        }
+                        if (pass == 0) {
+                            float b = imageLoad(rtShadowImage, tap + blockerRow)[k & 3u];
+                            found += b;
+                            blockers += b > 0.0 ? 1.0 : 0.0;
+                        } else {
+                            sum += RtShadowTexel(tap, k);
+                            weights += 1.0;
+                        }
+                    }
+                    if (pass == 1) {
+                        visibility = sum / weights;
                     }
                 }
-                visibility /= weights;
             }
             return true;
         }
