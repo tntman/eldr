@@ -1,0 +1,78 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# emissive.usda (a Cornell box lit by a glowing panel and a bulb) in final
+# quality with GI, final gather, traced shadows and reflections, 32 film
+# samples. The settings prims spend rays per component (Karma's Diffuse /
+# Reflection Quality, Light Sampling Quality) instead of raising the film
+# samples for everything.
+
+def Scope "Render"
+{
+    def RenderSettings "default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:filmSamples = 32
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 1
+    }
+
+    def RenderSettings "diffuse2"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:filmSamples = 32
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 1
+        custom float eldr:diffuseQuality = 2
+    }
+
+    def RenderSettings "diffuse2LightHalf"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:filmSamples = 32
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 1
+        custom float eldr:diffuseQuality = 2
+        custom float eldr:lightQuality = 0.5
+        custom float eldr:reflectQuality = 0.5
+    }
+
+    def RenderSettings "karmaNames"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:filmSamples = 32
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 1
+        custom float karma:object:diffusequality = 2
+        custom float karma:global:light_sampling_quality = 0.5
+        custom float karma:object:reflectquality = 0.5
+    }
+
+    def RenderSettings "allHalf"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:filmSamples = 32
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 1
+        custom float eldr:diffuseQuality = 0.5
+        custom float eldr:lightQuality = 0.5
+        custom float eldr:reflectQuality = 0.5
+    }
+}

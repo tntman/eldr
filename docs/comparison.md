@@ -9,6 +9,7 @@
 | Native USD / Hydra render delegate | Yes | No | Partial | Unreal imports USD stages; Blender only has a separate Hydra Storm add-on. |
 | Converging final frames (sample accumulation) | Yes | Yes | Yes | Eldr: film. Unreal: Movie Render Queue. |
 | Per-effect low-discrepancy sampling | Yes | Yes | Yes | Eldr: Sobol and blue-noise sample dimensions. |
+| Per-component sample quality (Karma's diffuse/reflect/light quality) | Yes | Partial | Yes | Eldr: `eldr:*Quality` or Karma's names, global (from the render settings), not per object. EEVEE: shadow rays and steps. Unreal: Lumen final gather and reflection quality. |
 | Adaptive sampling | Partial | No | No | Eldr stops when 99.9% of pixels converged; each sample still renders the whole frame. Not with motion blur time samples. |
 | Path-traced reference mode | No | Yes (Cycles) | Yes | Eldr: use Karma in Houdini for ground truth. |
 | Background shader compile and pipeline cache | Yes | Yes | Yes | |

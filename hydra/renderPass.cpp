@@ -605,6 +605,37 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
         frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
     }
+    // Per-component quality (Karma's): eldr:*Quality, else Karma's on the
+    // settings (husk) or the active settings prim (usdview), else 1. Rays
+    // per sample times it; the renderer spreads fractions over film samples.
+    {
+        static const TfToken karmaLight("karma:global:light_sampling_quality"),
+            karmaDiffuse("karma:object:diffusequality"), karmaReflect("karma:object:reflectquality"),
+            karmaSss("karma:object:sssquality"), karmaVolume("karma:object:volumequality");
+        const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
+        auto number = [&](const TfToken &key) {
+            VtValue v = delegate->GetRenderSetting(key);
+            if (v.IsEmpty() && prim) {
+                const VtDictionary &d = prim->GetNamespacedSettings();
+                const auto it = d.find(key.GetString());
+                v = it != d.end() ? it->second : v;
+            }
+            return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
+                 : v.IsHolding<int>()   ? double(v.UncheckedGet<int>()) : -1.0;
+        };
+        auto quality = [&](const TfToken &eldr, const TfToken &karma) {
+            double q = number(eldr);
+            q = q >= 0.0 ? q : number(karma);
+            return float(q >= 0.0 ? std::clamp(q, 1.0 / 64.0, 16.0) : 1.0);
+        };
+        frame.lightQuality = quality(t2.lightQuality, karmaLight);
+        frame.diffuseQuality = quality(t2.diffuseQuality, karmaDiffuse);
+        frame.reflectQuality = quality(t2.reflectQuality, karmaReflect);
+        frame.subsurfaceSamples =
+            uint32_t(std::clamp(std::lround(frame.subsurfaceSamples * quality(t2.sssQuality, karmaSss)), 1l, 64l));
+        frame.volume.shadowSteps =
+            uint32_t(std::clamp(std::lround(frame.volume.shadowSteps * quality(t2.volumeQuality, karmaVolume)), 1l, 256l));
+    }
     // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
     {
         const VtValue v = delegate->GetRenderSetting(t.rtReflections);
