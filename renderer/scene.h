@@ -794,7 +794,7 @@ public:
         // Per translucent slot: kRefracts (a material that refracts or
         // tints what's behind it, see refraction).
         // kHoldout: Mesh::holdout.
-        enum : uint8_t { kRefracts = 1, kHoldout = 2 };
+        enum : uint8_t { kRefracts = 1, kHoldout = 2, kThin = 4 };  // kThin: thin-walled, no inside to draw
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;

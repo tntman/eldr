@@ -212,7 +212,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Holdouts<br>`eldr:holdouts` | on | Matte objects draw black, zero alpha, keep depth, ids and shadows. | None |
 | Refraction Back Faces<br>`eldr:refractionBackFaces` | on | Draws back faces (water from below, Snell's window, total internal reflection). Off discards them. | |
 | Refraction Through Layers<br>`eldr:multiRefraction` | on | Glass behind glass: background re-copied after each layer. | 0.1 ms per copy |
-| Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most copies per frame (1-16); more layers share the last. | |
+| Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most copies per frame (1-16); more layers share the last. Also the translucent layers volumes see (at most 4). | Volumes under glass: 8 bytes per pixel per layer, a draw of the translucent meshes each |
 | Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced triangles and height-map bump (with `eldr:rtDisplacement`). Off: flat glass look. | Displaced glass only |
 | Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A translucent holdout cuts colour and alpha by its opacity. | Small pass when present |
@@ -241,7 +241,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Emission Multiplier<br>`eldr:volumeEmission` | float 1 | Scales emission. | |
 | Volume Phase Anisotropy<br>`eldr:volumeAnisotropy` | float 0 | Phase g for volumes without a MaterialX volume material (0: isotropic, as Karma). | |
 | Volume Resolution<br>`eldr:volumeResolution` | int 1 | 1 full, 2 half with depth-aware upsample. | volume.usda 22.0 to 7.3 ms |
-| Volumes under Transparency<br>`eldr:volumeUnderTransparency` | on | Rays split at the nearest translucent surface: smoke behind glass is dimmed and refracted. Nearest layer only. | 4.2 vs 5.8 ms off |
+| Volumes under Transparency<br>`eldr:volumeUnderTransparency` | on | Rays split at every translucent layer (up to `eldr:refractionLayers`, 4): smoke behind glass is dimmed by each pane in front of it, and refracted behind the last. | 4.2 vs 5.8 ms off |
 | Volume Shadows<br>`eldr:volumeShadows` | on | Volumes darken surfaces and fog from the sun via the tint maps. | volume.usda sunShadows 1.0 vs 0.07 ms |
 | Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
 | Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |

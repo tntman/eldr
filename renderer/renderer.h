@@ -808,6 +808,7 @@ private:
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _peelPipeline[kVariants] = {};  // translucent_peel.frag (_RenderTranslucentDepth)
     VkPipeline _mattePipeline[kVariants] = {};  // translucent holdouts' matte (matte.frag)
     VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.
