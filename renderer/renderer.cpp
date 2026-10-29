@@ -4888,10 +4888,14 @@ void Renderer::Read(const Targets &out)
 void Renderer::_FillRawBeauty(const Targets &out) const
 {
     float *raw = out.aovs[Aovs::kBeautyRaw];
-    if (!raw || _denoiseState != 2 || _rawBeauty.size() != size_t(_outWidth) * _outHeight * 4) {
+    if (!raw) {
         return;
     }
     const uint32_t n = out.aovComponents[Aovs::kBeautyRaw] ? out.aovComponents[Aovs::kBeautyRaw] : 4;
+    if (_denoiseState != 2 || _rawBeauty.size() != size_t(_outWidth) * _outHeight * 4) {
+        std::fill(raw, raw + size_t(_outWidth) * _outHeight * n, 0.0f);  // not yet (or no film): 0, as all AOVs
+        return;
+    }
     for (size_t p = 0; p < size_t(_outWidth) * _outHeight; ++p) {
         for (uint32_t c = 0; c < n; ++c) {
             raw[p * n + c] = c < 4 ? HalfToFloat(_rawBeauty[p * 4 + c]) * (c < 3 ? _rawExposure : 1.0f) : 0.0f;
