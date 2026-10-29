@@ -4,7 +4,7 @@ Three balls on a floor (`tests/scenes/lightlink.usda`) under three lights:
 
 - `key` (front left, above): its `collection:lightLink` excludes `/balls/right`, so the right ball gets none of its light (it still casts the key's shadow).
 - `fill` (blue, from the right): its `collection:shadowLink` excludes `/balls/left`, so the left ball casts no fill shadow onto the floor; the other two do.
-- `iesSpot` (warm, above the gap between the middle and right balls): `inputs:shaping:ies:file` is `tests/scenes/textures/spot_asym.ies`, a 40 degree spot that is brighter towards the light's +X: its pool on the floor leans right.
+- `iesSpot` (warm, above the gap between the middle and right balls): `inputs:shaping:ies:file` is `tests/scenes/textures/spot_asym.ies`, a 40 degree spot that is brighter towards phi 0, the light's -X as in Karma: its pool on the floor leans left.
 
 These are the UsdLux collections Houdini's Light Linker LOP edits (`includeRoot`, `includes`, `excludes` on the light).
 

@@ -568,7 +568,7 @@ struct Light {
     std::shared_ptr<Texture> ies;
     float iesScale = 1.0f;
     float iesAngleScale = 0.0f;
-    float iesX[3] = {1, 0, 0};           // the light's local +X (phi 0), world space
+    float iesX[3] = {1, 0, 0};           // the light's local +X (phi 180, as Karma), world space
     // Rect, disk: an image over the emitting surface (UsdLux
     // inputs:texture:file) multiplying the radiance; s = 0 at the +X side, the image's top row at +Y (as Karma; rows are stored bottom-up)
     // (the disk's square around it).

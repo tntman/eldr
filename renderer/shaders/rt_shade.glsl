@@ -31,7 +31,7 @@ vec3 TraceShadow(vec3 origin, vec3 dir, float tMax, int shadowLink)
 {
     shadowRay = vec4(1.0, 1.0, 1.0, shadowLink >= 0 ? -float(shadowLink + 1) : 0.0);
     uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT |
-                 (shadowLink >= 0 ? gl_RayFlagsForceNonOpaqueEXT : 0u);
+                 (shadowLink >= 0 ? gl_RayFlagsNoOpaqueEXT : 0u);
     traceRayEXT(tlas, flags, rt.shadowInfo.x, 1, 0, 1, origin, 0.0, dir, tMax, 1);
     vec3 through = shadowRay.rgb * max(shadowRay.a, 0.0);
     if (rt.shadowInfo.y > 0u && shadowRay.a > 0.0) {

@@ -6,10 +6,10 @@
 
 # IES profiles (UsdLux shaping:ies:*), compared with Karma (tests/karma_refs.py).
 # textures/spot_asym.ies (make_ies.py): a 40 degree spot from nadir, brighter
-# towards phi 0 (the light's +X) than phi 180, 1 : 0.3.
-# - raw: candela as authored, straight down: its pool leans to +X.
+# towards phi 0 than phi 180, 1 : 0.3; Karma's phi 0 is the light's -X.
+# - raw: candela as authored, straight down: its pool leans to -X.
 # - normalized: shaping:ies:normalize, angleScale 0.5 (half the beam),
-#   turned 90 degrees about Y first: its pool leans to -Z (away).
+#   turned 90 degrees about Y first: its pool leans to +Z (towards the camera).
 
 def Camera "cam"
 {

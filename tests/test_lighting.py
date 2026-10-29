@@ -280,20 +280,21 @@ for mode, settings in (("shadow maps", {}), ("traced", {"eldr:rtShadows": True})
     shadowLink.GetExcludesRel().ClearTargets(True)
 
 # IES profile (tests/scenes/textures/spot_asym.ies, a 40 degree spot from
-# the light's -Z, brighter towards its +X): the wall is lit under the
-# light, dark 35 degrees off axis, brighter on the light's +X side;
+# the light's -Z, brighter towards phi 0, the light's -X as in Karma): the
+# wall is lit under the light, dark 35 degrees off axis, brighter on -X;
 # eldr:lightIes off: lit evenly.
 stage = wall_stage()
 spot = UsdLux.SphereLight.Define(stage, "/spot")
-spot.CreateIntensityAttr(40)
+spot.CreateIntensityAttr(6)
 spot.CreateRadiusAttr(0.01)
 spot.AddTranslateOp().Set(Gf.Vec3d(0, 0, 1))
 UsdLux.ShapingAPI.Apply(spot.GetPrim()).CreateShapingIesFileAttr(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes", "textures", "spot_asym.ies"))
 image = render(stage, linear)
 expect(gray(image, 32, 32) > 50 and gray(image, 56, 32) < 0.1 * gray(image, 32, 32),
-       "IES profile: lit on its axis, dark past its beam")
-expect(gray(image, 44, 32) > 1.5 * gray(image, 20, 32), "IES profile: brighter towards the light's +X (phi 0)")
+       "IES profile: lit on its axis, dark past its beam (%d, %d)" % (gray(image, 32, 32), gray(image, 56, 32)))
+expect(gray(image, 20, 32) > 1.5 * gray(image, 44, 32), "IES profile: brighter towards the light's -X (phi 0, Karma) (%d, %d)" % (gray(image, 20, 32), gray(image, 44, 32)))
+spot.GetIntensityAttr().Set(6000)  # times the profile's peak, 1000 cd
 image = render(stage, {**linear, "eldr:lightIes": False})
 expect(gray(image, 56, 32) > 0.3 * gray(image, 32, 32), "eldr:lightIes off: no profile")
 

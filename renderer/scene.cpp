@@ -2592,7 +2592,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 std::copy(l->halfWidth, l->halfWidth + 3, c.halfWidth);
                 std::copy(l->halfHeight, l->halfHeight + 3, c.halfHeight);
                 const float radiance = std::max({l->radiance[0], l->radiance[1], l->radiance[2]}) *
-                                       std::max(l->diffuse, l->specular);
+                                       std::max(l->diffuse, l->specular) * (g.ies[3] >= 0.0f ? l->iesScale : 1.0f);  // the IES peak too
                 if (sphere) {
                     c.rangeIntensity = radiance * l->radius * l->radius;
                     c.radius = l->radius;

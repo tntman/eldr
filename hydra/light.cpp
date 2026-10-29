@@ -49,8 +49,8 @@ void Copy(const GfVec3d &v, float out[3])
 
 // An IES profile (UsdLux shaping:ies:file) baked for vkr::Light::ies:
 // relative intensity over kIesPhi x kIesTheta texels, its peak and its
-// power (mean intensity, for shaping:ies:normalize). Cached per file for
-// the process (a few KB each; the GPU may still read a replaced one).
+// power (mean intensity, for shaping:ies:normalize). Shared per file while
+// a light holds it (the lights own the textures: none outlives the device).
 // ponytail: LM-63 type C photometry only (A and B are read as C, with a
 // warning); TILT ignored; bilinear in the file's angles, as hdEmbree.
 struct IesProfile {
@@ -58,19 +58,26 @@ struct IesProfile {
     float peak = 0.0f, power = 0.0f;
 };
 constexpr uint32_t kIesPhi = 64, kIesTheta = 256;
-// Candela to UsdLux intensity: hdEmbree's (Cycles') factor.
-constexpr float kIesCandela = 0.0706650768394f;
+// Candela to radiance units: 1, as Karma (husk, tests/scenes/ies.usda;
+// hdEmbree's Cycles factor 0.0707 was 14x darker).
+constexpr float kIesCandela = 1.0f;
 
 IesProfile LoadIes(const std::string &path)
 {
+    struct Cached {
+        std::weak_ptr<vkr::Texture> texture;
+        float peak, power;
+    };
     static std::mutex mutex;
-    static std::map<std::string, IesProfile> cache;
+    static std::map<std::string, Cached> cache;
     std::lock_guard<std::mutex> lock(mutex);
     const auto found = cache.find(path);
     if (found != cache.end()) {
-        return found->second;
+        if (auto texture = found->second.texture.lock()) {
+            return {texture, found->second.peak, found->second.power};
+        }
     }
-    IesProfile &profile = cache[path];
+    IesProfile profile;
     std::ifstream in(path);
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const size_t tilt = text.find("TILT=");
@@ -167,6 +174,7 @@ IesProfile LoadIes(const std::string &path)
         texels[k] = GfHalf(baked[k] / profile.peak);
     }
     profile.texture = std::move(texture);
+    cache[path] = {profile.texture, profile.peak, profile.power};
     return profile;
 }
 
@@ -349,7 +357,7 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         color /= area;
     }
     std::copy(color.data(), color.data() + 3, light.radiance);
-    // IES profile (UsdLux shaping:ies:*), phi from the light's +X.
+    // IES profile (UsdLux shaping:ies:*), phi 0 at the light's -X (as Karma).
     light.ies = nullptr;
     const VtValue iesFile = param(HdLightTokens->shapingIesFile, VtValue());
     if (iesFile.IsHolding<SdfAssetPath>()) {

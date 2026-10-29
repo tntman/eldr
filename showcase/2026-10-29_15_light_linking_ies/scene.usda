@@ -14,7 +14,7 @@ def SphereLight "iesSpot" (
 )
 {
     color3f inputs:color = (1, 0.8, 0.55)
-    float inputs:intensity = 30
+    float inputs:intensity = 2
     float inputs:radius = 0.05
     asset inputs:shaping:ies:file = @../../tests/scenes/textures/spot_asym.ies@
     double3 xformOp:translate = (1.1, 3, 1.5)

@@ -19,7 +19,7 @@ struct Light {
     vec4 halfHeight;  // rect: center to the +Y edge, disk: radius along Y; w: diffuse multiplier
     vec4 shaping;     // soft cone angle, cone angle (radians), focus, specular multiplier
     vec4 focusTint;   // w: rect/disk: the texture's bindless index (-1: none)
-    vec4 ies;         // xyz: the light's +X (IES phi 0); w: its IES profile's bindless index (-1: none)
+    vec4 ies;         // xyz: the light's +X (IES phi 180); w: its IES profile's bindless index (-1: none)
     vec4 link;        // x: IES angle scale; y, z: light, shadow link bit of Instance::linkMask (-1: everything)
 };
 const uint kLightTextures = 4u;  // frame.reflections.z: lights' textures on
@@ -110,7 +110,7 @@ bool ShadowLinked(Light light, uint mask)
 
 // The light's IES profile (UsdLux shaping:ies) towards p, relative to its
 // peak (Scene folds the peak into the colour): theta from the emission
-// axis, phi around it from the light's +X towards +Y, theta rescaled by
+// axis, phi around it from the light's -X (Karma's), theta rescaled by
 // shaping:ies:angleScale as UsdLux says. 1 without a profile.
 float LightIes(Light light, vec3 p)
 {
@@ -121,7 +121,7 @@ float LightIes(Light light, vec3 p)
     vec3 d = normalize(p - light.position.xyz);
     vec3 z = -light.axis.xyz, x = light.ies.xyz, y = cross(z, x);
     float theta = acos(clamp(-dot(d, z), -1.0, 1.0));
-    float phi = atan(dot(d, y), dot(d, x));
+    float phi = atan(-dot(d, y), -dot(d, x));  // 0 at -X, as Karma
     float scale = light.link.x;
     theta = scale > 0.0 ? theta / scale : scale < 0.0 ? (theta - PI) / -scale + PI : theta;
     if (theta < 0.0) {
