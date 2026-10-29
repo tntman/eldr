@@ -66,7 +66,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are still read (they win over the styles) but no longer have a control: Render Curves As and Render Points As cover them.
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the quality and limit controls, light-source scales, portals, LPE tags on objects (lights' tags are light groups), caustics, outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the limit controls (Volume Limit aside), the quality controls per object (Karma Render Settings' Diffuse, Reflection, SSS and Volume Quality and Light Sampling Quality are honoured globally, from the settings prim: `eldr:diffuseQuality` and its twins win), light-source scales, portals, LPE tags on objects (lights' tags are light groups), fake caustics (caustics themselves are honoured: Enable Caustics, Roughness Clamp, a light's Contributes to Caustics), outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 
@@ -106,6 +106,10 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 `percentDone` is film samples over target (with adaptive sampling, the share of stopped pixels, whichever is further). Annotations read like "final 24/64 samples, 12% of pixels done" and "GPU 12.3 ms, 1442 triangles, 1 draws, 0.14 GB". A pass that did not run has a blank row.
 
+## Materials
+
+Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; median dE 1.7 (docs/materialx.md).
+
 ## Volumes
 
 | Source | Support |
@@ -130,6 +134,8 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 The Karma Render Settings LOP's AOV toggles and Render Var LOP presets fill these; set the same vars and Eldr and Karma write the same EXR layers.
 
+A Render Var's "Sample Blending" (Karma tab, `driver:parameters:aov:karma:filter`) is read: Sample Minimum/Maximum Value, Closest and Farthest work as in Karma; Average Sample Values (`ubox`, the default) keeps Eldr's per-AOV default; Adds Up and Stats aren't supported. Eldr's own `driver:parameters:aov:eldr:filter` (add it with an Edit Properties LOP) wins and adds `beauty`, `nearest`, `gauss` and `box` (features.md, Per-AOV sample filters).
+
 | Karma AOV | LPE | Eldr |
 |---|---|---|
 | beauty | `C.*[LO]` | The beauty |
@@ -144,6 +150,7 @@ The Karma Render Settings LOP's AOV toggles and Render Var LOP presets fill thes
 | shadow | `shadow;C.*[LO]` | The shadowed direct light |
 | holdout_shadow ("Holdout Shadows") | `holdouts;shadow;CDL` | Shadows on holdouts (`karma:object:holdoutmode`), diffuse |
 | per-light beauty ("Per LPE Tag" on beauty) | `C.*<L.'tag'>` | Light group: direct light of the lights tagged `tag` |
+| caustics (no Karma preset) | `C<RD>.+<TS>L`, `C<RD><TS>.*L`, `C<RD>[<TS><RS>].*L`; raw `caustics` | Caustic photons' light (`eldr:caustics`), part of indirect diffuse |
 | raw | `ray:hitP`, `ray:hitP_camera`, `ray:hitPz`, `ray:hitN`, `ray:hitN_facing`, `ray:primid`, `export_basecolor`, `primvars:st`, Cryptomatte | As listed in features.md |
 
 Against Karma (showcase `2026-10-29_06_light_groups`, husk `BRAY_HdKarma` with the same vars, 2026-10-29): image means of direct diffuse, subsurface, transmission and volume within ~25% (direct diffuse 0.054 vs 0.056, sss 0.012 vs 0.012); indirect diffuse follows Eldr's brighter GI. Differences by design: Karma's light groups include their indirect light (Eldr's are direct only); Karma's `shadow;` counts occluded indirect light too (in a closed room most of the image), Eldr's only the lights' and the dome's direct shadow, which is what a shadow matte needs; Karma's coat also reflects the room, Eldr's coat only the lights and dome (as its beauty).
@@ -186,6 +193,8 @@ step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto e
 | `ray:primid` | Id with coverage | Id + 1, no coverage |
 | Cryptomatte | `<name>00..02` + manifest | Same layout |
 | Volumes | Rendered | Rendered (OpenVDB files and SOP volumes) |
+| Light linking (`collection:lightLink`, `collection:shadowLink`, the Light Linker LOP's) | Honoured | Honoured: tests/scenes/lightlink.usda lum 0.95, worst region 0.16 (karma_golden) |
+| IES profiles (`shaping:ies:*`) | Candela as is; phi 0 at the light's -X | Same: tests/scenes/ies.usda within 3% per region, raw and normalized with `angleScale` |
 | Time to converge | step4 33 s, lights 29 s (32 spp) | 10-25 s |
 
 ### ColorChecker, Eldr vs Karma (linear EXR, no tonemap)
@@ -227,7 +236,7 @@ Display transforms are separate. Eldr's colour AOV in the viewport is ACES tonem
 | Viewport stats while moving | "TAA 10/18" was TAA's history weight (a moving camera's frame blends in at 1/10, `kTaaMoving`) over `eldr:taaSamples`, not samples a frame works through: each frame renders one sample (`eldr:interactiveSamples` only loops the noise pattern over 8 frames). A moving frame now reads "TAA interactive (moving)". macbeth's moving frame: 6 ms GPU, of which 4.6 copying to the CPU. |
 | Still frames | Before `eldr:lazyExtraAovs`, every still frame also rendered and read back the normal and st AOVs Houdini binds but doesn't read: macbeth 1866x737 accumulating the film took 52 ms a frame (GPU 19.2, of which the AOV pass 8.1), now 16 ms (GPU 6.9, `viewportBench --houdini --still`, machine shared with other jobs). They render once, when the film converged (one more frame). Film frames cost more than moving ones: they wait for their own frame (no overlap) and add the film pass. |
 | Guides and depth | With `eldr:overlapReadback` a moving camera's colour and depth are the frame before, while Houdini draws its guides with the current camera: guides slide over the image and depth-test against the old depth by one frame of motion, about 47 px per degree turned between redraws for macbeth's camera at 1866 px wide (12 px at the bench's 0.25 degree a frame). Off: aligned, macbeth 14.6 instead of 8.0 ms a frame and step4 15.5 instead of 8.2 (6 ms of Houdini work), camera-to-image latency 8.6 instead of 10.1 ms. Depth and ids are jittered (TAA, half a pixel) only while moving; once still they settle within two frames (the film keeps the sample nearest the pixel centre): 9845 then 1950 then 0 pixels change. |
-| Startup | macbeth 1866x737 (`viewportBench --houdini --startup`; a new exe name makes the NVIDIA driver's shader cache cold, an empty `HDVK_PIPELINE_CACHE_DIR` Eldr's): cold, plugin to converged 53 s before (delegate 15.2 s: ray tracing pipelines 9.0, volume pipelines 3.1; first frame 34.3 s: a whole shading set of 120 pipelines 23.6, the extra AOVs' 24 pipelines one at a time 10.0), 9.6 s after (delegate 2.1, first frame 6.1: shading 4.8, AOVs 0.9). Warm: 2.2 s (delegate 0.55 of which the Vulkan device 0.3-0.4, first frame 0.5, then 64 film frames). `eldr:lazyPipelines` compiles only the shading variants drawn; ray tracing and volume pipelines wait for their first use; every pipeline goes through Eldr's cache file (`%LOCALAPPDATA%\Eldr\pipelines-*.bin`, shared by usdview and Houdini). |
+| Startup | macbeth 1866x737 (`viewportBench --houdini --startup`; a new exe name makes the NVIDIA driver's shader cache cold, an empty `HDVK_PIPELINE_CACHE_DIR` Eldr's): cold, plugin to converged 53 s before (delegate 15.2 s: ray tracing pipelines 9.0, volume pipelines 3.1; first frame 34.3 s: a whole shading set of 120 pipelines 23.6, the extra AOVs' 24 pipelines one at a time 10.0), 9.6 s after (delegate 2.1, first frame 6.1: shading 4.8, AOVs 0.9). Warm: 2.2 s (delegate 0.55 of which the Vulkan device 0.3-0.4, first frame 0.5, then 64 film frames). `eldr:lazyPipelines` compiles only the shading variants drawn; ray tracing and volume pipelines wait for their first use; every pipeline goes through Eldr's cache file (`%LOCALAPPDATA%\Eldr\pipelines-*.bin`, one file per build: the cache key includes the size and time of the module holding the shaders, so usdview's and Houdini's hdVk.dll each have their own, and the first run after a rebuild starts cold). |
 | Render Outputs menu | The viewport's Render Outputs menu lists the vars of the Render Settings LOP's products (Render Var LOP, then Render Product LOP, then Render Settings LOP). The viewport binds a var by its prim name (`rendervar1`) without the source; Eldr looks the name up in the active settings prim's products and uses that var's `sourceName`/`sourceType` (also for the buffer format it is asked about), so a var picked there fills like it does in husk. Put a beauty var (`C.*[LO]`, color4f) in the product first: Houdini shows only the product's vars, so without one there is no `color` entry (Karma does the same). Supported sources: the "Supported LPEs" list above, light groups included; other LPEs stay black (per-object LPEs, `unoccluded;`). Tested headlessly (ctest `aovs`: a var bound by name alone); the menu itself is not clicked through. |
 | Viewport channel buttons (RGB, R, G, B, A, L) | Do nothing in Eldr's view as far as known. Houdini's Python API, HDAs, config and help don't expose or describe them for Hydra delegates (the help only mentions channel toggles for the Copernicus and Unreal viewers), so they are applied inside Houdini's compiled viewport, and nothing a delegate reports (AOV format, colour space, settings) is documented as controlling them. Eldr gives the same Float16Vec4 colour as the descriptor asks for. Not fixed on the Eldr side and not verified in the GUI (no Karma comparison made): use Render Outputs to view single AOVs, or the Cop viewer for channels. |
 

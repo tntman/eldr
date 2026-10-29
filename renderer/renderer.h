@@ -56,6 +56,8 @@ public:
         bool localLights = true;         // sphere, rect, disk and cylinder lights
         bool clusteredLights = true;     // off: every pixel loops over all local lights
         bool lightTextures = true;       // rect and disk lights' inputs:texture:file
+        bool lightLinking = true;        // UsdLux collection:lightLink / shadowLink (Scene::SetLightOptions)
+        bool lightIes = true;            // UsdLux shaping:ies:file profiles (Scene::SetLightOptions)
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
         bool normalMaps = true;
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
@@ -211,6 +213,10 @@ public:
         // and refit every frame).
         bool rtShadows = false;
         uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16); final quality: 1 per film sample
+        // Traced shadows' denoise (gi.glsl's RtTraced): the visibility
+        // averaged over a few pixels in the receiver's plane, the radius
+        // fading out over the film (effectDenoiseSamples).
+        bool rtShadowDenoise = true;
         // Shadows of final quality's film runs (_filmFinal) without
         // rtShadows: shadow maps, traced (then the sun and up to 15 local
         // lights, not 3), or traced when likely cheaper (Renderer::Render's
@@ -227,6 +233,10 @@ public:
         // quality (film runs started fresh), 2 always.
         uint32_t rtReflections = 1;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        // Traced reflections' denoise (gi.glsl's RtAround): rough ones
+        // averaged over up to 12 pixels in their plane, the radius fading
+        // out over the film (effectDenoiseSamples).
+        bool rtReflectionDenoise = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
@@ -251,9 +261,24 @@ public:
         // directions are the next points of a scrambled Sobol sequence,
         // turned per pixel by blue noise.
         uint32_t finalGatherRays = 1;
+        // Per-component quality, as Karma's (eldr:lightQuality, ...): rays
+        // per sample times this. Light: traced shadow rays per light;
+        // reflect: traced reflection rays; diffuse: final gather rays, GI
+        // probe rays, AO/SSGI directions. Under the film a fraction spreads
+        // over the samples (0.5: the traced effect every other sample, the
+        // others keep its image; 1.5: 1, 2, 1, 2 rays), so the film averages
+        // base x quality rays per sample. Interactive: rounded, at least 1.
+        float lightQuality = 1.0f, reflectQuality = 1.0f, diffuseQuality = 1.0f;
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;
+        // Per-effect denoise (final gather, traced shadows and reflections):
+        // film samples over which the filters fade out, linearly from the
+        // first (full) to none from this one on, so the early samples are
+        // clean and the converged film stays sharp and unbiased; 0: they
+        // filter every sample. Interactive frames always filter; with
+        // denoise (OIDN) none of them run.
+        uint32_t effectDenoiseSamples = 64;
         // Screen-space GI (gtao.cpp; no ray tracing needed), with the depth
         // prepass: per-pixel indirect diffuse light from what's on screen,
         // instead of GTAO; the probes (gi) or the dome light the rest.
@@ -433,6 +458,17 @@ public:
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
         uint32_t rtRefraction = 1;
         uint32_t rtRefractionBounces = 4;  // 1..16
+        // Caustics (needs Device::rayTracing; RayTracing::Work::caustics):
+        // photons from the lights that send them (Light::caustics) through
+        // the caster meshes (Mesh::causticsCast), gathered on the receivers'
+        // diffuse surfaces, the radius shrinking over film samples
+        // (progressive photon mapping). Nothing without casters.
+        // 0 off, 1 in final quality (film runs started fresh), 2 always.
+        uint32_t caustics = 1;
+        uint32_t causticsPhotons = 65536;  // per light and sample
+        // The first sample's gather radius (world units); 0: 2% of the
+        // casters' bounding sphere.
+        float causticsRadius = 0.0f;
         // Traced reflection and refraction hits shadow every light (one ray
         // each, up to 16 local lights a hit), not only the sun.
         // 0 off, 1 in final quality (film runs started fresh), 2 always.
@@ -487,6 +523,9 @@ public:
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
         bool rtDisplacement = true;
+        // Static BLASes are copied to their compacted size after the first
+        // build (about half the memory). Skinned and displaced ones refit.
+        bool rtCompaction = true;
         // Denoised glossy SSR (ssr.h, with ssr; not with rtReflections):
         // one GGX-sampled ray per pixel, faded out from roughness 0.5 to 0.8,
         // through a ratio estimator, temporal reprojection through the
@@ -524,6 +563,10 @@ public:
         // Extra AOVs (aov.h), packed floats; with Frame::extraAovs.
         float *aovs[Aovs::kCount] = {};
         uint8_t aovComponents[Aovs::kCount] = {};  // floats per pixel of each (0: Aovs::Components)
+        // How the film's samples make each one's pixels (Aovs::Filter), and
+        // the filter's radius in pixels (0: its default).
+        uint8_t aovFilters[Aovs::kCount] = {};
+        float aovFilterRadius[Aovs::kCount] = {};
         // Render and Collect leave colour, depth, the ids and velocity in
         // the renderer's host memory (HostOutput) instead of copying them:
         // their pointers only say which to read back. Not Read's.
@@ -765,6 +808,7 @@ private:
     bool _prewarmMerge = false;        // the worker compiled something not yet merged into the device's cache
     uint32_t _prewarmFor = kNone;      // the features the queue was made around
     VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
+    bool _prewarmMerged = false;  // the worker's pipelines went into the device's cache
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
@@ -774,6 +818,7 @@ private:
     // Translucent shadow casters into Transparency's tint maps: their
     // nearest depth, then their colours multiplied (shadow_tint.frag).
     VkPipeline _tintDepthPipeline[kVariants] = {}, _tintColorPipeline[kVariants] = {};
+    VkPipeline _peelPipeline[kVariants] = {};  // translucent_peel.frag (_RenderTranslucentDepth)
     VkPipeline _mattePipeline[kVariants] = {};  // translucent holdouts' matte (matte.frag)
     VkPipeline _subsurfacePipeline[kShadingSets * kVariants] = {};  // shading, the subsurface lobe (Subsurface)
     // Cutout materials: prepass and shadows with mask.frag's alpha test.

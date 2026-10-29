@@ -1,0 +1,148 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/default"
+    subLayers = [@../../tests/scenes/cornell.usda@]
+)
+
+# Per-AOV sample filters on the Cornell box: render vars asking for min,
+# max, closest, farthest, nearest, box and a narrower Gaussian, by Eldr's
+# driver:parameters:aov:eldr:filter or Karma's ...:karma:filter (Render Var
+# "Sample Blending"). See README.md.
+
+def Scope "Render"
+{
+    def RenderSettings "default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        custom bool eldr:finalQuality = 1
+        rel products = </Render/filters>
+    }
+    def RenderSettings "max"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        custom bool eldr:finalQuality = 1
+        rel products = </Render/filtersMax>
+    }
+    # The same vars as default with eldr:aovFilters off: every AOV at its
+    # default (colour like the beauty, data nearest).
+    def RenderSettings "off"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:aovFilters = 0
+        rel products = </Render/filtersOff>
+    }
+    def RenderProduct "filters"
+    {
+        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_min>, </Render/Vars/Pcam_closest>, </Render/Vars/camdepth_farthest>, </Render/Vars/N_box>, </Render/Vars/albedo_nearest>, </Render/Vars/directdiffuse>, </Render/Vars/indirectdiffuse_gauss>, </Render/Vars/primid>]
+        token productName = "aovFilters.exr"
+        rel camera = </cam>
+    }
+    def RenderProduct "filtersMax"
+    {
+        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_max>, </Render/Vars/N>, </Render/Vars/albedo>]
+        token productName = "aovFiltersMax.exr"
+        rel camera = </cam>
+    }
+    def RenderProduct "filtersOff"
+    {
+        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_min>, </Render/Vars/Pcam_closest>, </Render/Vars/camdepth_farthest>, </Render/Vars/N_box>, </Render/Vars/albedo_nearest>, </Render/Vars/directdiffuse>, </Render/Vars/indirectdiffuse_gauss>, </Render/Vars/primid>]
+        token productName = "aovFiltersOff.exr"
+        rel camera = </cam>
+    }
+    def Scope "Vars"
+    {
+        def RenderVar "C"
+        {
+            uniform token dataType = "color4f"
+            uniform string sourceName = "C.*[LO]"
+            uniform token sourceType = "lpe"
+        }
+        # Depth (Karma's ray:hitPz): the least of the pixel's samples.
+        def RenderVar "depth_min"
+        {
+            uniform token dataType = "float"
+            uniform string sourceName = "ray:hitPz"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:eldr:filter = "min"
+        }
+        def RenderVar "depth_max"
+        {
+            uniform token dataType = "float"
+            uniform string sourceName = "ray:hitPz"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:karma:filter = "[\"minmax\",{\"mode\":\"max\"}]"
+        }
+        # Camera-space position of the closest sample (Karma's "Sample: Closest").
+        def RenderVar "Pcam_closest"
+        {
+            uniform token dataType = "vector3f"
+            uniform string sourceName = "ray:hitP_camera"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:karma:filter = "[\"minmax\",{\"mode\":\"zmin\"}]"
+        }
+        # Hydra's cameraDepth (negative) of the farthest sample.
+        def RenderVar "camdepth_farthest"
+        {
+            uniform token dataType = "float"
+            uniform string sourceName = "cameraDepth"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:eldr:filter = "farthest"
+        }
+        # Normals averaged over a 3 x 3 pixel box (radius 1).
+        def RenderVar "N_box"
+        {
+            uniform token dataType = "normal3f"
+            uniform string sourceName = "ray:hitN"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:eldr:filter = "box 1"
+        }
+        def RenderVar "N"
+        {
+            uniform token dataType = "normal3f"
+            uniform string sourceName = "ray:hitN"
+            uniform token sourceType = "raw"
+        }
+        # Base colour of the sample nearest the pixel centre: hard edges.
+        def RenderVar "albedo_nearest"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "export_basecolor"
+            uniform token sourceType = "raw"
+            string driver:parameters:aov:eldr:filter = "nearest"
+        }
+        def RenderVar "albedo"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "export_basecolor"
+            uniform token sourceType = "raw"
+        }
+        # Karma's default ("ubox", what Houdini authors): like the beauty, sums.
+        def RenderVar "directdiffuse"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "C<RD>L"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:karma:filter = "[\"ubox\",{}]"
+        }
+        # A narrower Gaussian than the beauty's: sharper, and Eldr warns that
+        # this split no longer adds up to the beauty.
+        def RenderVar "indirectdiffuse_gauss"
+        {
+            uniform token dataType = "color3f"
+            uniform string sourceName = "C<RD>.+L"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:eldr:filter = "gauss 0.6"
+        }
+        # Hydra's primId: always the nearest sample (ids are never blended).
+        def RenderVar "primid"
+        {
+            uniform token dataType = "int"
+            uniform string sourceName = "primId"
+            uniform token sourceType = "raw"
+        }
+    }
+}

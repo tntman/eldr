@@ -54,6 +54,26 @@
       "lum": 0.9665,
       "region": 1.0281,
       "mald": 0.1896
+    },
+    "caustics": {
+      "lum": 1.015,
+      "region": 0.239,
+      "mald": 0.137
+    },
+    "transparency_order": {
+      "lum": 1.0276,
+      "region": 0.0567,
+      "mald": 0.0499
+    },
+    "lightlink": {
+      "lum": 0.9464,
+      "region": 0.1615,
+      "mald": 0.2249
+    },
+    "ies": {
+      "lum": 1.0082,
+      "region": 0.1026,
+      "mald": 0.0331
     }
   }
 }

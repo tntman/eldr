@@ -52,7 +52,9 @@ float rtUvFootprint = 0.0;
 #define UV_DY(uv) dFdy(uv)
 #endif
 
-vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
+// With uv's gradients given (dx, dy: per pixel, before the texture's own
+// transform).
+vec4 FetchGrad(TexRef r, vec4 constant, vec2 uv, vec2 dx, vec2 dy)
 {
     if (r.index < 0) {
         return constant;
@@ -60,7 +62,8 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     int index = r.index;
     // UsdTransform2d / MaterialX place2d; gradients through the same matrix.
     mat2 a = mat2(r.uvRow0.x, r.uvRow1.x, r.uvRow0.y, r.uvRow1.y);
-    vec2 dx = a * UV_DX(uv), dy = a * UV_DY(uv);
+    dx = a * dx;
+    dy = a * dy;
     uv = a * uv + vec2(r.uvRow0.z, r.uvRow1.z);
     vec2 tileUv = uv;
     if (r.pad != 0 && (((r.pad & 1) != 0 && (uv.x < 0.0 || uv.x > 1.0)) ||
@@ -83,6 +86,11 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
     }
     vec4 t = textureGrad(textures[nonuniformEXT(index)], tileUv, dx, dy) * r.scale + r.bias;
     return r.channel < 0 ? t : vec4(t[r.channel]);
+}
+
+vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
+{
+    return FetchGrad(r, constant, uv, UV_DX(uv), UV_DY(uv));
 }
 
 // What a translucent shadow caster lets through (shadow_tint.frag's tint

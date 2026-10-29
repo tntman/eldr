@@ -476,60 +476,11 @@ private:
         });
     }
 
-    // Karma's kma_rampconst: keys, values and a basis per key (arrays, as
-    // Houdini's ramp parameters), at input t: constant, linear, else
-    // Catmull-Rom (the end keys repeated).
-    // ponytail: bspline, bezier, hermite and monotone cubic bases are read as Catmull-Rom.
+    // Karma's kma_rampconst: a Houdini ramp (HdVkRamp) of input t.
     std::optional<Expr> RampConst(HdMaterialNode2 const &node, bool color)
     {
-        auto floats = [&](const char *name, std::vector<float> *out) {
-            uint32_t n = 0;
-            const VtValue *v = Find(node, TfToken(name));
-            return v && HdVkToFloats(*v, out, &n) ? n : 0u;
-        };
-        std::vector<float> keys, values;
-        floats(color ? "vkeys" : "fkeys", &keys);
-        const uint32_t n = floats(color ? "vvalues" : "fvalues", &values);
-        std::vector<int> basis;
-        if (const VtValue *b = Find(node, TfToken(color ? "vbasis" : "fbasis"))) {
-            if (b->IsHolding<VtArray<TfToken>>()) {
-                for (const TfToken &t : b->UncheckedGet<VtArray<TfToken>>()) {
-                    basis.push_back(t == "constant" ? 0 : t == "linear" ? 1 : 2);
-                }
-            }
-        }
-        const size_t count = n ? std::min(keys.size(), values.size() / n) : 0;
-        std::vector<GfVec4f> points;
-        for (size_t i = 0; i < count; ++i) {
-            points.push_back(n == 1 ? GfVec4f(values[i]) : GfVec4f(values[i * n], values[i * n + 1], values[i * n + 2], 1));
-        }
-        basis.resize(count, 1);
-        return Combine({Input(node, TfToken("t"))}, [keys, points, basis](V const &v) {
-            const float t = v[0][0];
-            if (points.empty()) {
-                return GfVec4f(0.0f);
-            }
-            if (t <= keys.front() || points.size() == 1) {
-                return points.front();
-            }
-            size_t i = 0;
-            while (i + 2 < points.size() && t >= keys[i + 1]) {
-                ++i;
-            }
-            if (t >= keys[i + 1]) {
-                return points.back();
-            }
-            const float u = keys[i + 1] > keys[i] ? (t - keys[i]) / (keys[i + 1] - keys[i]) : 0.0f;
-            if (basis[i] == 0) {
-                return points[i];
-            }
-            if (basis[i] == 1) {
-                return Lerp(points[i], points[i + 1], GfVec4f(u));
-            }
-            const GfVec4f k[4] = {points[i ? i - 1 : 0], points[i], points[i + 1],
-                                  points[std::min(i + 2, points.size() - 1)]};
-            return CatmullRom(k, u);
-        });
+        const HdVkRamp ramp = HdVkRamp::Read(node, color);
+        return Combine({Input(node, TfToken("t"))}, [ramp](V const &v) { return ramp(v[0][0]); });
     }
 
     HdMaterialNetwork2 const &_net;
@@ -840,7 +791,7 @@ HdDirtyBits HdVkVolume::GetInitialDirtyBitsMask() const
 {
     return HdChangeTracker::InitRepr | HdChangeTracker::DirtyVolumeField | HdChangeTracker::DirtyTransform |
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyPrimvar;
+           HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyPrimvar | HdChangeTracker::DirtyCategories;
 }
 
 void HdVkVolume::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -882,6 +833,10 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
         v.transforms = HdVkWorldTransforms(sceneDelegate, id, GetInstancerId());
+    }
+    // Light linking: the volume's link categories (not per instance).
+    if (*dirtyBits & HdChangeTracker::DirtyCategories) {
+        v.linkCategories = HdVkLinkCategories(sceneDelegate->GetCategories(id));
     }
     if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
         _UpdateVisibility(sceneDelegate, dirtyBits);
