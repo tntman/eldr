@@ -516,14 +516,17 @@ void RayTracing::_DestroyBlas(Blas &blas)
 
 // A BLAS's storage in a block (a new block when none has room) and the
 // acceleration structure over it.
-RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
+RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes, int onlyBlock)
 {
     Blas blas;
     blas.units = uint32_t((bytes + kUnit - 1) / kUnit);
     bool placed = false;
-    for (uint32_t b = 0; b < _blocks.size() && !placed; ++b) {
+    for (uint32_t b = onlyBlock >= 0 ? onlyBlock : 0; b < _blocks.size() && !placed; ++b) {
         placed = _blocks[b].buffer.buffer && _blocks[b].ranges.Allocate(blas.units, &blas.offset);
         blas.block = b;
+        if (onlyBlock >= 0) {
+            break;
+        }
     }
     if (!placed) {
         Block block;
@@ -742,17 +745,27 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 void RayTracing::_Compact(const std::vector<uint64_t> &versions, const std::vector<VkDeviceSize> &sizes)
 {
     std::vector<size_t> copied;
-    std::vector<Blas> compact;
+    uint64_t units = 0;
     for (size_t i = 0; i < versions.size(); ++i) {
-        const Blas &old = _blas[versions[i]];
-        if (sizes[i] == 0 || (sizes[i] + kUnit - 1) / kUnit >= old.units) {
+        if (sizes[i] == 0 || (sizes[i] + kUnit - 1) / kUnit >= _blas[versions[i]].units) {
             continue;  // no gain
         }
-        compact.push_back(_CreateBlas(sizes[i]));
+        units += (sizes[i] + kUnit - 1) / kUnit;
         copied.push_back(i);
     }
     if (copied.empty()) {
         return;
+    }
+    // The copies share a block of their own, exactly as large as they are,
+    // so the blocks holding the originals empty out and are freed.
+    Block block;
+    block.buffer = _dev.CreateDeviceBuffer(units * kUnit, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                                                              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    block.ranges.Grow(uint32_t(units));
+    _blocks.push_back(std::move(block));
+    std::vector<Blas> compact;
+    for (size_t i : copied) {
+        compact.push_back(_CreateBlas(sizes[i], int(_blocks.size()) - 1));
     }
     _dev.Submit([&](VkCommandBuffer cmd) {
         for (size_t k = 0; k < copied.size(); ++k) {

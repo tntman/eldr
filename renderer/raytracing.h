@@ -187,7 +187,7 @@ private:
         VkDeviceSize buildScratch = 0, updateScratch = 0;
         bool built = false;
     };
-    Blas _CreateBlas(VkDeviceSize bytes);
+    Blas _CreateBlas(VkDeviceSize bytes, int onlyBlock = -1);
     VkAccelerationStructureGeometryKHR _Triangles(VkDeviceAddress vertices, VkDeviceSize stride, uint32_t vertexCount,
                                                   VkDeviceAddress indices) const;
     void _BuildBlases(const Scene::Gpu &gpu);

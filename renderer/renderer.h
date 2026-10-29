@@ -804,6 +804,7 @@ private:
     bool _prewarmMerge = false;        // the worker compiled something not yet merged into the device's cache
     uint32_t _prewarmFor = kNone;      // the features the queue was made around
     VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
+    bool _prewarmMerged = false;  // the worker's pipelines went into the device's cache
     VkPipeline _prepassPipeline[kVariants] = {};      // depth only
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
