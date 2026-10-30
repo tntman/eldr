@@ -32,6 +32,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_17_karma_colour_limit` | Karma's colour limit on seen emitters and on emissive-mesh light; full-HDR emitters for comp | `eldr:colorLimit`, `eldr:indirectClamp` |
 | 2026-10-29 | `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
 | 2026-10-29 | `2026-10-29_10_reflection_motion_blur` | Planar and traced reflections blur with motion blur time samples; probes stay at the frame's time | `eldr:planarMotionBlur`, `eldr:rtReflections` |
+| 2026-10-29 | `2026-10-29_19_texture_compression` | 8-bit textures block-compressed (BC7, BC4, BC5) and cached on disk, against the exact texels | `eldr:textureCompression` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 
