@@ -2551,7 +2551,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _device->Reserve(_lightBuffer, (sceneLights.size() + 6 * emitters.size()) * sizeof(GpuLight),
                      VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
     auto *lights = static_cast<GpuLight *>(_lightBuffer.mapped);
-    uint32_t lightCount = 0, localLightCount = 0;
+    uint32_t lightCount = 0, localLightCount = 0, shapeLights = 0;
     _gpu.shadowLight = kNone;
     _gpu.shadowLinkBit = 0;
     _gpu.shadowAngle = 0;
@@ -2672,6 +2672,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 _gpu.shadowCasters.push_back(c);
             }
             ++localLightCount;
+            shapeLights += !distant && l->cameraVisible;
         }
     }
     // Emissive meshes (SetEmissiveLights): diffuse lights after the scene's
@@ -2800,6 +2801,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;
+    _gpu.shapeLightCount = shapeLights;
     if (_device && _device->sceneTraces) {
         _device->sceneTraces(_gpu.refraction,
                              _gpu.causticMin[0] <= _gpu.causticMax[0] && !_gpu.causticLights.empty());

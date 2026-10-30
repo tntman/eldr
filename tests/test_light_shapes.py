@@ -1,6 +1,6 @@
-"""Light shapes through Hydra: with eldr:lightShapesVisible two sphere lights
-show to the camera as their radiance, except one with Karma's
-inputs:karma:light:renderlightgeo = false ("Render Light Geometry").
+"""Light shapes through Hydra: of three sphere lights, the one with Karma's
+inputs:karma:light:renderlightgeo = true ("Render Light Geometry") shows to the
+camera as its radiance; one authored false and one unauthored are hidden.
 A dome hides from the camera the same way (or eldr:domeCameraVisible) yet lights.
 Run: usdenv.cmd python tests\test_light_shapes.py"""
 import sys
@@ -23,7 +23,7 @@ fbo = QOpenGLFramebufferObject(QSize(SIZE, SIZE))
 fbo.bind()
 
 stage = Usd.Stage.CreateInMemory()
-for name, x, geo in (("shown", -1.0, None), ("hidden", 1.0, False)):
+for name, x, geo in (("shown", -1.0, True), ("hidden", 1.0, False), ("unauthored", 0.0, None)):
     light = UsdLux.SphereLight.Define(stage, "/" + name)
     light.CreateRadiusAttr(0.4)
     light.CreateIntensityAttr(20.0)
@@ -54,7 +54,6 @@ def expect(ok, what):
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
 engine.SetRendererSetting("eldr:postProcess", False)
-engine.SetRendererSetting("eldr:lightShapesVisible", True)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
@@ -73,6 +72,7 @@ def lum(x):  # world x on the row of the lights
 
 expect(lum(-1.0) > 0.5, "a sphere light shows its shape")
 expect(lum(1.0) < 0.2, "inputs:karma:light:renderlightgeo = false hides it")
+expect(lum(0.0) < 0.2, "an unauthored light is hidden, as in Karma")
 del engine  # release GL resources while the context is still current
 # A dome with an HDRI: the sky shows unless renderlightgeo is authored false,
 # and the ground is lit the same either way (reflections and light unchanged).

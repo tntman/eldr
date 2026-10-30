@@ -24,7 +24,7 @@
 | IES profiles | Yes | No | Yes | Eldr: UsdLux `shaping:ies:*`, type C. |
 | Light linking | Yes | Yes | Partial | Unreal has lighting channels. Eldr: UsdLux light and shadow links, 32 collections, not on domes. |
 | Light functions / gobos | No | No | Yes | |
-| Light shapes visible to the camera | Yes | Yes | Yes | Eldr: `eldr:lightShapesVisible`; Karma's `renderlightgeo` hides single lights. |
+| Light shapes visible to the camera | Yes | Yes | Yes | Eldr: a light shows its shape when `renderlightgeo` is on, as in Karma; `eldr:lightShapesVisible` is the master switch. |
 | Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample (`eldr:shadowJitter`). |
 | Virtual shadow maps | No | Yes | Yes | Eldr uses cascades and an atlas; ray-traced shadows cover final frames. |
 | Ray-traced shadows | Yes | No | Yes | Eldr: `eldr:rtShadows` or `eldr:rtShadowsAuto`; sun plus up to 15 lights (`eldr:rtShadowLights`), one ray per light and film sample, exact penumbra. |

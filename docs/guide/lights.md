@@ -21,7 +21,7 @@ Every light has a size, and the size shows in its highlights: a tube light gives
 | Cylinder | Lights from its side only. |
 | Dome | An HDRI (lat-long). Lights diffuse and reflections; its sun can become a real shadowed light (below). |
 
-**Light shapes are hidden from the camera** by default, as USD wants. Turn on **Light Shapes Visible** to see them, or set Karma's **Render Light Geometry** on one light. The dome is drawn in the background unless its Render Light Geometry is off.
+**A light shows its shape to the camera** only when its **Render Light Geometry** is on, as in Karma; unauthored is hidden. **Light Shapes Visible** is the master switch (on by default); turn it off to hide every shape. The dome is drawn in the background unless its Render Light Geometry is off.
 
 > **Showcase:** open `showcase/2026-10-30_07_light_shapes/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `shapes` vs `shapesVisible`.
 

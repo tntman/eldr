@@ -16,7 +16,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_22_light_textures` | A rect or disk light's `inputs:texture:file` colours its light, in direct light, bounce light and reflections (`eldr:lightTextures`). | `lightTextures` vs `lightTexturesOff` |
 | `2026-10-29_24_ies_profiles` | A light's IES profile (`inputs:shaping:ies:file`) shapes its light, as in Karma (`eldr:lightIes`). | `ies` vs `noIes` |
 | `2026-10-30_06_many_lights` | Hundreds of small lights shaded through clusters, each pixel lit only by the lights that reach it (`eldr:clusteredLights`). | `lights` vs `clustersOff`, `localLightsOff` |
-| `2026-10-30_07_light_shapes` | Sun, sphere, rect, disk and tube lights give highlights of their own shape, and the shapes can be drawn (`eldr:lightShapesVisible`). | `shapes` vs `shapesVisible` |
+| `2026-10-30_07_light_shapes` | Sun, sphere, rect, disk and tube lights give highlights of their own shape, and each light with Render Light Geometry on shows its shape (`eldr:lightShapesVisible` is the master switch). | `shapes` vs `shapesVisible` |
 | `2026-10-30_08_dome_sun` | The HDRI's sun is taken out of the dome and cast as a shadowed distant light (`eldr:domeSun`). | `domeSun` vs `domeSunOff` |
 | `2026-10-30_09_ambient_occlusion` | The dome's light is darkened in corners and gaps by screen-space ambient occlusion (`eldr:ambientOcclusion`). | `ambient` vs `aoOff`, `aoWide` (`eldr:aoRadius` 2) |
 | `2026-10-30_10_shadow_modes` | Shadows from maps (sun cascades, light atlas) softened by PCSS and jitter, hard PCF, or traced (`eldr:shadowJitter`, `eldr:softShadows`, `eldr:rtShadows`). | `maps` (default) vs `pcss` vs `hard` vs `traced` |
