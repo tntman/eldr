@@ -45,6 +45,9 @@ public:
         bool ssr = true;              // screen-space reflections (needs postProcess)
         bool shadows = true;          // the distant light's shadow cascades
         bool localShadows = true;     // local lights' shadow atlas
+        // Further suns (distant lights past the first shadowed one): an atlas
+        // tile each for the first kMaxSunTiles; off: unshadowed unless traced.
+        bool extraSunShadowMaps = true;
         bool softShadows = true;      // local lights' penumbrae from their size (PCSS); off: 3x3 PCF
         uint32_t taaSamples = 16;     // jitter positions a still camera accumulates
         float cullPixels = 0.5f;      // instances under this screen radius are skipped (0: none)
@@ -243,7 +246,9 @@ public:
         // translucent meshes cast none, volumes neither.
         bool rtTranslucentShadows = true;
         // Distant lights past the first shadowed one (a dome's extracted sun
-        // beside the scene's sun) trace their shadows; off: unshadowed.
+        // beside the scene's sun) trace their shadows while ray tracing runs
+        // anyway (rtShadows or another traced effect); off: they use their
+        // shadow maps (extraSunShadowMaps).
         bool rtExtraSunShadows = true;
         // Traced reflections (needs Device::rayTracing).
         bool rtReflections = false;
@@ -633,6 +638,9 @@ public:
     // Shadow atlas for sphere/rect/disk lights, in square tiles
     // (Frame::localShadowResolution).
     static constexpr uint32_t kShadowAtlasSize = 4096;
+    // Further suns with a shadow map: one atlas quadrant (kShadowAtlasSize / 2
+    // square, orthographic over the view) each; the rest stay unshadowed.
+    static constexpr uint32_t kMaxSunTiles = 2;
 
     explicit Renderer(Device &device);
     ~Renderer();
@@ -682,6 +690,11 @@ public:
         double denoiseMs = 0;     // the last denoise (Frame::denoise): readback and OIDN, on the CPU
         double exposure = 1;      // the tonemap's multiplier of scene radiance
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
+        // Ray tracing runs only where the user turned a traced effect on:
+        // its pipeline compiles started so far, and whether this frame
+        // built acceleration structures and traced.
+        uint32_t rtPipelineStarts = 0;
+        bool rayTraced = false;
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
         uint32_t renderWidth = 0, renderHeight = 0;  // the scene's size (Frame::renderScale), else the frame's
         bool reduced = false;  // a moving reduction (Frame::moving*) applied this frame
@@ -701,6 +714,10 @@ public:
     }
     // Blocks until Frame::pipelinePrewarm's worker has nothing left to do.
     void WaitForPrewarm();
+    // Starts compiling the ray tracing pipelines ahead of the first traced
+    // frame (overlapping the scene's load), for hosts that know a traced
+    // effect is on before they render. Frames that trace start them too.
+    void StartRayTracing();
     // Tells the worker to stop after the pipelines it is compiling, and writes
     // the pipeline cache (if it changed); returns without waiting for the
     // worker. The destructor still waits for it. Render thread only.
@@ -751,13 +768,20 @@ private:
     void _CreateShadowMap(uint32_t size);
     void _CreateShadowAtlas(bool full);
     void _UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageView background);
-    bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLight[3], FrameData *data) const;
+    bool _FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLight[3], FrameData *data,
+                      uint32_t cascades = 0, uint32_t texels = 0) const;
     void _FitClusters(const Scene::Gpu &gpu, const Frame &frame, FrameData *data) const;
     bool _SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *data);
     struct ShadowTile;
+    struct SunTile {  // a further sun's atlas quadrant (_PlanLocalShadows)
+        uint32_t light;
+        float viewProj[16];
+        float texel;  // world units per texel
+        uint32_t shadowLinkBit;
+    };
     std::vector<ShadowTile> _PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame, float cutoff,
                                               uint32_t *rtLights, uint32_t rtSlots, bool tileTraced,
-                                              const float *shapeSample);
+                                              const float *shapeSample, const std::vector<SunTile> &suns);
     void _RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<ShadowTile> &tiles, bool tint,
                              const VolumePass::Settings *volume);
     void _DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands);

@@ -212,7 +212,8 @@ void main()
     vec3 light = vec3(0.0);
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light sun = lights[i];
-        vec3 shadow = vec3(i == frame.counts.y ? SunShadow(p, depth) : 1.0);
+        // Further suns: their atlas tile (orthographic: one tile, as a spot's).
+        vec3 shadow = i == frame.counts.y ? vec3(SunShadow(p, depth)) : LocalShadow(i, sun, p);
         if (i == frame.counts.y && Feature(kFeatureTranslucentShadows)) {
             shadow *= SunTint(p, depth);
         }

@@ -862,8 +862,14 @@ public:
         float shadowAngle = 0;              // its Light::angle (soft sun shadows)
         uint32_t shadowLinkBit = 0;         // its shadow link's Instance::linkMask bit + 1 (0: every caster)
         // The other shadow-casting distant lights (a dome's extracted sun beside
-        // the scene's own): no cascades, traced shadows only.
-        std::vector<uint32_t> extraSuns;
+        // the scene's own): no cascades; an atlas tile each (the first
+        // Renderer::kMaxSunTiles) or traced shadows.
+        struct ExtraSun {
+            uint32_t light;
+            float direction[3];      // towards the light
+            uint32_t shadowLinkBit;  // as shadowLinkBit
+        };
+        std::vector<ExtraSun> extraSuns;
         // A distant light's disc is wide enough, or some material glossy
         // enough, for mesh.frag's sun region (kFeatureSunRegion): sun
         // tan^2 > 4e-4 a^2 of the least rough material (a: its roughness^2).

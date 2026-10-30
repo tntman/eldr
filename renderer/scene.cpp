@@ -2594,7 +2594,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                     _gpu.shadowLinkBit = shadowLinkBit;
                     std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
                 } else if (shadowed) {
-                    _gpu.extraSuns.push_back(lightCount);
+                    _gpu.extraSuns.push_back({lightCount, {l->direction[0], l->direction[1], l->direction[2]},
+                                              shadowLinkBit});
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);

@@ -216,6 +216,23 @@ float SunShadow(vec3 x, vec3 l)
     return texture(shadowMap, vec4(ndc.xy * 0.5 + 0.5, float(c), ndc.z * 0.5 + 0.5));
 }
 
+// A further sun's atlas tile at a point in the medium (mesh.frag's
+// SunTileShadow): one tap; no tile, no shadow.
+float SunTileShadow(uint index, vec3 x, vec3 l)
+{
+    uint tile = lightShadow[index];
+    if (tile == kNone) {
+        return 1.0;
+    }
+    ShadowTile t = shadowTiles[tile];
+    vec4 clip = t.viewProj * vec4(x + l * t.params.x * 2.0, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    if (any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
+        return 1.0;
+    }
+    return texture(shadowAtlas, vec3(t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw, ndc.z * 0.5 + 0.5));
+}
+
 // A local light's atlas tiles at a point in the medium, as fog_inject.comp
 // looks them up: one tap, TAA's jitter smooths it. Traced lights keep tiles
 // while volumes are in the scene (Renderer::_PlanLocalShadows).
@@ -495,9 +512,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     depth += sunGrid && gridOthers ? cell.rgb : OthersDepth(i, x, l * 1e4, shadowNoise);
                 }
                 vec3 scattered = Octaves(depth) * Phase(dot(dir, l), g);
-                if (k == frame.counts.y) {
-                    scattered *= SunShadow(x, l);
-                }
+                scattered *= k == frame.counts.y ? SunShadow(x, l) : SunTileShadow(k, x, l);
                 light += sun.color.rgb * sun.halfHeight.w * scattered;
             }
             if (frame.localLights.x > 0u) {

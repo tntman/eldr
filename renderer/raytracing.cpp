@@ -162,26 +162,35 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     const VkDeviceSize tableBytes = AlignUp(AlignUp(stride, base) + AlignUp(2 * stride, base) + 2 * stride, base);
     _dev.Reserve(_sbt, kRaygens * tableBytes + base,
                  VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    // What nearly every traced frame uses compiles from here, in parallel
-    // with the scene's load (WaitPipelines). Refraction and photons (12.5 and
-    // 2 s cold) start once a commit has glass or casters (StartPipelines): a
-    // scene without them never compiles them nor waits for them at exit.
-    // HDVK_RT_EARLY_COMPILE=0: all on first use.
+    // HDVK_RT_EARLY_COMPILE=0: every pipeline on first use (StartEarly does nothing).
     const char *early = std::getenv("HDVK_RT_EARLY_COMPILE");
     _early = !(early && early[0] == '0');
-    if (_early) {
+}
+
+void RayTracing::StartEarly()
+{
+    // What nearly every traced frame uses compiles from here, in parallel
+    // with the scene's load (WaitPipelines).
+    if (_early && !_wanted) {
+        _wanted = true;
         for (int job : {int(kRaygens), int(kPixels), int(kProbes)}) {
             _Start(job);
         }
+        StartPipelines(_sceneRefraction, _sceneCaustics);
     }
 }
 
 void RayTracing::StartPipelines(bool refraction, bool caustics)
 {
-    if (_early && refraction) {
+    // Refraction and photons (12.5 and 2 s cold) once a commit has glass or
+    // casters and ray tracing is wanted: a scene without them, or rendered
+    // without ray tracing, never compiles them nor waits for them at exit.
+    _sceneRefraction = refraction;
+    _sceneCaustics = caustics;
+    if (_early && _wanted && refraction) {
         _Start(kRefraction);
     }
-    if (_early && caustics) {
+    if (_early && _wanted && caustics) {
         _Start(kPhotons);
     }
 }
@@ -189,6 +198,7 @@ void RayTracing::StartPipelines(bool refraction, bool caustics)
 void RayTracing::_Start(int job)
 {
     if (!_compiles[job].valid() && !_ready[job]) {
+        ++_pipelineStarts;
         _compiles[job] = std::async(std::launch::async, [this, job] {
             job == kRaygens ? _CompileCompute() : _CompileRaygen(Raygen(job));
         });
