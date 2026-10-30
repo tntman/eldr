@@ -2,7 +2,7 @@
 
 Eldr is a rasterizer at heart: it draws triangles, then shades them with tricks that use what is on screen. On a GPU with Vulkan ray tracing it can also trace rays, which see off-screen objects and give exact shadows, reflections, glass and bounce light. Ray-traced effects are **off by default** (they cost more) and on in the final settings.
 
-> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Lighting and GI** (GI, shadows, reflections) and **Film and sampling** (refraction, final gather, caustics). Settings marked [RT] in the [reference](../settings.md) need ray tracing.
+> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Ray Tracing** (shadows, reflections, refraction, final gather, caustics), **Global Illumination** (GI probes) and **Advanced: Ray Tracing**. Settings marked [RT] in the [reference](../settings.md) need ray tracing.
 
 > **Note:** On GPUs without ray-tracing cores (a GTX 1080 Ti, say), Vulkan runs ray tracing in a slower compute fallback. Everything works; finals just take longer.
 
@@ -20,7 +20,7 @@ Eldr is a rasterizer at heart: it draws triangles, then shades them with tricks 
 
 Bounced light: a red wall tints the floor next to it, a sunlit room fills its shadows.
 
-- **Global Illumination (RTX probes)** places a grid of light probes in the scene that trace rays and keep the bounced light. Smooth, cheap once settled, but soft: corners don't darken much.
+- **Global Illumination** places a grid of light probes in the scene that trace rays and keep the bounced light. Smooth, cheap once settled, but soft: corners don't darken much.
 - **Final Gather** (with GI) traces a ray per pixel and sample, shaded at its hit. It gives contact shadows in corners and exact colour bleeding. Denoised while the film is young (**Final Gather Denoise**).
 - **Screen-Space GI** works without ray tracing, from what is on screen: near-field bounce, replaces ambient occlusion.
 
@@ -61,7 +61,7 @@ Eldr picks the best reflection for each pixel:
 
 | Source | Setting | Good at | Misses |
 |---|---|---|---|
-| Screen-space (SSR) | **Screen Space Reflections** (on) | Polished floors, cheap | What is off screen or hidden |
+| Screen-space (SSR) | **Screen-Space Reflections** (on) | Polished floors, cheap | What is off screen or hidden |
 | Reflection probe | **Reflection Probe** | The room around a chrome object | Exact positions |
 | Planar mirrors | **Planar Reflections** | Flat mirrors and water | Curved surfaces |
 | Ray-traced | **Ray-Traced Reflections** [RT] | Everything, up to roughness 0.7 | Cost |
