@@ -25,6 +25,9 @@
 //   --stop N           after the timed (moving) frames, up to N still ones:
 //                      how long until full quality (the first frame at full
 //                      size without moving reductions), the film and converged
+//   --pause N          after the timed (moving) frames, N frames with the
+//                      camera paused, then N moving again (a pause shorter
+//                      than eldr:stillDelay): per frame ms, GPU ms and size
 //   --startup          instead of timing: a cold start (plugin, delegate,
 //                      scene, first frames) and frames to convergence
 //   --ids              check primId/instanceId against the render index
@@ -82,7 +85,7 @@ int main(int argc, char **argv)
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
     bool houdini = false, startup = false, renderPurpose = false;
     std::string csvPath, passCsvPath;
-    int warmupFrames = 10, stopFrames = 0;
+    int warmupFrames = 10, stopFrames = 0, pauseFrames = 0;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -112,6 +115,8 @@ int main(int argc, char **argv)
             warmupFrames = std::atoi(next), ++i;
         } else if (a == "--stop") {
             stopFrames = std::atoi(next), ++i;
+        } else if (a == "--pause") {
+            pauseFrames = std::atoi(next), ++i;
         } else if (a == "--pass-csv") {
             passCsvPath = next, ++i;
         } else if (a == "--still") {
@@ -470,6 +475,7 @@ int main(int argc, char **argv)
             // Houdini does; a still one reads its own.
             if (HdRenderBuffer *primId = controller.GetRenderOutput(HdAovTokens->primId)) {
                 delegate->SetRenderSetting(TfToken("houdini:viewport"), VtValue(true));
+                delegate->SetRenderSetting(TfToken("eldr:stillDelay"), VtValue(30.0f));
                 auto idsAt = [&](double angle) {
                     controller.SetFreeCameraMatrices(GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle)) * view,
                                                      projection);
@@ -482,9 +488,12 @@ int main(int argc, char **argv)
                 idsAt(0.0);
                 const std::vector<int32_t> still = idsAt(0.0);
                 const std::vector<int32_t> moved = idsAt(10.0), moved2 = idsAt(20.0);
+                const std::vector<int32_t> held = idsAt(20.0);  // within eldr:stillDelay (30 s): still moving
+                delegate->SetRenderSetting(TfToken("eldr:stillDelay"), VtValue(0.0f));
                 idsAt(20.0);
                 const std::vector<int32_t> stopped = idsAt(20.0);
                 expect(moved == still && moved2 == still, "moving frames keep the still frame's ids");
+                expect(held == still, "a paused camera (within eldr:stillDelay) keeps them too");
                 expect(stopped != still, "a still frame reads its own ids");
             } else {
                 expect(false, "--overlap needs primId bound (--aovs color,depth,primId)");
@@ -723,12 +732,50 @@ int main(int argc, char **argv)
                 }
             }
             std::puts("");
+            double lastAngle = still ? 0.0 : 0.25 * (warmup + frames - 1);
+            if (pauseFrames > 0) {
+                // Move -> pause -> move: the last moving frames, the paused
+                // ones and the resumed ones should look and cost the same
+                // (eldr:stillDelay holds the moving mode through the pause).
+                std::puts("  pause: frame, phase, ms since pause, frame ms, gpu ms, render width, annotation");
+                const auto p0 = Clock::now();
+                for (int f = -3; f < 2 * pauseFrames + 3; ++f) {
+                    const bool paused = f >= 0 && f < pauseFrames;
+                    lastAngle += paused || still ? 0.0 : 0.25;
+                    const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), lastAngle));
+                    const auto t0 = Clock::now();
+                    if (houdini) {
+                        camOp.Set(camXform * orbit.GetInverse());
+                        scene.SetTime(UsdTimeCode::EarliestTime());
+                    } else {
+                        controller.SetFreeCameraMatrices(orbit * view, projection);
+                    }
+                    engine.Execute(index, &tasks);
+                    for (auto &[name, b] : buffers) {
+                        const auto *data = static_cast<const uint8_t *>(b->Map());
+                        const size_t bytes = size_t(b->GetWidth()) * b->GetHeight() * HdDataSizeOfFormat(b->GetFormat());
+                        appCopy.resize(std::max(appCopy.size(), bytes));
+                        std::memcpy(appCopy.data(), data, bytes);
+                        b->Unmap();
+                    }
+                    const double ms = Ms(t0, Clock::now());
+                    const VtDictionary stats = delegate->GetRenderStats();
+                    auto get = [&](const char *key) {
+                        auto it = stats.find(key);
+                        return it == stats.end() ? VtValue() : it->second;
+                    };
+                    std::printf("  %3d %-6s %7.1f %6.2f %6.2f %5zu  %s\n", f, f < 0 ? "move" : paused ? "pause" : "resume",
+                                Ms(p0, t0), ms, get("gpuTimeMs").GetWithDefault<double>(0.0),
+                                get("renderWidth").GetWithDefault<size_t>(0),
+                                get("renderProgressAnnotation").GetWithDefault<std::string>().c_str());
+                }
+            }
             if (stopFrames > 0) {
                 // The camera stops where the orbit ended: frames and ms (from
                 // the first still frame's start) until full quality (full
                 // size, no moving reductions: stats interactiveReduced), the
                 // film's start and convergence.
-                const double angle = still ? 0.0 : 0.25 * (warmup + frames - 1);
+                const double angle = lastAngle;
                 const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
                 int full = -1, filmAt = -1, convergedAt = -1;
                 double fullMs = 0, filmMs = 0, convergedMs = 0, worst = 0;

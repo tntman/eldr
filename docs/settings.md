@@ -123,7 +123,7 @@ Groups follow topics. The switches people change most come first, in open groups
 |---|---|---|---|
 | Film when Still<br>`eldr:filmAccumulation` | on | After 3 still frames, switches from TAA to the film: an exact average of samples. Off: TAA only, also when still. | 0.23 ms |
 | TAA Samples<br>`eldr:taaSamples` | int 16 | Jitter cycle length; frames a still camera averages without the film; AOV averaging limit. | |
-| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds a stopped camera still counts as moving, so short pauses don't jump to full quality and back. 0: the first still frame is full quality. Not used offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
+| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds (0 to 30) a stopped camera still counts as moving, so short pauses don't jump to full quality and back. 0: the first still frame is full quality. Not used offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
 | Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25), renders smaller while moving and TAA upscales. The film and extra AOVs stay full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
 | Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | [interactive] While the camera or scene moves, renders at most at this scale, or starts from it when a frame budget is set. 1: off. | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below) |
 | Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | [interactive] Sample dimensions loop over this many samples (1-256) so TAA settles. | |
