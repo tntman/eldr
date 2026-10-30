@@ -320,16 +320,13 @@ chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
 UsdShade.MaterialBindingAPI.Apply(floor.GetPrim()).Bind(chrome)
 stage.GetRootLayer().Save()
 REFLECTIONS = {"eldr:finalQuality": True, "eldr:ssr": False, "eldr:rtReflections": 0,
-               "eldr:planarReflections": True}
-
-
-def reflectionRow():
-    """The lower half's brightest row: the cube's reflection."""
-    return max(range(SIZE // 2 + 8, SIZE), key=lambda row: max(red(x, row) for x in range(SIZE)))
+               "eldr:planarReflections": True, "eldr:planarScale": 1.0}
+# The cube's reflection covers rows 53-63, the cube itself 27-46.
+# ponytail: planarScale 1, a 32-pixel mirror render shows nothing (a bug of its own).
+row = SIZE - 6
 
 
 render([2], REFLECTIONS)
-row = reflectionRow()
 mirrored = ramp(row)
 direct = ramp(SIZE // 2 - 2)
 render([2], {**REFLECTIONS, "eldr:planarMotionBlur": False})
