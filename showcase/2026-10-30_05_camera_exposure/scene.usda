@@ -1,12 +1,12 @@
 #usda 1.0
 (
-    subLayers = [@../../tests/scenes/emissive.usda@]
+    subLayers = [@../../tests/scenes/cornell.usda@]
 )
 
 # Camera exposure, as Karma: /cam is two stops over (exposure 1 at ISO 200,
-# 4x). /Render/camera (the default) renders the box 4x brighter than
-# /Render/ignored (eldr:cameraExposure off), beauty and light AOVs alike;
-# depth stays.
+# 4x). /Render/camera (the default) renders the Cornell box 4x brighter
+# than /Render/ignored (eldr:cameraExposure off) before tonemapping, beauty
+# and light AOVs alike; depth stays.
 
 over "cam"
 {

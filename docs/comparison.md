@@ -89,7 +89,7 @@
 | Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | Eldr: skinned joints and blend shapes blur in time samples, from the shutter's samples in a single frame (sampled motion). |
 | Motion blur on a single frame | Yes | Yes | Yes | Eldr: Hydra transform and point samples. |
 | OpenCV lens distortion | Yes | No | Partial | |
-| Physical camera exposure (EV, ISO, shutter, f-stop) | Yes | Partial | Yes | Eldr: UsdGeomCamera's exposure attributes, as Karma (beauty and light AOVs; KARMA_RATIOS). EEVEE: one exposure value in colour management. |
+| Physical camera exposure (EV, ISO, shutter, f-stop) | Yes | Partial | Yes | Eldr: UsdGeomCamera's exposure attributes, as Karma (beauty and light AOVs, colour limit after exposure; Karma's ratios within 0.1% without the limit). EEVEE: one exposure value in colour management. |
 | Upscaling while interactive | Partial | No | Yes | Eldr has its own TAA upscaler; Unreal has TSR and DLSS. *(interactive)* |
 
 ## Output and pipeline

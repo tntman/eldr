@@ -841,6 +841,22 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |
                          delegate->GetRenderSettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
+    // The camera's exposure (UsdGeomCamera exposure, exposure:iso, :time,
+    // :fStop, :responsivity), as Karma (measured, lane 67): the image times
+    // its linear scale, beauty and light AOVs, not data AOVs. On the beauty
+    // it is EV added to eldr:exposureCompensation (before tonemapping; with
+    // auto exposure it offsets the metered exposure as compensation does).
+    // Karma's colour limit clamps exposed samples: the clamps in scene units
+    // shrink by the scale.
+    if (const float scale = camera ? camera->GetLinearExposureScale() : 1.0f;
+        HdVkOnOff(delegate->GetRenderSetting(t2.cameraExposure), true) && scale > 0.0f && std::isfinite(scale) &&
+        scale != 1.0f) {
+        frame.post.exposureCompensation += std::log2(scale);
+        frame.lightAovScale = frame.postProcess ? scale : 1.0f;  // raw HDR (eldr:postProcess off): neither
+        frame.indirectClamp /= scale;
+        frame.directClamp /= scale;
+        frame.colorLimit /= scale;
+    }
     // Any may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
                                                     frame.indirectClamp);
@@ -858,16 +874,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             frame.focusDistance = camera->GetFocusDistance();
             // The aperture the conformed projection shows (2 f / P[0][0]).
             frame.sensorWidth = float(2.0 * frame.focalLength / projection[0][0]);
-        }
-        // The camera's exposure (UsdGeomCamera exposure, exposure:iso, :time,
-        // :fStop, :responsivity), as Karma: the image times its linear scale,
-        // beauty and light AOVs, not data AOVs. On the beauty it is EV added
-        // to eldr:exposureCompensation (before tonemapping; with auto exposure
-        // it offsets the metered exposure as compensation does).
-        const float scale = camera->GetLinearExposureScale();
-        if (HdVkOnOff(delegate->GetRenderSetting(t2.cameraExposure), true) && scale > 0.0f && std::isfinite(scale)) {
-            frame.post.exposureCompensation += std::log2(scale);
-            frame.lightAovScale = frame.postProcess ? scale : 1.0f;  // raw HDR (eldr:postProcess off): neither
         }
     }
     {
