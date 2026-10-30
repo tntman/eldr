@@ -236,6 +236,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Glass tints fog; volumes behind glass are dimmed by every translucent layer in front of them (up to `eldr:refractionLayers`, at most 4, peeled per pixel) and refracted | `eldr:volumeUnderTransparency` |
 | Half-resolution march, about 3x cheaper | `eldr:volumeResolution` 2 |
 | Local lights' shadows (atlas tap, other volumes) every second march step, the steps between reuse the last tap's shadowed fraction | `eldr:volumeLocalShadowStride` |
+| Shadow grids: each volume's optical depth towards the dome, the suns and the local lights (other volumes) built once per change on a 64^3 grid and read trilinearly instead of shadow marches (3-4x cheaper volumes; time samples of velocity-blurred volumes march) | `eldr:volumeShadowGrid` |
 
 ## Materials
 

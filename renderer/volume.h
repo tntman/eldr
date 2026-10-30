@@ -181,7 +181,24 @@ public:
         // march steps; the steps between scale the unshadowed light by the
         // last tap's shadowed fraction. 1: every step.
         uint32_t localShadowStride = 2;
+        // Shadow grids: each volume's optical depth towards the dome, each
+        // distant light and (with mutualShadows) each local light's other
+        // volumes, at this many points per axis over its box, built once
+        // per change (EnsureShadowGrid) and read trilinearly by the march
+        // instead of a shadow ray per step and light. 0: march every ray.
+        // Time samples of moving volumes (velocity blur) march.
+        uint32_t shadowGrid = 64;
     };
+
+    // Before the frame's descriptors: sizes the shadow grid (Settings::
+    // shadowGrid) for `volumeCount` volumes and `distant` + `local` lights
+    // (the GPU must be idle when it changes); `version` stands for what the
+    // grid holds (the volumes, lights, dome; Scene::Gpu's stamps): the next
+    // Record rebuilds it when that or the settings changed. `tables`: as
+    // Record's `factors`.
+    void EnsureShadowGrid(uint32_t volumeCount, uint32_t distant, uint32_t local, bool dome, const Settings &settings,
+                          bool tables, uint64_t version);
+    VkImageView ShadowGrid() const { return _grid.view; }  // bindings 93 (sampled) and 94 (storage), GENERAL
 
     // Which part of each ray Record marches: all of it; the part behind the
     // farthest translucent layer (TranslucentLayers()), drawn before the
@@ -259,6 +276,16 @@ private:
     Image _half;
     VkSampler _halfSampler = VK_NULL_HANDLE;
     uint32_t _halfWidth = 0, _halfHeight = 0;
+    // Shadow grid (volume_grid.comp): gridSize^3 cells per slot, gridLights
+    // slots per volume, stacked along z; built for _gridWanted, holds _gridBuilt.
+    Image _grid;
+    VkPipelineLayout _gridLayout = VK_NULL_HANDLE;
+    VkPipeline _gridPipeline = VK_NULL_HANDLE;
+    uint32_t _gridSize = 0, _gridLights = 0, _gridCount = 0, _gridMutual = 0, _gridTables = 0;
+    float _gridDensity = 0.0f;
+    uint32_t _gridExtent[3] = {};
+    uint64_t _gridWanted = 0, _gridBuilt = 0;
+    void _BuildShadowGrid(VkCommandBuffer cmd, VkDescriptorSet set);
     Image _translucentDepth, _peelDepth, _layers;
     VkImageView _layerViews[kMaxLayers] = {};
     uint32_t _depthWidth = 0, _depthHeight = 0, _layerCount = 0;
