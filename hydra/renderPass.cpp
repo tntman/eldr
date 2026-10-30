@@ -485,6 +485,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.giRelocation, &frame.giRelocation},
                                 {t2.rtShadowDenoise, &frame.rtShadowDenoise},
                                 {t2.rtReflectionDenoise, &frame.rtReflectionDenoise},
+                                {t2.rtReflectionRoulette, &frame.rtReflectionRoulette},
                                 {t2.ssrDenoise, &frame.ssrDenoise}, {t2.shadowJitter, &frame.shadowJitter},
                                 {t2.rtTranslucentShadows, &frame.rtTranslucentShadows},
                                 {t2.dofJitter, &frame.dofJitter},
@@ -827,11 +828,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
     // Final quality: asked for, or an offline renderer's convention (husk,
-    // hdPrman: enableInteractive false). usdrecord sets neither, but its
+    // hdPrman, usdrecord: enableInteractive false). A host's
     // first frame has no history, so its film starts with the first sample.
     frame.firstFrameFinal = !houdiniViewport;
     const bool offline = static_cast<HdVkRenderDelegate *>(delegate)->Offline();
     frame.finalQuality = frame.finalQuality || offline;
+    // Nobody toggles a feature in a batch render: no prewarm (its compiles
+    // only made the teardown wait, seconds).
+    frame.pipelinePrewarm = frame.pipelinePrewarm && !offline;
     // An offline frame's exposure is deterministic (like Karma's: none)
     // unless the render settings prim asks for eldr:autoExposure.
     // Houdini's viewport colour-corrects every delegate's colour itself (its

@@ -24,14 +24,15 @@ struct RayTracingData {
     float giRotation[16];
     uint32_t skinned[4];  // the TLAS's first skinned instance, how many
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), w: layer stride
-    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel, 1: lights shadowed at hits
+    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel, w bit 1: lights shadowed at hits, bit 2: translucent casters tint
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
     float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
     float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
     float denoise[4];           // x: traced shadows' largest filter radius (pixels), y: traced reflections'
-                                // filter scale, z: the shadow image's first layer of penumbra radii
+                                // filter scale, z: the shadow image's first layer of penumbra radii,
+                                // w: reflection roulette (Work::reflectionRoulette)
     // Caustics (Work::caustics): x this sample's gather radius, y the hash
     // grid's cell size, z how far before the casters' sphere photons start
     float caustics[4];
@@ -107,6 +108,7 @@ public:
         // mesh.frag's filters of the traced shadows (radius in pixels) and
         // reflections (scale of their roughness radius); 0: off.
         float shadowDenoise = 0.0f, reflectionDenoise = 1.0f;
+        uint32_t reflectionRoulette = 0;  // rt_pixels.rgen: 1 surfaces reflecting nothing skip, 2 also dim ones in a share of samples
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;

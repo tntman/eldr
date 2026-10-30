@@ -118,7 +118,7 @@ void main()
         // diffuse surface, by its fractions.
         bool straight = bounce > 0u && u.x < s.straight;
         if (bounce > 0u && !straight && u.x >= s.straight + s.refracted) {
-            vec3 shaded = ShadeHit(dir, seed, true, rt.shadowInfo.w != 0u);
+            vec3 shaded = ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u);
             imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
             return;
         }
@@ -165,7 +165,7 @@ void main()
         }
         if ((hit.flags & kHitTranslucent) == 0u) {
             EvaluateHit(dir, cone);
-            vec3 shaded = ShadeHit(dir, seed, true, rt.shadowInfo.w != 0u);
+            vec3 shaded = ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u);
             imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
             return;
         }

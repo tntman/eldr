@@ -56,9 +56,9 @@
       "mald": 0.2006
     },
     "caustics": {
-      "lum": 1.0104,
-      "region": 0.2396,
-      "mald": 0.1453
+      "lum": 0.974,
+      "region": 0.181,
+      "mald": 0.0747
     },
     "transparency_order": {
       "lum": 1.0627,
