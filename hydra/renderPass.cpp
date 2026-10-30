@@ -885,6 +885,9 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // moves and re-dices once it stands still. The same wait for a
     // subdivision setting the settings prim just changed.
     _redicing = resync;
+    if (resync) {
+        static_cast<HdVkRenderDelegate *>(delegate)->KeepMotion();
+    }
     if (resync && offline) {
         return;
     }

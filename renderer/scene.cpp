@@ -2355,8 +2355,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     if (changed || drawn != _lastDrawn || rays != _lastRays) {
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;
-        // The film restarts: capture the shutter again.
-        _gpu.moved = _gpu.moved || (keepShutter && (!motion.empty() || _gpu.shutterJoints || _gpu.shutterWeights));
+        // The film restarts: capture the shutter again (the shutter's motion
+        // is this frame's, whichever commit brought it).
+        _gpu.moved = _gpu.moved || (shutterRows && (!motion.empty() || _gpu.shutterJoints || _gpu.shutterWeights));
         _keptMoved = _gpu.moved;
         _lastDrawn = std::move(drawn);
         _lastRays = std::move(rays);
