@@ -367,6 +367,9 @@ if(WIN32)
                  --compare --exrinfo $<TARGET_FILE:exrinfo>)
         set_tests_properties(karma_golden PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
                              LABELS slow SKIP_RETURN_CODE 77 TIMEOUT 1800)
+        # eldr:rtLightSampling / eldr:finalGatherRoulette: same converged mean with seven shadowed lights.
+        add_test(NAME light_sampling COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_light_sampling.py $<TARGET_FILE:exrinfo>)
+        set_tests_properties(light_sampling PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         add_test(NAME motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_motion.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()

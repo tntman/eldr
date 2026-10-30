@@ -229,13 +229,12 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
 }
 
 // Traced shadow k's texel at `pixel` (rt.shadowInfo.z lights per texel),
-// over the share of samples its light is traced in (rt.shadowSample.z).
+// as stored (0..1; RtTraced weights it by the light's share of samples).
 vec3 RtShadowTexel(ivec2 pixel, uint k)
 {
     uint perTexel = rt.shadowInfo.z;
     vec4 v = imageLoad(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
-    float scale = rt.shadowSample.z > 0.0 ? 1.0 / rt.shadowSample.z : 1.0;
-    return (perTexel == 1u ? v.rgb : vec3(v[k & 3u])) * scale;
+    return perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
 }
 
 // The traced shadow of `light` (its colour: what reaches p through
@@ -309,6 +308,10 @@ bool RtTraced(uint light, vec3 p, vec3 ng, out vec3 visibility)
                     }
                 }
             }
+            // The light traced in a share of the samples (rt_pixels.rgen,
+            // eldr:rtLightSampling): the stored 0..1 visibility, filtered
+            // above as stored, counts 1 / share.
+            visibility *= rt.shadowSample.z > 0.0 ? 1.0 / rt.shadowSample.z : 1.0;
             return true;
         }
     }
