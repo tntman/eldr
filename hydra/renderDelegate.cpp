@@ -25,7 +25,6 @@
 #include "pxr/imaging/hd/camera.h"
 #include "pxr/imaging/hd/driver.h"
 #include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
-#include "pxr/imaging/hd/materialSchema.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/xformSchema.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
@@ -733,7 +732,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t2.textureCompression) {
             // Materials fetch their textures again, in the other form.
-            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->material}, {HdMaterialSchema::GetDefaultLocator()});
+            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->material}, {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||

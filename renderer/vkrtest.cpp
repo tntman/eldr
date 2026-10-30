@@ -731,7 +731,10 @@ int main()
                 scene.Commit();
                 const float diff = MaxDifference(Render(renderer, scene), exact);
                 std::printf("texture compression (format %d): max difference %.4f\n", int(format), diff);
-                Expect(diff < 0.03f, "compressed textures render as their originals");
+                // BC7 mode 6 fits one colour line per 4x4 block: this gradient
+                // runs red along x and green along y, so up to ~6/255 off
+                // (0.054 linear near white); gray formats are a few steps.
+                Expect(diff < (channels == 4 ? 0.07f : 0.01f), "compressed textures render as their originals");
             }
         }
 
