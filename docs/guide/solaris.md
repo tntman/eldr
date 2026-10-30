@@ -37,6 +37,10 @@ In USD the same list is `tests/scenes/final_settings.usda`'s `/Render/final`: re
 
 ![Houdini: Render Settings LOP, Eldr tab, Film and sampling group with Set or Create menus](../images/houdini/render_settings_eldr_tab.png)
 
+A final node is the same Render Settings LOP with the effects ticked one by one, here the showcase scenes' `eldr_final`:
+
+![Houdini: the eldr_final Render Settings LOP with each final setting ticked](../images/houdini/render_settings_final.png)
+
 ### See the final in the viewport
 
 The viewport uses its own settings until you look through a render settings prim. Choose the final node's prim in the viewport's **camera / render settings menu** (top right of the viewport). Eldr then reads that prim's `eldr:` settings, while staying an interactive viewport (resolution and products of the prim don't apply).
