@@ -1,5 +1,12 @@
 # Subsurface scattering
 
+<!-- summary -->
+Light scattering under the surface of skin, jade and leaves (`eldr:subsurface`).
+
+- **Compare:** open `showcase/2026-10-30_13_subsurface/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `subsurface` vs `subsurfaceOff`, `subsurfaceQuality`.
+- **Look at:** The soft skin and jade, the ears and the leaf glowing against the sun.
+<!-- summary -->
+
 `tests/scenes/subsurface.usda`: a head-like ball with thin ears (standard_surface skin), an OpenPBR jade ball and a thin-walled leaf, the sun low behind them. Eldr's subsurface is a per-channel, depth-aware blur of the diffuse light over the subsurface radius; thin parts transmit the sun.
 
 ## What to look at

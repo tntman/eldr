@@ -1,4 +1,11 @@
-# Textures, UDIMs and colour spaces
+# Textures and colour spaces
+
+<!-- summary -->
+Texture colour spaces (ACEScg, Rec.709), UDIM tiles and anisotropic filtering (`eldr:anisotropy`).
+
+- **Compare:** open `showcase/2026-10-30_21_textures_colour/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `textures` vs `aniso1`.
+- **Look at:** The far floor tiles: crisp at 16x, smeared at 1x; each colour pair matches.
+<!-- summary -->
 
 Middle: `tests/scenes/colorspace.usda`: each column pairs a colour authored in ACEScg (top, tagged `lin_ap1_scene`) with the same colour pre-converted to linear Rec.709 (bottom); Eldr shades in linear Rec.709, so each pair matches. Left column constants, right column 16-bit textures. Right: a MaterialX image of `udim.<UDIM>.png` on uvs 0..2: tiles 1001 (bottom left), 1002 (bottom right), 1011 (top left); 1012 is missing and shows the image's `default` (black, lit only by the specular), as Karma. Bottom: a floor tiling `quadrants.png` (sRGB) 40 times towards the horizon.
 

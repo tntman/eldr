@@ -1,0 +1,68 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [@../../tests/scenes/volume.usda@]
+)
+
+# Multiple scattering in volumes, set with Karma's Volume Limit
+# (karma:object:volumelimit): tests/scenes/volume.usda's smoke clouds get
+# brighter with more bounces, fitted to Karma's gain over single scattering.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/volumeLimit4
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+        custom float karma:object:volumelimit = 4.0
+    }
+    # --- end standard settings ---
+    def RenderSettings "volumeLimit4"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float karma:object:volumelimit = 4
+    }
+
+    def RenderSettings "volumeLimit1"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float karma:object:volumelimit = 1
+    }
+
+    def RenderSettings "volumeLimit16"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float karma:object:volumelimit = 16
+    }
+}

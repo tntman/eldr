@@ -1,5 +1,12 @@
 # Per-AOV sample filters
 
+<!-- summary -->
+Each render var can ask for its own sample filter (min, max, closest, farthest, nearest, box, Gauss), as Karma's Sample Blending.
+
+- **Compare:** open `showcase/2026-10-29_14_aov_filters/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` (writes `aovFilters.exr`), `max` (writes `aovFiltersMax.exr`), `off` (`eldr:aovFilters` off).
+- **Look at:** Zoom into the silhouette pixels of the ball and the tall box in `depth_min` against `depth_max`, and `N_box` against `N`.
+<!-- summary -->
+
 The Cornell box with render vars that each ask for their own sample filter: Eldr's `driver:parameters:aov:eldr:filter` (`beauty`, `nearest`, `gauss`, `box`, `min`, `max`, `closest`, `farthest`, optionally a radius in pixels) or Karma's `driver:parameters:aov:karma:filter` (the Render Var's "Sample Blending": `["minmax",{"mode":"max"}]`, `zmin`...). Eldr's wins. Only the film filters (a still image once it renders over film samples); while the camera moves the viewport shows the defaults.
 
 ## What to look at

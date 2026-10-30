@@ -223,7 +223,7 @@ HdVkRenderPass::HdVkRenderPass(HdRenderIndex *index, HdRprimCollection const &co
 bool HdVkRenderPass::IsConverged() const
 {
     HdVkTimedCall timed(HdVkCallTimes::kConverged);
-    return !_renderer || (_renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed && !_redicing);
+    return !_renderer || (!_holding && _renderer->IsConverged() && !_scene.LodsPending() && !_extraStale && !_failed && !_redicing);
 }
 
 // ponytail: renders the whole buffer and ignores the framing's data window
@@ -851,7 +851,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Any edit to the scene or the settings starts the film over; the
     // camera's only when its lens changed (below).
     frame.sceneVersion = (static_cast<HdVkRenderDelegate *>(delegate)->SceneEdits() << 32) |
-                         delegate->GetRenderSettingsVersion();
+                         static_cast<HdVkRenderDelegate *>(delegate)->SettingsVersion();
     frame.toonBands = uint32_t(std::max(delegate->GetRenderSetting<int>(t.toonBands, int(frame.toonBands)), 0));
     // The camera's exposure (UsdGeomCamera exposure, exposure:iso, :time,
     // :fStop, :responsivity), as Karma (measured, lane 67): the image times
@@ -987,8 +987,27 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     void *mapped[4] = {};
     std::vector<uint8_t> productTargets[4];
     constexpr size_t kTargetBytes[4] = {8, 4, 4, 4};  // RGBA16F, float, int, int
+    const bool firstFrame = std::all_of(_lastViewProj, _lastViewProj + 16, [](float v) { return v == 0.0f; });
     const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
     std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    // eldr:stillDelay: a camera that stopped less than this ago (wall time,
+    // the same at any fps) still counts as moving for the renderer: short
+    // pauses mid-navigation keep the moving reductions and TAA instead of
+    // popping to full size and the film. IsConverged waits it out.
+    const auto now = FrameTiming::Clock::now();
+    if (moving && !firstFrame) {  // the first frame isn't navigation
+        _lastMove = now;
+    }
+    const float stillDelay = offline ? 0.0f : std::clamp(delegate->GetRenderSetting<float>(t2.stillDelay, 0.3f), 0.0f, 2.0f);
+    _holding = frame.cameraHold = !moving && _lastMove &&
+                                  now - *_lastMove < std::chrono::duration<double>(stillDelay);
+    // The step up to full quality, the moving frame budget and the film's
+    // start from the TAA image: interactive only (offline frames start
+    // their film clean).
+    frame.rampFrames = offline ? 0u : uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rampFrames, 6), 0, 60));
+    frame.movingFrameBudget =
+        offline ? 0.0f : std::clamp(delegate->GetRenderSetting<float>(t2.movingFrameBudget, 33.0f), 0.0f, 1000.0f);
+    frame.filmWarmStart = std::clamp(delegate->GetRenderSetting<float>(t2.filmWarmStart, 4.0f), 0.0f, 1000.0f);
     // eldr:staleMovingIds: while Houdini's viewport camera moves the ids (its
     // picking and selection outline, mapped every frame) keep the last still
     // frame's: nobody picks mid-tumble, it renders on once the camera stops,
@@ -1187,7 +1206,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
                                                  frame.depthToDistance[2], frame.depthToDistance[3]};
     std::array<float, 4> collectedDepth = depthConstants;
-    frame.deferReadback = frame.overlapReadback && moving && !frame.filmRestart && !productSized && !interop &&
+    frame.deferReadback = frame.overlapReadback && (moving || frame.cameraHold) && !frame.filmRestart && !productSized && !interop &&
                           colorHalf.empty() && huskIds.empty() && !frame.linearColor && readback == _lastReadback &&
                           std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
     bool collected = false;

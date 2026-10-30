@@ -168,8 +168,8 @@ public:
         // atlas; needs volumes.shadows and localShadows).
         bool localVolumeShadows = true;
         // The local lights' shapes (sphere, rect, disk, cylinder) show to the camera as emitters of their
-        // radiance, unless the light is hidden from the camera (Light::cameraVisible).
-        bool lightShapesVisible = false;
+        // radiance, unless the light is hidden from the camera (Light::cameraVisible). Off hides all.
+        bool lightShapesVisible = true;
         // GGX multiple-scattering energy compensation (MaterialX's, Turquin's) where the surface model
         // has it (standard_surface, OpenPBR; UsdPreviewSurface is single scattering). Off: single
         // scattering everywhere, darker when rough.
@@ -412,6 +412,22 @@ public:
         // While only the camera moves, settled GI probes skip their update
         // (they don't depend on the camera; eldr:movingGiPause).
         bool movingGiPause = true;
+        // The camera stopped less than eldr:stillDelay ago (the app's wall
+        // time): still frames count as moving (the reductions above, no
+        // film) and TAA keeps refining; the film starts when it ends.
+        bool cameraHold = false;
+        // Frames from the end of moving mode to full quality: the render
+        // scale and shadow rays step up linearly from their moving values,
+        // settled GI probes update every other frame, and the film starts
+        // on the last (eldr:rampFrames; 0 or 1: at once).
+        uint32_t rampFrames = 0;
+        // While moving, the render scale follows the measured GPU time to
+        // this budget, in ms (0.25-1, damped; eldr:movingFrameBudget; 0:
+        // movingRenderScale).
+        float movingFrameBudget = 0.0f;
+        // The weight, in film samples, of the TAA image a film starts from
+        // (eldr:filmWarmStart; 0: from its first sample, as filmRestart).
+        float filmWarmStart = 4.0f;
         float filmFilterRadius = 1.5f;
         // The film starts over at its first sample after any change, at
         // once, instead of from the TAA image after kFilmStillFrames.
@@ -773,6 +789,10 @@ private:
     // Film: samples in it (0: TAA resolves), frames the camera and the
     // scene have been still, what the scene was.
     uint32_t _filmSamples = 0, _stillFrames = 0;
+    uint32_t _rampLeft = 0;      // Frame::rampFrames: reduced still frames left
+    float _movingScale = 1.0f;   // the last moving frame's render scale (the ramp's start)
+    float _dynamicScale = 0.0f;  // Frame::movingFrameBudget's scale (0: not started)
+    bool _lastMoving = false;    // the last frame was moving: its GPU time is a moving frame's
     std::chrono::steady_clock::time_point _accumStart = std::chrono::steady_clock::now();
     double _accumSeconds = 0;  // Stats::accumSeconds
     bool _accumDone = false;

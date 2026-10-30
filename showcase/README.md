@@ -1,62 +1,113 @@
 # Eldr showcase scenes
 
-Small scenes to try Eldr features yourself. Each folder has a `scene.usda` with several `/Render/*` Render Settings prims (A/B toggles) and a `README.md`.
+One folder per feature, named `YYYY-MM-DD_NN_feature`. Each has a `scene.usda`, a `README.md` (what the feature is, which nodes to compare, what to look at) and a generated `scene.hip`.
 
-Every folder also has a `scene.hip` with the standard `eldr_default` (Eldr, nothing set), `eldr_final` (the final-render settings ticked) and `karma` (for Karma) render settings nodes, each with a USD Render ROP, and the same three prims in `scene.usda`.
+Every scene has the same three render settings prims and nodes: `eldr_default` (Eldr, nothing set), `eldr_final` (the final-render settings ticked) and `karma` (Karma to match), plus the feature's own A/B prims. Open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the A/B nodes.
 
-Each feature has a folder here, named `date_NN_name`; the date and number only order the list.
+Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` and pick a settings prim, or `husk -R Eldr -s /Render/<name> showcase/<folder>/scene.usda`. `houdini/make_showcase_hip.py` (hython) rebuilds the `.hip` files.
 
-| Date | Folder | Feature | Settings |
-|---|---|---|---|
-| 2026-10-28 | `2026-10-28_01_memory_subdivision` | Subdivision refine levels, polygon meshes as subdivision, memory | `eldr:maxRefineLevel`, `eldr:subdivision`, `primvars:eldr:refineLevel`, `renderAsSubdivision` |
-| 2026-10-28 | `2026-10-28_02_velocity_blur` | Velocity and instance blur, eldr over karma | `eldr:motionBlur`, `primvars:eldr:object:vblur`, `instance_vblur` |
-| 2026-10-28 | `2026-10-28_03_emitters_shadows_reflections` | Traced shadows and reflections, emissive lights | `eldr:rtShadows`, `rtReflections`, `rtHitShadows`, `emissiveLights` |
-| 2026-10-28 | `2026-10-28_04_gi_final_gather` | GI probes, final gather, SSGI | `eldr:gi`, `ssgi`, `finalGather`, `giRelocation`, `finalGatherDistance` |
-| 2026-10-28 | `2026-10-28_05_houdini_render_vars` | Render Vars in the Houdini viewport and husk | Render Product and Render Var prims, `houdini:viewport` |
-| 2026-10-28 | `2026-10-28_06_eldr_geometry_tab` | Per-object eldr: attributes over karma:, image group | `holdoutmode`, `rendervisibility`, `width_scale`, `curve_style`, `point_style`; `eldr:productLinear`, `bloomIntensity` |
-| 2026-10-28 | `2026-10-28_07_shadow_cull` | Small-object culling in sun shadows | `eldr:shadowCullPixels` |
-| 2026-10-28 | `2026-10-28_08_render_stats` | Eldr's statistics in the Render Gallery panel, `husk:render_stats` in EXRs | `husk.metadata` in `UsdRenderers.json` |
-| 2026-10-29 | `2026-10-29_01_quick_fixes` | Colour limit, traced reflections, UsdPreviewSurface opacityMode, displacement graph bound | `eldr:colorLimit`, `indirectClamp`, `rtReflections`, `opacityMode`, `eldr:displacementBound` (material input) |
-| 2026-10-29 | `2026-10-29_02_offline_batch` | husk and usdrecord: film samples back to back in one execute | `eldr:offlineBatchSeconds` |
-| 2026-10-29 | `2026-10-29_03_planar_blur_lighttex` | Blurred planar mirrors, light textures in traced paths | `eldr:planarBlur`, `eldr:lightTextures` |
-| 2026-10-29 | `2026-10-29_04_screen_dicing` | Subdivision levels by size on screen as Karma's dicing quality | `eldr:screenDicing`, `primvars:eldr:object:dicingquality` |
-| 2026-10-29 | `2026-10-29_05_coloured_volume_shadows` | Coloured smoke casts coloured shadows (maps, traced, half resolution); multiple scattering fitted to Karma's Volume Limit | `eldr:volumeShadows`, `eldr:rtShadows`, `eldr:volumeResolution`, `karma:object:volumelimit` |
-| 2026-10-29 | `2026-10-29_07_oidn_adaptive_tiles` | Intel Open Image Denoise on the converged film, raw beauty AOV, adaptive sampling skipping stopped tiles | `eldr:denoise`, `karma:global:imagefilter`, `eldr:beautyRaw` AOV, `eldr:adaptiveTiles` |
-| 2026-10-29 | `2026-10-29_15_light_linking_ies` | UsdLux light and shadow linking (Houdini Light Linker), IES profiles | `eldr:lightLinking`, `eldr:lightIes`; `collection:lightLink`, `collection:shadowLink`, `shaping:ies:*` |
-| 2026-10-29 | `2026-10-29_13_caustics` | Caustics: photons through a glass ball onto the floor, sharper every sample; caustic AOV | `eldr:caustics`, `eldr:causticsPhotons`, `primvars:karma:object:causticsenable` |
-| 2026-10-29 | `2026-10-29_06_light_groups` | Karma's AOVs: light groups, transmission, subsurface, coat, volume, shadow mattes | `inputs:karma:light:lpetag`, `eldr:holdouts`; LPE render vars |
-| 2026-10-29 | `2026-10-29_09_transparency_order` | Glass and other translucent meshes in one depth order; smoke dimmed by every pane in front of it | `eldr:oit`, `eldr:refractionLayers`, `eldr:volumeUnderTransparency`, `eldr:rtRefraction` |
-| 2026-10-29 | `2026-10-29_08_volume_karma_defaults` | Volumes without a material scatter as Karma's (white, no absorption, isotropic; dome from its upper half) | `eldr:volumeAnisotropy`, `karma:object:volumelimit` |
-| 2026-10-29 | `2026-10-29_11_effect_denoise` | Ray-traced effects (final gather, shadows, reflections) denoised per signal, fading out over the film | `eldr:effectDenoiseSamples`, `eldr:rtShadowDenoise`, `eldr:rtReflectionDenoise`, `eldr:finalGatherDenoise` |
-| 2026-10-29 | `2026-10-29_12_quality_multipliers` | Per-component quality as in Karma: more rays for the noisy component (the final gather) instead of more film samples | `eldr:diffuseQuality`, `eldr:lightQuality`, `eldr:reflectQuality`, `karma:object:diffusequality` |
-| 2026-10-29 | `2026-10-29_14_aov_filters` | Per-AOV sample filters: min, max, closest, farthest, nearest, box, Gauss per render var (Karma's Sample Blending) | `driver:parameters:aov:eldr:filter`, `driver:parameters:aov:karma:filter`, `eldr:aovFilters` |
-| 2026-10-29 | `2026-10-29_16_mtlx_coverage` | MaterialX compositing nodes, glTF PBR / Disney / unlit surfaces, Karma's Ramp Const, Hex Tiled Texture and Voronoi | `eldr:materialGraphs`, `eldr:proceduralTextures` |
-| 2026-10-29 | `2026-10-29_17_karma_colour_limit` | Karma's colour limit on seen emitters and on emissive-mesh light; full-HDR emitters for comp | `eldr:colorLimit`, `eldr:indirectClamp` |
-| 2026-10-29 | `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
-| 2026-10-29 | `2026-10-29_10_reflection_motion_blur` | Planar and traced reflections blur with motion blur time samples; probes stay at the frame's time | `eldr:planarMotionBlur`, `eldr:rtReflections` |
-| 2026-10-29 | `2026-10-29_19_texture_compression` | 8-bit textures block-compressed (BC7, BC4, BC5) and cached on disk, against the exact texels | `eldr:textureCompression` |
-| 2026-10-29 | `2026-10-29_20_rt_volume_cost` | Cheaper traced refraction (first ray looks for glass only) and volume local-light shadows (a tap every second step), same image | `eldr:rtRefractionClip`, `eldr:volumeLocalShadowStride` |
-| 2026-10-30 | `2026-10-30_01_moving_camera` | Moving camera mode: half size, one shadow ray, GI paused while moving; full settings back on the first still frame | `eldr:movingRenderScale`, `eldr:movingShadowRays`, `eldr:movingGiPause` |
-| 2026-10-30 | `2026-10-30_02_reflection_roulette` | Dim traced reflections trace in a share of the film's samples per 8x8 block, weighted to match: same converged image, crowd 249 to 146 ms per sample | `eldr:rtReflectionRoulette` |
-| 2026-10-30 | `2026-10-30_03_volume_shadow_grid` | Volume shadow grids: three volumes, sun, dome and three sphere lights, 3x cheaper, same image | `eldr:volumeShadowGrid` |
-| 2026-10-30 | `2026-10-30_04_light_sampling` | Hits trace one stochastic light, traced shadows skip lights that give a pixel nothing and share samples over 4 lights: same converged image, emissive RT 147 to 78 ms per sample | `eldr:rtLightSampling`, `eldr:finalGatherRoulette` |
-| 2026-10-30 | `2026-10-30_05_camera_exposure` | The USD camera's exposure (exposure, ISO, time, f-stop, responsivity) scales the beauty and light AOVs, as Karma | `eldr:cameraExposure` |
-| 2026-10-30 | `2026-10-30_06_many_lights` | 200 small sphere lights, clustered shading | `eldr:clusteredLights`, `eldr:localLights` |
-| 2026-10-30 | `2026-10-30_07_light_shapes` | Light shapes and the energy-conserving highlights of sun, sphere, rect, disk and tube lights | `eldr:lightShapesVisible`, `inputs:karma:light:renderlightgeo` |
-| 2026-10-30 | `2026-10-30_08_dome_sun` | The HDRI's sun taken out of the dome as a shadowed distant light | `eldr:domeSun`, `eldr:domeSunThreshold` |
-| 2026-10-30 | `2026-10-30_09_ambient` | Dome light darkened by GTAO in a white corner | `eldr:ambientOcclusion`, `eldr:aoRadius` |
-| 2026-10-30 | `2026-10-30_10_shadow_modes` | Shadow maps (cascades, atlas), PCSS, jittered maps, hard PCF, traced | `eldr:shadowJitter`, `eldr:softShadows`, `eldr:softSunShadows`, `eldr:rtShadows` |
-| 2026-10-30 | `2026-10-30_11_reflections_ssr` | Screen-space reflections fading with roughness; the reflection probe | `eldr:ssr`, `eldr:reflectionProbe` |
-| 2026-10-30 | `2026-10-30_12_fog` | Height fog with sun shafts and a spot's cone | `eldr:fog`, `eldr:fogDensity`, `eldr:fogHeightFalloff`, `eldr:fogColor` |
-| 2026-10-30 | `2026-10-30_13_subsurface` | Subsurface skin, jade and a thin leaf against the sun | `eldr:subsurface`, `eldr:sssQuality` |
-| 2026-10-30 | `2026-10-30_14_lens_dof` | Barrel lens distortion and depth of field at f/1.4 | `eldr:depthOfField`, `eldr:lensDistortion`, `lensDistortion:*` |
-| 2026-10-30 | `2026-10-30_15_cryptomatte` | Cryptomatte object and material layers in the EXR, soft or one id per pixel | `primvars:__name`, `primvars:__materialname`, `eldr:cryptomatteSoft` |
-| 2026-10-30 | `2026-10-30_16_light_path_intensity` | Direct and indirect light scaled in the final pixel | `eldr:directIntensity`, `eldr:indirectIntensity` |
-| 2026-10-30 | `2026-10-30_17_bloom_tonemap` | ACES, AgX and no tonemapper; bloom on full-HDR emitters | `eldr:tonemapper`, `eldr:bloomIntensity`, `eldr:productLinear` |
-| 2026-10-30 | `2026-10-30_18_displacement` | UsdPreviewSurface and MaterialX displacement, constant offset | `eldr:displacement`, `eldr:displacementScale` |
-| 2026-10-30 | `2026-10-30_19_curves_points` | Every curve basis, points, 600 hair curves | `eldr:curveRibbons`, `eldr:pointSprites`, `eldr:hairShading` |
-| 2026-10-30 | `2026-10-30_20_instancing` | Nested point instancers and native instances, per-instance culling | `eldr:cullPixels` |
-| 2026-10-30 | `2026-10-30_21_textures_colour` | ACEScg and Rec.709 pairs, UDIM tiles, anisotropic filtering | `eldr:anisotropy`, `colorSpace`, `sourceColorSpace` |
-| 2026-10-30 | `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropy, hair, toon | `eldr:clearcoat`, `eldr:sheen`, `eldr:thinFilm`, `eldr:anisotropicSpecular`, `eldr:multiScatter`, `eldr:toonBands` |
+## Lights
 
-Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_03_emissive_lights` | Glowing meshes light the scene as lights do, with shadows (`eldr:emissiveLights`). | `emissiveLightsOn` vs `emissiveLightsOff` |
+| `2026-10-29_15_light_linking` | A light can skip objects (light linking) and its shadows can skip casters (shadow linking), from UsdLux collections as Houdini's Light Linker writes them. | `default` vs `noLinking` (`eldr:lightLinking` off), `traced` (the same links with traced shadows) |
+| `2026-10-29_17_colour_limit` | Karma's colour limit clamps what the camera sees of emitters and the light they bounce, with a full-HDR option for comp (`eldr:colorLimit`, `eldr:indirectClamp`). | `limit20` (Karma's default) vs `fullHdr` vs `off`, `karmaName5` (Karma's `karma:global:colorlimit` 5) |
+| `2026-10-29_22_light_textures` | A rect or disk light's `inputs:texture:file` colours its light, in direct light, bounce light and reflections (`eldr:lightTextures`). | `lightTextures` vs `lightTexturesOff` |
+| `2026-10-29_24_ies_profiles` | A light's IES profile (`inputs:shaping:ies:file`) shapes its light, as in Karma (`eldr:lightIes`). | `ies` vs `noIes` |
+| `2026-10-30_06_many_lights` | Hundreds of small lights shaded through clusters, each pixel lit only by the lights that reach it (`eldr:clusteredLights`). | `lights` vs `clustersOff`, `localLightsOff` |
+| `2026-10-30_07_light_shapes` | Sun, sphere, rect, disk and tube lights give highlights of their own shape, and each light with Render Light Geometry on shows its shape (`eldr:lightShapesVisible` is the master switch). | `shapes` vs `shapesVisible` |
+| `2026-10-30_08_dome_sun` | The HDRI's sun is taken out of the dome and cast as a shadowed distant light (`eldr:domeSun`). | `domeSun` vs `domeSunOff` |
+| `2026-10-30_09_ambient_occlusion` | The dome's light is darkened in corners and gaps by screen-space ambient occlusion (`eldr:ambientOcclusion`). | `ambient` vs `aoOff`, `aoWide` (`eldr:aoRadius` 2) |
+| `2026-10-30_10_shadow_modes` | Shadows from maps (sun cascades, light atlas) softened by PCSS and jitter, hard PCF, or traced (`eldr:shadowJitter`, `eldr:softShadows`, `eldr:rtShadows`). | `maps` (default) vs `pcss` vs `hard` vs `traced` |
+| `2026-10-30_16_light_path_intensity` | Direct and indirect light scaled separately in the final pixel (`eldr:directIntensity`, `eldr:indirectIntensity`). | `neutral` vs `indirectBoost` vs `directDim` |
+
+## Materials
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_10_curve_styles` | Each curve or points prim can set its width scale, tubes or ribbons, and sphere points, with Eldr's names winning over Karma's. | `styles` (the per-object values) vs `ribbons` (`eldr:curveRibbons`: every curve without its own style becomes a ribbon); `eldr_default` vs `karma` (Karma reads only the karma names) |
+| `2026-10-29_01_opacity_mode` | UsdPreviewSurface's `opacityMode` "presence" fades the whole surface, highlight included, while "transparent" keeps the highlight (`eldr:opacityMode`). | `presence` vs `opacityModeOff` (both quads shaded as transparent) |
+| `2026-10-29_09_transparency_order` | Glass, translucent meshes and smoke are composited in one depth order, so what is behind a pane is seen through it. | `default`, `sorted` (`eldr:oit` off), `oneLayer` (`eldr:refractionLayers` 1), `volumesOverGlass` (`eldr:volumeUnderTransparency` off), `final` (traced refraction) |
+| `2026-10-29_16_materialx_nodes` | MaterialX compositing nodes, glTF PBR, Disney and unlit surfaces, and Karma's Ramp Const, Hex Tiled Texture and Voronoi nodes. | `graphsOn` vs `graphsOff` (`eldr:materialGraphs` off), `proceduralsOff` (`eldr:proceduralTextures` off) |
+| `2026-10-29_21_displacement_bound` | A material's displacement shader can state its largest offset (`inputs:eldr:displacementBound`) so culling keeps a surface that a displacement graph moves far. | `culled` (frustum culling on, the default) vs `noCulling` (`eldr:frustumCulling` off) |
+| `2026-10-30_13_subsurface` | Light scattering under the surface of skin, jade and leaves (`eldr:subsurface`). | `subsurface` vs `subsurfaceOff`, `subsurfaceQuality` |
+| `2026-10-30_18_displacement` | UsdPreviewSurface and MaterialX displacement move the surface, with shadows (`eldr:displacement`). | `displacement` vs `displacementOff`, `displacementHalf` |
+| `2026-10-30_19_curves_points` | Every curve basis as tubes or ribbons, points as spheres or discs, and hair shading. | `curves` vs `ribbons`, `sprites`, `hairOff` |
+| `2026-10-30_21_textures_colour` | Texture colour spaces (ACEScg, Rec.709), UDIM tiles and anisotropic filtering (`eldr:anisotropy`). | `textures` vs `aniso1` |
+| `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropic highlights and hair, plus toon shading. | `lobes` vs `lobesOff`, `toon` (`eldr:toonBands` 3) |
+
+## Ray tracing
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_04_gi_final_gather` | Bounced light from GI probes, a traced final gather or screen-space GI. | `probesOnly`, `finalGather`, `ssgi`, `giPlusSsgi`; tuning: `finalGatherNoRelocation`, `finalGatherDistance0`/`05`, `denoise0`/`1`, `rays1`/`4` |
+| `2026-10-28_09_traced_reflections` | Reflections traced against the whole scene, including what is behind the camera or off screen (`eldr:rtReflections`). | `traced` vs `screenSpace` (`eldr:rtReflections` off), `tracedNoHitShadows` (`eldr:rtHitShadows` off) |
+| `2026-10-29_03_planar_reflection_blur` | A rough planar mirror blurs its reflection by its roughness (`eldr:planarBlur`). | `blurred` vs `sharp` |
+| `2026-10-29_13_caustics` | Light focused through glass onto other surfaces, by progressive photon mapping (`eldr:caustics`). | `caustics` vs `noCaustics`, `caustics8`, `causticsFewPhotons` |
+| `2026-10-30_11_screen_space_reflections` | Reflections ray-marched in the last frame's image, fading out with roughness (`eldr:ssr`). | `ssr` vs `ssrOff` |
+| `2026-10-30_23_reflection_probe` | A cube captured around the scene supplies reflections where the screen has none (`eldr:reflectionProbe`). | `probe` vs `probeOff` |
+
+## Volumes
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-29_05_coloured_volume_shadows` | Coloured smoke casts coloured shadows, per channel, with shadow maps or traced shadows. | `maps` vs `shadowsOff` (`eldr:volumeShadows`), `traced` (`eldr:rtShadows`), `halfResolution` (`eldr:volumeResolution` 2) |
+| `2026-10-29_08_volume_default_material` | A volume with no material scatters as Karma's default medium: white, no absorption, isotropic, the dome lighting it from its upper half. | `newPhase` (the default) vs `oldPhase` (`eldr:volumeAnisotropy` 0.2) |
+| `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (a vector grid or Houdini's vel.x/.y/.z), as Karma's Lookup Offset. | `blur` vs `sharp` (`eldr:volumeVelocityBlur` off) |
+| `2026-10-29_26_volume_multiple_scattering` | Light bouncing more than once inside smoke, set with Karma's Volume Limit (`karma:object:volumelimit`) and fitted to Karma's gain. | `volumeLimit1` vs `volumeLimit4` vs `volumeLimit16` |
+| `2026-10-30_12_fog` | Height fog with light shafts from the sun and spot lights (`eldr:fog`). | `fog` vs `fogOff`, `fogDense` |
+
+## Cameras
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_02_velocity_blur` | Objects that only author `velocities` (or instance velocities) blur when their velocity blur is on, as Karma's Velocity Blur. | `blurOn` vs `blurOff` (`eldr:motionBlur`), `blurFinal`, `cameraBlur` |
+| `2026-10-29_10_reflection_motion_blur` | Planar and traced reflections blur with motion blur, rendered at each film sample's shutter time. | `planar` vs `frozen` (`eldr:planarMotionBlur` off), `traced` (`eldr:rtReflections`) |
+| `2026-10-30_05_camera_exposure` | The USD camera's exposure (exposure, ISO, time, f-stop, responsivity) scales the image as in Karma (`eldr:cameraExposure`). | `camera` vs `ignored` |
+| `2026-10-30_14_depth_of_field` | The camera's f-stop and focus distance blur what is out of focus, with true bokeh over the film (`eldr:depthOfField`). | `lens` vs `dofOff` |
+| `2026-10-30_17_tonemapping` | The display tonemapper: ACES, AgX or none (`eldr:tonemapper`). | `aces` (default) vs `agx` vs `linear` |
+| `2026-10-30_24_lens_distortion` | The camera's `lensDistortion:*` bows straight lines, as HdCamera and a Karma Physical Lens describe it (`eldr:lensDistortion`). | `lens` vs `distortionOff` |
+| `2026-10-30_25_bloom` | A glow around very bright pixels (`eldr:bloomIntensity`). | `bloom` (0.4) vs `bloomOff` (0) |
+
+## Sampling
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-29_07_oidn_denoiser` | The converged film is denoised by Intel Open Image Denoise, guided by albedo and normal (`eldr:denoise`, or Karma's image filter). | `raw16` vs `denoise16`, `karmaImageFilter16` (Karma's denoiser string), `raw64` |
+| `2026-10-29_11_effect_denoise` | The final gather, traced shadows and traced reflections are each filtered in their own signal during the first film samples. | `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64` |
+| `2026-10-29_12_quality_multipliers` | More rays for the noisy component (diffuse, light, reflection) instead of more film samples, as Karma's quality controls. | `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames` (Karma's names), `allHalf` |
+
+## AOVs
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_05_houdini_render_vars` | A Render Product's vars (beauty, CDA, N, depth) show in Houdini's Render Outputs menu and husk writes them to one EXR. | `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag) |
+| `2026-10-28_06_holdouts` | Objects set as holdouts are cut out of the image as mattes, and phantom objects are hidden from the camera but still cast shadows and show in reflections. | `holdoutScene` vs `holdoutsOff` (`eldr:holdouts`) |
+| `2026-10-29_06_karma_aovs` | The render vars a Karma Render Settings LOP writes (light groups, diffuse and glossy splits, transmission, subsurface, coat, volume, shadow mattes) come out of Eldr by the same names. | `default` vs `noHoldouts` (`eldr:holdouts` off) |
+| `2026-10-29_14_aov_filters` | Each render var can ask for its own sample filter (min, max, closest, farthest, nearest, box, Gauss), as Karma's Sample Blending. | `default` (writes `aovFilters.exr`), `max` (writes `aovFiltersMax.exr`), `off` (`eldr:aovFilters` off) |
+| `2026-10-30_15_cryptomatte` | Cryptomatte object and material layers in the EXR, soft (several ids per pixel) or one id per pixel (`eldr:cryptomatteSoft`). | `crypto` vs `cryptoHard` |
+
+## Performance
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_01_subdivision_levels` | Catmull-Clark meshes are refined to the host's level, capped by `eldr:maxRefineLevel`; a mesh can set its own level or opt a polygon mesh in. | `level3` vs `level1` (`eldr:maxRefineLevel`), `subdivOff` (`eldr:subdivision` off) |
+| `2026-10-28_07_shadow_cull` | Tiny instances are skipped in the far sun-shadow cascades to save time (`eldr:shadowCullPixels`). | `cull05` (default) vs `cull8` vs `cullOff` |
+| `2026-10-29_02_offline_batch` | Offline renders run film samples back to back inside one execute, removing the app's wait between samples (`eldr:offlineBatchSeconds`). | `batched` vs `oneSamplePerExecute` |
+| `2026-10-29_04_screen_dicing` | Subdivision meshes get the refine level their size on screen needs, as Karma's Dicing Quality (`eldr:screenDicing`). | `dicing` vs `fixed` |
+| `2026-10-29_19_texture_compression` | 8-bit textures are block-compressed on the GPU (BC7, BC4, BC5) and cached on disk, to save memory (`eldr:textureCompression`). | `compressed` vs `exact` |
+| `2026-10-29_20_volume_light_shadow_stride` | Volumes take a local light's shadow every second march step instead of every step, for the same image (`eldr:volumeLocalShadowStride`). | `stride2` (default) vs `stride1` vs `stride4` |
+| `2026-10-29_23_adaptive_tiles` | With adaptive sampling, tiles whose pixels have all stopped skip shading and rays (`eldr:adaptiveTiles`). | `adaptiveTiles256` vs `adaptiveFull256` |
+| `2026-10-29_25_refraction_clip` | With traced refraction, a pixel's first ray looks for glass only, up to the opaque depth, for the same image (`eldr:rtRefractionClip`). | `clip` (default) vs `noClip` |
+| `2026-10-30_02_reflection_roulette` | Dim traced reflections are traced in only some film samples, weighted to match (`eldr:rtReflectionRoulette`). | `roulette` vs `everySample` |
+| `2026-10-30_03_volume_shadow_grid` | Each volume's optical depth towards each light is built once on a grid instead of a shadow march per step (`eldr:volumeShadowGrid`). | `grid` (64, default) vs `exact` (0) vs `grid32` |
+| `2026-10-30_04_light_sampling` | Traced hits sample one light stochastically and traced shadows skip lights that give a pixel nothing (`eldr:rtLightSampling`). | `sampled` vs `everyLight` |
+| `2026-10-30_20_instancing` | Nested point instancers and native instances, with per-instance culling by screen size (`eldr:cullPixels`). | `instances` vs `cullSmall` |
+
+## Viewport
+
+| Folder | Feature | A/B nodes |
+|---|---|---|
+| `2026-10-28_08_render_stats` | Eldr's render statistics (renderer, memory, time) show in the Render Gallery's statistics panel and in husk EXRs as `husk:render_stats`. | `default` only (no A/B: the feature is metadata) |
+| `2026-10-30_01_moving_camera` | While the camera moves, Eldr renders smaller (to a GPU frame budget) with one shadow ray and paused GI; after the stop, quality steps up over a few frames and the film starts from the TAA image. | `moving` (the defaults) vs `full` vs `abrupt` |

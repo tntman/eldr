@@ -6,9 +6,10 @@
 // sphere, rect, disk or cylinder light along each pixel's ray, in front of
 // the opaque depth, replaces the colour with its emitted radiance. Lights
 // whose color.w is even (hidden from the camera: Light::cameraVisible) and
-// point or line lights are skipped.
-// ponytail: no cone or focus shaping, no light texture, no fog or
-// translucency in front of it; rects and disks show from their front only.
+// point or line lights are skipped. A rect or disk shows its texture
+// (inputs:texture:file, with Frame::lightTextures), mapped as LightTint maps it.
+// ponytail: no cone or focus shaping, no fog or translucency in front of
+// it; rects and disks show from their front only.
 
 #include "frame.glsl"
 #include "lights.glsl"
@@ -80,6 +81,7 @@ void main()
     float tScene = depth < 1.0 ? length(Unproject(vec3(ndc, depth * 2.0 - 1.0)) - o) : 3.0e38;
     float t = tScene;
     vec3 radiance = vec3(0.0);
+    uint nearest = 0u;
     for (uint k = params.first; k < params.first + params.count; ++k) {
         Light light = lights[k];
         if ((uint(light.color.w) & 1u) == 0u) {
@@ -89,10 +91,24 @@ void main()
         if (hit < t) {
             t = hit;
             radiance = light.color.rgb;
+            nearest = k;
         }
     }
     if (t >= tScene) {
         discard;
+    }
+    Light light = lights[nearest];
+    uint type = uint(light.position.w);
+    int tex = int(light.focusTint.w);
+    if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u && (type == kLightRect || type == kLightDisk)) {
+        vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz, p = o + d * t - light.position.xyz;
+        vec2 uv = vec2(dot(p, hw) / dot(hw, hw), dot(p, hh) / dot(hh, hh));
+        // Mip: one pixel's footprint on the light's plane, in texels.
+        vec3 dx = normalize(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, 1.0)) - o);
+        float footprint = t * length(dx - d) / max(abs(dot(d, light.axis.xyz)), 1e-3);
+        ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
+        float lod = log2(max(footprint * float(max(size.x, size.y)) / (2.0 * min(length(hw), length(hh))), 1.0));
+        radiance *= textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + uv * vec2(-0.5, 0.5), lod).rgb;
     }
     outColor = vec4(radiance, 1.0);
 }

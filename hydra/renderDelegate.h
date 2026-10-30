@@ -211,6 +211,11 @@ public:
     // speed (batching, teardown, prewarm, readback), never the image.
     bool HoudiniViewport() const;
     bool Offline() const;
+    // The render settings' version without houdini:interactive's flips
+    // (tumbling <-> normal on every mouse press and release): they change
+    // nothing Eldr renders, and a version change rebuilds the scene's
+    // commit (crowd 9k: +90 ms on the first still frame).
+    unsigned SettingsVersion() const { return GetRenderSettingsVersion() - _hostOnlyChanges; }
     // eldr:screenDicing: subdivision surfaces dice for DicingView, the view the render pass
     // last re-diced for (null before the first). SetDicingView re-syncs the
     // meshes; only the render pass calls it, between syncs.
@@ -242,6 +247,7 @@ private:
     std::string _loadLine;   // the last load's summary
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
+    unsigned _hostOnlyChanges = 0;      // setting changes SettingsVersion leaves out
     bool _motionSettingsChanged = false;  // since the last CommitResources
     bool _keepMotion = false;             // KeepMotion since the last CommitResources
     HdSceneIndexBasePtr _terminalSceneIndex;

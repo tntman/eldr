@@ -8,7 +8,8 @@
 # SSGI, traced shadows and traced reflections on. /Render/moving (the
 # defaults) renders at half size while the camera moves, one traced shadow
 # ray per light, GI probes paused; /Render/full keeps everything while
-# moving. Still frames are the same in both.
+# moving. Still frames are the same in both. /Render/abrupt turns off the
+# smooth switch (frame budget, ramp, film warm start).
 
 def Scope "Render"
 {
@@ -65,5 +66,20 @@ def Scope "Render"
         custom float eldr:movingRenderScale = 1
         custom int eldr:movingShadowRays = 0
         custom bool eldr:movingGiPause = 0
+    }
+
+    # The smooth switch off: a fixed half size while moving, full quality
+    # in one frame after the stop, the film from its first sample.
+    def RenderSettings "abrupt"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 720)
+        custom bool eldr:gi = 1
+        custom bool eldr:ssgi = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom int eldr:rampFrames = 0
+        custom float eldr:movingFrameBudget = 0
+        custom float eldr:filmWarmStart = 0
     }
 }

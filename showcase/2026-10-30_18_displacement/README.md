@@ -1,5 +1,12 @@
 # Displacement
 
+<!-- summary -->
+UsdPreviewSurface and MaterialX displacement move the surface, with shadows (`eldr:displacement`).
+
+- **Compare:** open `showcase/2026-10-30_18_displacement/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `displacement` vs `displacementOff`, `displacementHalf`.
+- **Look at:** The bumps rising from the planes and their shadows, and the swollen cube.
+<!-- summary -->
+
 `tests/scenes/displacement.usda`. Left: UsdPreviewSurface displacement from a height map (round bumps on five cells of a checker) times 0.6. Middle: the same map through a MaterialX displacement shader. Right: a cube displaced outwards by a constant 0.25. Vertices move along their normals after subdivision (the planes are 16 x 16 quads, diced by their size on screen), so silhouettes, shadows and traced rays agree.
 
 ## What to look at

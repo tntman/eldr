@@ -1,5 +1,12 @@
 # Per-effect denoise
 
+<!-- summary -->
+The final gather, traced shadows and traced reflections are each filtered in their own signal during the first film samples.
+
+- **Compare:** open `showcase/2026-10-29_11_effect_denoise/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64`.
+- **Look at:** The soft shadow under the box and the walls' indirect light at 4 samples.
+<!-- summary -->
+
 `tests/scenes/emissive.usda` (Cornell box lit by a glowing panel and a bulb, chrome ball) with the ray-traced recipe: GI final gather, traced shadows and traced reflections. Each effect's signal is filtered before it is shaded: the gathered light by two edge-aware a-trous passes (`eldr:finalGatherDenoise`), the shadow visibility over its penumbra (up to 3 pixels) in the receiver's plane (`eldr:rtShadowDenoise`), rough reflections over up to 12 pixels (`eldr:rtReflectionDenoise`). The filters fade out over the film's first `eldr:effectDenoiseSamples` (64) samples, so few samples come out clean and the converged image stays sharp.
 
 - `/Render/raw4` vs `/Render/denoise4`: 4 film samples. Look at the floor's soft shadow under the box and the walls' indirect light.

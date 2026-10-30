@@ -299,7 +299,8 @@ if(WIN32)
         set_tests_properties(viewport_bindings PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         # Houdini's camera tools: depth under the cursor, a still camera's film.
         add_test(NAME viewport_nav COMMAND ${usdenv} $<TARGET_FILE:viewportBench>
-                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --nav)
+                 ${CMAKE_SOURCE_DIR}/tests/scenes/step4.usda /cam --size 320x180 --nav
+                 --set eldr:stillDelay=0)  # frame-to-frame change from the first still frame
         set_tests_properties(viewport_nav PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         # eldr:overlapReadback: moving frames one late but unchanged, still ones at once.
         add_test(NAME viewport_overlap COMMAND ${usdenv} $<TARGET_FILE:viewportBench>

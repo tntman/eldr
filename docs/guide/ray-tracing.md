@@ -2,7 +2,7 @@
 
 Eldr is a rasterizer at heart: it draws triangles, then shades them with tricks that use what is on screen. On a GPU with Vulkan ray tracing it can also trace rays, which see off-screen objects and give exact shadows, reflections, glass and bounce light. Ray-traced effects are **off by default** (they cost more) and on in the final settings.
 
-> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Lighting and GI** (GI, shadows, reflections) and **Film and sampling** (refraction, final gather, caustics). Settings marked [RT] in the [reference](../settings.md) need ray tracing.
+> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Ray Tracing** (shadows, reflections, refraction, final gather, caustics), **Global Illumination** (GI probes) and **Advanced: Ray Tracing**. Settings marked [RT] in the [reference](../settings.md) need ray tracing.
 
 > **Note:** On GPUs without ray-tracing cores (a GTX 1080 Ti, say), Vulkan runs ray tracing in a slower compute fallback. Everything works; finals just take longer.
 
@@ -20,7 +20,7 @@ Eldr is a rasterizer at heart: it draws triangles, then shades them with tricks 
 
 Bounced light: a red wall tints the floor next to it, a sunlit room fills its shadows.
 
-- **Global Illumination (RTX probes)** places a grid of light probes in the scene that trace rays and keep the bounced light. Smooth, cheap once settled, but soft: corners don't darken much.
+- **Global Illumination** places a grid of light probes in the scene that trace rays and keep the bounced light. Smooth, cheap once settled, but soft: corners don't darken much.
 - **Final Gather** (with GI) traces a ray per pixel and sample, shaded at its hit. It gives contact shadows in corners and exact colour bleeding. Denoised while the film is young (**Final Gather Denoise**).
 - **Screen-Space GI** works without ray tracing, from what is on screen: near-field bounce, replaces ambient occlusion.
 
@@ -31,6 +31,8 @@ Bounced light: a red wall tints the floor next to it, a sunlit room fills its sh
 
 > **Tip:** For interiors, turn on GI and Final Gather together. For exteriors under a dome, GI alone is often enough.
 
+> **Showcase:** open `showcase/2026-10-28_04_gi_final_gather/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `probesOnly`, `finalGather`, `ssgi`, `giPlusSsgi`; tuning: `finalGatherNoRelocation`, `finalGatherDistance0`/`05`, `denoise0`/`1`, `rays1`/`4`.
+
 ## Ambient occlusion
 
 Without GI, **Ambient Occlusion (GTAO)** darkens the dome's light in corners and gaps. **Ambient Occlusion Radius** sets how far it reaches. SSGI and the final gather replace it.
@@ -38,14 +40,20 @@ Without GI, **Ambient Occlusion (GTAO)** darkens the dome's light in corners and
 ![Ambient occlusion on (30_09, ambient)](../images/ao_on.jpg)
 ![Off: flat sky light (30_09, aoOff)](../images/ao_off.jpg)
 
+> **Showcase:** open `showcase/2026-10-30_09_ambient_occlusion/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `ambient` vs `aoOff`, `aoWide` (`eldr:aoRadius` 2).
+
 ## Ray-traced shadows
 
 **Ray-Traced Shadows** replaces shadow maps for the sun and the brightest lights (**Ray-Traced Shadow Lights**, 4; finals use 16). Shadows are exact and soft from the light's size, also from objects off screen. See [Lights](lights.md#shadows) for all shadow methods.
 
-![Shadow maps (28_03, shadowMapsOnly)](../images/rt_shadow_maps.jpg)
-![Ray-traced shadows: crisper contact under the ball and box (28_03, rtShadows)](../images/rt_shadows.jpg)
+![Shadow maps (30_10, maps)](../images/shadows_maps.jpg)
+![Ray-traced shadows, soft from the light's size (30_10, traced)](../images/shadows_traced.jpg)
 
 **Ray-Traced Shadows through Glass and Volumes** lets shadow rays pick up colour from glass and smoke.
+
+> **Showcase:** open `showcase/2026-10-30_10_shadow_modes/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `maps` (default) vs `pcss` vs `hard` vs `traced`.
+
+> **Showcase:** open `showcase/2026-10-30_04_light_sampling/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `sampled` vs `everyLight`.
 
 ## Reflections
 
@@ -53,7 +61,7 @@ Eldr picks the best reflection for each pixel:
 
 | Source | Setting | Good at | Misses |
 |---|---|---|---|
-| Screen-space (SSR) | **Screen Space Reflections** (on) | Polished floors, cheap | What is off screen or hidden |
+| Screen-space (SSR) | **Screen-Space Reflections** (on) | Polished floors, cheap | What is off screen or hidden |
 | Reflection probe | **Reflection Probe** | The room around a chrome object | Exact positions |
 | Planar mirrors | **Planar Reflections** | Flat mirrors and water | Curved surfaces |
 | Ray-traced | **Ray-Traced Reflections** [RT] | Everything, up to roughness 0.7 | Cost |
@@ -61,10 +69,20 @@ Eldr picks the best reflection for each pixel:
 ![SSR: the columns mirrored in the floor (30_11, ssr)](../images/ssr_on.jpg)
 ![SSR off: only the dome in the floor (30_11, ssrOff)](../images/ssr_off.jpg)
 
-![Reflection probe: the chrome ball shows the red wall behind the camera (30_11, probe)](../images/reflection_probe.jpg)
-![Ray-traced reflections with shadowed hits (28_03, rtReflectionsHitShadows2)](../images/rt_reflections.jpg)
+![Reflection probe: the chrome ball shows the red wall behind the camera (30_23, probe)](../images/reflection_probe.jpg)
+![Ray-traced reflections with shadowed hits (28_09, traced)](../images/rt_reflections.jpg)
 
 **Ray-Traced Hit Shadows** shadows what a traced reflection sees (the floor in a chrome ball is shadowed too).
+
+> **Showcase:** open `showcase/2026-10-28_09_traced_reflections/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `traced` vs `screenSpace` (`eldr:rtReflections` off), `tracedNoHitShadows` (`eldr:rtHitShadows` off).
+
+> **Showcase:** open `showcase/2026-10-30_11_screen_space_reflections/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `ssr` vs `ssrOff`.
+
+> **Showcase:** open `showcase/2026-10-30_23_reflection_probe/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `probe` vs `probeOff`.
+
+> **Showcase:** open `showcase/2026-10-29_03_planar_reflection_blur/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `blurred` vs `sharp`.
+
+> **Showcase:** open `showcase/2026-10-30_02_reflection_roulette/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `roulette` vs `everySample`.
 
 ## Refraction and glass
 
@@ -75,6 +93,10 @@ Glass bends what is behind it. By default Eldr refracts a copy of the screen (**
 
 - **Refraction Layers** sets how many layers of glass behind glass the screen-space path handles.
 - **Translucent Shadows**: glass casts faint, tinted shadows.
+
+> **Showcase:** open `showcase/2026-10-29_09_transparency_order/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default`, `sorted` (`eldr:oit` off), `oneLayer` (`eldr:refractionLayers` 1), `volumesOverGlass` (`eldr:volumeUnderTransparency` off), `final` (traced refraction).
+
+> **Showcase:** open `showcase/2026-10-29_25_refraction_clip/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `clip` (default) vs `noClip`.
 
 ## Caustics
 
@@ -90,6 +112,8 @@ Caustics are the bright patterns light makes after passing through glass or boun
 ![Houdini: Render Geometry Settings LOP, Karma tab, Enable Caustics](../images/houdini/caustics_enable.png)
 
 > **Note:** Without caster objects, Caustics costs nothing: there is nothing to trace.
+
+> **Showcase:** open `showcase/2026-10-29_13_caustics/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `caustics` vs `noCaustics`, `caustics8`, `causticsFewPhotons`.
 
 ## Limitations
 

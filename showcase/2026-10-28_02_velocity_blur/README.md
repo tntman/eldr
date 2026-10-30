@@ -1,4 +1,11 @@
-# Velocity blur
+# Velocity motion blur
+
+<!-- summary -->
+Objects that only author `velocities` (or instance velocities) blur when their velocity blur is on, as Karma's Velocity Blur.
+
+- **Compare:** open `showcase/2026-10-28_02_velocity_blur/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `blurOn` vs `blurOff` (`eldr:motionBlur`), `blurFinal`, `cameraBlur`.
+- **Look at:** The meshes, points and instances smear along their velocity; the curves stay sharp (eldr vblur 0 beats karma 1).
+<!-- summary -->
 
 `tests/scenes/motion_blur.usda` at frame 24 (the layer's time range is pinned to it) with Velocity Blur turned on per object. Without it, objects that only author `velocities` do not blur (Karma's default).
 

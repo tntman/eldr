@@ -1745,6 +1745,9 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
                  VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     _taa.Resize(width, height);
     _post.Resize(width, height, _taa.Output());
+    for (Image &img : _up) {
+        _dev.Destroy(img);
+    }
     _ResizeScene(width, height);
     _taaValid = false;
     _historyValid = false;
@@ -1754,8 +1757,7 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
 // while upscaling (TAA's history stays, at the frame's size).
 void Renderer::_ResizeScene(uint32_t width, uint32_t height)
 {
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_up[0], &_up[1], &_up[2], &_up[3],
-                       &_filmIds[0], &_filmIds[1], &_filmIds[2]}) {
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_filmIds[0], &_filmIds[1], &_filmIds[2]}) {
         _dev.Destroy(*img);
     }
     _width = width;
@@ -1784,7 +1786,9 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
     _transparency.Resize(width, height);
     _subsurface.Resize(width, height, _depth.view);
     _ssr.Resize(width, height, _depth.view);
-    if (width != _outWidth || height != _outHeight) {
+    // The frame's size: made once, kept while the scene's size changes
+    // (eldr:rampFrames, eldr:movingFrameBudget); _Resize drops them.
+    if ((width != _outWidth || height != _outHeight) && !_up[0].image) {
         const VkFormat formats[4] = {kDepthFormat, kIdFormat, kIdFormat, kVelocityFormat};
         for (int i = 0; i < 4; ++i) {
             _up[i] = _dev.CreateImage(formats[i], _outWidth, _outHeight, 1, 1,
@@ -2972,6 +2976,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
 {
     std::lock_guard<std::mutex> lock(_frameMutex);
     _WaitInFlight();
+    // Targets resized this frame (the render scale's steps) reuse the
+    // memory of the ones they replace (Device::BeginRecycle).
+    struct Recycle {
+        Device &dev;
+        explicit Recycle(Device &d) : dev(d) { dev.BeginRecycle(); }
+        ~Recycle() { dev.EndRecycle(); }
+    } recycle{_dev};
     _deferredOutputs = false;  // not collected: dropped
     // The app's camera, or this film sample's through a point of the lens
     // (Frame::dofJitter, set once the film's state is known below); the
@@ -3006,22 +3017,56 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
     }
     const bool moving = _historyValid && (std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0 ||
-                                          gpu.moved);
-    // eldr:movingRenderScale: smaller still while moving, full size again
-    // from the first still frame. Post depth of field and motion blur work
+                                          gpu.moved || frame.cameraHold);
+    // eldr:movingRenderScale: smaller while moving, full size again after
+    // the ramp below. Post depth of field and motion blur work
     // at the scene's size (their pixel radii scale; the blur draws at the
     // frame's size).
-    const float renderScale = moving ? std::min(frame.renderScale, frame.movingRenderScale) : frame.renderScale;
+    // eldr:movingFrameBudget: the last moving frame's GPU time steers the
+    // scale (time taken as proportional to the pixels). Over the budget it
+    // drops at once, well under it rises half way; in between it holds, so
+    // it settles instead of oscillating.
+    if (moving && frame.movingFrameBudget > 0.0f) {
+        if (_dynamicScale <= 0.0f) {
+            _dynamicScale = std::clamp(frame.movingRenderScale, 0.25f, 1.0f);
+        } else if (_lastMoving && _stats.gpuMs > 0.0) {
+            const float last = float(_width) / float(_outWidth);
+            const float target =
+                std::clamp(last * std::sqrt(0.9f * frame.movingFrameBudget / float(_stats.gpuMs)), 0.25f, 1.0f);
+            const float next = target < 0.95f * last                                 ? target
+                               : target > last && target >= std::min(1.1f * last, 1.0f) ? 0.5f * (last + target)
+                                                                                        : last;
+            _dynamicScale = std::clamp(std::round(next * 32.0f) / 32.0f, 0.25f, 1.0f);
+        }
+    }
+    const float movingScale = frame.movingFrameBudget > 0.0f ? _dynamicScale : frame.movingRenderScale;
+    // eldr:rampFrames: after moving mode the scale (and shadow rays, GI
+    // probes below) step up to full quality over these frames; the film
+    // starts on the last.
+    if (moving) {
+        _rampLeft = frame.rampFrames > 1 ? frame.rampFrames - 1 : 0;
+    }
+    const bool ramp = !moving && _rampLeft > 0 && frame.rampFrames > 1 && _taaValid && !frame.filmRestart;
+    const uint32_t rampLeft = ramp ? std::min(_rampLeft, frame.rampFrames - 1) : 0;
+    const float rampT = 1.0f - float(rampLeft) / float(std::max(frame.rampFrames, 1u));
+    _rampLeft = moving ? _rampLeft : ramp ? rampLeft - 1 : 0;
+    const float renderScale = moving ? std::min(frame.renderScale, movingScale)
+                            : ramp   ? std::min(frame.renderScale, _movingScale + (1.0f - _movingScale) * rampT)
+                                     : frame.renderScale;
     const bool upscale = renderScale < 1.0f && _upscaleBlit == 1 && frame.postProcess && frame.taa &&
                          _taaValid && !frame.filmRestart &&
-                         (moving || !frame.filmAccumulation ||
+                         (moving || ramp || !frame.filmAccumulation ||
                           (_filmSamples == 0 && _stillFrames + 1 < kFilmStillFrames)) &&
                          !(frame.lensDistortion && frame.distortion.Active()) &&
                          !(frame.extraAovs && Aovs::Any(out.aovs));
     const float scale = upscale ? std::max(renderScale, 0.25f) : 1.0f;
+    _movingScale = moving ? scale : _movingScale;
+    _lastMoving = moving;
     const uint32_t sceneWidth = std::max(uint32_t(float(frame.width) * scale + 0.5f), 1u);
     const uint32_t sceneHeight = std::max(uint32_t(float(frame.height) * scale + 0.5f), 1u);
     if (sceneWidth != _width || sceneHeight != _height) {
+        // Blocks for the frame's size: the scale's next steps fit them.
+        _dev.recycleGrowth = double(_outWidth) * _outHeight / (double(sceneWidth) * sceneHeight);
         _ResizeScene(sceneWidth, sceneHeight);
     }
     _upscaled = _width != _outWidth || _height != _outHeight;
@@ -3164,11 +3209,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool shutterOn =
         nestedShutter || (frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0);
     const bool film = taa && frame.filmAccumulation && (!motionBlur || shutterOn) && !giSettling &&
+                      !(frame.cameraHold && !fresh && !frame.filmRestart) && !ramp &&
                       (fresh || frame.filmRestart || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
     const uint32_t filmMode = !film                            ? 0
                               : fresh                          ? 1
-                              : changed || _filmSamples == 0 ? (frame.filmRestart ? 1 : 2)
+                              : changed || _filmSamples == 0 ? (frame.filmRestart || frame.filmWarmStart <= 0.0f ? 1 : 2)
                                                                : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
     _filmRuns += filmMode != 0 ? 1 : 0;
@@ -3427,9 +3473,13 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool spread = film && !timeSample;
     uint32_t shadowFirst = 0, reflectionFirst = 0, gatherFirst = 0;
     // eldr:movingShadowRays: fewer while moving (TAA smooths them).
-    const bool fewerShadowRays = moving && !film && frame.movingShadowRays > 0 &&
+    const bool fewerShadowRays = (moving || ramp) && !film && frame.movingShadowRays > 0 &&
                                  frame.movingShadowRays < frame.rtShadowSamples;
-    const uint32_t shadowRays = fewerShadowRays ? frame.movingShadowRays : frame.rtShadowSamples;
+    const uint32_t shadowRays =
+        !fewerShadowRays ? frame.rtShadowSamples
+        : moving         ? frame.movingShadowRays
+                         : frame.movingShadowRays +
+                       uint32_t(rampT * float(frame.rtShadowSamples - frame.movingShadowRays) + 0.5f);
     rt.shadowSamples = SampleRays(double(shadowRays) * frame.lightQuality, spread, sobolIndex, 16, &shadowFirst);
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
@@ -3452,7 +3502,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     // eldr:movingGiPause: settled probes keep their light while only the camera moves.
-    rt.giPause = frame.movingGiPause && cameraOnly && !film && _rt && _rt->Converged();
+    rt.giPause = frame.movingGiPause && (cameraOnly || ((frame.cameraHold || (ramp && rampLeft % 2 == 1)) && !changed)) && !film && _rt && _rt->Converged();
     _stats.reduced = (rtScene && frame.depthPrepass && tracedShadows && fewerShadowRays) || (rt.gi && rt.giPause);
     rt.giRelocation = frame.giRelocation;
     // Final gather, on top of the probes.
@@ -4464,7 +4514,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     // Light shapes: the local lights seen by the camera, in front of the opaque depth.
-    if (draw && frame.lightShapesVisible && gpu.localLightCount > 0) {
+    if (draw && frame.lightShapesVisible && gpu.shapeLightCount > 0) {
         _volumePass->RecordLightShapes(_cmd, _set, gpu.lightCount, gpu.localLightCount, _color.view, _width,
                                        _height);
         pass("lightShapes");
@@ -4560,7 +4610,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             alpha = 1.0f / float(_taaFrames + 1);
             _stats.moving = moved;
             // Last sample of a still camera; with the film, which takes over, never.
-            _taaConverged = _taaValid && !moved && _taaFrames >= taaSamples - 1 && !(frame.filmAccumulation && !postBlur);
+            _taaConverged = _taaValid && !moved && !ramp && _taaFrames >= taaSamples - 1 &&
+                            !(frame.filmAccumulation && !postBlur);
             _taaFrames = std::min(_taaFrames + 1, taaSamples - 1);
             _taaValid = true;
             if (film) {
@@ -4607,7 +4658,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             fd.tiles[2] = (_height + 15) / 16;
             // From a TAA image: as much as 4 samples, a small bias that keeps
             // the switch from TAA from showing one sample's noise.
-            _taa.RecordFilm(_cmd, filmOffset, filmRadius, filmMode, 4.0f,
+            _taa.RecordFilm(_cmd, filmOffset, filmRadius, filmMode, frame.filmWarmStart,
                             adaptiveThreshold, frame.adaptiveMinSamples,
                             frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation),
                             _filmStamp);

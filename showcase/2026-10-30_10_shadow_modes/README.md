@@ -1,4 +1,11 @@
-# Shadow modes: maps, cascades, soft, traced
+# Shadow modes
+
+<!-- summary -->
+Shadows from maps (sun cascades, light atlas) softened by PCSS and jitter, hard PCF, or traced (`eldr:shadowJitter`, `eldr:softShadows`, `eldr:rtShadows`).
+
+- **Compare:** open `showcase/2026-10-30_10_shadow_modes/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `maps` (default) vs `pcss` vs `hard` vs `traced`.
+- **Look at:** The contact hardening: sharp where the posts meet the ground, soft under the beam and the sphere light.
+<!-- summary -->
 
 `tests/scenes/sunangle.usda` (a 4 degree sun over two posts, a beam and a ball) plus a warm sphere light of radius 0.3 low on the right, so both the sun's cascades and the local light atlas show. Look at the contact hardening: sharp where the posts meet the ground, soft under the beam, and the sphere light's soft shadow of the ball.
 

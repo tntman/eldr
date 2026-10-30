@@ -118,6 +118,8 @@ What the film enables (each has a switch, all on by default):
 - Colour AOVs (albedo, emission, light splits) are filtered like the beauty, so the splits keep summing to it. Without the film (TAA) they are a running mean.
 - Per-AOV sample filters (`eldr:aovFilters`, below) change either default per render var.
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_07_oidn_denoiser` (Intel Open Image Denoise), `2026-10-29_11_effect_denoise` (Per-effect denoise), `2026-10-29_12_quality_multipliers` (Per-component quality), `2026-10-29_23_adaptive_tiles` (Adaptive sampling by tiles), `2026-10-29_02_offline_batch` (Batched film samples in husk and usdrecord).
+
 ## Lighting and shadows
 
 Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody if `enableColorTemperature`, divided by area when `normalize`.
@@ -126,7 +128,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 |---|---|
 | DistantLight | The sun; `inputs:angle` gives soft penumbrae. The first shadow-casting one gets the cascades. |
 | SphereLight | Energy-conserving representative-point specular, horizon-clipped diffuse, `treatAsPoint` |
-| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures them (Karma orientation: left edge at +X, top row at +Y) |
+| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures their light and their visible shape (Karma orientation: left edge at +X, top row at +Y) |
 | CylinderLight | Side only; `treatAsLine` |
 | DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube |
 | Shaping | Cone angle, softness, focus, focus tint; IES profiles (`shaping:ies:file`, `angleScale`, `normalize`) |
@@ -134,13 +136,15 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 - **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Textured lights are read at the lobe's mip.
 - **Clustered lights:** up to 255 per cluster (a fuller cluster shades every local light, never drops one), cut off at 1% of mid-gray on a white surface.
 - **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows. A flat one (a panel) is a rect on each face and, unless thinner than 1% of their area, on each edge: beside a panel under a ceiling the edges give most of its light.
-- **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one. The same attribute on a dome hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
+- **Light shapes** show to the camera as in Karma: a sphere, rect, disk or cylinder light draws its shape only when `inputs:karma:light:renderlightgeo` (or `inputs:eldr:light:renderlightgeo`) is authored true; unauthored is hidden. `eldr:lightShapesVisible` (on by default) is the master switch; off hides every shape. On a dome the same attribute hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
 - **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
 - **Light linking** (`eldr:lightLinking`): a light's `collection:lightLink` limits what it lights, its `collection:shadowLink` what casts its shadows (UsdLux; Houdini's Light Linker LOP writes both). Hydra's light linking scene index turns them into categories; each instance and volume carries a 32-bit mask of the linked collections it is in. Every light loop honours the light link (raster, clusters, traced hits, GI probes, volumes, subsurface transmission), the shadow link every shadow (shadow maps and atlas tiles, translucent and volume tint maps, traced shadows, a volume's own shadow). Light groups still sum to the beauty. Up to 32 linked collections (lights sharing a collection share one); lights past them light everything, with a warning. Domes and the fog ignore links; per-instance links work for one level of instancing (as Hydra's scene index).
 - **IES profiles** (`eldr:lightIes`): `inputs:shaping:ies:file` (LM-63, type C) scales a sphere, rect, disk or cylinder light per direction wherever it lights: raster, traced hits, GI, fog and volumes. Theta is measured from the light's -Z (its emission axis), phi 0 at its -X (as Karma; the direction phi grows in is not checked); `angleScale` rescales theta as UsdLux says; `normalize` divides by the profile's mean intensity (over the sphere, or the hemisphere it covers), else candela as is (as Karma; hdEmbree is 14x darker). Baked into a 64 x 256 half-float texture per file. As Karma, the profile is taken from the whole light where the light covers a pole (theta 0 or 180, where phi wraps): a profile whose pole values differ by phi blurs over the light instead of pinching to a dot (32 taps there, one elsewhere).
 - **Clamps:** `eldr:directClamp` (0 = off) and `eldr:indirectClamp` limit fireflies. The indirect clamp is Karma's colour limit (default 20, 0 = off): `eldr:indirectClamp`, else (`eldr:colorLimitShared` off) `karma:global:colorlimitindirect`, else `eldr:colorLimit`, else `karma:global:colorlimit`, else 20. The `karma:` names are read from the render settings prim too (usdview, usdrecord), not only from husk's settings. It limits bounced light and the emission a bounce ray sees (GI, final gather, traced reflections and refractions), as Karma limits a sample after its path throughput; the direct clamp stays Eldr's own and off. Eldr clamps the radiance at the hit, before the surface's albedo, so a dark surface lit by a very bright emitter is limited harder than Karma's sample would be. Emissive meshes promoted to lights (`eldr:emissiveLights`) follow the indirect clamp too: Karma reaches emitters by bounce rays only and clamps each sample, radiance times albedo, so their light on a surface is scaled where radiance x albedo passes the clamp (a white wall gets about 20/0.73 of a panel of 40).
 - **Colour limit on camera rays (Karma-matching):** Karma clamps every camera sample at `karma:global:colorlimit` (default 20), so an emitter of 40 seen directly renders as 20 and a (60, 30, 8) bulb as (20, 10, 2.7), hue kept (measured in Karma 22.0.466). Eldr does the same to the emission the camera sees, from the same setting: `eldr:colorLimit`, else `karma:global:colorlimit`, else 20 (-1 = unset, so Karma's value or 20 applies; 0 = off). Karma has no separate control for camera rays (H22's controls are `colorlimit`, `colorlimitindirect` and `colorlimitindlinked`), so neither has Eldr. **Full HDR emitters for comp:** set `eldr:colorLimit` to 0 (off), or Karma's Color Limit to a large value such as 1e6: Karma's 0 is not off, it renders black (husk 22.0.466), so Eldr ignores a `karma:global:colorlimit` of 0 with a warning and keeps its default of 20. To keep the bounce clamp against fireflies, also set `eldr:indirectClamp` 20 (it wins over the colour limit), or turn Karma's Shared Color Limit off and keep its Indirect Color Limit. Light shapes made visible (`eldr:lightShapesVisible`) are not capped.
 - **Ambient:** GTAO on the dome's light, or with SSGI the traced visibility.
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-30_07_light_shapes` (Light shapes and highlights), `2026-10-30_06_many_lights` (Many lights), `2026-10-30_08_dome_sun` (Dome sun), `2026-10-29_15_light_linking` (Light linking), `2026-10-29_24_ies_profiles` (IES profiles), `2026-10-29_22_light_textures` (Light textures), `2026-10-28_03_emissive_lights` (Emissive meshes as lights), `2026-10-29_17_colour_limit` (Colour limit), `2026-10-30_16_light_path_intensity` (Direct and indirect intensity).
 
 ### Shadow modes
 
@@ -155,6 +159,8 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 
 Traced shadows cover opaque pixels only. With volumes, fog, translucent surfaces or subsurface in the scene a traced sun keeps its cascades for those (1.05 ms on volume.usda); traced local lights keep atlas tiles for them (about 1.4 ms for three lights; still frames 0-0.2 ms).
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-30_10_shadow_modes` (Shadow modes), `2026-10-28_07_shadow_cull` (Small-object culling in sun shadows).
+
 ## Global illumination
 
 | Layer | Setting | Needs | What it gives |
@@ -164,6 +170,8 @@ Traced shadows cover opaque pixels only. With volumes, fog, translucent surfaces
 | Final gather | `eldr:finalGather` | GI, prepass | Off by default. `eldr:finalGatherRays` (1) cosine rays per pixel and sample, their directions a scrambled Sobol sequence over the film's samples turned per pixel by blue noise (stratified); the gathered light (before the albedo) denoised per frame by two edge-aware a-trous passes (`eldr:finalGatherDenoise`, plane, normal and luminance stops: corners keep their contact shadows within 1%), fading out over the film's first `eldr:effectDenoiseSamples` (64) samples like the traced shadows' and reflections' filters; off under `eldr:denoise`, which wants uncorrelated noise. Each ray shaded at its hit with direct light (rect lights by their exact form factor) and probe bounces (`eldr:finalGatherDistance` > 0: rays that long, else the probes at their end); replaces the probes, AO and SSGI on opaque diffuse light: contact shadows, corners, colour bleeding. Hits shadow one light picked by its light, weighted (`eldr:rtLightSampling`); optionally (`eldr:finalGatherRoulette`, off) from the film's 2nd sample each 8x8 block gathers every other sample, weighted by 2 |
 | SSGI (screen-space GI) | `eldr:ssgi` | prepass | Near-field indirect light from the screen (GTAO horizon scan, last frame's lighting) at half resolution, denoised. Replaces AO. |
 | Caustics | `eldr:caustics` | ray tracing | Off by default; only with caster objects. See below. |
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-28_04_gi_final_gather` (Global illumination and final gather), `2026-10-30_09_ambient_occlusion` (Ambient occlusion).
 
 ### Caustics
 
@@ -189,6 +197,8 @@ Against Karma (tests/scenes/caustics.usda, karma_golden at 320x180: Karma CPU 10
 
 Costs at 1280x720: probes 2-3 ms (Kitchen), SSGI 0.67 ms at half resolution.
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_13_caustics` (Caustics).
+
 ## Reflections
 
 Each pixel takes the best source for its roughness.
@@ -203,6 +213,8 @@ Each pixel takes the best source for its roughness.
 
 Mirror pixels take the planar reflection; others use the probe (if on) or the dome as the base, with SSR where the screen has the hit.
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-28_09_traced_reflections` (Ray-traced reflections), `2026-10-30_11_screen_space_reflections` (Screen-space reflections), `2026-10-30_23_reflection_probe` (Reflection probe), `2026-10-29_03_planar_reflection_blur` (Planar reflection blur), `2026-10-29_10_reflection_motion_blur` (Motion blur in reflections), `2026-10-30_02_reflection_roulette` (Traced reflection roulette).
+
 ## Transparency
 
 | Feature | Setting | How |
@@ -216,6 +228,8 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Translucent shadows | `eldr:translucentShadows` | Glass casts faint, tinted shadows |
 | Holdouts | `eldr:holdouts`, `eldr:holdoutAlpha` | Matte objects: black, zero alpha, keep depth, ids, shadows. Translucent holdouts cut by opacity, also from MaterialX graphs. |
 | Subsurface | `eldr:subsurface` | See Materials |
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_09_transparency_order` (Transparency order), `2026-10-29_25_refraction_clip` (Traced refraction starts at glass), `2026-10-29_01_opacity_mode` (UsdPreviewSurface opacity mode).
 
 ## Volumes and fog
 
@@ -244,6 +258,8 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Local lights' shadows (atlas tap, other volumes) every second march step, the steps between reuse the last tap's shadowed fraction | `eldr:volumeLocalShadowStride` |
 | Shadow grids: each volume's optical depth towards the dome, the suns and the local lights (other volumes) built once per change on a 64^3 grid and read trilinearly instead of shadow marches (3-4x cheaper volumes; time samples of velocity-blurred volumes march) | `eldr:volumeShadowGrid` |
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_08_volume_default_material` (Volumes without a material), `2026-10-29_05_coloured_volume_shadows` (Coloured volume shadows), `2026-10-29_26_volume_multiple_scattering` (Volume multiple scattering), `2026-10-29_18_volume_motion_blur` (Volume motion blur), `2026-10-30_12_fog` (Height fog), `2026-10-30_03_volume_shadow_grid` (Volume shadow grids), `2026-10-29_20_volume_light_shadow_stride` (Volume local-light shadow stride).
+
 ## Materials
 
 Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged.
@@ -258,6 +274,8 @@ Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSp
 | MaterialX surface_unlit | `emission_color` times `emission`, cutout `opacity`; no reflection. `transmission` isn't read |
 
 Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`). Surfaces Eldr doesn't read (a `surface` of pbrlib BSDFs and EDFs) render the default grey and warn once; docs/materialx.md has the measured node coverage.
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_16_materialx_nodes` (MaterialX nodes and surfaces), `2026-10-30_22_material_lobes` (Material lobes), `2026-10-30_13_subsurface` (Subsurface scattering), `2026-10-30_18_displacement` (Displacement), `2026-10-29_21_displacement_bound` (Displacement bound), `2026-10-30_21_textures_colour` (Textures and colour spaces), `2026-10-29_19_texture_compression` (Texture compression).
 
 ### Spec conformance
 
@@ -310,6 +328,8 @@ UsdPreviewSurface `opacityMode` "presence" (without a threshold) scales the whol
 | Points | Icosahedra `widths` across, or camera-facing discs with `eldr:pointSprites` / `primvars:eldr:sprites` |
 | Volumes | See Volumes and fog |
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-28_01_subdivision_levels` (Subdivision levels), `2026-10-29_04_screen_dicing` (Dicing by screen size), `2026-10-30_19_curves_points` (Curves and points), `2026-10-28_10_curve_styles` (Per-object curve and point styles), `2026-10-30_20_instancing` (Instancing).
+
 ## Camera
 
 Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance`, `shutter:open`, `shutter:close`. usdview's free camera has no lens (no DOF or blur).
@@ -322,9 +342,11 @@ Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance
 | Motion blur | McGuire reconstruction along motion vectors (camera, objects, skinning, blend shapes) after TAA | `eldr:motionBlurTimeSamples` renders the whole scene at a Halton-spread shutter time per sample (box shutter, linear motion from the previous frame; instances, joints, blend shapes, camera), so shadows, rays, refraction and DOF see the motion. The camera's motion is only ever its own: a switch to another camera, or Houdini's free camera (`/__HoudiniFreeCamera__`) taking over from a scene camera, keeps the objects' motion but never blurs from the old camera's pose. 1.7-2.1 ms per sample on the crowd. `eldr:motionBlurResidual` spreads each sample over its shutter stratum along motion vectors for a smooth blur. Reflections: traced ones (`eldr:rtReflections`) see the sample's TLAS; planar mirrors render at the sample's time and camera (`eldr:planarMotionBlur`); reflection probes stay at the frame's time (a capture per sample would cost six renders and a CPU prefilter). |
 | Single-frame blur | | `eldr:sampledMotion`: rigid prims, instances and camera take motion from the scene's transform samples across the shutter. `eldr:deformationBlur`: point caches (meshes, curves, points) use per-point velocity. Velocity blur (`primvars:eldr:object:vblur` / `instance_vblur`, else Karma's `karma:object:vblur` / `instance_vblur`; 0 off as Karma, 1 velocities, 2 with accelerations) resolves `velocities`, `accelerations` and `angularVelocities` into those samples (USD's HdsiVelocityMotionResolvingSceneIndex). Skinned meshes sample their skinning transforms, skeleton placement and blend shape weights across the shutter too (extrapolated to one frame before, as rigid transforms are), so a first frame's skinning blurs in time samples and motion vectors. Toggling a motion blur setting blurs again at once. |
 | Upscaling | `eldr:renderScale` < 1 (min 0.25), and `eldr:movingRenderScale` (0.5) while the camera or scene moves: TAA reconstructs a full-size history; post DOF and motion blur work at the render size. Film, `eldr:filmRestart`, lens distortion and extra AOVs render full size. | |
-| Moving camera mode | While moving: half render size (`eldr:movingRenderScale`), one traced shadow ray per light (`eldr:movingShadowRays`), settled GI probes paused (`eldr:movingGiPause`); the first still frame is full quality again. | Kitchen 1080p moving 21.6 to 8.6 ms, emissive RT 64 to 12.5 ms |
+| Moving camera mode | While moving: half render size (`eldr:movingRenderScale`), one traced shadow ray per light (`eldr:movingShadowRays`), settled GI probes paused (`eldr:movingGiPause`); still for `eldr:stillDelay` (0.3 s wall time), quality steps up over `eldr:rampFrames` (6) and the film starts from the TAA image (`eldr:filmWarmStart`). `eldr:movingFrameBudget` (33 ms GPU) sets the moving render scale from the measured frame time; resized targets reuse their memory. | Kitchen 1080p moving 21.6 to 8.6 ms, emissive RT 64 to 12.5 ms |
 
 **Lens distortion:** camera attributes `lensDistortion:*` warp the finished frame with ids and depth; the scene renders wider (overscan, up to 2x). A Karma Physical Lens (`karma:camera:lensshader`, or a bound lens material) is read, so Karma cameras distort the same.
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-30_05_camera_exposure` (Camera exposure), `2026-10-30_14_depth_of_field` (Depth of field), `2026-10-30_24_lens_distortion` (Lens distortion), `2026-10-28_02_velocity_blur` (Velocity motion blur), `2026-10-30_17_tonemapping` (Tonemapping), `2026-10-30_25_bloom` (Bloom).
 
 ## Output
 
@@ -394,6 +416,8 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 
 **husk.** husk binds vars by its own channel names ("C", "depth") and carries `sourceName`/`sourceType`; Eldr resolves the AOV from that, so the table above holds under husk, which writes the EXR (Float32Vec4 colour renders as half and widens). husk (which hands Eldr its products as the `rasterRenderProducts` setting) makes the frame offline, which changes only speed (batching, readback), never the image: the settings prim's settings decide the look. Any `eldr:<setting>` attribute on the active UsdRenderSettings prim is that render setting, applied when its value changes.
 
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-28_05_houdini_render_vars` (Render vars in the Houdini viewport), `2026-10-29_06_karma_aovs` (Karma's AOVs and light groups), `2026-10-30_15_cryptomatte` (Cryptomatte), `2026-10-28_06_holdouts` (Holdouts and phantom objects), `2026-10-29_14_aov_filters` (Per-AOV sample filters), `2026-10-28_08_render_stats` (Render statistics in Houdini's Render Gallery).
+
 ## Performance
 
 | Topic | How |
@@ -407,6 +431,8 @@ A bound float buffer gets as many components as it has. One buffer per kind; if 
 | Numerics | NaN/Inf cleaned where they enter each history (TAA, SSGI, GI, exposure) |
 
 Costly opt-ins on a 1080 Ti at 1280x720: `eldr:ssrDenoise` +9 ms (crowd), `eldr:rtShadows` +10 ms (Kitchen), `eldr:rtReflections` +15 ms (Kitchen), `eldr:gi` 2-3 ms, volumes 7-22 ms for a large cloud. They matter little for seconds-per-frame renders.
+
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-30_01_moving_camera` (Moving camera mode), `2026-10-30_04_light_sampling` (Traced light sampling).
 
 ## USD authoring conventions
 
@@ -436,7 +462,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | `float primvars:eldr:object:dicingquality`, `karma:object:dicingquality` | subdivision mesh | With `eldr:screenDicing`: about quality² polygons per pixel (default 0.5, as Karma: a polygon per 4 pixels); the mesh gets the uniform level its nearest face needs. Off-screen faces count at 0.1 of it (Karma's offscreen quality). |
 | `float primvars:eldr:object:volumelimit`, `karma:object:volumelimit` | volume (also a render setting of that name) | Above 0, volumes scatter more than once: octaves fitted to Karma at that limit (the largest in the frame counts for all volumes) |
 | `bool primvars:eldr:renderAsSubdivision` | polygon mesh (subdivisionScheme none) | Renders it as Catmull-Clark without changing the mesh, as Mesh Edit would; then `refineLevel` applies. Needs `eldr:subdivision`. |
-| `bool inputs:eldr:light:renderlightgeo`, `inputs:karma:light:renderlightgeo` | light | Light geometry visible to the camera (false hides it) |
+| `bool inputs:eldr:light:renderlightgeo`, `inputs:karma:light:renderlightgeo` | light | Light geometry visible to the camera: a local light shows its shape only when true (unauthored: hidden); a dome is drawn unless false |
 | `string inputs:eldr:light:lpetag`, `inputs:karma:light:lpetag` | light, dome | Light group (LPE tag): `lpe:C.*<L.'tag'>` holds its lights' direct light |
 | `collection:matte` | active UsdRenderPass | Collection members are holdouts (usdview: "Set As Active Render Pass"; `usdrecord --renderPassPrimPath`, needs the pass's `renderSource`). Whole gprims only. |
 | UsdRenderSettings, RenderProduct, RenderVar | `/Render/...` | EXR products with AOVs and Cryptomatte; `sourceType` `lpe` and `primvar` honoured |

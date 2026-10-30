@@ -1,4 +1,11 @@
-# Offline samples per execute
+# Batched film samples in husk and usdrecord
+
+<!-- summary -->
+Offline renders run film samples back to back inside one execute, removing the app's wait between samples (`eldr:offlineBatchSeconds`).
+
+- **Compare:** open `showcase/2026-10-29_02_offline_batch/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `batched` vs `oneSamplePerExecute`.
+- **Look at:** The wall time of the two renders (the images are the same).
+<!-- summary -->
 
 `tests/scenes/emissive.usda` with GI, 64 film samples. Offline renders (husk, usdrecord) render film samples back to back inside one execute for up to `eldr:offlineBatchSeconds` and read back only the last one, so the app's wait between executes (husk: about 0.1 s per sample) goes away. The images are the same; only the wall time differs.
 

@@ -19,7 +19,7 @@ The film restarts on every real change: camera, scene, settings. If something an
 ## The render is noisy
 
 1. Raise **Film Samples** (256 for finals).
-2. Turn on **Denoise (OIDN)**.
+2. Turn on **Denoise** (OIDN).
 3. Noise only in one effect (bounce light, traced shadows)? Raise that effect's **Quality** instead of all samples (see [Sampling and denoising](sampling.md#quality-multipliers)).
 4. Single bright pixels: lower **Indirect Light Clamp**.
 

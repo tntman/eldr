@@ -1,4 +1,11 @@
-# Per-component quality multipliers
+# Per-component quality
+
+<!-- summary -->
+More rays for the noisy component (diffuse, light, reflection) instead of more film samples, as Karma's quality controls.
+
+- **Compare:** open `showcase/2026-10-29_12_quality_multipliers/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames` (Karma's names), `allHalf`.
+- **Look at:** The walls and floor: cleaner with `diffuse2` at the same sample count.
+<!-- summary -->
 
 emissive.usda (a Cornell box lit by a glowing panel and a bulb, plus a mirror sphere) with GI, final gather, traced shadows and traced reflections on, at 32 film samples (`eldr_final` has the same on at 256). Each settings prim spends rays on one component, the way Karma's quality controls do, instead of raising the film samples for everything.
 

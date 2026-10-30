@@ -1,4 +1,11 @@
-# Houdini Render Vars
+# Render vars in the Houdini viewport
+
+<!-- summary -->
+A Render Product's vars (beauty, CDA, N, depth) show in Houdini's Render Outputs menu and husk writes them to one EXR.
+
+- **Compare:** open `showcase/2026-10-28_05_houdini_render_vars/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag).
+- **Look at:** In Houdini's viewport pick `rendervar1`, N or depth in the Render Outputs menu: each shows an image, not black.
+<!-- summary -->
 
 The Cornell box with a product on the settings prims: `beauty` with the vars `C` (`C.*[LO]`), `rendervar1` (`CDA`), `N` (`ray:hitN`) and `depth` (`ray:hitPz`).
 

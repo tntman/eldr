@@ -4,18 +4,20 @@ In the Solaris viewport Eldr has two states: **moving** (you tumble the camera o
 
 ## While the camera moves
 
-- The image renders at half size (**Render Scale while Moving**, 0.5) and a temporal filter (TAA) rebuilds full resolution from the frames before.
+- The image renders as large as fits **Frame Budget while Moving** (33 ms of GPU time per frame) and a temporal filter (TAA) rebuilds full resolution from the frames before. Light scenes stay full size; heavy ones drop as far as needed (to a quarter). Set the budget to 0 for a fixed size (**Render Scale while Moving**, 0.5).
 - Traced shadows take one ray per light (**Ray-Traced Shadow Rays while Moving**).
 - Settled GI probes pause (**Pause Settled GI Probes while the Camera Moves**).
 - Eldr returns a frame while the next one renders (**Overlap Readback while Moving**): smoother tumbling, one frame of lag.
 
-The first still frame is full quality again, and the film starts.
+Once the camera has been still for **Still Delay** (0.3 s), quality steps up over **Ramp to Full Quality** (6 frames): size, shadow rays and GI updates rise a little each frame, so no single frame takes the whole cost. Then the film starts from the TAA image (**Film Warm Start**), so the first still frames are as clean as the last moving one. Short pauses mid-navigation stay in moving mode, so the view doesn't switch to full size and back (a start-stop feel); the moving image keeps refining meanwhile. Raise Still Delay if you pause longer between moves, or set 0 to switch on the first still frame. To keep TAA instead of the film (a steady image, no restart when the camera stops), turn off **Film when Still**; it, **TAA Samples**, **Still Delay** and the settings above are in the open **Viewport** group of the Eldr tab.
 
 | Kitchen test scene, 1080p, camera moving | Full settings | Moving mode |
 |---|---|---|
 | Frame time | 21.6 ms | 8.6 ms |
 
 > **Tip:** With heavy final settings in the viewport, moving stays fast; only the still frames take long. Choose the draft render settings prim while you lay out a shot.
+
+> **Showcase:** open `showcase/2026-10-30_01_moving_camera/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `moving` (the defaults) vs `full`.
 
 ## Choosing what the viewport renders
 
@@ -31,11 +33,15 @@ The viewport's **Render Outputs** menu lists the render vars of the chosen Rende
 
 > **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view. Use Render Outputs to view one AOV.
 
+> **Showcase:** open `showcase/2026-10-28_05_houdini_render_vars/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag).
+
 ## Render statistics
 
 Turn on the viewport's **Show/Hide Render Stats** toolbar button for a line with the stage ("Accumulating 24%"), the samples done and GPU time. The full stats panel (Eldr's own layout) shows memory and time per pass.
 
 ![Houdini: viewport with the render stats overlay](../images/houdini/viewport_render_stats.png)
+
+> **Showcase:** open `showcase/2026-10-28_08_render_stats/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default` only (no A/B: the feature is metadata).
 
 ## Colour in the viewport
 
