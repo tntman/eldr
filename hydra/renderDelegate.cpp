@@ -1027,6 +1027,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["gpuTimeMs"] = frame.gpuMs;
     stats["renderTimeMs"] = frame.cpuMs;
     stats["commitTimeMs"] = _commitMs;
+    stats["renderWidth"] = size_t(frame.renderWidth);  // the scene's (eldr:renderScale), else the frame's
     VtDictionary passes;
     for (const auto &[name, ms] : frame.passMs) {
         passes[name] = ms;
