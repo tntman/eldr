@@ -52,6 +52,7 @@ const vec2 kPoisson[16] = vec2[](
 
 #define RT_RESULTS
 #include "gi.glsl"  // ray-traced shadows and reflections, GI probes
+#include "caustics.glsl"  // caustic photons
 
 // mesh.vert's packed outputs.
 layout(location = 0) in vec4 inWorldPosPrevX;
@@ -70,6 +71,7 @@ layout(location = 4) flat in uint inEntry;
 #define inMaterial (draws[instances[inSlot].draw].material)
 #define inPrimId (draws[instances[inSlot].draw].primId)
 #define inInstanceId (instances[inSlot].index)
+#define inLinkMask (instances[inSlot].linkMask)  // light linking (lights.glsl's LightLinked)
 #ifdef GRAPH
 // Material programs: vertex-rate primvars (mesh.vert) and the interpreter.
 layout(location = 5) in vec4 inPrimvars;
@@ -107,7 +109,8 @@ vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
 // direct light (Light::color.w / 4 - 1 its group).
 vec3 splitShadow = vec3(0.0), splitShadowDiffuse = vec3(0.0), splitCoat = vec3(0.0);
 const uint kMaxLightGroups = 8u;  // Aovs::kMaxLightGroups
-const int kGroupLayer = 10;       // Aovs::kSplitLayers
+const int kCausticsLayer = 10;
+const int kGroupLayer = 11;       // Aovs::kSplitLayers
 vec3 splitGroups[kMaxLightGroups] = vec3[](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0),
                                            vec3(0.0), vec3(0.0));
 int LightGroup(Light light)
@@ -230,7 +233,7 @@ float ShadowDistance(float depth, float n, float f)
 float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
 {
     float traced;
-    if (RtShadow(index, traced)) {
+    if (RtShadow(index, p, ng, traced)) {
         return traced;
     }
     uint tile = lightShadow[index];
@@ -573,10 +576,10 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 toLight = light.position.xyz - p;
     float d = length(toLight);
     float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
-    if (window <= 0.0 || d <= 0.0) {
+    if (window <= 0.0 || d <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * window * window;
+    vec3 radiance = light.color.rgb * (window * window * EmitterClamp(light, diffuseColor)) * LightIes(light, p);
     float cosOff = dot(-toLight / d, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
@@ -752,7 +755,7 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
 float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
 {
     float traced;
-    if (RtShadow(frame.counts.y, traced)) {
+    if (RtShadow(frame.counts.y, p, ng, traced)) {
         return traced;
     }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
@@ -1165,12 +1168,13 @@ void main()
     vec3 f0 = base.metalW * base.metalF0 + base.dielW * base.dielF0;  // hair, multi-bounce, toon
     vec3 FssEss = BaseAlbedo(NoV, dfg);
 
+    emissive = BrightnessClamp(emissive, frame.lightClamp.z);  // Karma's colour limit (40 shows as 20)
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
         Light light = lights[i];
         vec3 l = light.position.xyz;
         float NoL = dot(n, l);
-        if (NoL <= 0.0) {
+        if (NoL <= 0.0 || !LightLinked(light, inLinkMask)) {
             continue;
         }
         // The sun's disc (angular radius axis.w) as a sphere at distance 1,
@@ -1332,6 +1336,14 @@ void main()
     color += FssEss * specular + kd * indirectDiffuse;
     vec3 splitIndirectGlossy = FssEss * specular;
     vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
+    // Caustics (caustics.glsl): the photons that came through or off the
+    // casters, on a receiver's diffuse surface; indirect diffuse light.
+    vec3 splitCaustics = vec3(0.0);
+    if (Feature(kFeatureCaustics) && (draws[instances[inSlot].draw].caustics & kCausticsReceive) != 0u) {
+        splitCaustics = kd * CausticDiffuse(inWorldPos, n);
+        color += splitCaustics;
+        splitIndirectDiffuse += splitCaustics;
+    }
     // Karma's convention (frame.aovs.y): the dome's light that reaches the
     // surface unblocked is direct. Diffuse: its irradiance under the
     // visibility (AO, or SSGI's); what GI's probes, the multi-bounce
@@ -1428,6 +1440,7 @@ void main()
             imageStore(lightSplits, ivec3(pixel, 6), vec4(keep * gSubsurfaceShare * splitIndirectDiffuse, 1.0));
             imageStore(lightSplits, ivec3(pixel, 7), vec4(keep * splitCoat, 1.0));
             imageStore(lightSplits, ivec3(pixel, 8), holdout ? vec4(splitShadowDiffuse, 1.0) : vec4(splitShadow, 0.0));
+            imageStore(lightSplits, ivec3(pixel, kCausticsLayer), vec4(keep * splitCaustics, 1.0));
             for (int g = 0; g < min(splitLayers - kGroupLayer, int(kMaxLightGroups)); ++g) {
                 imageStore(lightSplits, ivec3(pixel, kGroupLayer + g), vec4(keep * splitGroups[g], 1.0));
             }

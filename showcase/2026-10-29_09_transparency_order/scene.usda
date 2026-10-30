@@ -1,0 +1,47 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/transparency_order.usda@]
+)
+
+# tests/scenes/transparency_order.usda: a translucent red quad in front of
+# and behind blue glass, and smoke balls behind two panes and between two
+# panes. Settings prims flip how translucent layers are ordered and seen.
+
+def Scope "Render"
+{
+    def RenderSettings "default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "sorted"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:oit = 0
+    }
+
+    def RenderSettings "oneLayer"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:refractionLayers = 1
+    }
+
+    def RenderSettings "volumesOverGlass"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:volumeUnderTransparency = 0
+    }
+
+    def RenderSettings "final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+    }
+}

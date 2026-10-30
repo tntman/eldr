@@ -21,6 +21,7 @@
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
 #include "pxr/base/tf/stringUtils.h"
+#include "pxr/base/tf/errorMark.h"
 #ifdef interface
 #undef interface  // windows.h's (via Vulkan): HdMaterialNetworkSchema has a member of that name
 #endif
@@ -184,6 +185,13 @@ TF_DEFINE_PRIVATE_TOKENS(
     (ND_UsdPreviewSurface_surfaceshader)
     (ND_standard_surface_surfaceshader)
     (ND_open_pbr_surface_surfaceshader)
+    (ND_gltf_pbr_surfaceshader)
+    (ND_disney_principled)
+    (ND_surface_unlit)
+    (emissive)
+    (emissive_strength)
+    (alpha)
+    (baseColor)
     (base)
     (base_color)
     (base_weight)
@@ -303,7 +311,7 @@ TfToken CanonicalColorSpace(std::string name)
         {"utility - linear - srgb", "lin_rec709_scene"},
         {"acescg", "lin_ap1_scene"}, {"lin_ap1", "lin_ap1_scene"}, {"aces - acescg", "lin_ap1_scene"},
         {"aces2065-1", "lin_ap0_scene"}, {"lin_ap0", "lin_ap0_scene"}, {"aces - aces2065-1", "lin_ap0_scene"},
-        {"utility - raw", "raw"}, {"data", "raw"}, {"identity", "raw"}, {"unknown", "raw"},
+        {"raw", "raw"}, {"utility - raw", "raw"}, {"data", "raw"}, {"identity", "raw"}, {"unknown", "raw"},
     };
     if (GfColorSpace::IsValid(TfToken(name))) {
         return TfToken(name == "data" || name == "identity" || name == "unknown" ? "raw" : name);
@@ -379,7 +387,16 @@ std::shared_ptr<vkr::Texture> LoadTexture(std::string const &path, TfToken const
     spec.format = format;
     spec.flipped = true;  // bottom row first, so st (0,0) is the first texel
     spec.data = src.data();
-    if (!image->Read(spec)) {
+    // Hio's OpenEXR reader can post Ar read errors for files it decodes
+    // fine (Houdini's pic/lookdev/colormap_ramps.exr): a warning instead,
+    // so hosts that fail on posted errors (usdrecord scripts) don't.
+    TfErrorMark mark;
+    const bool read = image->Read(spec);
+    if (read && !mark.IsClean()) {
+        mark.Clear();
+        TF_WARN("HdVk: texture '%s' decoded with read errors", path.c_str());
+    }
+    if (!read) {
         TF_WARN("HdVk: failed to decode texture '%s'", path.c_str());
         return nullptr;
     }
@@ -526,7 +543,8 @@ struct SurfaceInputs {
     TfToken id;
     TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal, opacity;
     float baseColorDefault, baseWeightDefault, emissionDefault, emissionWeightDefault, roughnessDefault;
-    TfToken specular, specularColor;  // dielectric specular weight and colour (constants only)
+    TfToken specular, specularColor;  // dielectric specular weight and colour (connected: ReadLobes' program)
+    float metallicDefault = 0.0f;
 };
 
 const std::vector<SurfaceInputs> &Surfaces()
@@ -551,6 +569,19 @@ const std::vector<SurfaceInputs> &Surfaces()
              _tokens->emission_color, _tokens->emission_luminance, _tokens->base_metalness,
              _tokens->specular_roughness, TfToken(), _tokens->geometry_normal, _tokens->geometry_opacity, 0.8f,
              1.0f, 1.0f, 0.0f, 0.3f, _tokens->specular_weight, _tokens->specular_color},
+            // glTF PBR 2.0.1: base colour, metallic and roughness 1;
+            // emissive times emissive_strength; alpha by alpha_mode (ReadSurface).
+            // occlusion isn't read: MaterialX's graph doesn't use it (nor Karma).
+            {_tokens->ND_gltf_pbr_surfaceshader, _tokens->base_color, TfToken(), _tokens->emissive,
+             _tokens->emissive_strength, _tokens->metallic, _tokens->roughness, TfToken(), _tokens->normal,
+             _tokens->alpha, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f, _tokens->specular, _tokens->specular_color, 1.0f},
+            // Disney principled (MaterialX's bxdf): no emission, opacity or normal.
+            {_tokens->ND_disney_principled, _tokens->baseColor, TfToken(), TfToken(), TfToken(), _tokens->metallic,
+             _tokens->roughness, TfToken(), TfToken(), TfToken(), 0.16f, 1.0f, 0.0f, 0.0f, 0.5f},
+            // surface_unlit: emission_color times emission, cutout opacity;
+            // no BSDF (ReadLobes turns the base off).
+            {_tokens->ND_surface_unlit, TfToken(), TfToken(), _tokens->emission_color, _tokens->emission, TfToken(),
+             TfToken(), TfToken(), TfToken(), _tokens->opacity, 0.0f, 1.0f, 1.0f, 1.0f, 0.5f},
         };
     }();
     return surfaces;
@@ -645,16 +676,18 @@ void ReadWrap(HdMaterialNode2 const &node, bool preview, vkr::TextureRef *ref)
 // A texture node's file into ref (UDIMs as tiles) with its wrap modes. A
 // MaterialX file without a colour space is in the document's working space,
 // linear (as MaterialX and Storm's MaterialX path read it); a UsdUVTexture's
-// is "auto". False without a file.
-bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textures, vkr::TextureRef *ref)
+// is "auto". `space`: the node's own colour space (empty: auto) instead.
+// False without a file.
+bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textures, vkr::TextureRef *ref,
+              std::optional<TfToken> space = std::nullopt)
 {
     const auto file = node.parameters.find(_tokens->file);
     const std::string path = file == node.parameters.end() ? std::string() : AssetPath(file->second);
     if (path.empty()) {
         return false;
     }
-    TfToken colorSpace = ParameterColorSpace(node.parameters, _tokens->file);
-    if (colorSpace.IsEmpty() && !preview) {
+    TfToken colorSpace = space ? *space : ParameterColorSpace(node.parameters, _tokens->file);
+    if (colorSpace.IsEmpty() && !preview && !space) {
         colorSpace = GfColorSpaceNames->LinearRec709;
     }
     const bool compress = textures->compress;
@@ -1765,6 +1798,111 @@ private:
             (k.name == "place2d" ? Place2dMatrix : Transform2dMatrix)(n.parameters, m);
             return _Emit(P::kAffine, {*uv, _Const(GfVec4f(m[0], m[1], m[2], 0)), _Const(GfVec4f(m[3], m[4], m[5], 0))});
         }
+        // MaterialX's compositing nodes (program.glsl's Blend has their
+        // formulas): fg over bg mixed by `mix`; premult and unpremult of `in`.
+        static const std::map<std::string, uint32_t> blends = {
+            {"plus", 0},  {"minus", 1}, {"difference", 2}, {"burn", 3},  {"dodge", 4},    {"screen", 5},
+            {"disjointover", 6}, {"in", 7}, {"mask", 8}, {"matte", 9}, {"out", 10}, {"over", 11},
+            {"premult", 12}, {"unpremult", 13}};
+        if (const auto it = blends.find(k.name); it != blends.end() && StartsWith(n.nodeTypeId, "ND_")) {
+            const bool single = it->second >= 12;
+            const std::optional<Value> fg = in(single ? "in" : "fg"), bg = single ? fg : in("bg");
+            const std::optional<Value> m = single ? std::optional<Value>(_Const(GfVec4f(1.0f))) : in("mix");
+            if (!fg || !bg || !m) {
+                return std::nullopt;
+            }
+            return _Emit(P::kBlend, {*fg, *bg, *m}, 0, it->second);
+        }
+        if (k.name == "inside" || k.name == "outside") {  // in * mask, in * (1 - mask)
+            const std::optional<Value> v = in("in"), mask = in("mask");
+            if (!v || !mask) {
+                return std::nullopt;
+            }
+            return _Emit(P::kMultiply,
+                         {*v, k.name == "inside" ? *mask : _Emit(P::kInvert, {*mask, _Const(GfVec4f(1.0f))})});
+        }
+        // Karma's own VEX nodes (no MaterialX nodedef; parameters as
+        // $HFS/houdini/karmaShaderNodes.json, unauthored ones its defaults).
+        const std::string &id = n.nodeTypeId.GetString();
+        auto kma = [&](const char *name, GfVec4f fallback) -> std::optional<Value> {
+            const TfToken input(name);
+            return _Connected(n, input) || n.parameters.count(input) ? in(name) : std::optional<Value>(_Const(fallback));
+        };
+        if (StartsWith(n.nodeTypeId, "kma_rampconst")) {
+            // A Houdini ramp of t, baked into a table over its keys
+            // (HdVkRamp evaluates it): 64 floats or 32 colours.
+            // ponytail: linear between the table's entries, so constant
+            // steps and kinks soften over 1/63 (1/31) of the keys' range.
+            const bool color = id != "kma_rampconst_float";
+            const HdVkRamp ramp = HdVkRamp::Read(n, color);
+            const std::optional<Value> t = in("t");
+            if (!t) {
+                return std::nullopt;
+            }
+            if (ramp.keys.empty() || ramp.keys.back() <= ramp.keys.front()) {
+                return _Const(ramp(0.0f));
+            }
+            const float lo = ramp.keys.front(), hi = ramp.keys.back();
+            const uint32_t count = color ? 32 : 64, first = _NewConst(GfVec4f(lo, hi, 0.0f, 0.0f)).index;
+            std::vector<float> packed;
+            for (uint32_t i = 0; i < count; ++i) {
+                const GfVec4f v = ramp(lo + (hi - lo) * float(i) / float(count - 1));
+                if (color) {
+                    _NewConst(v);
+                } else {
+                    packed.push_back(v[0]);
+                }
+            }
+            if (!color) {
+                _Packed(std::move(packed));
+            }
+            return _Emit(P::kRampTable, {*t}, first, count | (color ? 0u : 256u));
+        }
+        if (StartsWith(n.nodeTypeId, "kma_voronoinoise3d") && output == TfToken("distance")) {
+            // F1 (F2, F3) of a jittered grid at position * freq - offset,
+            // MaterialX's worley cells (noise.glsl), Karma's metric.
+            // ponytail: unconnected position is the object-space point
+            // (Karma's VEX P: unverified); p1..p3 aren't read; MaterialX's
+            // cell hash, not VEX's vnoise: the same look, other cells.
+            const TfToken position("position");
+            const std::optional<Value> p = _Connected(n, position) || n.parameters.count(position)
+                                               ? in("position")
+                                               : std::optional<Value>(_Emit(P::kPosition, {}, 0));
+            const std::optional<Value> freq = kma("freq", GfVec4f(1.0f)), offset = kma("offset", GfVec4f(0.0f));
+            const std::optional<Value> jitter = kma("jitter", GfVec4f(1.0f));
+            const std::optional<float> metric = _ConstantInput(n, TfToken("metric"));
+            if (!p || !freq || !offset || !jitter || !metric) {
+                return std::nullopt;
+            }
+            const Value q = _Emit(P::kSubtract, {_Emit(P::kMultiply, {*p, *freq}), *offset});
+            const uint32_t m = uint32_t(std::clamp(int(*metric), 0, 3));
+            return _Emit(P::kWorleyNoise, {q, *jitter, _Const(GfVec4f(0.0f))}, 3 | m << 4,
+                         Components(id.substr(id.rfind('_') + 1)));
+        }
+        if (id == "kma_color_hextiling" && (output.IsEmpty() || output == TfToken("out"))) {
+            vkr::TextureRef ref;
+            // Its sourceColorSpace (UsdImaging hands it over as the file's
+            // colour space, as a UsdUVTexture's), "auto" by default.
+            const std::string space = _String(n, "sourceColorSpace");
+            LoadFile(n, false, _textures, &ref,
+                     space.empty() ? ParameterColorSpace(n.parameters, _tokens->file) : CanonicalColorSpace(space));
+            const std::optional<Value> uv = _Uv(n, _tokens->texcoord, depth), size = kma("size", GfVec4f(1.0f));
+            const std::optional<Value> rot = kma("rot", GfVec4f(0.0f)), randRot = kma("rand_rot", GfVec4f(0.5f));
+            const std::optional<Value> scale = kma("scale", GfVec4f(1.0f)), randScale = kma("rand_scale", GfVec4f(0.0f));
+            const std::optional<Value> contrast = kma("contrast", GfVec4f(0.5f));
+            const std::optional<Value> falloff = kma("contrast_falloff", GfVec4f(0.6f));
+            const std::optional<Value> exponent = kma("weightexp", GfVec4f(7.0f)), seed = kma("seed", GfVec4f(0.0f));
+            if (!uv || !size || !rot || !randRot || !scale || !randScale || !contrast || !falloff || !exponent ||
+                !seed) {
+                return std::nullopt;
+            }
+            _p.images.push_back(std::move(ref));
+            const Value st = _Emit(P::kDivide, {*uv, *size});
+            return _Emit(P::kHexTile,
+                         {st, _Emit(P::kCombine, {*rot, *randRot, *scale, *randScale}),
+                          _Emit(P::kCombine, {*contrast, *falloff, *exponent, *seed}), _Const(GfVec4f(0, 0, 0, 1))},
+                         uint32_t(_p.images.size() - 1));
+        }
         // Houdini's ramps (hmtlxramp graphs), as Houdini 22 defines them
         // (houdini/materialx/libraries/houdini; program.glsl has the
         // formulas): hinvlinear places its input among ten keys,
@@ -1915,6 +2053,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_IOR, P::kThinFilmIor);
         program(_tokens->specular_rotation, P::kAnisotropyRotation);
         program(_tokens->specular_IOR, P::kIor);
+        program(_tokens->specular, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
         program(_tokens->transmission, P::kTransmission);
         program(_tokens->transmission_color, P::kTransmissionColor);
         program(_tokens->subsurface, P::kSubsurface);
@@ -1951,6 +2091,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_weight, P::kThinFilm);
         program(_tokens->thin_film_ior, P::kThinFilmIor);
         program(_tokens->specular_ior, P::kIor);
+        program(_tokens->specular_weight, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
         program(_tokens->transmission_weight, P::kTransmission);
         program(_tokens->transmission_color, P::kTransmissionColor);
         program(_tokens->subsurface_weight, P::kSubsurface);
@@ -1959,6 +2101,92 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->subsurface_radius_scale, P::kSubsurfaceScale);
         program(_tokens->transmission_depth, P::kTransmissionDepth);
         program(_tokens->geometry_thin_walled, P::kThinWalled);
+    } else if (id == _tokens->ND_gltf_pbr_surfaceshader) {
+        // MaterialX's gltf_pbr graph: a dielectric of `ior` tinted by
+        // specular_color, weighted by specular, over a Schlick metal (as
+        // standard_surface's lobes, multiple scattering); KHR clearcoat,
+        // sheen (its colour's largest channel is the weight, roughness
+        // squared), iridescence, transmission (tinted by base_color, or
+        // attenuation_color at attenuation_distance), anisotropy.
+        // ponytail: the metal's edge follows specular and specular_color
+        // as standard_surface's does (glTF's stays white); attenuation
+        // replaces the base colour tint rather than adding to it.
+        m->model = vkr::Material::Model::kStandardSurface;
+        m->ior = ReadOr(p, _tokens->ior, 1.5f);
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = ReadOr(p, TfToken("clearcoat_roughness"), 0.0f);
+        m->coatF0 = IorToF0(1.5f);
+        float sheen[3] = {0, 0, 0};
+        color(_tokens->sheen_color, sheen);
+        m->sheen = std::max({sheen[0], sheen[1], sheen[2]});
+        for (int c = 0; c < 3; ++c) {
+            m->sheenColor[c] = m->sheen > 0 ? sheen[c] / m->sheen : 1.0f;
+        }
+        m->sheenRoughness = std::pow(ReadOr(p, _tokens->sheen_roughness, 0.0f), 2.0f);
+        m->thinFilm = ReadOr(p, TfToken("iridescence"), 0.0f);
+        m->thinFilmIor = ReadOr(p, TfToken("iridescence_ior"), 1.3f);
+        m->thinFilmThickness = ReadOr(p, TfToken("iridescence_thickness"), 100.0f);
+        m->anisotropy = ReadOr(p, TfToken("anisotropy_strength"), 0.0f);
+        m->anisotropyRotation = -ReadOr(p, TfToken("anisotropy_rotation"), 0.0f) / 6.2831853f;  // radians, turns
+        m->transmission = std::clamp(ReadOr(p, _tokens->transmission, 0.0f), 0.0f, 1.0f);
+        m->thinWalled = ReadOr(p, TfToken("thickness"), 0.0f) <= 0.0f;
+        float distance = 0.0f;
+        if (Read(p, TfToken("attenuation_distance"), &distance) && distance > 0.0f) {
+            m->transmissionDepth = distance;
+            std::fill(m->transmissionColor, m->transmissionColor + 3, 1.0f);
+            color(TfToken("attenuation_color"), m->transmissionColor);
+        } else {
+            std::copy(m->baseColor, m->baseColor + 3, m->transmissionColor);
+        }
+        program(_tokens->clearcoat, P::kCoat);
+        program(TfToken("clearcoat_roughness"), P::kCoatRoughness);
+        program(TfToken("iridescence"), P::kThinFilm);
+        program(TfToken("iridescence_thickness"), P::kThinFilmThickness);
+        program(TfToken("anisotropy_strength"), P::kAnisotropy);
+        program(_tokens->specular, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
+        program(_tokens->transmission, P::kTransmission);
+    } else if (id == _tokens->ND_disney_principled) {
+        // MaterialX's disney_principled graph: Schlick dielectric of F0
+        // 0.08 specular (an ior), Schlick metal, Lambert diffuse (the graph's
+        // Burley), sheen tinted towards the base colour, a coat of F0 0.04
+        // and roughness 1 - clearcoatGloss, specTrans, subsurface.
+        // ponytail: specularTint isn't read; the coat's reflectance rises
+        // to 1 at grazing (the graph's stays 0.04 clearcoat); with specTrans
+        // the dielectric's F0 comes from `ior`, not specular.
+        m->model = vkr::Material::Model::kPreviewSurface;
+        const float r = std::sqrt(std::clamp(0.08f * ReadOr(p, _tokens->specular, 0.5f), 0.0f, 0.99f));
+        m->ior = (1.0f + r) / (1.0f - r);
+        m->transmission = std::clamp(ReadOr(p, TfToken("specTrans"), 0.0f), 0.0f, 1.0f);
+        if (m->transmission > 0.0f) {
+            m->ior = ReadOr(p, _tokens->ior, 1.5f);
+        }
+        std::copy(m->baseColor, m->baseColor + 3, m->transmissionColor);
+        m->sheen = ReadOr(p, _tokens->sheen, 0.0f);
+        const float tint = ReadOr(p, TfToken("sheenTint"), 0.5f);
+        for (int c = 0; c < 3; ++c) {
+            m->sheenColor[c] = 1.0f + tint * (m->baseColor[c] - 1.0f);
+        }
+        m->coat = ReadOr(p, _tokens->clearcoat, 0.0f);
+        m->coatRoughness = 1.0f - ReadOr(p, TfToken("clearcoatGloss"), 1.0f);
+        m->coatF0 = 0.04f;
+        m->anisotropy = ReadOr(p, TfToken("anisotropic"), 0.0f);
+        m->subsurface = std::clamp(ReadOr(p, _tokens->subsurface, 0.0f), 0.0f, 1.0f);
+        std::copy(m->baseColor, m->baseColor + 3, m->subsurfaceColor);
+        const GfVec3f radius = ReadOr(p, TfToken("subsurfaceDistance"), GfVec3f(1.0f));
+        std::copy(radius.data(), radius.data() + 3, m->subsurfaceRadius);
+        program(_tokens->clearcoat, P::kCoat);
+        program(_tokens->sheen, P::kSheen);
+        program(TfToken("anisotropic"), P::kAnisotropy);
+        program(TfToken("specTrans"), P::kTransmission);
+        program(_tokens->subsurface, P::kSubsurface);
+    } else if (id == _tokens->ND_surface_unlit) {
+        // Emission only: no diffuse, no specular.
+        // ponytail: `transmission` (its see-through tint) isn't read; opacity is.
+        m->model = vkr::Material::Model::kStandardSurface;
+        std::fill(m->baseColor, m->baseColor + 3, 0.0f);
+        m->metallic = 0.0f;
+        m->specularWeight = 0.0f;
     }
     // NPR toon has no USD standard: Eldr's own inputs on any surface it
     // reads, e.g. `float inputs:eldr:toonBands = 3` (flat bands per unit of
@@ -2142,7 +2370,9 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         for (int i = 0; i < 3; ++i) {
             m->subsurfaceRadius[i] = std::max(radius[i] * scale, 0.0f);
         }
-    } else if (Read(surface.parameters, _tokens->ior, &m->ior)) {
+    } else if ((surface.nodeTypeId == _tokens->UsdPreviewSurface ||
+                surface.nodeTypeId == _tokens->ND_UsdPreviewSurface_surfaceshader) &&
+               Read(surface.parameters, _tokens->ior, &m->ior)) {
         m->opacityRefracts = m->ior != 1.0f;
     }
     using P = vkr::MaterialProgram;
@@ -2150,15 +2380,19 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
           &m->baseColorTex, P::kBaseColor);
     input(kind->emission, kind->emissionWeight, kind->emissionWeightDefault, kind->emissionDefault, m->emissive,
           3, &m->emissiveTex, P::kEmissive);
-    input(kind->metallic, TfToken(), 1.0f, 0.0f, &m->metallic, 1, &m->metallicTex, P::kMetallic);
+    input(kind->metallic, TfToken(), 1.0f, kind->metallicDefault, &m->metallic, 1, &m->metallicTex, P::kMetallic);
     input(kind->roughness, TfToken(), 1.0f, kind->roughnessDefault, &m->roughness, 1, &m->roughnessTex,
           P::kRoughness);
     input(kind->occlusion, TfToken(), 1.0f, 1.0f, &m->occlusion, 1, &m->occlusionTex, P::kOcclusion);
     float unusedNormal[3];
     input(kind->normal, TfToken(), 1.0f, 0.0f, unusedNormal, 3, &m->normalTex, P::kNormal);
     // standard_surface's opacity is a colour: its constant stays 1, a
-    // texture is read through its first channel.
-    input(kind->opacity, TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex, P::kOpacity);
+    // texture is read through its first channel. glTF's alpha counts in
+    // alpha_mode MASK (1: a cutout at alpha_cutoff) and BLEND (2) only.
+    const bool gltf = surface.nodeTypeId == _tokens->ND_gltf_pbr_surfaceshader;
+    const int alphaMode = gltf ? ReadOr(surface.parameters, TfToken("alpha_mode"), 0) : 2;
+    input(alphaMode != 0 ? kind->opacity : TfToken(), TfToken(), 1.0f, 1.0f, &m->opacity, 1, &m->opacityTex,
+          P::kOpacity);
     ReadLobes(surface, m, graph);
     const int outputs = graph.Outputs();
     if (!graph.Finish()) {
@@ -2180,6 +2414,9 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         // MaterialX has no threshold: an opacity texture is a cutout, as
         // realtime engines draw foliage; constant opacity stays translucent.
         m->opacityThreshold = 0.5f;
+    }
+    if (gltf) {
+        m->opacityThreshold = alphaMode == 1 ? ReadOr(surface.parameters, TfToken("alpha_cutoff"), 0.5f) : 0.0f;
     }
 }
 
@@ -2466,6 +2703,166 @@ GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input)
         }
     }
     return v;
+}
+
+HdVkRamp HdVkRamp::Read(HdMaterialNode2 const &node, bool color)
+{
+    auto floats = [&](const char *name, std::vector<float> *out) {
+        uint32_t n = 0;
+        const auto it = node.parameters.find(TfToken(name));
+        return it != node.parameters.end() && HdVkToFloats(it->second, out, &n) ? n : 0u;
+    };
+    std::vector<float> keys, values;
+    floats(color ? "vkeys" : "fkeys", &keys);
+    const uint32_t n = floats(color ? "vvalues" : "fvalues", &values);
+    size_t count = n ? std::min(keys.size(), values.size() / n) : 0;
+    int num = 0;
+    if (PXR_NS::Read(node.parameters, TfToken(color ? "vramp" : "framp"), &num) && num > 0) {
+        count = std::min(count, size_t(num));
+    }
+    VtArray<TfToken> bases;
+    VtArray<std::string> names;
+    const TfToken basisName(color ? "vbasis" : "fbasis");
+    if (!PXR_NS::Read(node.parameters, basisName, &bases) && PXR_NS::Read(node.parameters, basisName, &names)) {
+        for (const std::string &s : names) {
+            bases.push_back(TfToken(s));
+        }
+    }
+    std::vector<size_t> order(count);
+    for (size_t i = 0; i < count; ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) { return keys[a] < keys[b]; });
+    HdVkRamp r;
+    for (size_t i : order) {
+        r.keys.push_back(keys[i]);
+        const float *v = values.data() + i * n;
+        r.values.push_back(n == 1 ? GfVec4f(v[0]) : GfVec4f(v[0], v[1], n > 2 ? v[2] : 0.0f, n > 3 ? v[3] : 1.0f));
+        r.basis.push_back(i < bases.size() ? bases[i] : TfToken("linear"));
+    }
+    return r;
+}
+
+namespace {
+
+// Uniform cubic B-spline weights of m control points, the end ones
+// tripled (Houdini's ramps: the curve starts and ends at them, m + 1
+// segments), at u in [0, 1], into w.
+void BSplineWeights(int m, float u, std::vector<float> *w)
+{
+    const float x = u * float(m + 1);
+    const int seg = std::min(int(x), m);
+    const float s = x - float(seg), s2 = s * s, s3 = s2 * s;
+    const float basis[4] = {(1 - s) * (1 - s) * (1 - s) / 6, (3 * s3 - 6 * s2 + 4) / 6,
+                            (-3 * s3 + 3 * s2 + 3 * s + 1) / 6, s3 / 6};
+    w->assign(m, 0.0f);
+    for (int j = 0; j < 4; ++j) {
+        (*w)[std::clamp(seg + j - 2, 0, m - 1)] += basis[j];
+    }
+}
+
+// Bernstein weights of a Bezier spline through every third of m control
+// points (a shorter last segment of lower degree), at u in [0, 1].
+void BezierWeights(int m, float u, std::vector<float> *w)
+{
+    const int segments = std::max((m - 1 + 2) / 3, 1);
+    const int seg = std::min(int(u * float(segments)), segments - 1), first = 3 * seg;
+    const int degree = std::min(3, m - 1 - first);
+    const float s = u * float(segments) - float(seg);
+    w->assign(m, 0.0f);
+    static const float binomial[4][4] = {{1, 0, 0, 0}, {1, 1, 0, 0}, {1, 2, 1, 0}, {1, 3, 3, 1}};
+    for (int j = 0; j <= degree; ++j) {
+        (*w)[first + j] = binomial[degree][j] * std::pow(s, float(j)) * std::pow(1.0f - s, float(degree - j));
+    }
+}
+
+} // namespace
+
+GfVec4f HdVkRamp::operator()(float t) const
+{
+    const int n = int(keys.size());
+    if (n == 0) {
+        return GfVec4f(0.0f);
+    }
+    if (n == 1 || t <= keys.front()) {
+        return values.front();
+    }
+    if (t >= keys.back()) {
+        return values.back();
+    }
+    int i = 0;
+    while (i + 2 < n && keys[i + 1] <= t) {
+        ++i;
+    }
+    const TfToken &b = basis[i];
+    const float dt = keys[i + 1] - keys[i], s = dt > 0 ? (t - keys[i]) / dt : 0.0f;
+    if (b == "constant") {
+        return values[i];
+    }
+    if (b == "bezier" || b == "bspline") {
+        // The run of keys with this basis: a curve through their (key,
+        // value) points, its parameter found where its key is t.
+        int first = i, last = i + 1;
+        while (first > 0 && basis[first - 1] == b) {
+            --first;
+        }
+        while (last < n - 1 && basis[last] == b) {
+            ++last;
+        }
+        const int m = last - first + 1;
+        std::vector<float> w;
+        auto weights = [&](float u) {
+            if (b == "bspline") {
+                BSplineWeights(m, u, &w);
+            } else {
+                BezierWeights(m, u, &w);
+            }
+        };
+        float lo = 0.0f, hi = 1.0f;
+        for (int k = 0; k < 32; ++k) {  // ponytail: assumes the curve's key rises along it
+            const float u = 0.5f * (lo + hi);
+            weights(u);
+            float x = 0.0f;
+            for (int j = 0; j < m; ++j) {
+                x += w[j] * keys[first + j];
+            }
+            (x < t ? lo : hi) = u;
+        }
+        weights(0.5f * (lo + hi));
+        GfVec4f v(0.0f);
+        for (int j = 0; j < m; ++j) {
+            v += w[j] * values[first + j];
+        }
+        return v;
+    }
+    if (b != "catmull-rom" && b != "monotonecubic" && b != "hermite") {
+        return values[i] + s * (values[i + 1] - values[i]);  // linear, and unknown bases
+    }
+    const float s2 = s * s, s3 = s2 * s;
+    if (b != "monotonecubic") {
+        // Uniform Catmull-Rom per segment, the end keys repeated.
+        // ponytail: hermite (value and slope keys) is read as Catmull-Rom.
+        const GfVec4f &k0 = values[std::max(i - 1, 0)], &k3 = values[std::min(i + 2, n - 1)];
+        return 0.5f * ((2 * s2 - s3 - s) * k0 + (3 * s3 - 5 * s2 + 2) * values[i] + (4 * s2 - 3 * s3 + s) * values[i + 1] +
+                       (s3 - s2) * k3);
+    }
+    // Monotone cubic: Fritsch-Carlson slopes in the keys' units, flat at the
+    // end keys.
+    auto slope = [&](int j) {
+        GfVec4f m(0.0f);
+        if (j == 0 || j == n - 1) {
+            return m;
+        }
+        const float h0 = keys[j] - keys[j - 1], h1 = keys[j + 1] - keys[j];
+        for (int c = 0; c < 4; ++c) {
+            const float d0 = h0 > 0 ? (values[j][c] - values[j - 1][c]) / h0 : 0.0f;
+            const float d1 = h1 > 0 ? (values[j + 1][c] - values[j][c]) / h1 : 0.0f;
+            m[c] = d0 * d1 > 0 ? 3.0f * (h0 + h1) / ((2.0f * h1 + h0) / d0 + (h1 + 2.0f * h0) / d1) : 0.0f;
+        }
+        return m;
+    };
+    return (2 * s3 - 3 * s2 + 1) * values[i] + (s3 - 2 * s2 + s) * dt * slope(i) + (3 * s2 - 2 * s3) * values[i + 1] +
+           (s3 - s2) * dt * slope(i + 1);
 }
 
 namespace {

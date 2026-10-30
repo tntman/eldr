@@ -38,6 +38,10 @@ public:
     // each. False if no level has it.
     bool ComputeInstancePrimvar(SdfPath const &prototypeId, TfToken const &name, std::vector<float> *values,
                                 uint32_t *components);
+    // Light linking: each instance's link categories (HdVkLinkCategory ids,
+    // its parents' too), in ComputeInstanceTransforms' order; empty when
+    // no instance has any.
+    std::vector<std::vector<uint32_t>> ComputeInstanceCategories(SdfPath const &prototypeId);
 
 private:
     std::map<TfToken, VtValue> _primvars;
@@ -58,5 +62,11 @@ std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const 
 // transforms one frame before as their samples at shutter open and close
 // continue linearly, else the transforms they replace.
 void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &mesh);
+
+// Light linking: gives `mesh` its link categories (Hydra's categories of
+// the rprim, and per instance its instancer's) and marks its transforms
+// dirty when they changed.
+void HdVkSetLinkCategories(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId,
+                           vkr::Mesh &mesh);
 
 PXR_NAMESPACE_CLOSE_SCOPE

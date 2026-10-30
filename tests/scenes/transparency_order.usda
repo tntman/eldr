@@ -1,0 +1,249 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Transparency order (Karma reference: tests/karma_refs.py). Top left: a
+# half-opaque red quad (UsdPreviewSurface opacity 0.5, no ior: blended, not
+# refracted) in front of blue thin-walled glass, and to its right the same
+# pair the other way round: there the red is seen through the glass, tinted
+# blue. Bottom right: dense balls of smoke (volume.vdb's second grid) with
+# green-tinted glass panes. The left ball sits behind two overlapping panes
+# (dimmed once at its edges, twice in the middle); the right ball sits
+# between a pane in front and a pane behind it (dimmed by the front one
+# only).
+
+def Camera "cam"
+{
+    float focalLength = 24
+    double3 xformOp:translate = (0, 0.3, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.6, 0.7, 1)
+    float inputs:intensity = 0.4
+}
+
+def Scope "mtl"
+{
+    def Material "grey"
+    {
+        token outputs:surface.connect = </mtl/grey/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.1, 0.1)
+            float inputs:opacity = 0.5
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+    }
+
+    def Material "blueGlass"
+    {
+        token outputs:mtlx:surface.connect = </mtl/blueGlass/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.3, 0.5, 1)
+            bool inputs:thin_walled = 1
+            float inputs:specular_roughness = 0.05
+            token outputs:out
+        }
+    }
+
+    def Material "greenGlass"
+    {
+        token outputs:mtlx:surface.connect = </mtl/greenGlass/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.55, 0.9, 0.55)
+            bool inputs:thin_walled = 1
+            float inputs:specular_roughness = 0.05
+            token outputs:out
+        }
+    }
+}
+
+class Mesh "Quad"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "floor" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </Quad>
+)
+{
+    point3f[] points = [(-9, -1.6, 4), (9, -1.6, 4), (9, -1.6, -4), (-9, -1.6, -4)]
+    rel material:binding = </mtl/grey>
+}
+
+def Mesh "wall" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </Quad>
+)
+{
+    point3f[] points = [(-9, -1.6, -4), (9, -1.6, -4), (9, 5, -4), (-9, 5, -4)]
+    rel material:binding = </mtl/grey>
+}
+
+# Ordering: each quad's unit square scaled to x0..x1, y 0.6..2.0, at depth z.
+def Xform "order"
+{
+    def Mesh "redFront" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/red>
+        double3 xformOp:translate = (-3.6, 0.6, 1.5)
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "glassBehind" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/blueGlass>
+        double3 xformOp:translate = (-3.0, 0.6, 0.5)
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "glassFront" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/blueGlass>
+        double3 xformOp:translate = (-1.2, 0.6, 1.5)
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "redBehind" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/red>
+        double3 xformOp:translate = (-0.6, 0.6, 0.5)
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+
+# Smoke: a ball of radius 0.6 (density 4) behind two panes, and another
+# between a pane in front and one behind it.
+def Volume "ballBehind"
+{
+    rel field:density = </ballBehind/density>
+    double3 xformOp:translate = (1.0, -0.8, -1.0)
+    float3 xformOp:scale = (1.2, 1.2, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+        int fieldIndex = 1
+    }
+}
+
+def Volume "ballBetween"
+{
+    rel field:density = </ballBetween/density>
+    double3 xformOp:translate = (3.2, -0.8, -0.5)
+    float3 xformOp:scale = (1.2, 1.2, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @./volume.vdb@
+        token fieldName = "density"
+        int fieldIndex = 1
+    }
+}
+
+def Xform "panes"
+{
+    def Mesh "near1" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/greenGlass>
+        double3 xformOp:translate = (0.1, -1.6, 1.6)
+        float3 xformOp:scale = (1.2, 1.8, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "near2" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/greenGlass>
+        double3 xformOp:translate = (0.7, -1.6, 0.5)
+        float3 xformOp:scale = (1.2, 1.8, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "front" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/greenGlass>
+        double3 xformOp:translate = (2.0, -1.6, 1.6)
+        float3 xformOp:scale = (1.6, 1.8, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "back" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/greenGlass>
+        double3 xformOp:translate = (2.4, -1.6, -2.0)
+        float3 xformOp:scale = (1.8, 2.6, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}

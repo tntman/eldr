@@ -34,7 +34,10 @@ CELL = 2.5
 
 # --- Eldr's compiler, as hydra/material.cpp has it (keep in sync) ------------------------
 SURFACES = {"UsdPreviewSurface", "ND_UsdPreviewSurface_surfaceshader", "ND_standard_surface_surfaceshader",
-            "ND_open_pbr_surface_surfaceshader", "ND_displacement_float", "ND_displacement_vector3", "ND_volume"}
+            "ND_open_pbr_surface_surfaceshader", "ND_displacement_float", "ND_displacement_vector3", "ND_volume",
+            "ND_gltf_pbr_surfaceshader", "ND_disney_principled", "ND_surface_unlit"}
+# Karma's VEX nodes Eldr compiles by id (no nodedef).
+KMA = ("kma_rampconst", "kma_color_hextiling", "kma_voronoinoise3d")
 GRAPH = {"add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "absval", "floor", "ceil",
          "sin", "cos", "sqrt", "exp", "ln", "invert", "mix", "overlay", "clamp", "smoothstep", "dotproduct",
          "normalize", "luminance", "ifgreater", "ifgreatereq", "ifequal", "hsvadjust", "rgbtohsv", "hsvtorgb",
@@ -45,7 +48,9 @@ GRAPH = {"add", "subtract", "multiply", "divide", "min", "max", "power", "modulo
          "hinvlinear", "huniformramp", "heighttonormal", "fract", "round", "sign", "tan", "asin", "acos", "atan2",
          "magnitude", "crossproduct", "rotate2d", "rotate3d", "logical", "switch", "splitlr", "splittb", "frame",
          "time", "geomcolor", "tangent", "bitangent", "viewdirection", "artistic_ior", "transformpoint",
-         "transformvector", "transformnormal", "transformmatrix", "and", "or", "not", "xor"}
+         "transformvector", "transformnormal", "transformmatrix", "and", "or", "not", "xor", "plus", "minus",
+         "difference", "burn", "dodge", "screen", "disjointover", "in", "mask", "matte", "out", "over", "premult",
+         "unpremult", "inside", "outside"}
 
 
 def eldr_name(node_id):
@@ -57,7 +62,7 @@ def eldr_name(node_id):
 def eldr_supports(node_id, graphs=None):
     """Eldr compiles it natively, or expands its nodegraph (graphs: nodedef -> inner node
     categories, library_defs) into nodes it compiles."""
-    if node_id in SURFACES or eldr_name(node_id) in GRAPH:
+    if node_id in SURFACES or node_id.startswith(KMA) or eldr_name(node_id) in GRAPH:
         return True
     return graphs is not None and _category_ok(None, graphs, node_id, set())
 
@@ -497,7 +502,9 @@ def sheet(path, e_img, k_img, labels, cols):
 def selftest():
     assert eldr_name("ND_multiply_color3FA") == "multiply" and eldr_supports("ND_multiply_color3FA")
     assert eldr_supports("UsdPrimvarReader_float2") and not eldr_supports("ND_hextiledimage_color3")
-    assert eldr_supports("ND_separate3_color3") and not eldr_supports("ND_gltf_pbr_surfaceshader")
+    assert eldr_supports("ND_separate3_color3") and eldr_supports("ND_gltf_pbr_surfaceshader")
+    assert eldr_supports("ND_burn_color3") and eldr_supports("kma_rampconst_float")
+    assert not eldr_supports("kma_ramp_float") and not eldr_supports("ND_surface")
     import tempfile
     d = tempfile.mkdtemp()
     src = os.path.join(d, "a.mtlx")

@@ -10,6 +10,35 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
+namespace {
+
+// Identifies the build this code runs in (size and time of the module file
+// holding it): every shader is embedded in it, so a pipeline cache file
+// keyed by it never holds entries of other shader versions. 0 when unknown.
+uint64_t BuildStamp()
+{
+#ifdef _WIN32
+    HMODULE module = nullptr;
+    wchar_t path[MAX_PATH];
+    WIN32_FILE_ATTRIBUTE_DATA info;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&BuildStamp), &module) &&
+        GetModuleFileNameW(module, path, MAX_PATH) && GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {
+        return ((uint64_t(info.nFileSizeHigh) << 32 | info.nFileSizeLow) * 1099511628211ull) ^
+               (uint64_t(info.ftLastWriteTime.dwHighDateTime) << 32 | info.ftLastWriteTime.dwLowDateTime);
+    }
+#endif
+    return 0;
+}
+
+} // namespace
+
 namespace vkr {
 
 void Check(VkResult r, const char *what)
@@ -524,7 +553,8 @@ void Device::LoadPipelineCache(uint64_t shaderHash)
     for (uint8_t b : props.pipelineCacheUUID) {
         n += std::snprintf(name + n, sizeof(name) - n, "%02x", b);
     }
-    std::snprintf(name + n, sizeof(name) - n, "-%016llx.bin", static_cast<unsigned long long>(shaderHash));
+    std::snprintf(name + n, sizeof(name) - n, "-%016llx.bin",
+                  static_cast<unsigned long long>(shaderHash ^ BuildStamp() * 0x9E3779B97F4A7C15ull));
     _pipelineCachePath = (folder / name).string();
 
     // The driver checks the header (vendor, device, cache UUID) and starts
@@ -585,14 +615,20 @@ void Device::SavePipelineCache()
         }
         _savedCacheBytes = size;
     }
-    // Only the newest per driver stays: caches of other shader builds (the
-    // same driver's UUID, another hash) are stale.
+    // Per driver, this build's file and the newest few of other builds stay
+    // (a main and a few test builds share the folder); older ones are stale.
+    constexpr size_t kOtherBuilds = 3;
     const std::string prefix = path.filename().string().substr(0, path.filename().string().rfind('-') + 1);
+    std::vector<std::pair<std::filesystem::file_time_type, std::filesystem::path>> others;
     for (const auto &entry : std::filesystem::directory_iterator(path.parent_path(), error)) {
         const std::string file = entry.path().filename().string();
         if (entry.path() != path && file.compare(0, prefix.size(), prefix) == 0 && entry.path().extension() == ".bin") {
-            std::filesystem::remove(entry.path(), error);
+            others.emplace_back(entry.last_write_time(error), entry.path());
         }
+    }
+    std::sort(others.begin(), others.end(), [](const auto &a, const auto &b) { return a.first > b.first; });
+    for (size_t i = kOtherBuilds; i < others.size(); ++i) {
+        std::filesystem::remove(others[i].second, error);
     }
 }
 

@@ -58,6 +58,26 @@ private:
 // Rec.709), else its node definition's default, else 0; scalars splat.
 GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input);
 
+// A Houdini ramp parameter as Karma's kma_rampconst holds it: keys, values
+// (colours with alpha 1, floats splat) and a basis per key (the segment
+// after it), sorted by key. Evaluated on the CPU (material programs and
+// volumes bake tables of it).
+struct HdVkRamp {
+    std::vector<float> keys;
+    std::vector<GfVec4f> values;
+    std::vector<TfToken> basis;
+
+    // kma_rampconst's fkeys/fvalues/fbasis (vkeys/... with `color`), the
+    // first framp/vramp keys where that count is authored.
+    static HdVkRamp Read(HdMaterialNode2 const &node, bool color);
+    // At t, as Houdini's ramps (hou.Ramp.lookup, checked to 1e-6): the end
+    // values outside the keys; constant, linear, uniform Catmull-Rom (end
+    // keys repeated) and monotone cubic (flat at the end keys) between two
+    // keys; bezier and bspline (uniform, end keys tripled) over each run of
+    // keys with that basis as a curve through (key, value) control points.
+    GfVec4f operator()(float t) const;
+};
+
 // What materials' shading graphs fell back from, by material: inputs with a
 // node bypassed or dropped (or an unknown surface: 1), and those nodes as
 // "node (id)". The render stats' materialFallback* (renderDelegate.cpp).
@@ -74,7 +94,8 @@ private:
     std::map<SdfPath, std::pair<int, std::vector<std::string>>> _byMaterial;
 };
 
-// Reads a UsdPreviewSurface, MaterialX standard_surface or OpenPBR network
+// Reads a UsdPreviewSurface, MaterialX standard_surface, OpenPBR, glTF PBR,
+// Disney principled or surface_unlit network
 // into a vkr::Material. The vkr::Material
 // object stays the same for the sprim's lifetime (meshes hold it), so
 // re-syncs update it in place.

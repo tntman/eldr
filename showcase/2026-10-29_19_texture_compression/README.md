@@ -16,7 +16,7 @@ Render settings prims:
 - `/Render/exact`: `eldr:textureCompression` off, the exact 8-bit texels (look-dev).
 
 Open it:
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_10_texture_compression\scene.usda`, then flip
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_19_texture_compression\scene.usda`, then flip
   Texture Compression in the Hydra settings (materials reload their textures).
 - usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/exact scene.usda exact.png`
 - husk: `husk -R HdVkRendererPlugin -s /Render/compressed scene.usda -o out.exr`

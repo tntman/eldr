@@ -1,0 +1,42 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/emissive.usda@]
+    renderSettingsPrimPath = "/Render/karma"
+)
+
+# Lane 40, Karma's colour limit. The Cornell box lit only by an emissive
+# panel (40) and a warm bulb (60, 30, 8). "karma": Karma's default limit of
+# 20, as Karma renders it: the panel shows as 20, the bulb as (20, 10, 2.7),
+# and their light on the walls is clamped as Karma's bounce samples are.
+# "fullHdr": no limit on what the camera sees (the emitters keep 40 and 60),
+# the bounce clamp kept at 20. "off": no limit at all.
+
+def Scope "Render"
+{
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+    }
+    def RenderSettings "fullHdr"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom float eldr:colorLimit = 0
+        custom float eldr:indirectClamp = 20
+    }
+    def RenderSettings "off"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom bool eldr:gi = 1
+        custom float eldr:colorLimit = 0
+    }
+}
