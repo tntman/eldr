@@ -245,6 +245,18 @@ edges = velocityBlur(karma=1)
 expect(edges >= 12, "karma:object:vblur 1: the mesh blurs by its velocities (%d edge pixels)" % edges)
 edges = velocityBlur(karma=1, eldr=0)
 expect(edges <= 4, "eldr:object:vblur 0 wins over Karma's 1: sharp (%d edge pixels)" % edges)
+# A subdivision surface re-dicing (a subdivision setting) bumps the scene's
+# version without uploading the velocity mesh: it must blur again.
+ball = UsdGeom.Mesh.Define(stage, "/ball")  # catmullClark, USD's default
+ball.CreateFaceVertexCountsAttr([4] * 6)
+ball.CreateFaceVertexIndicesAttr(mesh.GetFaceVertexIndicesAttr().Get())
+ball.CreatePointsAttr([p * 0.6 + Gf.Vec3f(0, 1.2, 0) for p in corners])  # above the rows measured
+ball.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
+velocityBlur(karma=1)
+render([2], {"eldr:finalQuality": True}, [{"eldr:subdivision": False}])
+edges = ramp(32)
+expect(edges >= 12, "velocities blur after a subdivision setting re-dices another mesh (%d edge pixels)" % edges)
+ball.GetPrim().SetActive(False)
 # Points (curves share their code): the same velocities.
 still.GetPrim().SetActive(False)
 points = UsdGeom.Points.Define(stage, "/pointsVelocities")

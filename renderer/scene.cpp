@@ -2356,8 +2356,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         static std::atomic<uint64_t> versions{0};
         _gpu.version = ++versions;
         // The film restarts: capture the shutter again (the shutter's motion
-        // is this frame's, whichever commit brought it).
-        _gpu.moved = _gpu.moved || (shutterRows && (!motion.empty() || _gpu.shutterJoints || _gpu.shutterWeights));
+        // is this frame's, whichever commit brought it; so are velocities,
+        // also on meshes this commit didn't upload).
+        _gpu.moved = _gpu.moved || (shutterRows && (!motion.empty() || _gpu.shutterJoints || _gpu.shutterWeights)) ||
+                     std::any_of(_meshes.begin(), _meshes.end(), [](const auto &m) { return m->_velocityCount > 0; });
         _keptMoved = _gpu.moved;
         _lastDrawn = std::move(drawn);
         _lastRays = std::move(rays);
