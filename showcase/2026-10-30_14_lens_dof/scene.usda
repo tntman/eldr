@@ -1,0 +1,77 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 0.01
+    subLayers = [@../../tests/scenes/lens.usda@]
+)
+
+# Lens distortion and depth of field: tests/scenes/lens.usda (an 85 mm lens
+# at f/1.4 focused at 5 m on spheres from 2 to 20 m, in centimetres) with
+# a barrel distortion added to the camera (HdCamera's lensDistortion:k1,
+# k2, as tests/scenes/distortion.usda). Render frame 1 (the orange cube
+# moves from frame 2 on).
+# /Render/lens (the default): only the green sphere at 5 m is sharp; the
+# film moves the camera across the aperture every sample (true bokeh with
+# occlusion); the ground's straight edges bow outwards (barrel).
+# /Render/dofOff: eldr:depthOfField off: everything sharp.
+# /Render/distortionOff: eldr:lensDistortion off: straight lines.
+
+over "cam"
+{
+    float lensDistortion:k1 = 0.12
+    float lensDistortion:k2 = 0.02
+}
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "lens"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "dofOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:depthOfField = 0
+    }
+
+    def RenderSettings "distortionOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:lensDistortion = 0
+    }
+}

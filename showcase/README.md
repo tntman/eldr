@@ -41,5 +41,22 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-30 | `2026-10-30_03_volume_shadow_grid` | Volume shadow grids: three volumes, sun, dome and three sphere lights, 3x cheaper, same image | `eldr:volumeShadowGrid` |
 | 2026-10-30 | `2026-10-30_04_light_sampling` | Hits trace one stochastic light, traced shadows skip lights that give a pixel nothing and share samples over 4 lights: same converged image, emissive RT 147 to 78 ms per sample | `eldr:rtLightSampling`, `eldr:finalGatherRoulette` |
 | 2026-10-30 | `2026-10-30_05_camera_exposure` | The USD camera's exposure (exposure, ISO, time, f-stop, responsivity) scales the beauty and light AOVs, as Karma | `eldr:cameraExposure` |
+| 2026-10-30 | `2026-10-30_06_many_lights` | 200 small sphere lights, clustered shading | `eldr:clusteredLights`, `eldr:localLights` |
+| 2026-10-30 | `2026-10-30_07_light_shapes` | Light shapes and the energy-conserving highlights of sun, sphere, rect, disk and tube lights | `eldr:lightShapesVisible`, `inputs:karma:light:renderlightgeo` |
+| 2026-10-30 | `2026-10-30_08_dome_sun` | The HDRI's sun taken out of the dome as a shadowed distant light | `eldr:domeSun`, `eldr:domeSunThreshold` |
+| 2026-10-30 | `2026-10-30_09_ambient` | Dome light darkened by GTAO in a white corner | `eldr:ambientOcclusion`, `eldr:aoRadius` |
+| 2026-10-30 | `2026-10-30_10_shadow_modes` | Shadow maps (cascades, atlas), PCSS, jittered maps, hard PCF, traced | `eldr:shadowJitter`, `eldr:softShadows`, `eldr:softSunShadows`, `eldr:rtShadows` |
+| 2026-10-30 | `2026-10-30_11_reflections_ssr` | Screen-space reflections fading with roughness; the reflection probe | `eldr:ssr`, `eldr:reflectionProbe` |
+| 2026-10-30 | `2026-10-30_12_fog` | Height fog with sun shafts and a spot's cone | `eldr:fog`, `eldr:fogDensity`, `eldr:fogHeightFalloff`, `eldr:fogColor` |
+| 2026-10-30 | `2026-10-30_13_subsurface` | Subsurface skin, jade and a thin leaf against the sun | `eldr:subsurface`, `eldr:sssQuality` |
+| 2026-10-30 | `2026-10-30_14_lens_dof` | Barrel lens distortion and depth of field at f/1.4 | `eldr:depthOfField`, `eldr:lensDistortion`, `lensDistortion:*` |
+| 2026-10-30 | `2026-10-30_15_cryptomatte` | Cryptomatte object and material layers in the EXR, soft or one id per pixel | `primvars:__name`, `primvars:__materialname`, `eldr:cryptomatteSoft` |
+| 2026-10-30 | `2026-10-30_16_light_path_intensity` | Direct and indirect light scaled in the final pixel | `eldr:directIntensity`, `eldr:indirectIntensity` |
+| 2026-10-30 | `2026-10-30_17_bloom_tonemap` | ACES, AgX and no tonemapper; bloom on full-HDR emitters | `eldr:tonemapper`, `eldr:bloomIntensity`, `eldr:productLinear` |
+| 2026-10-30 | `2026-10-30_18_displacement` | UsdPreviewSurface and MaterialX displacement, constant offset | `eldr:displacement`, `eldr:displacementScale` |
+| 2026-10-30 | `2026-10-30_19_curves_points` | Every curve basis, points, 600 hair curves | `eldr:curveRibbons`, `eldr:pointSprites`, `eldr:hairShading` |
+| 2026-10-30 | `2026-10-30_20_instancing` | Nested point instancers and native instances, per-instance culling | `eldr:cullPixels` |
+| 2026-10-30 | `2026-10-30_21_textures_colour` | ACEScg and Rec.709 pairs, UDIM tiles, anisotropic filtering | `eldr:anisotropy`, `colorSpace`, `sourceColorSpace` |
+| 2026-10-30 | `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropy, hair, toon | `eldr:clearcoat`, `eldr:sheen`, `eldr:thinFilm`, `eldr:anisotropicSpecular`, `eldr:multiScatter`, `eldr:toonBands` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.

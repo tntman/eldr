@@ -1,0 +1,95 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/light_reflections.usda@]
+)
+
+# Light shapes and the highlights of sized lights: tests/scenes/
+# light_reflections.usda (a 4 degree sun low ahead and a blue tube, over a
+# glossy floor of roughness 0.15) plus a warm sphere, a rect panel and a
+# green disk. Each light's highlight on the floor has its shape: the
+# tube's is a streak, the rect's a stretched box, the sphere's and disk's
+# round, stretched along the view. Energy-conserving: power, peak and shape
+# match a brute-force GGX integral within 5% (docs/features.md).
+# /Render/shapes (the default): light shapes hidden from the camera, as
+# UsdLux wants by default. /Render/shapesVisible: the shapes themselves
+# drawn (eldr:lightShapesVisible), so you see which light gives which
+# highlight.
+
+def SphereLight "bulb"
+{
+    color3f inputs:color = (1, 0.7, 0.4)
+    float inputs:intensity = 30
+    float inputs:radius = 0.25
+    double3 xformOp:translate = (0, 0.8, -4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "panel"
+{
+    color3f inputs:color = (1, 1, 1)
+    float inputs:intensity = 8
+    float inputs:width = 1.2
+    float inputs:height = 0.6
+    double3 xformOp:translate = (2.5, 1, -3)
+    float xformOp:rotateY = -20
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+def DiskLight "disk"
+{
+    color3f inputs:color = (0.4, 1, 0.5)
+    float inputs:intensity = 20
+    float inputs:radius = 0.3
+    double3 xformOp:translate = (5, 0.8, -5)
+    float xformOp:rotateY = -30
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "shapes"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "shapesVisible"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:lightShapesVisible = 1
+    }
+}

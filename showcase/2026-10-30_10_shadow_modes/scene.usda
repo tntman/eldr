@@ -1,0 +1,91 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/sunangle.usda@]
+)
+
+# Shadow modes: tests/scenes/sunangle.usda (a 4 degree sun over two posts,
+# a beam and a ball) plus a sphere light of radius 0.3 low on the right, so
+# both the sun's cascades and the local light atlas show. Look at the
+# contact hardening: sharp where the posts meet the ground, soft under the
+# beam, and the sphere light's soft shadow of the ball.
+# /Render/maps (the default): shadow maps, cascades for the sun and an atlas
+# tile set for the sphere light, soft from the light's size (PCSS), exact
+# penumbrae from jittered maps under the film (eldr:shadowJitter).
+# /Render/pcss: the same maps without the film's jitter (PCSS only).
+# /Render/hard: eldr:softShadows and eldr:softSunShadows off: 3x3 PCF,
+# hard edges everywhere.
+# /Render/traced: ray-traced shadows (eldr:rtShadows), soft from light size.
+
+def SphereLight "lamp"
+{
+    color3f inputs:color = (1, 0.8, 0.6)
+    float inputs:intensity = 40
+    float inputs:radius = 0.3
+    double3 xformOp:translate = (4, 1.5, 3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "maps"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "pcss"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:shadowJitter = 0
+    }
+
+    def RenderSettings "hard"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:softShadows = 0
+        custom bool eldr:softSunShadows = 0
+        custom bool eldr:shadowJitter = 0
+    }
+
+    def RenderSettings "traced"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:rtShadows = 1
+    }
+}

@@ -1,0 +1,72 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/displacement.usda@]
+)
+
+# Displacement: tests/scenes/displacement.usda. Left: UsdPreviewSurface
+# displacement from a height map (round bumps on five cells of a checker)
+# times 0.6. Middle: the same map through a MaterialX displacement shader.
+# Right: a cube displaced outwards by a constant 0.25. Vertices move along
+# their normals (subdivided first: the planes are 16 x 16 quads, diced by
+# their size on screen), so silhouettes, shadows and traced rays agree.
+# /Render/displacement (the default): bumps rise from the planes and cast
+# shadows; the cube swells.
+# /Render/displacementOff: eldr:displacement off: flat planes, the cube at
+# its authored size.
+# /Render/displacementHalf: eldr:displacementScale 0.5: half height.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "displacement"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+    }
+
+    def RenderSettings "displacementOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+        custom bool eldr:displacement = 0
+    }
+
+    def RenderSettings "displacementHalf"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 480)
+        custom float eldr:displacementScale = 0.5
+    }
+}
