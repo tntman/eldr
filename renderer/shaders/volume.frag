@@ -24,6 +24,9 @@
 // tiles (and the background) of zero density.
 // Volumes shadow each other (params.mutual): the light towards each step
 // also marches the other volumes' boxes on its way (OthersDepth).
+// With the shadow grid (params.gridSize, volume_grid.comp) both marches
+// become one trilinear tap per light: the dome's and the distant lights'
+// own and others' depth, the local lights' others'.
 // ponytail: volumes are composited one after another along the ray (in
 // entry order, not interleaved where they overlap); local lights get one atlas tap per
 // params.localShadowStride steps (the steps between reuse its shadowed fraction), the
@@ -86,7 +89,27 @@ layout(push_constant) uniform Params {
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
     int shadowLink;     // volume_shadow.frag's
     uint localShadowStride;  // local lights' shadows every this many steps (1: each)
+    uint gridSize;      // shadowGrid's cells per axis (0: march every shadow ray)
+    uint gridLights;    // shadowGrid's slots per volume: the dome, then lights[0 .. gridLights - 1)
 } params;
+
+// Each volume's optical depth towards each light (volume_grid.comp): per
+// slot gridSize^3 cells over its index box, stacked along z, volume by
+// volume, gridLights slots each. rgb: the other volumes' (OthersDepth), a:
+// its own (ShadowMarch's integral; the march scales it by the extinction).
+layout(set = 0, binding = 93) uniform sampler3D shadowGrid;
+// The grid stands in for the other volumes' marches: no volume moves in
+// this time sample (the grid is of the frame's own fields).
+bool gridOthers;
+
+vec4 GridTap(uint i, uint slot, vec3 p)
+{
+    float r = float(params.gridSize);
+    vec3 f = clamp((p - volumes[i].indexMin.xyz) / (volumes[i].indexMax.xyz - volumes[i].indexMin.xyz), 0.0, 1.0)
+             * (r - 1.0) + 0.5;
+    f.z += float(i * params.gridLights + slot) * r;
+    return textureLod(shadowGrid, f / vec3(textureSize(shadowGrid, 0)), 0.0);
+}
 
 #ifdef HALF
 // Half resolution (built with HALF, scale 2): radiance and the coloured
@@ -278,76 +301,11 @@ float Density(inout pnanovdb_readaccessor_t acc, vec3 p, vec3 xi)
     return max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
 }
 
-// The density (without a table) or the extinction table's value
-// (ExtinctionTable) integrated from density index p towards a distant
-// light (index-space direction dl per world unit) to the edge of the box,
-// in `steps` steps.
-float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo,
-                  vec3 hi, float noise, uint steps)
-{
-    float far = Slabs(p, dl, lo, hi).y;
-    if (!(far > 0.0) || steps == 0u) {
-        return 0.0;
-    }
-    float dt = far / float(steps), tau = 0.0;
-    for (uint k = 0u; k < steps; ++k) {
-        ivec3 ijk = ivec3(floor(p + dl * ((float(k) + noise) * dt) + 0.5));
-        float rho = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
-        tau += table == kNone ? rho : ExtinctionTable(table, low, scale, rho);
-    }
-    return tau * dt;
-}
-
-// Optical depth per channel of the volumes other than `self` along
-// x + dir * s, s in [0, 1] (as VolumeOpticalDepth): shadowSteps steps across each box crossed, offset by noise. The
-// self march (ShadowMarch) covers the volume's own density, so it is left
-// out here. No tint maps: they hold all volumes' transmittance together,
-// the lit volume's own included, with one depth per texel, so they can't
-// tell another volume in front from this one.
-// Steps landing in an empty tile go on to the first step past it; the
-// march stops once nothing is left to dim (kShadowOpaque).
-// ponytail: fixed steps per box; cost grows with the volumes crossed.
+// The other volumes' optical depth towards a light (volume.glsl's OthersDepth) in
+// params.shadowSteps steps per box.
 vec3 OthersDepth(uint self, vec3 x, vec3 dir, float noise)
 {
-    vec3 tau = vec3(0.0);
-    for (uint j = 0u; j < params.count && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++j) {
-        if (j == self) {
-            continue;
-        }
-        vec4 w0 = volumes[j].worldToIndex[0], w1 = volumes[j].worldToIndex[1], w2 = volumes[j].worldToIndex[2];
-        vec3 oi = Row3(w0, w1, w2, x, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
-        vec2 span = Slabs(oi, di, volumes[j].indexMin.xyz, volumes[j].indexMax.xyz);
-        span = vec2(max(span.x, 0.0), min(span.y, 1.0));
-        if (!(span.x < span.y)) {
-            continue;
-        }
-        float ds = (span.y - span.x) / float(params.shadowSteps);
-        uint table = kFactors ? volumes[j].lutOffsets.w : kNone;
-        float low = volumes[j].lutLow.w, tableScale = volumes[j].lutScale.w;
-        vec3 scale = ds * length(dir) * params.density *
-                     (table == kNone ? volumes[j].scattering.rgb + volumes[j].absorption.rgb : vec3(1.0));
-        vec3 safe = SafeDir(di);
-        pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
-        const bool moving = Moving(j);  // velocity blur: no tile skips (the fields move)
-        float k = 0.0;
-        while (k < float(params.shadowSteps) && min(min(tau.x, tau.y), tau.z) < kShadowOpaque) {
-            vec3 q = Advect(j, oi + di * (span.x + (k + noise) * ds)) + 0.5;  // nearest voxel: floor(q)
-            uint level;
-            pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, acc,
-                                                                                     ivec3(floor(q)), level);
-            float v = pnanovdb_read_float(buf, a);
-            if (level > 0u && v <= 0.0 && !moving) {
-                // An empty tile (or the background): on to the first step past its far side.
-                float dim = level == 1u ? 8.0 : level == 2u ? 128.0 : 4096.0;
-                vec3 exits = (floor(q / dim) * dim + step(0.0, di) * dim - 0.5 - oi) / safe;
-                k = max(k + 1.0, ceil((min(min(exits.x, exits.y), exits.z) - span.x) / ds - noise));
-                continue;
-            }
-            tau += (table == kNone ? vec3(max(v, 0.0)) : ExtinctionTableRgb(table, low, tableScale, max(v, 0.0))) * scale;
-            k += 1.0;
-        }
-    }
-    return tau;
+    return OthersDepth(self, x, dir, noise, params.count, params.shadowSteps, params.density, kFactors);
 }
 
 // Volume i's factor k at density index p (rho: the density there): its
@@ -431,6 +389,8 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     // frames before (Advect), the lights marched from there too; empty
     // tiles are stepped through, not skipped (the fields move).
     const bool moving = Moving(i);
+    // Its own shadows from the grid (built from the unmoved fields).
+    const bool grid = params.gridSize > 0u && !moving;
     float t = t0 + noise * dt;
     // Local lights' shadowed fraction at the last tap, and the steps since.
     vec3 lit = vec3(1.0);
@@ -507,10 +467,13 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             vec3 albedo = mix(vec3(0.0), sigmaS / max(sigma, 1e-20), greaterThan(sigma, vec3(0.0)));
             vec3 light = vec3(0.0);
             if (frame.envRadiance.w > 0.0) {
-                vec3 depth = extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, up, 0.0), lo, hi, noise,
-                                                      (params.shadowSteps + 1u) / 2u);
+                vec4 cell = grid ? GridTap(i, 0u, p) : vec4(0.0);
+                vec3 depth = extinction * (grid ? cell.a
+                                                : ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, up, 0.0),
+                                                              lo, hi, noise, (params.shadowSteps + 1u) / 2u));
                 if (mutual) {
-                    depth += OthersDepth(i, x, up * 1e4, shadowNoise);  // the other volumes above, as its own
+                    // the other volumes above, as its own
+                    depth += gridOthers ? cell.rgb : OthersDepth(i, x, up * 1e4, shadowNoise);
                 }
                 light = dome * Octaves(depth);
             }
@@ -520,14 +483,16 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     continue;
                 }
                 vec3 l = sun.position.xyz;
+                const bool sunGrid = grid && 1u + k < params.gridLights;
+                vec4 cell = sunGrid ? GridTap(i, 1u + k, p) : vec4(0.0);
                 // Outside the sun's shadow link the volume doesn't shadow itself.
-                vec3 depth = ShadowLinked(sun, linkMask)
-                                 ? extinction * ShadowMarch(table, tableLow, tableScale, shadow, p, Row3(w0, w1, w2, l, 0.0), lo, hi,
-                                                            noise, params.shadowSteps)
-                                 : vec3(0.0);
+                vec3 depth = !ShadowLinked(sun, linkMask) ? vec3(0.0)
+                           : extinction * (sunGrid ? cell.a
+                                                   : ShadowMarch(table, tableLow, tableScale, shadow, p,
+                                                                 Row3(w0, w1, w2, l, 0.0), lo, hi, noise, params.shadowSteps));
                 if (mutual) {
                     // ponytail: a sun's ray marches 1e4 units (the boxes clip it), as rt_shade.glsl's.
-                    depth += OthersDepth(i, x, l * 1e4, shadowNoise);
+                    depth += sunGrid && gridOthers ? cell.rgb : OthersDepth(i, x, l * 1e4, shadowNoise);
                 }
                 vec3 scattered = Octaves(depth) * Phase(dot(dir, l), g);
                 if (k == frame.counts.y) {
@@ -568,7 +533,11 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     open += e;
                     if (tap) {
                         e *= LocalShadow(index, x);
-                        e = mutual ? e * exp(-OthersDepth(i, x, lights[index].position.xyz - x, shadowNoise)) : e;
+                        if (mutual) {
+                            e *= exp(-(gridOthers && 1u + index < params.gridLights
+                                           ? GridTap(i, 1u + index, p).rgb
+                                           : OthersDepth(i, x, lights[index].position.xyz - x, shadowNoise)));
+                        }
                         shadowed += e;
                     }
                 }
@@ -668,6 +637,10 @@ void main()
         return;
     }
 
+    gridOthers = params.gridSize > 0u;
+    for (uint i = 0u; i < params.count; ++i) {
+        gridOthers = gridOthers && !Moving(i);
+    }
     float noise = SampleNoise(kDimVolume, gl_FragCoord.xy, float(frame.localLights.y));
     // The dome's pole (its latlong's +y) in world space.
     mat3 toDome = mat3(frame.envWorldToLocal);

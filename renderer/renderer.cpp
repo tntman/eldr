@@ -855,11 +855,15 @@ void Renderer::_CreateDescriptors()
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Scene::Gpu::kMaxMirrors, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},  // traced shadows march the volumes too
-        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
+        // Traced shadows march the volumes too, and volume_grid.comp.
+        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},  // VolumePass::TranslucentLayers
+        // The volumes' shadow grid (VolumePass::ShadowGrid): read by volume.frag, written by volume_grid.comp.
+        {93, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {94, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT | kRt},
@@ -1982,6 +1986,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         _volumePass->TranslucentLayers() ? _volumePass->TranslucentLayers() : _transparency.SunTint().color.view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentLayers);
+    const VkDescriptorImageInfo shadowGrid{_clampSampler, _volumePass->ShadowGrid(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo shadowGridStorage{VK_NULL_HANDLE, _volumePass->ShadowGrid(), VK_IMAGE_LAYOUT_GENERAL};
+    write(93, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowGrid);
+    write(94, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &shadowGridStorage);
     const VkDescriptorImageInfo blueNoise{_clampSampler, _blueNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &blueNoise);
     const VkDescriptorBufferInfo filmTiles{_taa.Tiles(), 0, VK_WHOLE_SIZE};
@@ -3492,6 +3500,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Surfaces that reflect nothing skip their rays always; the roulette not on the film's first
     // sample (it would show the blocks) nor without a film (TAA has none to converge).
     rt.reflectionRoulette = !frame.rtReflectionRoulette ? 0 : film && _filmSamples > 1 ? 2 : 1;
+    // The same for the light sampling's shared shadow rays and the gather roulette.
+    rt.lightSampling = !frame.rtLightSampling ? 0 : film && _filmSamples > 1 ? 2 : 1;
+    rt.gatherShare = frame.finalGatherRoulette && film && _filmSamples > 1 ? 0.5f : 1.0f;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics: in final quality (or always), with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):
@@ -3764,6 +3775,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
+    }
+    if (frame.volumes && gpu.volumeCount > 0) {
+        // The shadow grid holds the volumes and what lights them.
+        _volumePass->EnsureShadowGrid(gpu.volumeCount, gpu.lightCount, localLights, ibl, frame.volume,
+                                      gpu.volumeFactors, gpu.volumeVersion * 1099511628211ull ^ gpu.lightingHash);
     }
     // Volumes under transparency: split around the translucent layers,
     // peeled up to the refraction layer budget (and the prepass's depth,

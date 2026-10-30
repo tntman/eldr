@@ -30,7 +30,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                taa.frag lens_tiles.comp dof.frag motion_blur.frag motion_residual.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp gather_denoise.comp oit_resolve.frag
                shadow_tint.frag translucent_peel.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
-               volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp
+               volume_upsample.frag volume_shadow.frag volume_grid.comp shadow_min.comp rt_skin.comp rt_displace.comp film.comp
                shutter.comp light_shapes.frag background_unscale.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
@@ -367,6 +367,9 @@ if(WIN32)
                  --compare --exrinfo $<TARGET_FILE:exrinfo>)
         set_tests_properties(karma_golden PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>"
                              LABELS slow SKIP_RETURN_CODE 77 TIMEOUT 1800)
+        # eldr:rtLightSampling / eldr:finalGatherRoulette: same converged mean with seven shadowed lights.
+        add_test(NAME light_sampling COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_light_sampling.py $<TARGET_FILE:exrinfo>)
+        set_tests_properties(light_sampling PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         add_test(NAME motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_motion.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     endif()

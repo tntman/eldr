@@ -36,5 +36,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_20_rt_volume_cost` | Cheaper traced refraction (first ray looks for glass only) and volume local-light shadows (a tap every second step), same image | `eldr:rtRefractionClip`, `eldr:volumeLocalShadowStride` |
 | 2026-10-30 | `2026-10-30_01_moving_camera` | Moving camera mode: half size, one shadow ray, GI paused while moving; full quality on the first still frame | `eldr:movingRenderScale`, `eldr:movingShadowRays`, `eldr:movingGiPause` |
 | 2026-10-30 | `2026-10-30_02_reflection_roulette` | Dim traced reflections trace in a share of the film's samples per 8x8 block, weighted to match: same converged image, crowd 249 to 146 ms per sample | `eldr:rtReflectionRoulette` |
+| 2026-10-30 | `2026-10-30_03_volume_shadow_grid` | Volume shadow grids: three volumes, sun, dome and three sphere lights, 3x cheaper, same image | `eldr:volumeShadowGrid` |
+| 2026-10-30 | `2026-10-30_04_light_sampling` | Hits trace one stochastic light, traced shadows skip lights that give a pixel nothing and share samples over 4 lights: same converged image, emissive RT 147 to 78 ms per sample | `eldr:rtLightSampling`, `eldr:finalGatherRoulette` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.

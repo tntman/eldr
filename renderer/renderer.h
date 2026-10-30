@@ -251,6 +251,12 @@ public:
         // reflecting nothing trace none; from the film's second sample dim ones
         // trace in some of the samples, block by block, weighted by 1 over that share.
         bool rtReflectionRoulette = true;
+        // Traced light sampling (rt_shade.glsl ShadeHit, rt_pixels.rgen): reflection,
+        // refraction and gather hits trace one light picked by its light (1 / p);
+        // the per-pixel shadows skip lights that give the pixel nothing and, from
+        // the film's second sample with over four lights, trace each in 4 / lights
+        // of the samples per block, weighted.
+        bool rtLightSampling = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
@@ -286,6 +292,9 @@ public:
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;
+        // From the film's second sample half the 8 x 8 blocks gather per
+        // sample (in turn), weighted by 2 (rt_pixels.rgen).
+        bool finalGatherRoulette = false;  // off: same RMSE costs more samples than it saves (lane 59)
         // Per-effect denoise (final gather, traced shadows and reflections):
         // film samples over which the filters fade out, linearly from the
         // first (full) to none from this one on, so the early samples are

@@ -232,7 +232,33 @@ vec3 DomeDiffuse(vec3 n)
 // ponytail: local lights are shaded as points (textured ones by one tap, LightTint) and hits have no specular
 // highlights; lights past the cap stay unshadowed (most important first if
 // scenes with many lights at one hit show it).
+// Light sampling (rt.gatherInfo.w, eldr:rtLightSampling): of the lights
+// that would trace, one ray for one of them, picked in proportion to its
+// unshadowed light (a weighted reservoir on one uniform number) and
+// counted 1 / p: every light shadowed, no cap, the same on average.
 const uint kMaxHitShadows = 16u;
+
+// One step of ShadeHit's light pick: light i with unshadowed light e joins;
+// it replaces the pick with probability w / total, u rescaled to stay uniform.
+void Reservoir(uint i, vec3 e, inout float u, inout float total, inout uint picked, inout float pickedWeight,
+               inout vec3 pickedLight)
+{
+    float w = e.r + e.g + e.b;
+    if (w <= 0.0) {
+        return;
+    }
+    total += w;
+    float q = w / total;
+    if (u < q) {
+        u /= q;
+        picked = i;
+        pickedWeight = w;
+        pickedLight = e;
+    } else {
+        u = (u - q) / (1.0 - q);
+    }
+}
+
 vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
 {
     vec3 p = hit.position, n = hit.normal;
@@ -240,12 +266,24 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     vec3 f0 = mix(vec3(0.04), hit.baseColor, hit.metallic);
     vec3 irradiance = vec3(0.0);  // direct, cosine-weighted
     uint linkMask = RtLinkMask(hit.instance);
+    bool pick = rt.gatherInfo.w != 0.0;
+    float u = float(Pcg3d(seed + uvec3(0u, 0u, 0x51edu)).x >> 8u) * (1.0 / 16777216.0);
+    float total = 0.0, pickedWeight = 0.0;
+    uint picked = kNone;
+    vec3 pickedLight = vec3(0.0);
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light light = lights[i];
         float NoL = dot(n, light.position.xyz);
         if (NoL > 0.0 && LightLinked(light, linkMask)) {
-            vec3 shadow = i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u) ? LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u) : vec3(1.0);
-            irradiance += light.color.rgb * (NoL * light.halfHeight.w * shadow);
+            vec3 e = light.color.rgb * (NoL * light.halfHeight.w);
+            if (i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u)) {
+                if (pick) {
+                    Reservoir(i, e, u, total, picked, pickedWeight, pickedLight);
+                    continue;
+                }
+                e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
+            }
+            irradiance += e;
         }
     }
     uint traced = 0u;
@@ -281,11 +319,19 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
         vec3 e = light.color.rgb * LightTint(light, p) *
                  (formFactor * window * window * cone * light.halfHeight.w * EmitterClamp(light, albedo));
+        if (shadows && pick && (uint(light.color.w) & 2u) != 0u) {
+            Reservoir(i, e, u, total, picked, pickedWeight, pickedLight);
+            continue;
+        }
         if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(e.r, max(e.g, e.b)) > 0.0) {
             e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
             ++traced;
         }
         irradiance += e;
+    }
+    if (picked != kNone) {
+        irradiance += pickedLight * (total / pickedWeight) *
+                      LightVisibility(picked, p, hit.geometric, Random2(seed + uvec3(0u, 0u, picked * 64u), 0u), 1u);
     }
     vec3 indirect = DomeDiffuse(n);
     if ((frame.features.x & kFeatureGi) != 0u) {
