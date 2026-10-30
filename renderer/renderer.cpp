@@ -3480,6 +3480,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     constexpr float kShadowDenoiseRadius = 3.0f;  // pixels, on the first sample
     rt.shadowDenoise = frame.rtShadowDenoise ? kShadowDenoiseRadius * effectDenoise : 0.0f;
     rt.reflectionDenoise = frame.rtReflectionDenoise ? effectDenoise : 0.0f;
+    // Surfaces that reflect nothing skip their rays always; the roulette not on the film's first
+    // sample (it would show the blocks) nor without a film (TAA has none to converge).
+    rt.reflectionRoulette = !frame.rtReflectionRoulette ? 0 : film && _filmSamples > 1 ? 2 : 1;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics: in final quality (or always), with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):

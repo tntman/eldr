@@ -30,7 +30,8 @@ struct RayTracingData {
     float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
     float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
     float denoise[4];           // x: traced shadows' largest filter radius (pixels), y: traced reflections'
-                                // filter scale, z: the shadow image's first layer of penumbra radii
+                                // filter scale, z: the shadow image's first layer of penumbra radii,
+                                // w: reflection roulette (Work::reflectionRoulette)
     // Caustics (Work::caustics): x this sample's gather radius, y the hash
     // grid's cell size, z how far before the casters' sphere photons start
     float caustics[4];
@@ -106,6 +107,7 @@ public:
         // mesh.frag's filters of the traced shadows (radius in pixels) and
         // reflections (scale of their roughness radius); 0: off.
         float shadowDenoise = 0.0f, reflectionDenoise = 1.0f;
+        uint32_t reflectionRoulette = 0;  // rt_pixels.rgen: 1 surfaces reflecting nothing skip, 2 also dim ones in a share of samples
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
