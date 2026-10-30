@@ -739,6 +739,7 @@ bool SampleShutter(HdSceneDelegate *delegate, SdfPath const &id, TfToken const &
     return true;
 }
 
+
 } // namespace
 
 // Sampled motion of a skinned mesh: its skinning transforms (and blend

@@ -1254,6 +1254,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     _committedEdits = edits;
     _committedSettings = settings;
     _motionSettingsChanged = false;  // the prims synced for it
+    HdVkNewSyncPass();  // the prims' shutter samples were for this time
 #ifdef HDVK_VOLUMES
     HdVkReleaseFiles();  // the fields that synced read their files
 #endif

@@ -20,11 +20,13 @@
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/gf/vec4h.h"
 #include "pxr/base/gf/vec4i.h"
+#include "pxr/base/tf/getenv.h"
 #include "pxr/imaging/hd/renderIndex.h"
 #include "pxr/imaging/hd/sceneDelegate.h"
 #include "pxr/imaging/hd/timeSampleArray.h"
 #include "pxr/imaging/hd/tokens.h"
 
+#include <atomic>
 #include <type_traits>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -125,6 +127,31 @@ void HdVkInstancer::Sync(HdSceneDelegate *delegate, HdRenderParam *, HdDirtyBits
     }
 }
 
+namespace {
+std::atomic<uint64_t> syncPass{1};
+std::atomic<int64_t> shutterHits{0};
+} // namespace
+
+void HdVkNewSyncPass()
+{
+    ++syncPass;
+}
+
+uint64_t HdVkSyncPass()
+{
+    return syncPass;
+}
+
+int64_t HdVkTakeShutterHits()
+{
+    return shutterHits.exchange(0);
+}
+
+void HdVkNoteShutterHit()
+{
+    ++shutterHits;
+}
+
 // Same composition order as hdEmbree: instancer transform, then translate,
 // rotate, scale and per-instance transform applied on top (row-vector).
 // Instance indices past the end of a primvar array leave that term out.
@@ -135,30 +162,76 @@ VtMatrix4dArray HdVkInstancer::ComputeInstanceTransforms(SdfPath const &prototyp
     }
     HdSceneDelegate *delegate = GetDelegate();
     GfMatrix4d instancerTransform = delegate->GetInstancerTransform(GetId());
-    if (at) {
+    // Shutter samples: taken once per sync pass and time, for all this
+    // instancer's prototypes (a crowd's 448 meshes sampled the same agents
+    // three times each). The pass fixes the scene time, so they are the same.
+    // HDVK_NO_SHUTTER_SHARE=1 (A/B): each prototype samples its own.
+    static const bool share = !TfGetenvBool("HDVK_NO_SHUTTER_SHARE", false);
+    std::unique_lock<std::mutex> lock(_sampledMutex, std::defer_lock);
+    Sampled own;
+    Sampled *sampled = nullptr;
+    if (at && !share) {
+        sampled = &own;
+        own.time = at->time;
+        own.open = at->open;
+        own.close = at->close;
         HdTimeSampleArray<GfMatrix4d, 4> samples;
         delegate->SampleInstancerTransform(GetId(), at->open, at->close, &samples);
-        instancerTransform = samples.count > 0 ? samples.Resample(at->time) : instancerTransform;
+        own.hasTransform = samples.count > 0;
+        own.transform = own.hasTransform ? samples.Resample(at->time) : GfMatrix4d(1);
+        instancerTransform = own.hasTransform ? own.transform : instancerTransform;
+    } else if (at) {
+        lock.lock();
+        const uint64_t pass = HdVkSyncPass();
+        _sampled.remove_if([pass](const Sampled &s) { return s.pass != pass; });
+        for (Sampled &s : _sampled) {
+            if (s.time == at->time && s.open == at->open && s.close == at->close) {
+                sampled = &s;
+                HdVkNoteShutterHit();
+                break;
+            }
+        }
+        if (!sampled) {
+            sampled = &_sampled.emplace_back();
+            sampled->pass = pass;
+            sampled->time = at->time;
+            sampled->open = at->open;
+            sampled->close = at->close;
+            HdTimeSampleArray<GfMatrix4d, 4> samples;
+            delegate->SampleInstancerTransform(GetId(), at->open, at->close, &samples);
+            sampled->hasTransform = samples.count > 0;
+            sampled->transform = sampled->hasTransform ? samples.Resample(at->time) : GfMatrix4d(1);
+        }
+        instancerTransform = sampled->hasTransform ? sampled->transform : instancerTransform;
     }
     const VtIntArray indices = delegate->GetInstanceIndices(GetId(), prototypeId);
     VtMatrix4dArray transforms(indices.size(), instancerTransform);
 
-    std::map<TfToken, VtValue> sampled;  // at `at`
     auto primvar = [&](TfToken const &name) -> VtValue const * {
         const auto it = _primvars.find(name);
         if (it == _primvars.end()) {
             return nullptr;
         }
-        if (at) {
-            HdTimeSampleArray<VtValue, 4> samples;
-            delegate->SamplePrimvar(GetId(), name, at->open, at->close, &samples);
-            if (samples.count > 0) {
-                VtValue &v = sampled[name] = samples.Resample(at->time);
-                return v.IsEmpty() ? &it->second : &v;
+        if (sampled) {  // at `at`; empty: no samples, the frame's value
+            auto [s, added] = sampled->primvars.try_emplace(name);
+            if (added) {
+                HdTimeSampleArray<VtValue, 4> samples;
+                delegate->SamplePrimvar(GetId(), name, at->open, at->close, &samples);
+                s->second = samples.count > 0 ? samples.Resample(at->time) : VtValue();
             }
+            return s->second.IsEmpty() ? &it->second : &s->second;
         }
         return &it->second;
     };
+    if (sampled) {  // all of them now, then the transforms unlocked (the map no longer changes this pass)
+        for (const TfToken &name : {HdInstancerTokens->instanceTranslations, HdInstancerTokens->instanceRotations,
+                                    HdInstancerTokens->instanceScales, HdInstancerTokens->instanceTransforms}) {
+            primvar(name);
+        }
+        if (lock.owns_lock()) {
+            lock.unlock();
+        }
+    }
     auto valid = [](int i, size_t size) { return i >= 0 && size_t(i) < size; };
 
     VtVec3fArray vec;
