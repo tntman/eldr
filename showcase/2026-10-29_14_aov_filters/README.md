@@ -1,6 +1,6 @@
 # Per-AOV sample filters
 
-The Cornell box with render vars that each ask for their own sample filter: Eldr's `driver:parameters:aov:eldr:filter` (`beauty`, `nearest`, `gauss`, `box`, `min`, `max`, `closest`, `farthest`, optionally a radius in pixels) or Karma's `driver:parameters:aov:karma:filter` (the Render Var's "Sample Blending": `["minmax",{"mode":"max"}]`, `zmin`...). Eldr's wins. Only final renders (the film) filter; the interactive viewport shows the defaults.
+The Cornell box with render vars that each ask for their own sample filter: Eldr's `driver:parameters:aov:eldr:filter` (`beauty`, `nearest`, `gauss`, `box`, `min`, `max`, `closest`, `farthest`, optionally a radius in pixels) or Karma's `driver:parameters:aov:karma:filter` (the Render Var's "Sample Blending": `["minmax",{"mode":"max"}]`, `zmin`...). Eldr's wins. Only the film filters (a still image once it renders over film samples); while the camera moves the viewport shows the defaults.
 
 ## What to look at
 
@@ -26,3 +26,16 @@ Zoom in to pixels at the silhouettes of the ball and the tall box against the ba
 - usdrecord: `usdenv usdrecord --renderer Eldr --renderSettingsPrimPath /Render/default showcase\2026-10-29_14_aov_filters\scene.usda out.png` writes `aovFilters.exr` in the current folder; then `/Render/max` and `/Render/off`.
 - husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_14_aov_filters/scene.usda`; with `-R BRAY_HdKarma` the Karma-named filters (`depth_max`, `Pcam_closest`, `directdiffuse`) do the same in Karma.
 - Houdini: Sublayer LOP on the file; the Render Var LOP's Karma tab shows "Sample Blending". Eldr's own attribute needs an Edit Properties LOP.
+
+## Houdini scene
+
+Open `scene.hip`. Its LOP network sublayers `scene.usda` and has one render settings node per settings prim:
+
+- `eldr_default`: Eldr with nothing set (its default settings).
+- `eldr_final`: Eldr with each setting a final render needs ticked one by one: traced reflections, refraction and hit shadows, final gather, caustics, GI, traced shadows (16 lights, 1 ray each), denoise, film restart, 256 film samples.
+- `karma`: a Karma Render Settings node to match (same camera, resolution and samples).
+- The other nodes are this scene's A/B settings above.
+
+Pick a node and render its USD Render ROP (`render_<node>`; images go to `render/`). Eldr's ROPs run `$ELDR_HUSK`, Karma's plain husk. Nothing switches automatically. For the viewport, choose Eldr in the viewport's renderer menu (a script can't set it). The same prims are in `scene.usda` for usdview and husk: `husk -R Eldr -s /Render/eldr_final scene.usda`.
+
+The file is built by `hython houdini/make_showcase_hip.py`; rerun it after changing `scene.usda`.

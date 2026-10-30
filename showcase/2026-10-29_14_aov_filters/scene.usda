@@ -11,6 +11,40 @@
 
 def Scope "Render"
 {
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        rel products = [</Render/filters>]
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        rel products = [</Render/filters>]
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 480)
+        rel products = [</Render/filters>]
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
     def RenderSettings "default"
     {
         rel camera = </cam>
@@ -81,6 +115,7 @@ def Scope "Render"
     {
         def RenderVar "C"
         {
+            string driver:parameters:aov:husk:name = "C"
             uniform token dataType = "color4f"
             uniform string sourceName = "C.*[LO]"
             uniform token sourceType = "lpe"
@@ -88,6 +123,7 @@ def Scope "Render"
         # Depth (Karma's ray:hitPz): the least of the pixel's samples.
         def RenderVar "depth_min"
         {
+            string driver:parameters:aov:husk:name = "depth_min"
             uniform token dataType = "float"
             uniform string sourceName = "ray:hitPz"
             uniform token sourceType = "raw"
@@ -95,6 +131,7 @@ def Scope "Render"
         }
         def RenderVar "depth_max"
         {
+            string driver:parameters:aov:husk:name = "depth_max"
             uniform token dataType = "float"
             uniform string sourceName = "ray:hitPz"
             uniform token sourceType = "raw"
@@ -103,6 +140,7 @@ def Scope "Render"
         # Camera-space position of the closest sample (Karma's "Sample: Closest").
         def RenderVar "Pcam_closest"
         {
+            string driver:parameters:aov:husk:name = "Pcam_closest"
             uniform token dataType = "vector3f"
             uniform string sourceName = "ray:hitP_camera"
             uniform token sourceType = "raw"
@@ -111,6 +149,7 @@ def Scope "Render"
         # Hydra's cameraDepth (negative) of the farthest sample.
         def RenderVar "camdepth_farthest"
         {
+            string driver:parameters:aov:husk:name = "camdepth_farthest"
             uniform token dataType = "float"
             uniform string sourceName = "cameraDepth"
             uniform token sourceType = "raw"
@@ -119,6 +158,7 @@ def Scope "Render"
         # Normals averaged over a 3 x 3 pixel box (radius 1).
         def RenderVar "N_box"
         {
+            string driver:parameters:aov:husk:name = "N_box"
             uniform token dataType = "normal3f"
             uniform string sourceName = "ray:hitN"
             uniform token sourceType = "raw"
@@ -126,6 +166,7 @@ def Scope "Render"
         }
         def RenderVar "N"
         {
+            string driver:parameters:aov:husk:name = "N"
             uniform token dataType = "normal3f"
             uniform string sourceName = "ray:hitN"
             uniform token sourceType = "raw"
@@ -133,6 +174,7 @@ def Scope "Render"
         # Base colour of the sample nearest the pixel centre: hard edges.
         def RenderVar "albedo_nearest"
         {
+            string driver:parameters:aov:husk:name = "albedo_nearest"
             uniform token dataType = "color3f"
             uniform string sourceName = "export_basecolor"
             uniform token sourceType = "raw"
@@ -140,6 +182,7 @@ def Scope "Render"
         }
         def RenderVar "albedo"
         {
+            string driver:parameters:aov:husk:name = "albedo"
             uniform token dataType = "color3f"
             uniform string sourceName = "export_basecolor"
             uniform token sourceType = "raw"
@@ -147,6 +190,7 @@ def Scope "Render"
         # Karma's default ("ubox", what Houdini authors): like the beauty, sums.
         def RenderVar "directdiffuse"
         {
+            string driver:parameters:aov:husk:name = "directdiffuse"
             uniform token dataType = "color3f"
             uniform string sourceName = "C<RD>L"
             uniform token sourceType = "lpe"
@@ -156,6 +200,7 @@ def Scope "Render"
         # this split no longer adds up to the beauty.
         def RenderVar "indirectdiffuse_gauss"
         {
+            string driver:parameters:aov:husk:name = "indirectdiffuse_gauss"
             uniform token dataType = "color3f"
             uniform string sourceName = "C<RD>.+L"
             uniform token sourceType = "lpe"
@@ -164,6 +209,7 @@ def Scope "Render"
         # Hydra's primId: always the nearest sample (ids are never blended).
         def RenderVar "primid"
         {
+            string driver:parameters:aov:husk:name = "primid"
             uniform token dataType = "int"
             uniform string sourceName = "primId"
             uniform token sourceType = "raw"

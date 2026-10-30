@@ -9,6 +9,40 @@
 
 def Scope "Render"
 {
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/Products/beautyAndRaw>]
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/Products/beautyAndRaw>]
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/Products/beautyAndRaw>]
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 16
+    }
+    # --- end standard settings ---
     def RenderSettings "raw16"
     {
         rel camera = </cam>
@@ -130,6 +164,7 @@ def Scope "Render"
         {
             def RenderVar "C"
             {
+                string driver:parameters:aov:husk:name = "C"
                 uniform token dataType = "color4f"
                 uniform string sourceName = "C.*[LO]"
                 uniform token sourceType = "lpe"
@@ -137,6 +172,7 @@ def Scope "Render"
 
             def RenderVar "raw"
             {
+                string driver:parameters:aov:husk:name = "raw"
                 uniform token dataType = "color4f"
                 uniform string sourceName = "eldr:beautyRaw"
                 uniform token sourceType = "raw"

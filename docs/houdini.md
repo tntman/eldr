@@ -223,6 +223,8 @@ Eldr has no quality mode and no final-quality button: a render settings prim say
 
 To see the final in the viewport, choose the final Render Settings prim in the viewport's camera/Render Settings menu (Houdini then sends `houdini:use_render_settings_prim` and Eldr reads that prim's `eldr:` attributes, see "Render Settings LOP" below), or make it the stage's `renderSettingsPrimPath`. The viewport's Display Options (Eldr section) set the same settings per viewport, without a prim. Not checked in the GUI this lane (`tests/houdini_render_settings.py` checks the prim headless).
 
+Every showcase folder has such a pair ready: `scene.hip` next to `scene.usda`, with `eldr_default` (nothing set), `eldr_final` (each final setting ticked), `karma` (a Karma Render Settings LOP with the same camera, resolution and samples), the scene's own A/B nodes, and a USD Render ROP per node (Eldr's Render Command `$ELDR_HUSK`). `hython houdini/make_showcase_hip.py` builds them and writes the same three prims into each `scene.usda`; its `FINAL` list is the one place that says what `eldr_final` ticks. `houdini/make_houdini_tests.py` builds `houdini-tests/*.hip` from the Houdini checklist the same way. To keep the files small, each Render Settings LOP keeps only Eldr's tab (all of it on `eldr_default`, only the settings it sets on the others); a hip is 0.6 to 1.8 MB, most of it Houdini's spare parameter definitions. Karma's node writes its own beauty product, so the scene's AOV products render only from the Eldr nodes. The viewport renderer can't be set from hython: choose Eldr in the viewport.
+
 ## Solaris viewport
 
 | Topic | Behaviour |
