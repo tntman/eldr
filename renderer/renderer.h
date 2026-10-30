@@ -247,6 +247,10 @@ public:
         // averaged over up to 12 pixels in their plane, the radius fading
         // out over the film (effectDenoiseSamples).
         bool rtReflectionDenoise = true;
+        // Traced reflections' roulette (rt_pixels.rgen): dim ones (dielectrics
+        // seen head-on) trace in some of the film's samples, block by block,
+        // weighted by 1 over that share; from the film's second sample.
+        bool rtReflectionRoulette = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,

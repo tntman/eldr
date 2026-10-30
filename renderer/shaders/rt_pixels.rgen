@@ -97,6 +97,26 @@ float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
 // kFadeRoughness; rougher surfaces keep the dome's prefiltered light.
 const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
 
+// Reflection roulette (rt.denoise.w, eldr:rtReflectionRoulette): a dim
+// reflection (its Fresnel f, Schlick's from F0 at n.v; a dielectric seen
+// head-on reflects 4%) traces with probability keep = 6 f (at least 1/4)
+// and its weight counts 1 / keep, so mesh.frag's mix(specular, traced, a)
+// averages to the same over the film. Decided per 8 x 8 block, not per
+// pixel: a warp waits for its slowest ray, so only whole blocks save. Each
+// block steps a Weyl sequence over the samples (a hashed start), so it
+// traces in very nearly `keep` of them.
+float ReflectionKeep(ivec2 pixel, vec3 baseColor, float metallic, float NoV)
+{
+    if (rt.denoise.w == 0.0) {
+        return 1.0;
+    }
+    vec3 f0 = mix(vec3(0.04), baseColor, metallic);
+    float f = max(max(f0.r, f0.g), f0.b);
+    float keep = clamp(6.0 * (f + (1.0 - f) * pow(1.0 - NoV, 5.0)), 0.25, 1.0);
+    uint u = Pcg3d(uvec3(uvec2(pixel) >> 3u, 0x9e37u)).x + rt.params.x * 2654435769u;
+    return float(u >> 8u) * (1.0 / 16777216.0) < keep ? keep : 0.0;
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -128,6 +148,7 @@ void main()
     }
     vec3 p = hit.position, n = hit.normal, ng = hit.geometric;
     float perceptual = hit.roughness, metallic = hit.metallic;
+    vec3 baseColor = hit.baseColor;  // the shadow rays below overwrite hit
     if (raster && (hit.t < 0.0 || abs(hit.t - rasterT) > 0.02 * rasterT)) {
         // Of the differences each way the smaller (less likely across an edge).
         vec3 dx = PrepassPoint(pixel + ivec2(1, 0)) - surface, dx2 = surface - PrepassPoint(pixel - ivec2(1, 0));
@@ -194,11 +215,12 @@ void main()
 
     if ((frame.features.x & kFeatureRtReflections) != 0u && rt.params.z != 0u) {
         vec4 reflection = vec4(0.0);
-        if (perceptual < kMaxRoughness) {
+        vec3 v = -dir;
+        float keep = perceptual < kMaxRoughness ? ReflectionKeep(pixel, baseColor, metallic, max(dot(v, n), 1e-4)) : 0.0;
+        if (keep > 0.0) {
             float a = perceptual * perceptual;
             vec3 t, b;
             Basis(n, t, b);
-            vec3 v = -dir;
             vec3 ve = vec3(dot(v, t), dot(v, b), max(dot(v, n), 1e-4));
             vec3 reflectOrigin = OffsetRay(p, ng);
             uint samples = rt.params.z;
@@ -214,7 +236,7 @@ void main()
                                               : ShadeHit(l, seed, true, rt.shadowInfo.w != 0u);
             }
             reflection.rgb /= float(samples);
-            reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual);
+            reflection.a = (1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual)) / keep;
         }
         imageStore(rtReflectionImage, pixel, reflection);
     }

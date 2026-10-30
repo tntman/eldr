@@ -29,7 +29,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
     vec4 denoise;        // x: traced shadows' largest filter radius in pixels (RtTraced), y: traced
                          // reflections' filter scale (RtReflection); 0: off. z: the shadow image's
-                         // first layer of penumbra radii (rt_pixels.rgen PenumbraRadius)
+                         // first layer of penumbra radii (rt_pixels.rgen PenumbraRadius); w 1: reflection
+                         // roulette (rt_pixels.rgen)
     // Caustics (caustics.glsl): x this sample's gather radius, y the hash grid's cell size, z how far
     // before the casters' sphere a sun's photons start.
     vec4 caustics;

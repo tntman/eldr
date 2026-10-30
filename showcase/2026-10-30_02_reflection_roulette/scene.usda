@@ -1,0 +1,32 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/cornell.usda@]
+)
+
+# Traced reflection roulette: in final quality, dim reflections (the
+# walls, seen head-on) trace in about a quarter of the film's samples, per
+# 8 x 8 block, weighted 4x; the chrome ball and grazing views trace every
+# sample. /Render/roulette (the default) and /Render/everySample converge
+# to the same image; the first is cheaper per sample.
+
+def Scope "Render"
+{
+    def RenderSettings "roulette"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:rtReflections = 1
+        custom int eldr:filmSamples = 64
+    }
+
+    def RenderSettings "everySample"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:rtReflections = 1
+        custom int eldr:filmSamples = 64
+        custom bool eldr:rtReflectionRoulette = 0
+    }
+}
