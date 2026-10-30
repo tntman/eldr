@@ -1,5 +1,12 @@
 # Moving camera mode
 
+<!-- summary -->
+While the camera moves, Eldr renders at half size with one shadow ray and paused GI, and full quality returns on the first still frame.
+
+- **Compare:** open `showcase/2026-10-30_01_moving_camera/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `moving` (the defaults) vs `full`.
+- **Look at:** Tumble the camera: moving frames are softer and much faster; once still, both are the same.
+<!-- summary -->
+
 While the camera moves Eldr cuts the per-frame work and brings full quality back on the first still frame:
 
 - `eldr:movingRenderScale` (0.5): renders at half size and TAA upscales. It now also works with depth of field and an open shutter, so it applies in Houdini, whose free camera has an open shutter.
@@ -13,6 +20,12 @@ What to look at: tumble with `/Render/moving` (the defaults), then with `/Render
 - Measure: `viewportBench scene.usda /cam --houdini --stop 1500` (add `--set eldr:movingRenderScale=1` for the A/B).
 
 1920x1080, GTX 1080 Ti, moving: 64 ms a frame with everything kept, 12.5 ms with the defaults.
+
+## Open
+
+- Houdini: open `scene.hip` (see below)
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_01_moving_camera\scene.usda`, then pick a settings prim
+- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_01_moving_camera/scene.usda`
 
 ## Houdini scene
 

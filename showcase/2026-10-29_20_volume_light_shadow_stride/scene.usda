@@ -1,0 +1,120 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [@../../tests/scenes/volume.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Cheaper local-light shadows in volumes: tests/scenes/volume.usda's three
+# volumes with three sphere lights. /Render/stride2 is the default (one
+# shadow-atlas tap per light every second march step); /Render/stride1 taps
+# every step, as before. The two should look the same.
+
+def SphereLight "warm"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    color3f inputs:color = (1, 0.6, 0.3)
+    double3 xformOp:translate = (-1.2, 1.6, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "cool"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    color3f inputs:color = (0.3, 0.6, 1)
+    double3 xformOp:translate = (1.4, 0.6, 1.0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "low"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    double3 xformOp:translate = (0.2, -0.8, 0.6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/stride2
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "stride2"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
+    }
+
+    def RenderSettings "stride1"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
+        custom int eldr:volumeLocalShadowStride = 1
+    }
+
+    def RenderSettings "stride4"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
+        custom int eldr:volumeLocalShadowStride = 4
+    }
+}

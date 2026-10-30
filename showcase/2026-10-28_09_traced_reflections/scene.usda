@@ -1,0 +1,67 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# Ray-traced reflections (eldr:rtReflections): the Cornell box lit by a
+# glowing panel and a bulb, with a chrome ball and no dome. The ball shows
+# the room behind the camera, which screen-space reflections cannot see.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/traced
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "traced"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtHitShadows = 1
+    }
+
+    def RenderSettings "screenSpace"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtReflections = 0
+    }
+
+    def RenderSettings "tracedNoHitShadows"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtHitShadows = 0
+    }
+}

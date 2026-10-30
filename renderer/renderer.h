@@ -412,6 +412,10 @@ public:
         // While only the camera moves, settled GI probes skip their update
         // (they don't depend on the camera; eldr:movingGiPause).
         bool movingGiPause = true;
+        // The camera stopped less than eldr:stillDelay ago (the app's wall
+        // time): still frames count as moving (the reductions above, no
+        // film) and TAA keeps refining; the film starts when it ends.
+        bool cameraHold = false;
         float filmFilterRadius = 1.5f;
         // The film starts over at its first sample after any change, at
         // once, instead of from the TAA image after kFilmStillFrames.

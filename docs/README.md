@@ -2,7 +2,7 @@
 
 Eldr is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08, for fast raster renders to EXR.
 
-**User guide** (`guide/`, start here): getting started, rendering in Solaris, lights, materials, sampling and denoising, ray-traced effects, volumes, cameras, AOVs, crowds and performance, viewport, Eldr and Karma, troubleshooting. Plain language, pictures from the showcase scenes, "Where in Houdini" boxes. The pages below are the reference.
+**User guide** (`guide/`, start here): getting started, rendering in Solaris, lights, materials, sampling and denoising, ray-traced effects, volumes, cameras, AOVs, crowds and performance, viewport, Eldr and Karma, showcase scenes (one folder per feature, by topic), troubleshooting. Plain language, pictures from the showcase scenes, "Where in Houdini" boxes. The pages below are the reference.
 
 | Page | Contents |
 |---|---|

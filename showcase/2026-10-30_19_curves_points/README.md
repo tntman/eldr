@@ -1,5 +1,12 @@
 # Curves and points
 
+<!-- summary -->
+Every curve basis as tubes or ribbons, points as spheres or discs, and hair shading.
+
+- **Compare:** open `showcase/2026-10-30_19_curves_points/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `curves` vs `ribbons`, `sprites`, `hairOff`.
+- **Look at:** The curves' shapes, the points, and the fur's hair highlight.
+<!-- summary -->
+
 Beyond showcase 2026-10-28_06: every basis of `tests/scenes/curves.usda` (polyline with vertex widths, periodic square, ribbon with normals, bspline, catmullRom, pinned bspline, bezier, periodic loop, points with vertex widths and colours) plus a patch of 600 hair curves without a material (bottom left: Kajiya-Kay hair shading), under a sun and a soft dome. The camera is pulled back to fit the patch.
 
 ## What to look at

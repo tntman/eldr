@@ -1,4 +1,11 @@
-# GI and final gather
+# Global illumination and final gather
+
+<!-- summary -->
+Bounced light from GI probes, a traced final gather or screen-space GI.
+
+- **Compare:** open `showcase/2026-10-28_04_gi_final_gather/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `probesOnly`, `finalGather`, `ssgi`, `giPlusSsgi`; tuning: `finalGatherNoRelocation`, `finalGatherDistance0`/`05`, `denoise0`/`1`, `rays1`/`4`.
+- **Look at:** The walls and ceiling lit by the panel's bounce, the colour bleeding from the red and green walls, the leaks at the corners with probes only.
+<!-- summary -->
 
 `tests/scenes/emissive.usda` (the Cornell box lit by the glowing panel and bulb; `cornell.usda` is the rect-light version) with the bounced-light settings. The A/B prims here (except `probesOnly` and `ssgi`) also set the final-render settings, so the image converges over film samples: wait for it.
 

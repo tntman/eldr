@@ -14,6 +14,8 @@ Every setting is a Hydra render setting `eldr:<name>`. Unset settings have the d
 
 **Former modes (old scenes):** `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather` and `eldr:caustics` were ints (0 off, 1 final quality only, 2 always): an int is on at 2 only. `eldr:textureCompression` was an int (0 off, 1 interactive only, 2 always): an int is on at 1 or 2. the former `finalShadows` (`raytraced`: now `eldr:rtShadows` with `eldr:rtShadowLights` 16; `auto`: now `eldr:rtShadowsAuto`) and the former `adaptiveFinalThreshold` (now `eldr:adaptiveThreshold`) are ignored.
 
+**Try a setting:** most features have a scene in `showcase/` (one folder per feature, listed by topic in the user guide's [Showcase scenes](guide/showcase.md) chapter): open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the feature's A/B nodes.
+
 ## Reading the tables
 
 | Mark | Meaning |
@@ -97,6 +99,7 @@ Groups follow topics. The switches people change most come first, in open groups
 |---|---|---|---|
 | Film when Still<br>`eldr:filmAccumulation` | on | Once still for 3 frames (or from frame 1 of a fresh history), plain Gaussian-filtered averaging replaces TAA. Off: TAA only, also when still (no film). | 0.23 ms |
 | TAA Samples<br>`eldr:taaSamples` | int 16 | Jitter cycle length; frames a still camera averages without the film; AOV averaging limit. | |
+| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds (wall time) a stopped camera still counts as moving: moving reductions stay, no film yet, TAA refines, so short pauses don't pop to full size and back. 0: the first still frame is full quality. Not offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
 | Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25) renders smaller and TAA upscales (depth of field and post motion blur too). Film, `eldr:filmRestart`, lens distortion and extra AOVs render full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
 | Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | [interactive] While the camera or scene moves, at most this scale (as Render Scale); the first still frame is full size again. 1: off. | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below); a resize (5-15 ms once) when the camera starts and stops |
 | Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | [interactive] Sample dimensions loop over this many samples (1-256) so TAA settles. | |
@@ -169,7 +172,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, up to 255 lights per cluster (more: that cluster shades all lights). Off loops all lights per pixel. | |
 | Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation). | |
 | Light Linking<br>`eldr:lightLinking` | on | UsdLux `collection:lightLink` and `collection:shadowLink` (Houdini's Light Linker LOP) in every light loop and shadow pass. Up to 32 linked collections; more light everything (warned). Domes and fog ignore links. Off: all lights light and shadow all. | A shadow-linked light's traced shadow rays run any-hit on every surface |
-| IES Profiles<br>`eldr:lightIes` | on | Local lights multiply radiance per direction by `inputs:shaping:ies:file` (LM-63 type C) with `angleScale` and `normalize`, in raster, traced hits, GI, fog and volumes. Theta from the light's -Z, phi 0 at its -X (Karma's). | One texture tap per light and pixel |
+| IES Profiles<br>`eldr:lightIes` | on | Local lights multiply radiance per direction by `inputs:shaping:ies:file` (LM-63 type C) with `angleScale` and `normalize`, in raster, traced hits, GI, fog and volumes. Theta from the light's -Z, phi 0 at its -X (Karma's). | One texture tap per light and pixel (32 where the light covers the profile's pole) |
 | Light Shapes Visible<br>`eldr:lightShapesVisible` | off | Draws sphere, rect, disk and cylinder shapes to the camera. `bool inputs:karma:light:renderlightgeo = 0` hides one light. No point or line lights, shaping or textures. Needs `eldr:localLights`. | One pass, 0.12 ms |
 | Dome in the Camera<br>`eldr:domeCameraVisible` | on | Draws the dome's texture behind the scene. Off: the clear colour (with its alpha) shows; lighting and reflections still use the dome. `bool inputs:karma:light:renderlightgeo = 0` hides one dome; Hydra's `domeLightCameraVisibility` also applies. | |
 | Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small bright constant emitters also become rect or sphere lights with shadows (max 32). Others light via GI only. | |

@@ -24,6 +24,7 @@ DOCS = [
     ("guide/performance.md", "Crowds and performance", "User guide"),
     ("guide/viewport.md", "Viewport", "User guide"),
     ("guide/karma.md", "Eldr and Karma", "User guide"),
+    ("guide/showcase.md", "Showcase scenes", "User guide"),
     ("guide/troubleshooting.md", "Troubleshooting", "User guide"),
     ("settings.md", "Settings reference", "Reference"),
     ("features.md", "How Eldr works", "Reference"),

@@ -1,4 +1,11 @@
-# Dome sun extraction
+# Dome sun
+
+<!-- summary -->
+The HDRI's sun is taken out of the dome and cast as a shadowed distant light (`eldr:domeSun`).
+
+- **Compare:** open `showcase/2026-10-30_08_dome_sun/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `domeSun` vs `domeSunOff`.
+- **Look at:** Crisp sun shadows on the ground and the sun's glint in the chrome; none without.
+<!-- summary -->
 
 `tests/scenes/step4.usda` (chrome, gold and matte objects on a ground) lit by StinsonBeach.hdr alone; its distant light is set to 0. The HDRI's sun is a few very bright texels: as image light only they give soft, shadowless sunlight. Eldr takes texels brighter than `eldr:domeSunThreshold` (10) out of the dome and lights with them as a shadowed distant light of the same power and direction.
 

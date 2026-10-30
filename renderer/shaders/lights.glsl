@@ -120,17 +120,10 @@ bool ShadowLinked(Light light, uint mask)
     return bit < 0 || (mask & (1u << uint(bit))) != 0u;
 }
 
-// The light's IES profile (UsdLux shaping:ies) towards p, relative to its
-// peak (Scene folds the peak into the colour): theta from the emission
-// axis, phi around it from the light's -X (Karma's), theta rescaled by
-// shaping:ies:angleScale as UsdLux says. 1 without a profile.
-float LightIes(Light light, vec3 p)
+// The IES profile `tex` along direction d from the light (LightIes).
+float IesTap(Light light, int tex, vec3 d)
 {
-    int tex = int(light.ies.w);
-    if (tex < 0) {
-        return 1.0;
-    }
-    vec3 d = normalize(p - light.position.xyz);
+    d = normalize(d);
     vec3 z = -light.axis.xyz, x = light.ies.xyz, y = cross(z, x);
     float theta = acos(clamp(-dot(d, z), -1.0, 1.0));
     float phi = atan(-dot(d, y), -dot(d, x));  // 0 at -X, as Karma
@@ -140,6 +133,47 @@ float LightIes(Light light, vec3 p)
         return 0.0;
     }
     return textureLod(textures[nonuniformEXT(tex)], vec2(phi / (2.0 * PI), min(theta, PI) / PI), 0.0).r;
+}
+
+// The light's IES profile (UsdLux shaping:ies) towards p, relative to its
+// peak (Scene folds the peak into the colour): theta from the emission
+// axis, phi around it from the light's -X (Karma's), theta rescaled by
+// shaping:ies:angleScale as UsdLux says. 1 without a profile.
+// Karma evaluates the profile from each point on the light: where the
+// light's extent seen from p covers a pole (theta 0 or 180, where phi
+// wraps), a profile whose pole values differ by phi blurs over that
+// extent instead of pinching to a point. There it averages 32 taps from
+// points spread over the light; elsewhere one tap from its centre.
+// ponytail: rects take the taps in their inscribed ellipse.
+float LightIes(Light light, vec3 p)
+{
+    int tex = int(light.ies.w);
+    if (tex < 0) {
+        return 1.0;
+    }
+    vec3 toP = p - light.position.xyz;
+    float dist = length(toP);
+    uint type = uint(light.position.w);
+    vec3 u = light.halfWidth.xyz, v = light.halfHeight.xyz;
+    if (type == kLightSphere || type == kLightCylinder) {
+        vec3 w = toP / max(dist, 1e-12);
+        vec3 e = normalize(cross(w, abs(w.x) < 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+        v = cross(w, e) * light.halfWidth.w;
+        u = type == kLightSphere ? e * light.halfWidth.w : u;
+    }
+    float extent = max(length(u), length(v));
+    float cosAxis = abs(dot(toP, light.axis.xyz)) / max(dist, 1e-12);
+    // Farther than 3 angular radii of the light off both poles (the blur there is
+    // under 1.5%, no seam where this switches): one tap.
+    if (extent <= 0.0 || cosAxis < cos(min(3.0 * asin(min(extent / max(dist, 1e-12), 1.0)), 0.5 * PI))) {
+        return IesTap(light, tex, toP);
+    }
+    float sum = 0.0;
+    for (int k = 0; k < 32; ++k) {
+        float r = sqrt((float(k) + 0.5) / 32.0), a = 2.39996323 * float(k);
+        sum += IesTap(light, tex, toP - r * (cos(a) * u + sin(a) * v));
+    }
+    return sum / 32.0;
 }
 
 // A textured rect/disk light's colour as seen from p: the texel above p's

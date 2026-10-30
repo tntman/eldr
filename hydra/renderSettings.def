@@ -64,6 +64,7 @@ HDVK_SETTING(volumeMultipleScattering, "Volume Multiple Scattering", frame.volum
 HDVK_GROUP("Viewport", true)
 HDVK_SETTING(filmAccumulation, "Film when Still (off: keep TAA)", frame.filmAccumulation)
 HDVK_SETTING(taaSamples, "TAA Samples", int(frame.taaSamples))
+HDVK_SETTING(stillDelay, "Still Delay (seconds)", 0.3f)
 HDVK_SETTING(renderScale, "Render Scale", frame.renderScale)
 HDVK_SETTING(movingRenderScale, "Render Scale while Moving", frame.movingRenderScale)
 HDVK_SETTING(interactiveSamples, "Interactive Noise Loop (samples)", int(frame.interactiveSamples))

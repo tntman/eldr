@@ -1,5 +1,12 @@
 # Texture compression
 
+<!-- summary -->
+8-bit textures are block-compressed on the GPU (BC7, BC4, BC5) and cached on disk, to save memory (`eldr:textureCompression`).
+
+- **Compare:** open `showcase/2026-10-29_19_texture_compression/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `compressed` vs `exact`.
+- **Look at:** The disc edges and one-texel lines: slightly smeared where three colours meet in a block.
+<!-- summary -->
+
 `eldr:textureCompression` stores 8-bit textures block-compressed on the GPU: colour as
 BC7 (1 byte per texel instead of 4), gray as BC4 (half a byte instead of 1), gray + alpha as BC5. The
 mips are made before compressing (sRGB filtered in linear). Off (the default) loads exact textures, as Karma never compresses; on compresses them. Each file is encoded once and kept in
@@ -20,6 +27,12 @@ Open it:
   Texture Compression off or on in the Hydra settings (materials reload their textures).
 - usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/exact scene.usda exact.png`
 - husk: `husk -R HdVkRendererPlugin -s /Render/compressed scene.usda -o out.exr`
+
+## Open
+
+- Houdini: open `scene.hip` (see below)
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_19_texture_compression\scene.usda`, then pick a settings prim
+- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_19_texture_compression/scene.usda`
 
 ## Houdini scene
 

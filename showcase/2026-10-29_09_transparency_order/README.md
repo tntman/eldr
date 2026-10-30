@@ -1,4 +1,11 @@
-# Transparency order: glass, translucent meshes and smoke
+# Transparency order
+
+<!-- summary -->
+Glass, translucent meshes and smoke are composited in one depth order, so what is behind a pane is seen through it.
+
+- **Compare:** open `showcase/2026-10-29_09_transparency_order/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default`, `sorted` (`eldr:oit` off), `oneLayer` (`eldr:refractionLayers` 1), `volumesOverGlass` (`eldr:volumeUnderTransparency` off), `final` (traced refraction).
+- **Look at:** The red quad behind blue glass (purple-blue through the glass) and the smoke balls dimmed once per pane in front of them.
+<!-- summary -->
 
 tests/scenes/transparency_order.usda. Top row: a half-opaque red quad (UsdPreviewSurface opacity 0.5) in front of blue thin glass, and to its right the pair the other way round. Bottom right: dense smoke balls with green-tinted panes. The left ball is behind two overlapping panes, and the right ball is between a pane in front and a pane behind.
 

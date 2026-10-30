@@ -1,5 +1,12 @@
 # Cryptomatte
 
+<!-- summary -->
+Cryptomatte object and material layers in the EXR, soft (several ids per pixel) or one id per pixel (`eldr:cryptomatteSoft`).
+
+- **Compare:** open `showcase/2026-10-30_15_cryptomatte/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `crypto` vs `cryptoHard`.
+- **Look at:** Open `cryptomatte.exr` in a Cryptomatte viewer and pick the ball's edge: soft mattes against aliased ones.
+<!-- summary -->
+
 The Cornell box with a render product writing the beauty and two Cryptomatte layers: by object (`primvars:__name`, the rprim path) and by material (`primvars:__materialname`), as Karma's Cryptomatte LOP names them. The EXR has `CryptoObject00..02` and `CryptoMaterial00..02` (ranks 0-5, id and coverage pairs) and the spec's metadata (name, MurmurHash3_32, uint32_to_float32, manifest), so Nuke's Cryptomatte gizmo or Houdini's COP Cryptomatte picks mattes.
 
 ## What to look at

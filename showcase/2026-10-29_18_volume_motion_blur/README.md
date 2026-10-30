@@ -1,4 +1,11 @@
-# Volume motion blur along vel
+# Volume motion blur
+
+<!-- summary -->
+Volumes blur along their `vel` field (a vector grid or Houdini's vel.x/.y/.z), as Karma's Lookup Offset.
+
+- **Compare:** open `showcase/2026-10-29_18_volume_motion_blur/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `blur` vs `sharp` (`eldr:volumeVelocityBlur` off).
+- **Look at:** The two smoke balls and their shadows smear along x; the right one twice as far (blur scale 2).
+<!-- summary -->
 
 Two balls of smoke move a unit a frame along x (`tests/scenes/volume_moving.vdb`, written by
 `make_volume --moving`). The left one's velocity is a vector VDB grid `vel`; the right one's is
@@ -21,6 +28,12 @@ Open it:
   leave it still and wait: the blur builds up over the film's samples
 - usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/blur scene.usda out.png`
 - husk: `husk -R HdVkRendererPlugin -s /Render/blur scene.usda -o out.exr` (Karma: `-R BRAY_HdKarma`)
+
+## Open
+
+- Houdini: open `scene.hip` (see below)
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_18_volume_motion_blur\scene.usda`, then pick a settings prim
+- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_18_volume_motion_blur/scene.usda`
 
 ## Houdini scene
 

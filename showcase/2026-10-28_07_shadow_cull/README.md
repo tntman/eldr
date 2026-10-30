@@ -1,4 +1,11 @@
-# Shadow small-object culling
+# Small-object culling in sun shadows
+
+<!-- summary -->
+Tiny instances are skipped in the far sun-shadow cascades to save time (`eldr:shadowCullPixels`).
+
+- **Compare:** open `showcase/2026-10-28_07_shadow_cull/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `cull05` (default) vs `cull8` vs `cullOff`.
+- **Look at:** The distant rows of posts: at 8 some lose their shadows; at the default the picture equals `cullOff`, only faster.
+<!-- summary -->
 
 A ground plane and 1600 small posts (a PointInstancer) far from the camera, under a low sun. Far sun-shadow cascades have big texels, so tiny instances can be skipped there to save time.
 
