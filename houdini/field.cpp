@@ -87,15 +87,22 @@ openvdb::GridBase::ConstPtr HdVkReadGrid(const std::string &path, const std::str
         return GridFromDetail(*gdp.getGdp(), name, index, houdiniField);
     }
     if (path.size() > 4 && path.compare(path.size() - 4, 4, ".vdb") == 0) {
-        openvdb::io::File file(path);
-        file.open();
-        const openvdb::GridBase::ConstPtr grid = HdVkPickGrid(*file.getGrids(), name, index);
-        file.close();
-        return grid;
+        const auto grids = std::static_pointer_cast<const openvdb::GridPtrVec>(HdVkCachedFile(path, [&] {
+            openvdb::io::File file(path);
+            file.open();
+            std::shared_ptr<const void> all(file.getGrids());
+            file.close();
+            return all;
+        }));
+        return HdVkPickGrid(*grids, name, index);
     }
-    GU_Detail gdp;  // .bgeo(.sc) and the other geometry formats Houdini reads
-    if (!gdp.load(path.c_str()).success()) {
-        throw std::runtime_error("Houdini can't load it");
-    }
-    return GridFromDetail(gdp, name, index, houdiniField);
+    // .bgeo(.sc) and the other geometry formats Houdini reads.
+    const auto gdp = std::static_pointer_cast<const GU_Detail>(HdVkCachedFile(path, [&] {
+        auto loaded = std::make_shared<GU_Detail>();
+        if (!loaded->load(path.c_str()).success()) {
+            throw std::runtime_error("Houdini can't load it");
+        }
+        return std::shared_ptr<const void>(std::move(loaded));
+    }));
+    return GridFromDetail(*gdp, name, index, houdiniField);
 }

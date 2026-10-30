@@ -791,7 +791,8 @@ int main()
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 1.0f);
             white->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->material = white;
 
             // Sphere: reflected radiance L R^2 / d^2 * cos.
             vkr::Light *sphere = AddSphereLight(scene, 0, 0, 0, 0.1f, 10.0f);
@@ -808,6 +809,21 @@ int main()
             img = Render(renderer, scene);
             Expect(img.At(38, 32, 0) > 0.2f, "spot: lit inside the cone (22 degrees)");
             Expect(img.At(48, 32, 0) == 0.0f, "spot: dark outside the cone (46 degrees)");
+
+            // Light linking: a light linked to a category the wall isn't in leaves it dark;
+            // the wall in it (Mesh::linkCategories) is lit as before.
+            sphere->coneAngle = 180;
+            sphere->lightLink = 7;
+            scene.Commit();
+            Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "light linking: outside the light's link: dark");
+            wall->linkCategories = {7};
+            wall->transformsDirty = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) - 0.4f) < 0.01f,
+                   "light linking: in the light's link: lit");
+            wall->linkCategories.clear();
+            wall->transformsDirty = true;
+            sphere->lightLink = 0;
             scene.RemoveLight(sphere);
 
             // Rect: 0.5 x 0.5 square facing the wall. Form factor of a square
@@ -2775,7 +2791,11 @@ int main()
             bool empty = true;
             for (uint32_t k = 0; k < A::kCount; ++k) {
                 for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
-                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                    if (at(A::Kind(k), 2, 2, int(c)) != 0.0f) {
+                        std::printf("  AOV %u component %u is %g where nothing was drawn\n", k, c,
+                                    at(A::Kind(k), 2, 2, int(c)));
+                        empty = false;
+                    }
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
@@ -4916,7 +4936,7 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
-            // Saving prunes the other shader builds' caches of this driver
+            // Saving keeps the newest 3 other builds' caches of this driver
             // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
             std::filesystem::path current;
@@ -4926,14 +4946,22 @@ int main()
                 }
             }
             const std::string name = current.filename().string();
-            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
-                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
-            std::filesystem::copy_file(current, stale, cacheError);
+            const std::string stem = name.substr(0, name.rfind('-') + 1);
+            const std::filesystem::path other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            for (int i = 1; i <= 4; ++i) {
+                std::filesystem::copy_file(current, cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin"),
+                                           cacheError);
+            }
             std::filesystem::copy_file(current, other, cacheError);
             device.SavePipelineCache();
-            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
-                       std::filesystem::exists(other),
-                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            int kept = 0;
+            for (int i = 1; i <= 4; ++i) {
+                const auto stale = cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin");
+                kept += std::filesystem::exists(stale);
+                std::filesystem::remove(stale, cacheError);
+            }
+            Expect(kept == 3 && std::filesystem::exists(current) && std::filesystem::exists(other),
+                   "pipeline cache: saving keeps this driver's newest 3 other caches, not older ones; other drivers' stay");
             std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {

@@ -120,7 +120,7 @@ struct MaterialProgram {
         kNoise,        // noise2d/3d: value * b + c.x
         kFractal,      // fractal2d/3d: value * b, c = (octaves, lacunarity, diminish)
         kCellNoise,    // cellnoise2d/3d (float)
-        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style
+        kWorleyNoise,  // worleynoise2d/3d: b.x = jitter, c.x = style; imm0 >> 4: metric (noise.glsl's MxWorley)
         kPosition,     // the surface point, imm0: 0 object space, 1 world
         kGeomNormal,   // the interpolated normal, imm0: 0 object space, 1 world
         kConvert,      // MaterialX convert of a from imm0 to imm1 components (not from a float: those are splat already)
@@ -141,6 +141,14 @@ struct MaterialProgram {
         kViewDirection,     // camera to the point, imm0: 0 object space, 1 world
         kTime,              // imm0 0: the scene's frame, 1: its time in seconds
         kArtisticIor,       // Gulbrandsen's ior (imm1 0) or extinction (1) of reflectivity a, edge colour b
+        // Every pipeline again:
+        kBlend,      // MaterialX compositing imm1 (program.glsl's Blend) of a = fg over b = bg, mixed by c.x
+        kRampTable,  // imm1 & 255 values over [constants[imm0].x, .y] from constants[imm0 + 1] at a.x, linearly
+                     // (imm1 & 256: floats packed four to a vec4): Houdini ramps baked
+        // Procedural pipelines: Karma's hex tiling (kma_color_hextiling) of
+        // images[imm0] at uv a, b = (rot, rand_rot, scale, rand_scale),
+        // c = (contrast, contrast_falloff, weightexp, seed), else d.
+        kHexTile,
     };  // as shaders/program.glsl numbers them
     // Material inputs kOutput writes, as GpuMaterial::tex orders them, then
     // the lobes' (Material's constants of the same names; brdf.glsl reads
@@ -153,7 +161,8 @@ struct MaterialProgram {
         kSubsurfaceRadius,  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
         kTransmissionDepth, kThinWalled,  // replace the constants (thin walled above 0.5)
         kSubsurfaceScale,   // multiplies the constant too (standard_surface's scale, OpenPBR's radius_scale)
-        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 29)
+        kSpecular, kSpecularTint,  // the dielectric's weight and colour (Material::specularWeight, specular)
+        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 31)
 
     };
 
@@ -177,7 +186,7 @@ struct MaterialProgram {
     {
         for (size_t i = 0; i < code.size(); i += 4) {
             const uint32_t op = code[i] & 0xFFu;
-            if ((op >= kNoise && op <= kGeomNormal) || op >= kRotate2d) {
+            if ((op >= kNoise && op <= kGeomNormal) || (op >= kRotate2d && op <= kArtisticIor) || op == kHexTile) {
                 return true;
             }
         }
@@ -297,7 +306,7 @@ struct Material {
         if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
             return true;
         }
-        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSubsurfaceScale; ++i) {
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSpecularTint; ++i) {
             if (program.Outputs(MaterialProgram::Input(i))) {
                 return true;  // a textured or graph-driven lobe
             }
@@ -393,6 +402,11 @@ struct Mesh {
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
     uint32_t tag = 1;            // caller's render tag bit: drawn when in the scene's tag mask
+    // Light linking: the link categories (Light::lightLink/shadowLink ids)
+    // it is in, and per instance more (empty: none). Set transformsDirty
+    // after changing them.
+    std::vector<uint32_t> linkCategories;
+    std::vector<std::vector<uint32_t>> instanceLinkCategories;
     bool geometryDirty = true;   // set after changing points/normals/uvs/joint influences
     bool transformsDirty = true; // set after changing transforms
     // Primvars the material's program reads, by name; vertex-rate ones are
@@ -454,6 +468,14 @@ struct Mesh {
     // Reflection probes: this mesh only marks one (primvars:eldr:reflectionProbe):
     // never drawn, its world bounds are the probe's influence box.
     bool reflectionProbe = false;
+    // Caustics (raytracing.h's photons): a caster (Karma's
+    // karma:object:causticsenable) sends the photons that hit it on through
+    // its glass or metal; a receiver gathers them on its diffuse surface
+    // (-1: every mesh but refracting glass). Casters' roughness is at least
+    // causticsRoughness for the photons (Karma's causticsroughnessclamp).
+    bool causticsCast = false;
+    int8_t causticsReceive = -1;
+    float causticsRoughness = 0.2f;
 
 private:
     friend class Scene;
@@ -541,9 +563,21 @@ struct Light {
     bool cameraVisible = true;           // its shape shows to the camera (Frame::lightShapesVisible)
     bool castShadows = false;            // distant: the first caster gets the CSM; others: atlas tiles
     float angle = 0.53f;                 // distant: the sun disk's angular diameter, degrees (traced, soft shadows)
+    bool caustics = true;                // sends caustic photons (Karma's contributescaustics): distant, sphere, rect, disk
     // Its light group (Karma's LPE tag, karma:light:lpetag): which of
     // Scene::SetLightGroups' groups its direct light is split into.
     std::string lpeTag;
+    // Light linking (UsdLux collection:lightLink, collection:shadowLink):
+    // the link category (Mesh::linkCategories) of what it lights and of
+    // what casts its shadows; 0: everything.
+    uint32_t lightLink = 0, shadowLink = 0;
+    // IES profile (UsdLux shaping:ies:*): intensity over (phi, theta) as
+    // width x height texels of one float, u = phi / 2 pi from iesX, v =
+    // theta / pi from the emission axis, times iesScale; null: none.
+    std::shared_ptr<Texture> ies;
+    float iesScale = 1.0f;
+    float iesAngleScale = 0.0f;
+    float iesX[3] = {1, 0, 0};           // the light's local +X (phi 180, as Karma), world space
     // Rect, disk: an image over the emitting surface (UsdLux
     // inputs:texture:file) multiplying the radiance; s = 0 at the +X side, the image's top row at +Y (as Karma; rows are stored bottom-up)
     // (the disk's square around it).
@@ -580,7 +614,7 @@ struct Instance {
     uint32_t draw;       // mesh slot = index into the DrawInfo table; kNone: free slot
     int32_t index;       // index into Mesh::transforms (instanceId AOV)
     uint32_t joints;     // skinned: first of the instance's joint matrices
-    uint32_t pad;
+    uint32_t linkMask;   // light linking: bit k = in the k-th linked category (Scene::_linkBits)
 };
 static_assert(sizeof(Instance) == 64, "std430 mirror in shaders/scene.glsl");
 struct DrawInfo {
@@ -608,7 +642,9 @@ struct DrawInfo {
     uint32_t facing;           // Mesh::facing
     float uvSpacing;           // mean uv length of an edge (vertex-stage texture footprint, displace.glsl)
     uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
-    uint32_t pad[3];
+    uint32_t caustics;         // 1: Mesh::causticsCast, 2: receives (Mesh::causticsReceive)
+    float causticsRoughness;   // Mesh::causticsRoughness
+    uint32_t pad;
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -706,8 +742,12 @@ public:
     // small rigid mesh whose material emits at least `threshold` (a constant
     // emissiveColor's brightest channel, scene-referred radiance) also
     // lights the scene as a sphere light around it, of the same power
-    // (pi x radiance x area), casting shadows. Returns whether it changed.
-    bool SetEmissiveLights(bool on, float threshold);
+    // (pi x radiance x area), casting shadows. Its light on a surface is
+    // capped where radiance x albedo passes `limit` (brightest channel,
+    // keeping hue; 0: off): Karma reaches emitters by bounce rays only and
+    // clamps each such sample at its indirect colour limit.
+    // Returns whether it changed.
+    bool SetEmissiveLights(bool on, float threshold, float limit = 0.0f);
     // Dome sun extraction: the dome texture's light over `threshold` (scene
     // radiance, luminance) leaves its image-based lighting and lights the
     // scene as a distant light with shadows, of the texels' size. Returns
@@ -717,6 +757,12 @@ public:
     // tags[g] split their direct light into group g (from the next
     // Commit). Returns whether they changed.
     bool SetLightGroups(const std::vector<std::string> &tags);
+    // Light linking and IES profiles on or off (from the next Commit).
+    // Returns whether they changed.
+    bool SetLightOptions(bool linking, bool ies);
+    // Light linking: at most this many link categories are honoured
+    // (Instance::linkMask); lights in more light everything.
+    static constexpr size_t kMaxLinkCategories = 32;
 
     struct Gpu {
         VkBuffer vertices = VK_NULL_HANDLE;
@@ -783,7 +829,7 @@ public:
         // Per translucent slot: kRefracts (a material that refracts or
         // tints what's behind it, see refraction).
         // kHoldout: Mesh::holdout.
-        enum : uint8_t { kRefracts = 1, kHoldout = 2 };
+        enum : uint8_t { kRefracts = 1, kHoldout = 2, kThin = 4 };  // kThin: thin-walled, no inside to draw
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;
@@ -796,6 +842,7 @@ public:
         uint32_t shadowLight = kNone;       // index into lights
         float shadowDirection[3] = {0, 0, 1};
         float shadowAngle = 0;              // its Light::angle (soft sun shadows)
+        uint32_t shadowLinkBit = 0;         // its shadow link's Instance::linkMask bit + 1 (0: every caster)
         // A distant light's disc is wide enough, or some material glossy
         // enough, for mesh.frag's sun region (kFeatureSunRegion): sun
         // tan^2 > 4e-4 a^2 of the least rough material (a: its roughness^2).
@@ -816,6 +863,7 @@ public:
             enum class Shape : uint32_t { Sphere, Rect, Disk, Cylinder } shape = Shape::Sphere;
             float halfWidth[3], halfHeight[3];
             float cylinderRadius;  // a cylinder's radius (jittered across its section)
+            uint32_t shadowLinkBit = 0;  // as Gpu::shadowLinkBit
         };
         std::vector<ShadowCaster> shadowCasters;
         // Changes whenever anything a shadow map could see changed (geometry,
@@ -863,6 +911,11 @@ public:
         // the opaque colour for it.
         bool refraction = false;
         bool holdouts = false;  // a drawn mesh is a holdout (Mesh::holdout)
+        // Caustics: the lights that send photons (indices into lights:
+        // Light::caustics, distant, sphere, rect, disk) and the drawn
+        // casters' world bounds (none: min > max).
+        std::vector<uint32_t> causticLights;
+        float causticMin[3] = {1, 1, 1}, causticMax[3] = {0, 0, 0};
         // Commands of opaque and cutout meshes with subsurface materials
         // (and their pipeline variants), shaded again by the subsurface pass.
         std::vector<uint32_t> subsurface;
@@ -894,6 +947,7 @@ public:
         VkBuffer volumeGrids = VK_NULL_HANDLE;
         uint32_t volumeCount = 0;
         bool volumeFactors = false;  // a drawn volume reads factor tables (VolumePass::Record)
+        bool volumeVelocity = false; // a drawn volume moves along its velocity in time samples
         uint64_t volumeVersion = 0;  // unique per commit that held volumes (the local lights' cached atlas)
         float volumeMin[3] = {}, volumeMax[3] = {};  // world space box around them (with volumeCount)
         // Displacement: per material (as `materials`) its constant, bound
@@ -991,11 +1045,16 @@ private:
     float _envThreshold = 0;          // the sun extraction it was built with (texture units, 0: none)
     bool _domeSunOn = false;
     std::vector<std::string> _lightGroups;
+    bool _lightLinking = true, _lightIes = true;
+    // Link category id -> its bit in the instances' linkMask (as uploaded).
+    std::map<uint32_t, uint32_t> _linkBits;
+    uint32_t _LinkMask(const std::vector<uint32_t> &categories) const;
     float _domeSunThreshold = 0;
     ExtractedSun _domeSun;            // of the environment built (dome-local, texture units)
     uint32_t _tagMask = ~0u;
     bool _emissiveLights = true;
     float _emissiveThreshold = 4.0f;
+    float _emissiveLimit = 0.0f;
     bool _changed = true;           // since the last Commit: a mesh was added or removed
     std::vector<float> _keptMotion;            // the last Commit's motion rows (Commit's keepMotion)
     std::vector<uint32_t> _keptMotionBase;

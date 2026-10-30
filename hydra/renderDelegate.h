@@ -11,6 +11,8 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/base/tf/token.h"
+#include "pxr/base/vt/array.h"
 
 #include <atomic>
 #include <memory>
@@ -168,6 +170,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((rtTranslucentShadows, "eldr:rtTranslucentShadows"))    \
     ((dofJitter, "eldr:dofJitter")) \
     ((lightTextures, "eldr:lightTextures")) \
+    ((lightLinking, "eldr:lightLinking")) \
+    ((lightIes, "eldr:lightIes")) \
     ((domeSun, "eldr:domeSun")) \
     ((domeSunThreshold, "eldr:domeSunThreshold")) \
     ((fogGiAmbient, "eldr:fogGiAmbient")) \
@@ -187,6 +191,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((displacementGraphs, "eldr:displacementGraphs")) \
     ((splitDomeDirect, "eldr:splitDomeDirect")) \
     ((cryptomatteSoft, "eldr:cryptomatteSoft")) \
+    ((aovFilters, "eldr:aovFilters")) \
     ((directIntensity, "eldr:directIntensity")) \
     ((indirectIntensity, "eldr:indirectIntensity")) \
     ((sampledMotion, "eldr:sampledMotion")) \
@@ -197,6 +202,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((productResolution, "eldr:productResolution")) \
     ((localVolumeShadows, "eldr:localVolumeShadows")) \
     ((volumeMutualShadows, "eldr:volumeMutualShadows")) ((volumeMultipleScattering, "eldr:volumeMultipleScattering"))     ((volumeDefaultFields, "eldr:volumeDefaultFields")) \
+    ((volumeVelocityBlur, "eldr:volumeVelocityBlur")) \
     ((lightShapesVisible, "eldr:lightShapesVisible")) \
     ((domeCameraVisible, "eldr:domeCameraVisible")) \
     ((multiScatter, "eldr:multiScatter")) \
@@ -210,10 +216,15 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
     ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
-    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise")) \
+    ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))     ((effectDenoiseSamples, "eldr:effectDenoiseSamples")) ((rtShadowDenoise, "eldr:rtShadowDenoise")) ((rtReflectionDenoise, "eldr:rtReflectionDenoise")) \
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
-    ((adaptiveTiles, "eldr:adaptiveTiles"))
+    ((adaptiveTiles, "eldr:adaptiveTiles")) \
+    ((lightQuality, "eldr:lightQuality")) ((diffuseQuality, "eldr:diffuseQuality")) ((reflectQuality, "eldr:reflectQuality")) ((sssQuality, "eldr:sssQuality")) ((volumeQuality, "eldr:volumeQuality")) \
+    ((caustics, "eldr:caustics")) \
+    ((causticsPhotons, "eldr:causticsPhotons")) \
+    ((causticsRadius, "eldr:causticsRadius")) \
+    ((rtCompaction, "eldr:rtCompaction"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -232,7 +243,8 @@ TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2)
     ((baseColor, "export_basecolor"))                       \
     ((cryptoObject, "primvars:__name"))                     \
     ((cryptoMaterial, "primvars:__materialname"))           \
-    ((beautyRaw, "eldr:beautyRaw"))
+    ((beautyRaw, "eldr:beautyRaw"))                         \
+    ((caustics, "caustics"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
@@ -255,6 +267,12 @@ bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
 // gets -1 and a warning). Process-wide.
 int HdVkLightGroup(const std::string &tag);
 std::vector<std::string> HdVkLightGroups();
+// Light linking: Hydra's link categories (HdsiLightLinkingSceneIndex's ids
+// of UsdLux collection:lightLink / shadowLink) as vkr ids (Mesh::
+// linkCategories, Light::lightLink), the empty one 0. A light naming
+// (`light`) more than vkr::Scene::kMaxLinkCategories warns. Process-wide.
+uint32_t HdVkLinkCategory(TfToken const &category, bool light = false);
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
@@ -354,6 +372,10 @@ public:
     // their motion again (transforms, deformation velocities) even where
     // nothing moved since their last sync.
     bool MotionSettingsChanged() const { return _motionSettingsChanged; }
+    // The meshes re-sync for the same frame (re-dicing, a subdivision
+    // setting): the next commit keeps the last one's motion where it moves
+    // nothing itself (a re-diced mesh uploads geometry, not its motion).
+    void KeepMotion() { _keepMotion = true; }
     // What the film starts over on besides the camera and the settings:
     // every sync of geometry, instancers, materials, volumes and fields
     // (lights through the renderer's lighting hash). Not cameras: an app may
@@ -398,6 +420,7 @@ private:
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
     bool _motionSettingsChanged = false;  // since the last CommitResources
+    bool _keepMotion = false;             // KeepMotion since the last CommitResources
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.

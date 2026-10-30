@@ -35,6 +35,9 @@ layout(push_constant) uniform Params {  // as volume.frag's (VolumeParams)
     uint mapSize;    // texels per side
     uint originX;    // part 1: the tile's first texel
     uint originY;
+    uint mutual, defaultFields, octaves;
+    float octaveLight, octaveDepth;
+    int shadowLink;  // the light's shadow link bit (-1: every volume casts)
 } params;
 
 struct ShadowTile {  // as mesh.frag's
@@ -57,7 +60,8 @@ void main()
     vec4 a = inv * vec4(ndc, -1.0, 1.0), b = inv * vec4(ndc, 1.0, 1.0);
     vec3 origin = a.xyz / a.w, dir = b.xyz / b.w - origin;
     float weighted, weighted2;  // the optical depth times s, s^2
-    vec3 rgb = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, weighted, weighted2);
+    vec3 rgb = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, params.shadowLink,
+                                  weighted, weighted2);
     float tau = dot(rgb, vec3(1.0 / 3.0));
     if (max(max(rgb.x, rgb.y), rgb.z) < 1e-3 || !(tau > 0.0)) {
         discard;

@@ -1,0 +1,785 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/graphsOn"
+)
+
+# Lane 38, MaterialX coverage. Top row: compositing nodes of a left-right
+# ramp (fg, orange to blue) over a bottom-top ramp (bg, dark to light),
+# unlit: plus, minus, difference, burn, dodge, screen, overlay, over
+# (color4). Middle row: glTF PBR gold, glTF coat + sheen, glTF blend alpha,
+# Disney plastic, Disney coated metal, surface_unlit. Bottom row, Karma's
+# VEX nodes in the kma context: Ramp Const (bspline colours along u), Ramp
+# Const (monotone cubic, constant, linear along u), hex tiling of the
+# quadrants texture, Voronoi F1 (unlit), Voronoi flakes as a bump under a
+# coat.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    float horizontalAperture = 36
+    float verticalAperture = 18
+    double3 xformOp:translate = (0, 0, 20)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 2.5
+    float inputs:angle = 2
+    double3 xformOp:rotateXYZ = (-35, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.45, 0.5, 0.6)
+    float inputs:intensity = 0.6
+}
+
+class Mesh "_quad"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+    uniform token subdivisionScheme = "none"
+}
+
+def Scope "mtl"
+{
+    def Material "plus"
+    {
+        token outputs:mtlx:surface.connect = </mtl/plus/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/plus/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_plus_color3"
+            color3f inputs:fg.connect = </mtl/plus/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/plus/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "minus"
+    {
+        token outputs:mtlx:surface.connect = </mtl/minus/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/minus/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_minus_color3"
+            color3f inputs:fg.connect = </mtl/minus/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/minus/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "difference"
+    {
+        token outputs:mtlx:surface.connect = </mtl/difference/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/difference/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_difference_color3"
+            color3f inputs:fg.connect = </mtl/difference/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/difference/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "burn"
+    {
+        token outputs:mtlx:surface.connect = </mtl/burn/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/burn/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_burn_color3"
+            color3f inputs:fg.connect = </mtl/burn/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/burn/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "dodge"
+    {
+        token outputs:mtlx:surface.connect = </mtl/dodge/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/dodge/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_dodge_color3"
+            color3f inputs:fg.connect = </mtl/dodge/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/dodge/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "screen"
+    {
+        token outputs:mtlx:surface.connect = </mtl/screen/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/screen/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_screen_color3"
+            color3f inputs:fg.connect = </mtl/screen/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/screen/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "overlay"
+    {
+        token outputs:mtlx:surface.connect = </mtl/overlay/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/overlay/blend.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color3"
+            color3f inputs:valuel = (1, 0.5, 0.1)
+            color3f inputs:valuer = (0.1, 0.3, 1)
+            color3f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color3"
+            color3f inputs:valueb = (0.1, 0.1, 0.1)
+            color3f inputs:valuet = (0.9, 0.9, 0.9)
+            color3f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_overlay_color3"
+            color3f inputs:fg.connect = </mtl/overlay/fg.outputs:out>
+            color3f inputs:bg.connect = </mtl/overlay/bg.outputs:out>
+            float inputs:mix = 1
+            color3f outputs:out
+        }
+    }
+
+    def Material "over"
+    {
+        token outputs:mtlx:surface.connect = </mtl/over/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/over/rgb.outputs:out>
+            token outputs:out
+        }
+        def Shader "fg"
+        {
+            uniform token info:id = "ND_ramplr_color4"
+            color4f inputs:valuel = (1, 0.5, 0.1, 1)
+            color4f inputs:valuer = (0.1, 0.3, 1, 0)
+            color4f outputs:out
+        }
+        def Shader "bg"
+        {
+            uniform token info:id = "ND_ramptb_color4"
+            color4f inputs:valueb = (0.1, 0.1, 0.1, 1)
+            color4f inputs:valuet = (0.9, 0.9, 0.9, 1)
+            color4f outputs:out
+        }
+        def Shader "blend"
+        {
+            uniform token info:id = "ND_over_color4"
+            color4f inputs:fg.connect = </mtl/over/fg.outputs:out>
+            color4f inputs:bg.connect = </mtl/over/bg.outputs:out>
+            float inputs:mix = 1
+            color4f outputs:out
+        }
+        def Shader "rgb"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </mtl/over/blend.outputs:out>
+            color3f outputs:out
+        }
+    }
+
+    def Material "gltfGold"
+    {
+        token outputs:mtlx:surface.connect = </mtl/gltfGold/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_gltf_pbr_surfaceshader"
+            color3f inputs:base_color = (1, 0.77, 0.34)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.3
+            token outputs:out
+        }
+    }
+
+    def Material "gltfCoatSheen"
+    {
+        token outputs:mtlx:surface.connect = </mtl/gltfCoatSheen/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_gltf_pbr_surfaceshader"
+            color3f inputs:base_color = (0.1, 0.25, 0.6)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.6
+            float inputs:clearcoat = 1
+            float inputs:clearcoat_roughness = 0.05
+            color3f inputs:sheen_color = (0.8, 0.8, 0.8)
+            token outputs:out
+        }
+    }
+
+    def Material "gltfBlend"
+    {
+        token outputs:mtlx:surface.connect = </mtl/gltfBlend/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_gltf_pbr_surfaceshader"
+            color3f inputs:base_color = (0.2, 0.7, 0.2)
+            float inputs:metallic = 0
+            float inputs:roughness = 0.5
+            float inputs:alpha = 0.3
+            int inputs:alpha_mode = 2
+            token outputs:out
+        }
+    }
+
+    def Material "disneyPlastic"
+    {
+        token outputs:mtlx:surface.connect = </mtl/disneyPlastic/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_disney_principled"
+            color3f inputs:baseColor = (0.7, 0.08, 0.05)
+            float inputs:roughness = 0.35
+            float inputs:specular = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "disneyCoatMetal"
+    {
+        token outputs:mtlx:surface.connect = </mtl/disneyCoatMetal/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_disney_principled"
+            color3f inputs:baseColor = (0.9, 0.9, 0.92)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.5
+            float inputs:clearcoat = 1
+            float inputs:clearcoatGloss = 0.95
+            token outputs:out
+        }
+    }
+
+    def Material "unlit"
+    {
+        token outputs:mtlx:surface.connect = </mtl/unlit/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_surface_unlit"
+            float inputs:emission = 2
+            color3f inputs:emission_color = (1, 0.45, 0.1)
+            token outputs:out
+        }
+    }
+
+    def Material "rampconst"
+    {
+        token outputs:kma:surface.connect = </mtl/rampconst/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/rampconst/ramp.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "u"
+        {
+            uniform token info:id = "ND_extract_vector2"
+            float2 inputs:in.connect = </mtl/rampconst/uv.outputs:out>
+            int inputs:index = 0
+            float outputs:out
+        }
+        def Shader "ramp"
+        {
+            uniform token info:id = "kma_rampconst_color"
+            float inputs:t.connect = </mtl/rampconst/u.outputs:out>
+            int inputs:vramp = 5
+            float[] inputs:vkeys = [0, 0.25, 0.5, 0.75, 1]
+            color3f[] inputs:vvalues = [(0.05, 0.05, 0.3), (0.9, 0.2, 0.1), (1, 0.9, 0.2), (0.2, 0.8, 0.3), (0.9, 0.9, 0.9)]
+            token[] inputs:vbasis = ["bspline", "bspline", "bspline", "bspline", "bspline"]
+            color3f outputs:out
+        }
+    }
+
+    def Material "rampsteps"
+    {
+        token outputs:kma:surface.connect = </mtl/rampsteps/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/rampsteps/ramp.outputs:out>
+            token outputs:out
+        }
+        def Shader "uv"
+        {
+            uniform token info:id = "ND_texcoord_vector2"
+            float2 outputs:out
+        }
+        def Shader "u"
+        {
+            uniform token info:id = "ND_extract_vector2"
+            float2 inputs:in.connect = </mtl/rampsteps/uv.outputs:out>
+            int inputs:index = 0
+            float outputs:out
+        }
+        def Shader "ramp"
+        {
+            uniform token info:id = "kma_rampconst_float"
+            float inputs:t.connect = </mtl/rampsteps/u.outputs:out>
+            int inputs:framp = 3
+            float[] inputs:fkeys = [0.2, 0.5, 0.8]
+            float[] inputs:fvalues = [0, 1, 0.3]
+            token[] inputs:fbasis = ["monotonecubic", "constant", "linear"]
+            float outputs:out
+        }
+        def Shader "grey"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/rampsteps/ramp.outputs:out>
+            color3f outputs:out
+        }
+    }
+
+    def Material "hextiling"
+    {
+        token outputs:kma:surface.connect = </mtl/hextiling/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/hextiling/rgb.outputs:out>
+            token outputs:out
+        }
+        def Shader "hex"
+        {
+            uniform token info:id = "kma_color_hextiling"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            float inputs:size = 0.35
+            float inputs:contrast = 0.725
+            float4 outputs:out
+        }
+        def Shader "rgb"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </mtl/hextiling/hex.outputs:out>
+            color3f outputs:out
+        }
+    }
+
+    def Material "voronoi"
+    {
+        token outputs:kma:surface.connect = </mtl/voronoi/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:emission = 1
+            color3f inputs:emission_color.connect = </mtl/voronoi/grey.outputs:out>
+            token outputs:out
+        }
+        def Shader "v"
+        {
+            uniform token info:id = "kma_voronoinoise3d_float"
+            vector3f inputs:freq = (4, 4, 4)
+            int inputs:metric = 0
+            float outputs:distance
+        }
+        def Shader "grey"
+        {
+            uniform token info:id = "ND_convert_float_color3"
+            float inputs:in.connect = </mtl/voronoi/v.outputs:distance>
+            color3f outputs:out
+        }
+    }
+
+    def Material "flakes"
+    {
+        token outputs:kma:surface.connect = </mtl/flakes/surface.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.5, 0.02, 0.02)
+            float inputs:metalness = 0.6
+            float inputs:specular_roughness = 0.25
+            float inputs:coat = 1
+            vector3f inputs:normal.connect = </mtl/flakes/bump.outputs:out>
+            token outputs:out
+        }
+        def Shader "v"
+        {
+            uniform token info:id = "kma_voronoinoise3d_float"
+            vector3f inputs:freq = (60, 60, 60)
+            int inputs:metric = 1
+            float outputs:distance
+        }
+        def Shader "bump"
+        {
+            uniform token info:id = "ND_bump_vector3"
+            float inputs:height.connect = </mtl/flakes/v.outputs:distance>
+            float inputs:scale = 0.004
+            vector3f outputs:out
+        }
+    }
+}
+
+def Mesh "c_plus" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/plus>
+    double3 xformOp:translate = (-8.05, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_minus" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/minus>
+    double3 xformOp:translate = (-5.75, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_difference" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/difference>
+    double3 xformOp:translate = (-3.45, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_burn" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/burn>
+    double3 xformOp:translate = (-1.15, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_dodge" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/dodge>
+    double3 xformOp:translate = (1.15, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_screen" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/screen>
+    double3 xformOp:translate = (3.45, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_overlay" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/overlay>
+    double3 xformOp:translate = (5.75, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "c_over" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/over>
+    double3 xformOp:translate = (8.05, 2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_gltfGold" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/gltfGold>
+    double3 xformOp:translate = (-5.75, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_gltfCoatSheen" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/gltfCoatSheen>
+    double3 xformOp:translate = (-3.45, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_gltfBlend" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/gltfBlend>
+    double3 xformOp:translate = (-1.15, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_disneyPlastic" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/disneyPlastic>
+    double3 xformOp:translate = (1.15, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_disneyCoatMetal" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/disneyCoatMetal>
+    double3 xformOp:translate = (3.45, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "s_unlit" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/unlit>
+    double3 xformOp:translate = (5.75, 0, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "k_rampconst" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/rampconst>
+    double3 xformOp:translate = (-4.6, -2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "k_rampsteps" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/rampsteps>
+    double3 xformOp:translate = (-2.3, -2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Mesh "k_hextiling" (prepend apiSchemas = ["MaterialBindingAPI"]
+    inherits = </_quad>)
+{
+    rel material:binding = </mtl/hextiling>
+    double3 xformOp:translate = (0, -2.6, 0)
+    float3 xformOp:scale = (1, 1, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "k_voronoi" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/voronoi>
+    double3 xformOp:translate = (2.3, -2.6, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "k_flakes" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    double radius = 1
+    rel material:binding = </mtl/flakes>
+    double3 xformOp:translate = (4.6, -2.6, 0)
+    float3 xformOp:scale = (0.9, 0.9, 0.9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Scope "Render"
+{
+    def RenderSettings "graphsOn"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 640)
+    }
+
+    def RenderSettings "graphsOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 640)
+        custom bool eldr:materialGraphs = 0
+    }
+
+    def RenderSettings "proceduralsOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 640)
+        custom bool eldr:proceduralTextures = 0
+    }
+}

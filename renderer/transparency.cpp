@@ -387,8 +387,10 @@ void Transparency::EndTint(VkCommandBuffer cmd, const TintMap &map, uint32_t lay
 
 void Transparency::BeginAccumulation(VkCommandBuffer cmd)
 {
+    // After a previous resolve's reads (several per frame: Renderer's
+    // translucency between refracting meshes).
     for (const Image *img : {&_accum, &_revealage}) {
-        ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_NONE, 0,
+        ImageBarrier(cmd, img->image, Color(), VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                      VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);

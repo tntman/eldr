@@ -12,7 +12,8 @@ from .tooltips import Tooltips
 # docs/settings.md follows this order (tests/test_docs.py checks).
 GROUPS = [
     ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold denoise finalShadows rtRefraction finalGather motionBlur "
+     "finalQuality filmSamples adaptiveFinalThreshold denoise diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
+     "finalShadows rtRefraction finalGather caustics motionBlur "
      "motionBlurTimeSamples depthOfField"),
     ("Lighting and GI", True,
      "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
@@ -20,20 +21,20 @@ GROUPS = [
      "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
     ("Advanced: Geometry and products", False,
      "lod lodBias lodFade subdivision maxRefineLevel screenDicing displacement curveRibbons pointSprites "
-     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft directIntensity "
+     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft aovFilters directIntensity "
      "indirectIntensity renderProducts productResolution"),
     ("Advanced: Lighting", False,
-     "localLights clusteredLights lightTextures lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
+     "localLights clusteredLights lightTextures lightLinking lightIes lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
      "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise ssgiSteps "
+     "finalGatherRays finalGatherDenoise effectDenoiseSamples causticsPhotons causticsRadius ssgiSteps "
      "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
      "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
     ("Advanced: Shadows", False,
      "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
-     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples "
-     "rtSkinnedInstances rtDisplacement shadowJitter rtTranslucentShadows"),
+     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples rtShadowDenoise "
+     "rtSkinnedInstances rtDisplacement rtCompaction shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtHitShadows reflectionProbe probeResolution "
+     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtReflectionDenoise rtHitShadows reflectionProbe probeResolution "
      "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur planarMotionBlur"),
     ("Advanced: Materials", False,
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
@@ -46,7 +47,7 @@ GROUPS = [
      "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
      "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
      "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
-     "volumeMutualShadows volumeDefaultFields volumeMultipleScattering"),
+     "volumeMutualShadows volumeDefaultFields volumeMultipleScattering volumeVelocityBlur"),
     ("Advanced: Camera and film", False,
      "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
      "adaptivePixelFraction adaptiveMinSamples adaptiveTiles objectMotion blendShapeMotion dofJitter dofResidualBlur "
