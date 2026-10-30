@@ -5,7 +5,7 @@
 )
 
 # Dicing by screen size: loop octahedra (tests/scenes/subdivision.usda's
-# /loop) from near to far. In final quality each gets the refine level its
+# /loop) from near to far. With eldr:screenDicing each gets the refine level its
 # size on screen needs (Karma's dicing quality 0.5) instead of the host's.
 
 def Camera "cam"
@@ -83,12 +83,20 @@ def Mesh "farthestFine" (references = @../../tests/scenes/subdivision.usda@</loo
 
 def Scope "Render"
 {
-    # Screen dicing (the default in final quality).
+    # Screen dicing (on by default).
     def RenderSettings "dicing"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:finalQuality = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
         custom bool eldr:screenDicing = 1
     }
 
@@ -97,7 +105,15 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:finalQuality = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
         custom bool eldr:screenDicing = 0
     }
 }

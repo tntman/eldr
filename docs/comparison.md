@@ -25,9 +25,9 @@
 | Light linking | Yes | Yes | Partial | Unreal has lighting channels. Eldr: UsdLux light and shadow links, 32 collections, not on domes. |
 | Light functions / gobos | No | No | Yes | |
 | Light shapes visible to the camera | Yes | Yes | Yes | Eldr: `eldr:lightShapesVisible`; Karma's `renderlightgeo` hides single lights. |
-| Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample in final quality. |
+| Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample (`eldr:shadowJitter`). |
 | Virtual shadow maps | No | Yes | Yes | Eldr uses cascades and an atlas; ray-traced shadows cover final frames. |
-| Ray-traced shadows | Yes | No | Yes | Eldr: a final-quality mode (`eldr:finalShadows`) or always (`eldr:rtShadows`); sun plus 15 lights, one ray per light and film sample, exact penumbra. |
+| Ray-traced shadows | Yes | No | Yes | Eldr: `eldr:rtShadows` or `eldr:rtShadowsAuto`; sun plus up to 15 lights (`eldr:rtShadowLights`), one ray per light and film sample, exact penumbra. |
 | Ray-traced shadows through glass and volumes | Yes | No | Partial | Eldr: tinted by glass, marched through volumes (`eldr:rtTranslucentShadows`). |
 | Coloured shadows through glass | Yes | Partial | Yes | Eldr: shadow maps and ray-traced shadows alike. |
 | Volumes casting shadows | Yes | Yes | Yes | Eldr: sun and local lights. |
@@ -38,7 +38,7 @@
 
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
-| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes with relocation, plus a per-pixel final gather in final quality. EEVEE: baked irradiance volumes. Unreal: Lumen. |
+| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes with relocation, plus a per-pixel final gather (`eldr:finalGather`). EEVEE: baked irradiance volumes. Unreal: Lumen. |
 | Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask SSGI. |
 | GI at Lumen quality (surface cache, many bounces) | No | No | Yes | |
 | Every diffuse bounce by default | Yes | Partial | Partial | Eldr's GI has no bounce limit. Karma's default `karma:object:diffuselimit` is 1, so a closed room renders darker in Karma (Cornell box: Eldr 1.27x Karma's default, within 3% of Karma at 10; docs/testing.md). |
@@ -52,8 +52,8 @@
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | Order-independent transparency | Yes | No | Partial | |
-| Refraction through several layers, back faces, TIR | Yes | Partial | Yes | Screen space interactively; traced in final quality. |
-| Ray-traced refraction (off-screen content) | Yes | No | Partial | Eldr: final quality (`eldr:rtRefraction`); glass behind glass, materials evaluated at every hit. |
+| Refraction through several layers, back faces, TIR | Yes | Partial | Yes | Screen space by default; traced with `eldr:rtRefraction`. |
+| Ray-traced refraction (off-screen content) | Yes | No | Partial | Eldr: `eldr:rtRefraction`; glass behind glass, materials evaluated at every hit. |
 | Ray-traced refraction through displaced glass | Yes | No | No | Eldr: rippled water bends the rays (`eldr:rtRefractionDisplacement`). |
 | Holdouts and mattes | Yes | Yes | Yes | |
 | OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX or `kma_volume` materials, coloured extinction. Not Karma's Pyro Shader graph. |
@@ -73,7 +73,7 @@
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
 | Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
-| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels per mesh, from the host, the mesh, or in final quality its size on screen (Karma's dicing quality); no per-face adaptive dicing. |
+| Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels per mesh, from the host, the mesh, or its size on screen (`eldr:screenDicing`) (Karma's dicing quality); no per-face adaptive dicing. |
 | Per-object ray visibility (camera, shadow, reflections) | Partial | Yes | Yes | Eldr: Karma's render visibility; reflections and GI only when ray traced, screen-space effects see what the camera sees. |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
 | Virtual geometry (Nanite-style) | No | No | Yes | *(interactive)* |

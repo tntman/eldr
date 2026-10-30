@@ -6,6 +6,8 @@ Run: usdenv.cmd python tests\\test_denoise.py"""
 import os
 import sys
 
+from final_settings import FINAL
+
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
@@ -39,8 +41,8 @@ def Render(samples, denoise, aov="color"):
     """Pixels (r, g, b floats) of a converged final film, and the render stats."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"eldr:finalQuality": True, "eldr:filmSamples": samples, "eldr:denoise": denoise, "eldr:gi": True, "eldr:filmFilterRadius": 0.0,
-                       "eldr:finalGather": 1}.items():
+    for key, value in {**FINAL, "eldr:filmSamples": samples, "eldr:denoise": denoise, "eldr:gi": True, "eldr:filmFilterRadius": 0.0,
+                       "eldr:finalGather": True}.items():
         engine.SetRendererSetting(key, value)
     engine.SetRendererAov(aov)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))

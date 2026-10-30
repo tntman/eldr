@@ -48,7 +48,7 @@ SECTIONS = [
          "How often a subdivision surface (subdivisionScheme not none) is refined, instead of the viewport's "
          "Level of Detail or husk's complexity. At most the Subdivision Max Level render setting.", None),
         ("primvars:eldr:object:dicingquality", "Dicing Quality", "float", 0.5,
-         "With Dicing by Screen Size in final quality (husk): about this squared polygons per pixel; the mesh "
+         "With Dicing by Screen Size (eldr:screenDicing, on by default): about this squared polygons per pixel; the mesh "
          "gets the level its nearest face needs. Eldr's setting wins over Karma's "
          "primvars:karma:object:dicingquality.", None),
         ("primvars:eldr:object:dicingdepthmin", "Dicing Minimum Depth", "int", -1,

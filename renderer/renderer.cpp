@@ -2992,8 +2992,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const Scene::Gpu &gpu = scene.GetGpu();
     // Upscaling (TAAU, Frame::renderScale): while TAA resolves, the scene
     // renders smaller and TAA reconstructs the frame's size. Not for the
-    // film (its next frame would start it: full size from then on), final
-    // quality, nor the passes that are full size only. The depth and ids
+    // film (its next frame would start it: full size from then on),
+    // filmRestart, nor the passes that are full size only. The depth and ids
     // reach the frame's size by blits, if the formats allow them.
     if (_upscaleBlit < 0) {
         _upscaleBlit = 1;
@@ -3012,7 +3012,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // frame's size).
     const float renderScale = moving ? std::min(frame.renderScale, frame.movingRenderScale) : frame.renderScale;
     const bool upscale = renderScale < 1.0f && _upscaleBlit == 1 && frame.postProcess && frame.taa &&
-                         _taaValid && !frame.finalQuality &&
+                         _taaValid && !frame.filmRestart &&
                          (moving || !frame.filmAccumulation ||
                           (_filmSamples == 0 && _stillFrames + 1 < kFilmStillFrames)) &&
                          !(frame.lensDistortion && frame.distortion.Active()) &&
@@ -3146,8 +3146,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool cameraOnly = !fresh && cameraMoved && !gpu.moved && filmKey == _filmKey;
     _filmKey = filmKey;
     _stillFrames = changed ? 0 : _stillFrames + 1;
-    // Final without finalQuality: only a run from the renderer's very first frame.
-    _freshRun = (fresh && !_hasLastFrame && frame.firstFrameFinal) || (_freshRun && !changed);
     if (fresh || changed) {
         _accumStart = std::chrono::steady_clock::now();
         _accumDone = false;
@@ -3165,20 +3163,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool shutterOn =
         nestedShutter || (frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0);
     const bool film = taa && frame.filmAccumulation && (!motionBlur || shutterOn) && !giSettling &&
-                      (fresh || frame.finalQuality || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
+                      (fresh || frame.filmRestart || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
     const uint32_t filmMode = !film                            ? 0
                               : fresh                          ? 1
-                              : changed || _filmSamples == 0 ? (frame.finalQuality || _freshRun ? 1 : 2)
+                              : changed || _filmSamples == 0 ? (frame.filmRestart ? 1 : 2)
                                                                : 0;
     _filmSamples = !film ? 0 : filmMode != 0 ? 1 : _filmSamples + 1;
-    // A run is final if it started so: finalQuality, or the first frame's
-    // fresh run. One that started from the TAA image (2), or from a later
-    // fresh history (filmMode 1 without either), stays interactive.
-    _filmFinal = film && (filmMode != 0 ? (frame.finalQuality || _freshRun) : _filmFinal);
     _filmRuns += filmMode != 0 ? 1 : 0;
-    // eldr:rtReflections: 2 always, 1 in final quality.
-    const bool tracedReflections = frame.rtReflections >= 2 || (frame.rtReflections == 1 && film && _filmFinal);
+    const bool tracedReflections = frame.rtReflections;
     float filmOffset[2] = {0, 0};  // the samples' offset from their pixel centres
     // The sample dimensions' sample: the film's, free running; while TAA
     // resolves (the camera or the scene moves) a loop of the first
@@ -3251,9 +3244,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // samples render the whole frame anyway, so only the film's early
     // end is lost, which moving pixels prevent in most frames.
     const float adaptiveThreshold = timeSample                      ? 0.0f
-                                  : frame.adaptiveThreshold > 0.0f ? frame.adaptiveThreshold
-                                  : _filmFinal                      ? std::max(frame.adaptiveFinalThreshold, 0.0f)
-                                                                    : 0.0f;
+                                  : std::max(frame.adaptiveThreshold, 0.0f);
     _filmAdaptive = film && adaptiveThreshold > 0.0f;
     // Denoising (and the raw beauty AOV): a film, once converged
     // (_WaitInFlight), is denoised before the next frame records, and that
@@ -3400,10 +3391,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     RayTracing::Work rt;
     const bool rtScene = _rt && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
                          gpu.instanceCapacity <= kMaxRtInstances - kMaxRtSkinned;
-    // Final quality (Frame::finalShadows) may trace them without rtShadows,
-    // one ray per light and film sample, and up to kMaxRtShadowLights.
-    // Auto traces when the maps would cost more: a final sample redraws every
-    // shadow view (jittered light shapes) over the scene's triangles, while
+    // Frame::rtShadowsAuto traces them without rtShadows when the maps
+    // would cost more: a jittered film sample redraws every shadow view (jittered light shapes) over the scene's triangles, while
     // tracing costs a ray per pixel and shadowed light. So: at least
     // kAutoTriangles triangles per pixel and shadowed light (960 x 540, 64
     // samples: City 94 per pixel, 5 lights, traced 2.2 against maps 4.5 s of
@@ -3413,8 +3402,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // ponytail: triangles before culling stand in for what each shadow view
     // draws; a measured per-frame cost would place the switch better.
     constexpr double kAutoTriangles = 2.0;
-    const bool finalRun = film && _filmFinal;
-    using FinalShadows = Frame::FinalShadows;
     auto autoTraced = [&] {
         const size_t local = frame.localShadows && frame.localLights ? gpu.shadowCasters.size() : 0;
         const size_t lights = std::min<size_t>(local + (gpu.shadowLight != kNone ? 1 : 0), kMaxRtShadowLights);
@@ -3423,17 +3410,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                scene.LargestSkinned(frame.cameraPos, skinCap + 1).size() <= skinCap;
     };
     const bool tracedShadows =
-        frame.rtShadows ||
-        (finalRun && (frame.finalShadows == FinalShadows::Raytraced ||
-                      (frame.finalShadows == FinalShadows::Auto && autoTraced())));
+        frame.rtShadows || (frame.rtShadowsAuto && autoTraced());
     rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
     rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
-    // Traced refraction: in final quality (or always), for scenes with
-    // refracting meshes.
+    // Traced refraction, for scenes with refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
-                    (frame.rtRefraction >= 2 || (frame.rtRefraction == 1 && film && _filmFinal));
+                    frame.rtRefraction;
     rt.refractionBounces = frame.rtRefractionBounces;
-    rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
+    rt.hitShadows = frame.rtHitShadows;
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
     rt.refractionClip = frame.rtRefractionClip;
     // Rays per sample times the quality multipliers (SampleRays; 0: the
@@ -3444,7 +3428,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // eldr:movingShadowRays: fewer while moving (TAA smooths them).
     const bool fewerShadowRays = moving && !film && frame.movingShadowRays > 0 &&
                                  frame.movingShadowRays < frame.rtShadowSamples;
-    const uint32_t shadowRays = finalRun ? 1 : fewerShadowRays ? frame.movingShadowRays : frame.rtShadowSamples;
+    const uint32_t shadowRays = fewerShadowRays ? frame.movingShadowRays : frame.rtShadowSamples;
     rt.shadowSamples = SampleRays(double(shadowRays) * frame.lightQuality, spread, sobolIndex, 16, &shadowFirst);
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
@@ -3470,9 +3454,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giPause = frame.movingGiPause && cameraOnly && !film && _rt && _rt->Converged();
     _stats.reduced = (rtScene && frame.depthPrepass && tracedShadows && fewerShadowRays) || (rt.gi && rt.giPause);
     rt.giRelocation = frame.giRelocation;
-    // Final gather: in final quality (or always), on top of the probes.
-    rt.gather = rt.gi && frame.depthPrepass &&
-                (frame.finalGather >= 2 || (frame.finalGather == 1 && film && _filmFinal));
+    // Final gather, on top of the probes.
+    rt.gather = rt.gi && frame.depthPrepass && frame.finalGather;
     rt.gatherDistance = frame.finalGatherDistance;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
@@ -3504,12 +3487,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.lightSampling = !frame.rtLightSampling ? 0 : film && _filmSamples > 1 ? 2 : 1;
     rt.gatherShare = frame.finalGatherRoulette && film && _filmSamples > 1 ? 0.5f : 1.0f;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
-    // Caustics: in final quality (or always), with casters and lights that
+    // Caustics, with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):
     // film sample i gathers within r_i, r_(i+1)^2 = r_i^2 (i + a) / (i + 1),
     // a = 2/3; the film's average of the samples converges.
     rt.caustics = rtScene && gpu.causticMin[0] <= gpu.causticMax[0] && !gpu.causticLights.empty() &&
-                  (frame.caustics >= 2 || (frame.caustics == 1 && film && _filmFinal));
+                  frame.caustics;
     if (rt.caustics) {
         rt.causticPhotons = frame.causticsPhotons;
         rt.causticLights = gpu.causticLights;
@@ -3534,7 +3517,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     // Jittered light shapes (film samples only): this sample's point on
     // every shape, the sun's direction within its disc.
-    const bool shapeJitter = film && _filmFinal && frame.shadowJitter && frame.softShadows;
+    const bool shapeJitter = film && frame.shadowJitter && frame.softShadows;
     float shapeSample[3];
     ScrambledSobol(sobolIndex, kSeedLightShape, shapeSample, 3);
     float toSun[3];
@@ -3587,7 +3570,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     const std::vector<ShadowTile> shadowTiles =
         _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun,
-                          rt.shadows ? (finalRun ? kMaxRtShadowLights : 4) - rtSun : 0, cascadeUsers,
+                          rt.shadows ? std::clamp(frame.rtShadowLights, 1u, kMaxRtShadowLights) - rtSun : 0, cascadeUsers,
                           shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
@@ -4955,7 +4938,6 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
     _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
     _stats.film = film;
-    _stats.filmFinal = film && _filmFinal;
     if (defer) {
         _deferredOutputs = true;
     } else {
@@ -5093,7 +5075,7 @@ void Renderer::_WaitInFlight()
                                         float(_width) * float(_height)) {
         _taaConverged = true;
     }
-    // A converged final film to denoise: the next frame does (Render).
+    // A converged film to denoise: the next frame does (Render).
     if (_denoiseRun && _denoiseState == 0 && IsConverged()) {
         _denoiseState = 1;
     }

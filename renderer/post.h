@@ -11,7 +11,7 @@ namespace vkr {
 class PostProcess {
 public:
     struct Settings {
-        bool autoExposure = true;
+        bool autoExposure = false;  // off: a fixed exposure, as Karma (lane 65)
         float exposureCompensation = 0.0f;  // EV, also the fixed exposure without auto
         float bloomIntensity = 0.04f;       // 0 disables bloom
         // AgX tonemapping: the curve from scene to display (shaders/tonemap.frag).

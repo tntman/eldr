@@ -7,8 +7,8 @@
 # Texture compression A/B: two quads show their texture as emission (no
 # lights), so pixels are texels. Left: detail.png, sRGB colour (BC7).
 # Right: rings.png, raw gray (BC4). /Render/compressed sets
-# eldr:textureCompression 2 (always: the default 1 compresses only
-# interactively, so finals are exact); /Render/exact sets 0.
+# eldr:textureCompression on (off by default: exact, as Karma);
+# /Render/exact sets it off.
 
 def Scope "Render"
 {
@@ -17,7 +17,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (1024, 512)
         custom bool eldr:postProcess = 0
-        custom int eldr:textureCompression = 2
+        custom bool eldr:textureCompression = 1
     }
 
     def RenderSettings "exact"
@@ -25,7 +25,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (1024, 512)
         custom bool eldr:postProcess = 0
-        custom int eldr:textureCompression = 0
+        custom bool eldr:textureCompression = 0
     }
 }
 

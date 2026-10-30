@@ -33,6 +33,7 @@ viewProj = frustum.ComputeViewMatrix() * frustum.ComputeProjectionMatrix()
 
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+engine.SetRendererSetting("eldr:screenDicing", False)  # the display style's levels (on by default)
 engine.SetRendererSetting("eldr:postProcess", False)
 # The scene's dome is an HDRI with a sun; extracted (the default) it adds a
 # white light the tint checks below weren't made for.

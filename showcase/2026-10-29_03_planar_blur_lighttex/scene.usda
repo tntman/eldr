@@ -33,7 +33,7 @@ def Scope "Render"
         int2 resolution = (480, 270)
         custom bool eldr:planarReflections = 1
         custom float eldr:planarBlur = 0
-        custom int eldr:rtReflections = 0
+        custom bool eldr:rtReflections = 0
     }
     def RenderSettings "blurred"
     {
@@ -41,6 +41,6 @@ def Scope "Render"
         int2 resolution = (480, 270)
         custom bool eldr:planarReflections = 1
         custom float eldr:planarBlur = 1
-        custom int eldr:rtReflections = 0
+        custom bool eldr:rtReflections = 0
     }
 }

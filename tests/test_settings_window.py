@@ -38,7 +38,7 @@ listed = [k for _, _, keys in GROUPS for k in keys.split()]
 expect(len(listed) == len(set(listed)), "no setting in two groups")
 
 expect(set("eldr:" + k for k in listed) == set(str(s.key) for s in settings), "GROUPS lists exactly the renderer's keys")
-expect([t for t, o, _ in GROUPS if o] == ["Final render", "Lighting and GI", "Image"] and not GROUPS[-1][1] and GROUPS[-1][0] == "Performance and debug",
+expect([t for t, o, _ in GROUPS if o] == ["Film and sampling", "Lighting and GI", "Image"] and not GROUPS[-1][1] and GROUPS[-1][0] == "Performance and debug",
        "three open groups first, performance and debug folded last")
 
 window = _SettingsWindow(SimpleNamespace(qMainWindow=None), engine)
@@ -48,7 +48,7 @@ expect(len(rows) == len(settings), "a row per setting")
 expect(all(window._tips.get(k) and r[1].toolTip() == window._tips[k] and r[2].toolTip() == window._tips[k]
            for k, r in rows.items()), "every setting has a tooltip")
 boxes = {b.title(): b for _, _, _, b in window._rows}
-expect(boxes["Final render"].isChecked()
+expect(boxes["Film and sampling"].isChecked()
        and not boxes["Advanced: Shadows"].isChecked() and boxes["Advanced: Shadows"]._body.isHidden(),
        "open groups open, advanced folded")
 _, label, box = rows["eldr:ssr"]

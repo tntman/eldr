@@ -16,7 +16,7 @@ rendered once, kept outside the repo, and Eldr is compared against them automati
    Karma takes about 2.5 min for all ten scenes (emissive gets 2048 samples, as its small emitters
    are noisy at 256).
 2. `ctest -R karma_golden` (label `slow`, about 1 min) renders the same scenes with Eldr (exr_record.py:
-   final quality with GI (`eldr:gi`), linear colour: no tonemap, bloom or auto exposure;
+   `tests/scenes/final_settings.usda`'s settings (what final quality was) with GI (`eldr:gi`), linear colour: no tonemap, bloom or auto exposure;
    `eldr:domeCameraVisible` off, because Karma doesn't show domes to the camera by default) and prints
    per scene, Eldr / Karma:
 

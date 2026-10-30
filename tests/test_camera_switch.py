@@ -115,7 +115,7 @@ def run(switch, motionBlur=True, sampled=True):
     place(0 if switch else PAN)
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"houdini:viewport": True, "eldr:autoExposure": False,
+    for key, value in {"houdini:viewport": True, "eldr:autoExposure": False, "eldr:screenDicing": False,
                        "eldr:motionBlur": motionBlur, "eldr:sampledMotion": sampled}.items():
         engine.SetRendererSetting(key, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))

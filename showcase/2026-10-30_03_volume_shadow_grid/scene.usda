@@ -43,14 +43,30 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 704)
-        custom bool eldr:finalQuality = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
     }
 
     def RenderSettings "exact"
     {
         rel camera = </cam>
         int2 resolution = (960, 704)
-        custom bool eldr:finalQuality = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
         custom int eldr:volumeShadowGrid = 0
     }
 
@@ -58,7 +74,15 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 704)
-        custom bool eldr:finalQuality = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
         custom int eldr:volumeShadowGrid = 32
     }
 }

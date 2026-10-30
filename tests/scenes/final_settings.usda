@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    doc = """A final-render settings prim: the eldr: settings that eldr:finalQuality,
+husk or usdrecord turned on by themselves before lane 65 (Eldr has no quality
+mode since: a final render is a render settings prim that sets them). The
+tests use it to render as before. Reference it:
+    def RenderSettings "final" (references = @<path>/final_settings.usda@</Render/final>)
+A production final also ticks eldr:gi, eldr:rtShadows, eldr:denoise and more
+eldr:filmSamples (docs/settings.md, "Final render")."""
+)
+
+def Scope "Render"
+{
+    def RenderSettings "final"
+    {
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+    }
+}

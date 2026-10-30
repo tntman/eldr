@@ -6,6 +6,8 @@ Run: usdenv.cmd python tests\\test_light_sampling.py <exrinfo>"""
 import os
 import subprocess
 import sys
+
+from final_settings import FINAL_ARGS
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,8 +63,8 @@ def render(on):
     if os.path.exists(exr):
         os.remove(exr)
     subprocess.run([sys.executable, os.path.join(HERE, "exr_record.py"), scene, "/Render", "/cam",
-                    "eldr:finalQuality=true", "eldr:filmSamples=128", "eldr:autoExposure=false",
-                    "eldr:adaptiveFinalThreshold=0.0", "eldr:rtShadows=1", "eldr:gi=true", "eldr:finalGather=1",
+                    *FINAL_ARGS, "eldr:filmSamples=128", "eldr:autoExposure=false",
+                    "eldr:rtShadows=1", "eldr:gi=true", "eldr:finalGather=true",
                     "eldr:rtLightSampling=%s" % on, "eldr:finalGatherRoulette=%s" % on],
                    check=True, timeout=900, env=dict(os.environ, EXR_SIZE=str(SIZE)))
     out = subprocess.run([exrinfo, exr, "--grid", "2", "2"], capture_output=True, text=True,

@@ -7,6 +7,8 @@ Run: usdenv.cmd python tests\\test_caustics.py <exrinfo>"""
 import os
 import subprocess
 import sys
+
+from final_settings import FINAL_ARGS
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,8 +46,8 @@ def render(caustics, *extra):
     if os.path.exists(exr):
         os.remove(exr)
     subprocess.run([sys.executable, os.path.join(HERE, "exr_record.py"), scene, "/Render", "/cam",
-                    "eldr:finalQuality=true", "eldr:filmSamples=16", "eldr:autoExposure=false",
-                    "eldr:caustics=%d" % caustics, *extra], check=True, timeout=600, env=dict(os.environ, EXR_SIZE=str(SIZE)))
+                    *FINAL_ARGS, "eldr:filmSamples=16", "eldr:autoExposure=false",
+                    "eldr:caustics=%s" % ("true" if caustics else "false"), *extra], check=True, timeout=600, env=dict(os.environ, EXR_SIZE=str(SIZE)))
     out = subprocess.run([exrinfo, exr, "--grid", str(CELLS), str(CELLS)], capture_output=True, text=True,
                          check=True, timeout=120).stdout.splitlines()
     chans = [l.split()[1] for l in out if l.startswith("channel ")]

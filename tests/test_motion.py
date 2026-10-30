@@ -16,6 +16,8 @@ Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
 import sys
+
+from final_settings import FINAL
 import tempfile
 
 import exr_info
@@ -133,7 +135,7 @@ def render(times, settings, toggles=()):
 
 # Time 1 converges over the film's samples; time 2 (the cube moved: the post
 # motion blur, final at once) must be in the product, not time 1's image.
-render([1, 2], {"eldr:finalQuality": True, "eldr:motionBlurTimeSamples": False})
+render([1, 2], {**FINAL, "eldr:motionBlurTimeSamples": False})
 then = int(SIZE / 2 - PIXELS_PER_UNIT)  # the cube's centre at time 1
 expect(red(32, 32) > 0.1 and red(then, 32) < 0.02,
        "the product shows time 2 (cube at the centre: %.3f, where it was at 1: %.3f)" % (red(32, 32), red(then, 32)))
@@ -162,16 +164,16 @@ expect(blurred >= 12, "a single usdrecord frame is motion blurred (%d edge pixel
 render([2], {"eldr:sampledMotion": False})
 sharp = ramp(32)
 expect(sharp <= 4, "eldr:sampledMotion off: the first frame is sharp (%d edge pixels)" % sharp)
-render([2], {"eldr:finalQuality": True})
+render([2], FINAL)
 blurred = ramp(32)
 expect(blurred >= 12, "a final frame through the engine is motion blurred (%d edge pixels)" % blurred)
 # A blur setting off and on again, the time unchanged: it blurs again at once.
 for key in ("eldr:motionBlur", "eldr:motionBlurTimeSamples", "eldr:sampledMotion"):
-    render([2], {"eldr:finalQuality": True}, [{key: False}, {key: True}])
+    render([2], FINAL, [{key: False}, {key: True}])
     blurred = ramp(32)
     expect(blurred >= 12, "%s off and on again: the cube blurs again (%d edge pixels)" % (key, blurred))
 UsdGeom.PrimvarsAPI(cube).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
-render([2], {"eldr:finalQuality": True})
+render([2], FINAL)
 sharp = ramp(32)
 expect(sharp <= 4, "primvars:karma:object:mblur off: the moving cube is sharp (%d edge pixels)" % sharp)
 
@@ -195,19 +197,19 @@ run(["usdrecord", "--renderer", "Eldr", "--camera", "/cam", "--renderSettingsPri
                shell=True)
 blurred = ramp(32)
 expect(blurred >= 12, "a single usdrecord frame of moving points is blurred (%d edge pixels)" % blurred)
-render([2], {"eldr:deformationBlur": False, "eldr:finalQuality": True})
+render([2], {**FINAL, "eldr:deformationBlur": False})
 sharp = ramp(32)
 expect(sharp <= 4, "eldr:deformationBlur off: moving points stay sharp (%d edge pixels)" % sharp)
 print("deformation blur: %d edge pixels on, %d off" % (blurred, sharp))
-render([2], {"eldr:finalQuality": True})
+render([2], FINAL)
 blurred = ramp(32)
 expect(blurred >= 12, "a final frame of moving points through the engine is blurred (%d edge pixels)" % blurred)
 for key in ("eldr:deformationBlur", "eldr:motionBlur"):
-    render([2], {"eldr:finalQuality": True}, [{key: False}, {key: True}])
+    render([2], FINAL, [{key: False}, {key: True}])
     blurred = ramp(32)
     expect(blurred >= 12, "%s off and on again: moving points blur again (%d edge pixels)" % (key, blurred))
 UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("karma:object:mblur", Sdf.ValueTypeNames.Bool).Set(False)
-render([2], {"eldr:finalQuality": True})
+render([2], FINAL)
 sharp = ramp(32)
 expect(sharp <= 4, "primvars:karma:object:mblur off: moving points stay sharp (%d edge pixels)" % sharp)
 
@@ -236,7 +238,7 @@ def velocityBlur(karma=None, eldr=None, instance=False):
             stillPrimvars.RemovePrimvar(name)
         else:
             stillPrimvars.CreatePrimvar(name, Sdf.ValueTypeNames.Int).Set(value)
-    render([2], {"eldr:finalQuality": True})
+    render([2], FINAL)
     return ramp(32)
 
 
@@ -254,7 +256,7 @@ ball.CreateFaceVertexIndicesAttr(mesh.GetFaceVertexIndicesAttr().Get())
 ball.CreatePointsAttr([p * 0.6 + Gf.Vec3f(0, 1.2, 0) for p in corners])  # above the rows measured
 ball.CreateDisplayColorAttr([Gf.Vec3f(1, 1, 1)])
 velocityBlur(karma=1)
-render([2], {"eldr:finalQuality": True}, [{"eldr:subdivision": False}])
+render([2], FINAL, [{"eldr:subdivision": False}])
 edges = ramp(32)
 expect(edges >= 12, "velocities blur after a subdivision setting re-dices another mesh (%d edge pixels)" % edges)
 ball.GetPrim().SetActive(False)
@@ -319,7 +321,7 @@ pbr.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.0)
 chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
 UsdShade.MaterialBindingAPI.Apply(floor.GetPrim()).Bind(chrome)
 stage.GetRootLayer().Save()
-REFLECTIONS = {"eldr:finalQuality": True, "eldr:ssr": False, "eldr:rtReflections": 0,
+REFLECTIONS = {**FINAL, "eldr:ssr": False, "eldr:rtReflections": False,
                "eldr:planarReflections": True}  # the default planarScale: a 32-pixel mirror render
 # The cube's reflection covers rows 53-63, the cube itself 27-46.
 row = SIZE - 6
@@ -335,7 +337,7 @@ print("reflections: row %d, %d edge pixels at time samples, %d at the frame's ti
 expect(mirrored >= 8 and mirrored >= 0.6 * direct,
        "the planar reflection blurs as the cube does (%d edge pixels, the cube %d)" % (mirrored, direct))
 expect(frozen <= 5, "eldr:planarMotionBlur off: the reflection is sharp (%d edge pixels)" % frozen)
-render([2], {**REFLECTIONS, "eldr:planarReflections": False, "eldr:rtReflections": 2})
+render([2], {**REFLECTIONS, "eldr:planarReflections": False, "eldr:rtReflections": True})
 traced = ramp(row)
 expect(traced >= 8, "traced reflections blur by the sample's TLAS (%d edge pixels)" % traced)
 

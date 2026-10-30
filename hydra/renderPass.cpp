@@ -418,16 +418,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 continue;
             }
             applied = value;
-            // eldr:textureCompression: a bool means 0 or 2 (a cast would make true 1).
-            const VtValue typed = token == HdVkRenderSettingsTokens->textureCompression && value.IsHolding<bool>()
-                                      ? VtValue(value.UncheckedGet<bool>() ? 2 : 0)
-                                      : VtValue::CastToTypeOf(value, current);
+            // The former 0 / 1 / 2 modes: on at 2 only (HdVkLegacyMode).
+            const VtValue typed = HdVkLegacyMode(token) ? VtValue(HdVkOnOff(value, false))
+                                                        : VtValue::CastToTypeOf(value, current);
             if (!typed.IsEmpty()) {
                 delegate->SetRenderSetting(token, typed);
                 // These re-sync the meshes (SetRenderSetting): wait for that.
                 const auto &ts = *HdVkRenderSettingsTokens;
                 resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
-                                                         token == ts.finalQuality ||
                                                          token == HdVkRenderSettingsTokens->screenDicing ||
                                                          token == HdVkRenderSettingsTokens->textureCompression));
             }
@@ -472,7 +470,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeShadows, &frame.volume.shadows},
                                 {t.displacement, &frame.displacement},
                                 {t.lod, &frame.lod}, {t.filmAccumulation, &frame.filmAccumulation},
-                                {t.finalQuality, &frame.finalQuality},
+                                {t2.filmRestart, &frame.filmRestart}, {t2.rtShadowsAuto, &frame.rtShadowsAuto},
                                 {t.sampleDimensions, &frame.sampleDimensions},
                                 {t.giPreconverge, &frame.giPreconverge}, {t.fogFilmJitter, &frame.fogFilmJitter},
                                 {t.pipelineCache, &frame.pipelineCache},
@@ -624,7 +622,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.filmFilterRadius, &frame.filmFilterRadius}, {t2.renderScale, &frame.renderScale},
                                 {t2.movingRenderScale, &frame.movingRenderScale},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
-                                {t2.adaptiveFinalThreshold, &frame.adaptiveFinalThreshold},
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
                                 {t2.directIntensity, &frame.directIntensity},
                                 {t2.indirectIntensity, &frame.indirectIntensity},
@@ -661,6 +658,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.softShadowSamples, &frame.softShadowSamples}, {t.aoSlices, &frame.aoSlices},
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
+                                {t2.rtShadowLights, &frame.rtShadowLights},
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
                                 {t.giProbes, &frame.giProbes}, {t.giRaysPerProbe, &frame.giRays},
                                 {t.ssgiSteps, &frame.ssgiSteps}, {t.ssgiResolution, &frame.ssgiResolution},
@@ -746,33 +744,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         frame.volume.shadowSteps =
             uint32_t(std::clamp(std::lround(frame.volume.shadowSteps * quality(t2.volumeQuality, karmaVolume)), 1l, 256l));
     }
-    // 0 allowed: off. Reflections: a bool (older scenes) is 0 or 2.
-    {
-        const VtValue v = delegate->GetRenderSetting(t.rtReflections);
-        frame.rtReflections = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2u : 0u)
-                                                  : uint32_t(std::clamp(delegate->GetRenderSetting<int>(t.rtReflections, int(frame.rtReflections)), 0, 2));
+    // Bools; an int of the former modes (older scenes, husk) is on at 2 only.
+    for (auto [token, value] : {std::pair{t.rtReflections, &frame.rtReflections}, {t2.rtRefraction, &frame.rtRefraction},
+                                {t2.rtHitShadows, &frame.rtHitShadows}, {t2.finalGather, &frame.finalGather},
+                                {t2.caustics, &frame.caustics}}) {
+        *value = HdVkOnOff(delegate->GetRenderSetting(token), *value);
     }
-    frame.rtRefraction =
-        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtRefraction, int(frame.rtRefraction)), 0, 2));
-    frame.rtHitShadows =
-        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtHitShadows, int(frame.rtHitShadows)), 0, 2));
-    frame.finalGather =
-        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGather, int(frame.finalGather)), 0, 2));
     frame.finalGatherRays =
         uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.finalGatherRays, int(frame.finalGatherRays)), 1, 16));
     frame.effectDenoiseSamples = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.effectDenoiseSamples, int(frame.effectDenoiseSamples)), 0, 65536));
-    frame.caustics = uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.caustics, int(frame.caustics)), 0, 2));
     frame.causticsPhotons = uint32_t(
         std::clamp(delegate->GetRenderSetting<int>(t2.causticsPhotons, int(frame.causticsPhotons)), 1024, 1 << 22));
     // 0 allowed: no skinned instance blocks rays.
     frame.rtSkinnedInstances =
         uint32_t(std::max(delegate->GetRenderSetting<int>(t.rtSkinnedInstances, int(frame.rtSkinnedInstances)), 0));
-    using FinalShadows = vkr::Renderer::Frame::FinalShadows;
-    const std::string finalShadows = delegate->GetRenderSetting<std::string>(t2.finalShadows, "maps");
-    frame.finalShadows = finalShadows == "raytraced" ? FinalShadows::Raytraced
-                       : finalShadows == "auto"      ? FinalShadows::Auto
-                                                     : FinalShadows::Maps;
     using Tonemapper = vkr::PostProcess::Settings::Tonemapper;
     const std::string tonemapper = delegate->GetRenderSetting<std::string>(t.tonemapper, "aces");
     frame.post.tonemapper = tonemapper == "agx"       ? Tonemapper::Agx
@@ -830,17 +816,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     std::copy(viewProjF.data(), viewProjF.data() + 16, frame.viewProj);
     std::copy(invViewProjF.data(), invViewProjF.data() + 16, frame.invViewProj);
 
-    // Final quality: asked for, or an offline renderer's convention (husk,
-    // hdPrman, usdrecord: enableInteractive false). A host's
-    // first frame has no history, so its film starts with the first sample.
-    frame.firstFrameFinal = !houdiniViewport;
+    // Offline (husk, usdrecord: HdVkRenderDelegate::Offline) changes only
+    // how fast the image comes, never the image: prewarm, batching,
+    // readback, waits (lane 65: no automatic final quality).
     const bool offline = static_cast<HdVkRenderDelegate *>(delegate)->Offline();
-    frame.finalQuality = frame.finalQuality || offline;
     // Nobody toggles a feature in a batch render: no prewarm (its compiles
     // only made the teardown wait, seconds).
     frame.pipelinePrewarm = frame.pipelinePrewarm && !offline;
-    // An offline frame's exposure is deterministic (like Karma's: none)
-    // unless the render settings prim asks for eldr:autoExposure.
     // Houdini's viewport colour-corrects every delegate's colour itself (its
     // OCIO view, gamma, LUT): with eldr:productLinear it gets the EXR's
     // linear beauty, as from Karma, not Eldr's tonemap, bloom or auto exposure.
@@ -849,7 +831,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         frame.post.tonemapper = Tonemapper::None;
         frame.post.bloomIntensity = 0.0f;
     }
-    if ((offline || hostLinear) && !_appliedSettings.count(t.autoExposure)) {
+    if (hostLinear && !_appliedSettings.count(t.autoExposure)) {
         frame.post.autoExposure = false;
     }
     // Bloom mixes the blurred image in: 0-1 (past 1 it extrapolates to dark rings).
@@ -901,7 +883,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // eldr:screenDicing: subdivision surfaces refine for this view. Offline
     // they re-dice whenever it changed and this frame waits for them (not
     // converged, nothing rendered: husk comes back after the sync); an
-    // interactive final-quality frame keeps its levels while the camera
+    // interactive frame keeps its levels while the camera
     // moves and re-dices once it stands still. The same wait for a
     // subdivision setting the settings prim just changed.
     _redicing = resync;
@@ -987,7 +969,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // camera change. Detached: the renderer's memory they were mapped in
     // (eldr:inPlaceReadback) will hold other outputs.
     const bool staleIds =
-        frame.staleMovingIds && houdiniViewport && moving && !frame.finalQuality && !productSized;
+        frame.staleMovingIds && houdiniViewport && moving && !frame.filmRestart && !productSized;
     for (int i = 0; i < 4; ++i) {
         if (staleIds && i >= 2 && buffers[i]) {
             buffers[i]->Detach();
@@ -1025,8 +1007,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         if (++frames % 60 == 0) {
             const double n = projection[3][2] / (projection[2][2] - 1.0), f = projection[3][2] / (projection[2][2] + 1.0);
             std::fprintf(stderr, "Eldr last 60 frames: camera moved %d, scene or settings changed %d; near %g far %g, "
-                         "%ux%u, final %d, product framing %d, depth cleared to %g\n", moved, edited, n, f, frame.width,
-                         frame.height, int(frame.finalQuality), int(productSized), clearDepth);
+                         "%ux%u, offline %d, product framing %d, depth cleared to %g\n", moved, edited, n, f, frame.width,
+                         frame.height, int(offline), int(productSized), clearDepth);
             std::fflush(stderr);
             moved = edited = 0;
         }
@@ -1037,7 +1019,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const bool skipUnread = moving || (frame.lazyExtraAovs && !_renderer->IsConverged());
     bool skipped = false;
     for (HdRenderBuffer *&b : extra) {
-        const bool skip = b && skipUnread && !frame.finalQuality && !productSized && !read.count(b);
+        const bool skip = b && skipUnread && !offline && !productSized && !read.count(b);
         skipped = skipped || skip;
         b = skip ? nullptr : b;
     }
@@ -1177,7 +1159,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
                                                  frame.depthToDistance[2], frame.depthToDistance[3]};
     std::array<float, 4> collectedDepth = depthConstants;
-    frame.deferReadback = frame.overlapReadback && moving && !frame.finalQuality && !productSized && !interop &&
+    frame.deferReadback = frame.overlapReadback && moving && !frame.filmRestart && !productSized && !interop &&
                           colorHalf.empty() && huskIds.empty() && !frame.linearColor && readback == _lastReadback &&
                           std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
     bool collected = false;

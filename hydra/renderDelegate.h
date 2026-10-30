@@ -78,6 +78,11 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs();
 // expression ("lpe:...") of the forms Karma writes (renderDelegate.cpp's
 // LpeKind; format Float32Vec3). False for any other name.
 bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
+// eldr:rtReflections, rtRefraction, rtHitShadows, finalGather, caustics:
+// bools since lane 65. Their former int (0 off, 1 in final quality, 2
+// always) from older scenes is on at 2 only: HdVkOnOff.
+bool HdVkLegacyMode(TfToken const &key);
+bool HdVkOnOff(VtValue const &value, bool fallback);
 // Light groups: Karma's LPE tags (inputs:karma:light:lpetag) in the order
 // AOVs first asked for them, at most vkr::Aovs::kMaxLightGroups (another
 // gets -1 and a warning). Process-wide.
@@ -202,11 +207,11 @@ public:
 
     // Who renders: Houdini's viewport (houdini:viewport or
     // houdini:interactive), or an offline renderer (husk's
-    // rasterRenderProducts, enableInteractive false): final quality.
+    // rasterRenderProducts, enableInteractive false). Offline changes only
+    // speed (batching, teardown, prewarm, readback), never the image.
     bool HoudiniViewport() const;
     bool Offline() const;
-    // eldr:screenDicing in final quality (eldr:finalQuality or offline):
-    // subdivision surfaces dice for DicingView, the view the render pass
+    // eldr:screenDicing: subdivision surfaces dice for DicingView, the view the render pass
     // last re-diced for (null before the first). SetDicingView re-syncs the
     // meshes; only the render pass calls it, between syncs.
     bool ScreenDicing() const;
