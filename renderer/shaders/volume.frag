@@ -1,6 +1,8 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_nonuniform_qualifier : require
+#extension GL_KHR_shader_subgroup_vote : require
+#extension GL_KHR_shader_subgroup_ballot : require
 
 // Heterogeneous volumes (NanoVDB grids) raymarched per pixel over the shaded
 // image, nearest volume first, up to the opaque depth. Single scattering
@@ -432,7 +434,9 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     float t = t0 + noise * dt;
     // Local lights' shadowed fraction at the last tap, and the steps since.
     vec3 lit = vec3(1.0);
-    uint sinceTap = params.localShadowStride;
+    // Above the stride: no tap yet (lit unset), one is due whatever the
+    // subgroup does.
+    uint sinceTap = params.localShadowStride + 1u;
     while (t < t1 && stepsLeft > 0u && Max3(transmittance) > kOpaque) {
         --stepsLeft;
         vec3 p = Advect(i, oi + t * di);
@@ -452,7 +456,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
             vec3 exits = (cell - oi) / safe;
             float exit = min(min(exits.x, exits.y), exits.z);
             t = max(t + dt, t0 + (ceil((exit - t0) / dt - noise) + noise) * dt);
-            sinceTap = params.localShadowStride;  // past empty space: tap afresh
+            sinceTap = params.localShadowStride + 1u;  // past empty space: tap afresh
             continue;
         }
         float rho = Density(density, p, fract(noise + vec3(0.8191725, 0.6710436, 0.5497005) * float(stepsLeft)));
@@ -535,7 +539,13 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 // Shadows (atlas tap, other volumes) every localShadowStride
                 // steps; the steps between take the last tap's shadowed
                 // fraction of the unshadowed light.
-                bool tap = sinceTap >= params.localShadowStride;
+                // The whole subgroup taps together (a tap where only some
+                // lanes do costs all of them the time): when its first lane
+                // is due, or any lane has no tap yet. Then their counts agree.
+                // ponytail: needs subgroup vote and ballot in fragment
+                // shaders (every desktop Vulkan 1.3 GPU).
+                bool tap = subgroupAny(sinceTap > params.localShadowStride) ||
+                           subgroupBroadcastFirst(sinceTap) >= params.localShadowStride;
                 sinceTap = tap ? 1u : sinceTap + 1u;
                 bool clusters = (frame.features.x & kFeatureClusters) != 0u;
                 uint base = 0u, n = frame.localLights.x;

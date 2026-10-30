@@ -14,7 +14,7 @@
 def SphereLight "warm"
 {
     float inputs:radius = 0.1
-    float inputs:intensity = 40
+    float inputs:intensity = 250
     color3f inputs:color = (1, 0.6, 0.3)
     double3 xformOp:translate = (-1.2, 1.6, 1.2)
     uniform token[] xformOpOrder = ["xformOp:translate"]
@@ -23,7 +23,7 @@ def SphereLight "warm"
 def SphereLight "cool"
 {
     float inputs:radius = 0.1
-    float inputs:intensity = 40
+    float inputs:intensity = 250
     color3f inputs:color = (0.3, 0.6, 1)
     double3 xformOp:translate = (1.4, 0.6, 1.0)
     uniform token[] xformOpOrder = ["xformOp:translate"]
@@ -32,7 +32,7 @@ def SphereLight "cool"
 def SphereLight "low"
 {
     float inputs:radius = 0.1
-    float inputs:intensity = 40
+    float inputs:intensity = 250
     double3 xformOp:translate = (0.2, -0.8, 0.6)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
@@ -43,12 +43,22 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
     }
 
     def RenderSettings "stride1"
     {
         rel camera = </cam>
         int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
         custom int eldr:volumeLocalShadowStride = 1
+    }
+
+    def RenderSettings "stride4"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:volumeLocalShadowStride = 4
     }
 }
