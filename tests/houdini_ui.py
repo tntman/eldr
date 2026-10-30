@@ -76,6 +76,7 @@ assert folders[-1].label() == "Performance and Debug"
 for t in tab(rs).parmTemplates():  # the Render Settings LOP tab
     if t.type() == hou.parmTemplateType.Folder:
         assert all(p.help().strip() for p in t.parmTemplates() if "_control" not in p.name()), t.label()
-assert all(t.help().strip() for t in tab(rg).parmTemplates() if "_control" not in t.name()), "primvar help"
+geo = [p for f in tab(rg).parmTemplates() if f.type() == hou.parmTemplateType.Folder for p in f.parmTemplates()]
+assert geo and all(t.help().strip() for t in geo if "_control" not in t.name()), "primvar help"
 print("houdini_ui OK")
 sys.exit(0)
