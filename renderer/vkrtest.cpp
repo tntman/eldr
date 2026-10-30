@@ -3557,6 +3557,39 @@ int main()
         }
 
         {
+            // A textured rect light's shape shows its texture times its radiance: black over its +X
+            // half (s = 0 at +X, as LightTint), white over its -X half; Frame::lightTextures off: plain.
+            vkr::Scene scene(&device);
+            vkr::Light *rect = scene.AddLight();
+            rect->type = vkr::Light::Type::Rect;
+            rect->position[2] = -0.5f;
+            rect->direction[2] = -1.0f;  // facing the camera
+            rect->halfHeight[1] = 0.5f;
+            std::fill(rect->radiance, rect->radiance + 3, 50.0f);
+            auto halves = std::make_shared<vkr::Texture>();
+            halves->width = 64;
+            halves->height = 2;
+            halves->pixels.assign(64 * 2 * 4, 255);
+            for (int y = 0; y < 2; ++y) {
+                for (int x = 0; x < 32; ++x) {
+                    std::fill_n(&halves->pixels[(y * 64 + x) * 4], 3, uint8_t(0));
+                }
+            }
+            rect->texture = halves;
+            scene.Commit();
+            vkr::Renderer::Frame frame = IdentityFrame();
+            frame.lightShapesVisible = true;
+            const Image textured = Render(renderer, scene, frame);
+            frame.lightTextures = false;
+            const Image plain = Render(renderer, scene, frame);
+            std::printf("textured light shape -X/+X: %.3f, %.3f
+", textured.At(24, 32, 0), textured.At(40, 32, 0));
+            Expect(std::abs(textured.At(24, 32, 0) - 50.0f) < 0.5f && textured.At(40, 32, 0) < 0.5f,
+                   "a textured rect light's shape shows its texture");
+            Expect(std::abs(plain.At(40, 32, 0) - 50.0f) < 0.5f, "Frame::lightTextures off: a plain light shape");
+        }
+
+        {
             // Soft sun shadows: the sun shadow test's occluder (one unit above
             // the ground along z, light at 45 degrees). A 10 degree sun spreads
             // the shadow's right edge (around x = -0.75, pixel 8) over a
