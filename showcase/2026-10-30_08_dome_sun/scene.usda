@@ -1,5 +1,6 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     upAxis = "Y"
     metersPerUnit = 1
     subLayers = [@../../tests/scenes/step4.usda@]
@@ -26,6 +27,7 @@ over "sun"
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/domeSun
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

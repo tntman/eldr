@@ -1,11 +1,13 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     subLayers = [@../../tests/scenes/emissive.usda@]
 )
 
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/default
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

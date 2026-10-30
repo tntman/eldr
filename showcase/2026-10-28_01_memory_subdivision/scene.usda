@@ -1,5 +1,6 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     upAxis = "Y"
     metersPerUnit = 1
 )
@@ -111,6 +112,7 @@ def Mesh "dicingCap" (prepend apiSchemas = ["MaterialBindingAPI"])
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/level3
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

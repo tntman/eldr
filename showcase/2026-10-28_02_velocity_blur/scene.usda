@@ -1,5 +1,6 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     subLayers = [@../../tests/scenes/motion_blur.usda@]
     startTimeCode = 24
     endTimeCode = 24
@@ -60,6 +61,7 @@ over "inst_angularVelocities"
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/blurOn
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

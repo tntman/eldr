@@ -1,6 +1,6 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/caustics"
+    renderSettingsPrimPath = "/Render/eldr_default"
     subLayers = [@../../tests/scenes/caustics.usda@]
 )
 
@@ -11,6 +11,7 @@
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/caustics
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>
