@@ -421,8 +421,8 @@ public:
         // (they don't depend on the camera; eldr:movingGiPause).
         bool movingGiPause = true;
         // The camera stopped less than eldr:stillDelay ago (the app's wall
-        // time): still frames count as moving (the reductions above, no
-        // film) and TAA keeps refining; the film starts when it ends.
+        // time): still frames count as moving (the reductions above, TAA's
+        // moving blend, no film); the ramp starts when it ends.
         bool cameraHold = false;
         // Frames from the end of moving mode to full quality: the render
         // scale and shadow rays step up linearly from their moving values,

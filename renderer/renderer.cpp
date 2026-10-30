@@ -4673,7 +4673,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         float alpha = 1.0f;
         Mat4 reprojection;
         if (taa) {
-            const bool moved = _taaValid && std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0;
+            // A held camera (Frame::cameraHold) blends as a moving one: no
+            // sample count rises during a pause mid-navigation.
+            const bool moved =
+                _taaValid && (std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0 || frame.cameraHold);
             if (_taaValid) {
                 // Upscaling resolves at the frame's (unjittered) pixel centres.
                 reprojection = (_upscaled ? Mat4() : unjitter) * ToMat4(appFrame.invViewProj) * ToMat4(_prevViewProj);

@@ -923,6 +923,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if (resync && offline) {
         return;
     }
+    const bool firstFrame = std::all_of(_lastViewProj, _lastViewProj + 16, [](float v) { return v == 0.0f; });
+    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
+    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
+    // eldr:stillDelay: a camera that stopped less than this ago (wall time,
+    // the same at any fps) still counts as moving: a held frame looks and
+    // costs the same as a moving one (size, TAA, AOVs, ids, dicing), so a
+    // pause mid-navigation shows no change. IsConverged waits it out.
+    const auto now = FrameTiming::Clock::now();
+    if (moving && !firstFrame) {  // the first frame isn't navigation
+        _lastMove = now;
+    }
+    const float stillDelay = offline ? 0.0f : std::clamp(delegate->GetRenderSetting<float>(t2.stillDelay, 0.3f), 0.0f, 30.0f);
+    _holding = frame.cameraHold = !moving && _lastMove &&
+                                  now - *_lastMove < std::chrono::duration<double>(stillDelay);
+    const bool navigating = moving || frame.cameraHold;
     if (auto *vk = static_cast<HdVkRenderDelegate *>(delegate); vk->ScreenDicing()) {
         HdVkDicingView dicing;
         dicing.viewProj = viewProj;
@@ -931,7 +946,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         dicing.width = int(frame.width);
         dicing.height = int(frame.height);
         dicing.pixels = std::min(std::abs(projection[0][0]) * frame.width, std::abs(projection[1][1]) * frame.height) / 2.0;
-        const bool still = _lastDicing && dicing == *_lastDicing;
+        const bool still = _lastDicing && dicing == *_lastDicing && !frame.cameraHold;
         _lastDicing = dicing;
         if ((!vk->DicingView() || !(dicing == *vk->DicingView())) && (offline || still)) {
             vk->SetDicingView(dicing);
@@ -989,20 +1004,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     void *mapped[4] = {};
     std::vector<uint8_t> productTargets[4];
     constexpr size_t kTargetBytes[4] = {8, 4, 4, 4};  // RGBA16F, float, int, int
-    const bool firstFrame = std::all_of(_lastViewProj, _lastViewProj + 16, [](float v) { return v == 0.0f; });
-    const bool moving = std::memcmp(frame.viewProj, _lastViewProj, sizeof(_lastViewProj)) != 0;
-    std::copy(frame.viewProj, frame.viewProj + 16, _lastViewProj);
-    // eldr:stillDelay: a camera that stopped less than this ago (wall time,
-    // the same at any fps) still counts as moving for the renderer: short
-    // pauses mid-navigation keep the moving reductions and TAA instead of
-    // popping to full size and the film. IsConverged waits it out.
-    const auto now = FrameTiming::Clock::now();
-    if (moving && !firstFrame) {  // the first frame isn't navigation
-        _lastMove = now;
-    }
-    const float stillDelay = offline ? 0.0f : std::clamp(delegate->GetRenderSetting<float>(t2.stillDelay, 0.3f), 0.0f, 2.0f);
-    _holding = frame.cameraHold = !moving && _lastMove &&
-                                  now - *_lastMove < std::chrono::duration<double>(stillDelay);
     // The step up to full quality, the moving frame budget and the film's
     // start from the TAA image: interactive only (offline frames start
     // their film clean).
@@ -1018,7 +1019,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // camera change. Detached: the renderer's memory they were mapped in
     // (eldr:inPlaceReadback) will hold other outputs.
     const bool staleIds =
-        frame.staleMovingIds && houdiniViewport && moving && !frame.filmRestart && !productSized;
+        frame.staleMovingIds && houdiniViewport && navigating && !frame.filmRestart && !productSized;
     for (int i = 0; i < 4; ++i) {
         if (staleIds && i >= 2 && buffers[i]) {
             buffers[i]->Detach();
@@ -1065,7 +1066,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // eldr:lazyExtraAovs: a still camera's too until its film converged,
     // then one more frame renders them (IsConverged waits for it): they cost
     // a G-buffer pass and readback a frame (4.9 ms GPU at 1866x737).
-    const bool skipUnread = moving || (frame.lazyExtraAovs && !_renderer->IsConverged());
+    const bool skipUnread = navigating || (frame.lazyExtraAovs && !_renderer->IsConverged());
     bool skipped = false;
     for (HdRenderBuffer *&b : extra) {
         const bool skip = b && skipUnread && !offline && !productSized && !read.count(b);
@@ -1208,7 +1209,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     const std::array<float, 4> depthConstants = {frame.depthToDistance[0], frame.depthToDistance[1],
                                                  frame.depthToDistance[2], frame.depthToDistance[3]};
     std::array<float, 4> collectedDepth = depthConstants;
-    frame.deferReadback = frame.overlapReadback && (moving || frame.cameraHold) && !frame.filmRestart && !productSized && !interop &&
+    frame.deferReadback = frame.overlapReadback && navigating && !frame.filmRestart && !productSized && !interop &&
                           colorHalf.empty() && huskIds.empty() && !frame.linearColor && readback == _lastReadback &&
                           std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
     bool collected = false;
@@ -1432,6 +1433,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             b->Unmap();
             static_cast<HdVkRenderBuffer *>(b)->TakeMapped();  // the pass's own map
         }
+    }
+    // HDVK_DEBUG_HOLD: per frame, whether the camera moved, the eldr:stillDelay
+    // hold, the render width and the GPU time.
+    if (static const bool debugHold = TfGetenvBool("HDVK_DEBUG_HOLD", false); debugHold) {
+        const vkr::Renderer::Stats &s = _renderer->GetStats();
+        std::fprintf(stderr, "Eldr hold: moving %d hold %d (stillDelay %.2f s) width %u/%u gpu %.2f ms converged %d\n",
+                     int(moving), int(frame.cameraHold), stillDelay, s.renderWidth, frame.width, s.gpuMs,
+                     int(_renderer->IsConverged()));
+        std::fflush(stderr);
     }
     if (timing) {
         const auto tEnd = FrameTiming::Clock::now();
