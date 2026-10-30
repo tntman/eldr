@@ -271,6 +271,8 @@ foreach(py __init__.py attributes.py settings.py tooltips.py)
 endforeach()
 # The settings' tooltips are its "What it does" column (tooltips.py).
 file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/settings.md INPUT docs/settings.md)
+# Their groups are hydra/renderSettings.def's (tooltips.py ReadGroups).
+file(GENERATE OUTPUT $<TARGET_FILE_DIR:hdVk>/usdview/hdvkUsdview/renderSettings.def INPUT hydra/renderSettings.def)
 
 add_executable(testPlugin tests/testPlugin.cpp)
 target_link_libraries(testPlugin PRIVATE hd)
@@ -434,5 +436,13 @@ foreach(t ${allTests})
     get_property(hasTimeout TEST ${t} PROPERTY TIMEOUT SET)
     if(NOT hasTimeout)
         set_property(TEST ${t} PROPERTY TIMEOUT 1800)
+    endif()
+endforeach()
+# Labels: slow = over about a minute on a GTX 1080 Ti (CTestCostData, 2026-10-29),
+# fast = the rest. Lanes run `ctest -j1 -L fast`; the integrator runs everything.
+set_property(TEST ${allTests} PROPERTY LABELS fast)
+foreach(t vkrtest aov_sums motion lighting traced_media screenspace displacement_graphs exr procedural karma_golden)
+    if(TEST ${t})
+        set_property(TEST ${t} PROPERTY LABELS slow)
     endif()
 endforeach()

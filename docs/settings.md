@@ -23,7 +23,7 @@ Every setting is a Hydra render setting `eldr:<name>`. Unset settings have the d
 
 Optional shader code compiles out when its setting is off. The first frame using a new combination compiles a pipeline set (seconds, unless cached).
 
-The settings people change most come first and are open in the UIs; rarely touched ones are folded (Houdini) and last. Same order as `GROUPS`.
+The settings people change most come first and are open in the UIs; rarely touched ones are folded (Houdini) and last. Same order as `hydra/renderSettings.def`, where every setting is defined (one line: name, label, default).
 
 ## Final render
 

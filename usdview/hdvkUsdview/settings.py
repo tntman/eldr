@@ -4,58 +4,11 @@ dialog lists them in one column that runs off the screen."""
 
 from pxr.Usdviewq.qt import QtCore, QtWidgets
 
-from .tooltips import Tooltips
+from .tooltips import ReadGroups, Tooltips
 
-# (title, open, keys) in the order the window shows them: the settings people
-# change most first and open, the rarely touched ones folded, diagnostics last.
-# Every key appears once; settings not listed (new ones) land in "Other".
-# docs/settings.md follows this order (tests/test_docs.py checks).
-GROUPS = [
-    ("Final render", True,
-     "finalQuality filmSamples adaptiveFinalThreshold denoise diffuseQuality reflectQuality lightQuality sssQuality volumeQuality "
-     "finalShadows rtRefraction finalGather caustics motionBlur "
-     "motionBlurTimeSamples depthOfField"),
-    ("Lighting and GI", True,
-     "gi ssgi rtShadows rtReflections ambientOcclusion imageBasedLighting domeSun fog volumes"),
-    ("Image", True,
-     "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
-    ("Advanced: Geometry and products", False,
-     "lod lodBias lodFade subdivision maxRefineLevel screenDicing displacement curveRibbons pointSprites "
-     "displacementScale displacementGraphs anisotropy textureCompression splitDomeDirect cryptomatteSoft aovFilters directIntensity "
-     "indirectIntensity renderProducts productResolution"),
-    ("Advanced: Lighting", False,
-     "localLights clusteredLights lightTextures lightLinking lightIes lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
-     "domeSunThreshold aoRadius aoSlices giProbes giRaysPerProbe giHysteresis giPreconverge giRelocation finalGatherDistance "
-     "finalGatherRays finalGatherDenoise effectDenoiseSamples causticsPhotons causticsRadius ssgiSteps "
-     "ssgiRadius ssgiResolution ssgiTileOrder ssgiThickness ssgiBitmask ssgiBitmaskThickness "
-     "screenBackface screenBackfaceScale directClamp indirectClamp colorLimit colorLimitShared"),
-    ("Advanced: Shadows", False,
-     "shadows shadowResolution shadowCascades localShadows localShadowResolution softShadows "
-     "softSunShadows softShadowSamples translucentShadows translucentShadowDivisor rtShadowSamples rtShadowDenoise "
-     "rtSkinnedInstances rtDisplacement rtCompaction shadowJitter rtTranslucentShadows"),
-    ("Advanced: Reflections", False,
-     "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtReflectionDenoise rtHitShadows reflectionProbe probeResolution "
-     "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur planarMotionBlur"),
-    ("Advanced: Materials", False,
-     "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
-     "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
-    ("Advanced: Transparency", False,
-     "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "
-     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement rtRefractionClip "
-     "holdoutAlpha opacityMode"),
-    ("Advanced: Fog and volumes", False,
-     "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
-     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeLocalShadowStride volumeDensity volumeEmission "
-     "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
-     "volumeMutualShadows volumeDefaultFields volumeMultipleScattering volumeVelocityBlur"),
-    ("Advanced: Camera and film", False,
-     "taa taaSamples filmAccumulation filmFilterRadius sampleDimensions adaptiveThreshold "
-     "adaptivePixelFraction adaptiveMinSamples adaptiveTiles objectMotion blendShapeMotion dofJitter dofResidualBlur "
-     "motionBlurResidual sampledMotion deformationBlur lensDistortion postProcess"),
-    ("Performance and debug", False,
-     "depthPrepass frustumCulling cullPixels shadowCullPixels shareFrame overlapReadback inPlaceReadback offlineBatchSeconds staleMovingIds pipelineCache pipelinePrewarm lazyPipelines extraAovs lazyExtraAovs "
-     "renderScale interactiveSamples"),
-]
+# [(title, open, "key key ...")]: hydra/renderSettings.def's groups, in the
+# order the window shows them. docs/settings.md follows it (tests/test_docs.py).
+GROUPS = ReadGroups()
 
 
 def Groups(settings):
