@@ -1,4 +1,11 @@
-# Many lights (clustered)
+# Many lights
+
+<!-- summary -->
+Hundreds of small lights shaded through clusters, each pixel lit only by the lights that reach it (`eldr:clusteredLights`).
+
+- **Compare:** open `showcase/2026-10-30_06_many_lights/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `lights` vs `clustersOff`, `localLightsOff`.
+- **Look at:** 200 coloured pools and highlights on the floor; the same with clusters off, only the slower frame time.
+<!-- summary -->
 
 200 small coloured sphere lights hang just above a glossy floor around a ball, a box and a post, under a faint night dome. Clustered shading (up to 255 lights per cluster, cut off at 1% of mid-gray on a white surface) lights each pixel with only the lights that reach it (here each reaches about 7 units, most of the floor, so clustering saves little: compare a dimmer rig); every light still gets a shadow (atlas tiles halve before any light goes unshadowed).
 

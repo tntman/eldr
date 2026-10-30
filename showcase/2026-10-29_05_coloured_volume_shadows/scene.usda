@@ -130,24 +130,4 @@ def Scope "Render"
         custom bool eldr:volumeShadows = 0
     }
 
-    def RenderSettings "volumeLimit1"
-    {
-        rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom float karma:object:volumelimit = 1
-    }
-
-    def RenderSettings "volumeLimit4"
-    {
-        rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom float karma:object:volumelimit = 4
-    }
-
-    def RenderSettings "volumeLimit16"
-    {
-        rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom float karma:object:volumelimit = 16
-    }
 }

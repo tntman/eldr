@@ -13,8 +13,8 @@ The usual setup is two Render Settings LOPs:
 | Draft (`eldr_default`) | Nothing, or only the camera and resolution | Look development, layout, fast previews |
 | Final (`eldr_final`) | The expensive settings ticked one by one | The frames you deliver |
 
-![Defaults: shadow maps, no ray tracing (28_03, eldr_default)](../images/solaris_default.jpg)
-![Final settings: ray-traced shadows, reflections and GI, OIDN (28_03, eldr_final)](../images/solaris_final.jpg)
+![Defaults: shadow maps, no ray tracing (28_09, eldr_default)](../images/solaris_default.jpg)
+![Final settings: ray-traced shadows, reflections and GI, OIDN (28_09, eldr_final)](../images/solaris_final.jpg)
 
 The final node of every showcase ticks these settings. Copy them as a start:
 

@@ -1,4 +1,11 @@
-# Instancing: point instancers, nested, native
+# Instancing
+
+<!-- summary -->
+Nested point instancers and native instances, with per-instance culling by screen size (`eldr:cullPixels`).
+
+- **Compare:** open `showcase/2026-10-30_20_instancing/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `instances` vs `cullSmall`.
+- **Look at:** The far rows of trees thin out with `cullSmall`.
+<!-- summary -->
 
 A PointInstancer of 12 x 12 "trees" whose prototype holds a trunk and a second, nested PointInstancer of three leaf balls, with per-instance scales; in front on the left three native USD instances (instanceable references of one rock). Each prototype draws once per pass (one indirect draw per prototype) however many times it appears; frustum and small-object culling run per instance on the GPU.
 

@@ -29,6 +29,8 @@ Point instancers (nested too) and native USD instances render as one draw per pr
 
 **Shadow Small Object Culling** does the same in the sun's shadow maps.
 
+> **Showcase:** open `showcase/2026-10-30_20_instancing/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `instances` vs `cullSmall`.
+
 ## Levels of detail
 
 Meshes of 1000+ triangles get up to three simpler versions, and Eldr draws the coarsest one that still looks the same (under about a pixel of error): the crowd went from 54.5M to 13.6M triangles. **Level of Detail Bias** -1 keeps more detail; **Levels of Detail** off always draws the full mesh.
@@ -44,12 +46,20 @@ Subdivision surfaces (`subdivisionScheme` catmullClark, loop or bilinear) are re
 
 > **Where in Houdini:** SOP Import LOP > **Treat Polygons as Subdivision Surfaces** makes a mesh a subdivision surface. Render Geometry Settings LOP > **Eldr** tab > **Subdivision and dicing** sets its level.
 
+> **Showcase:** open `showcase/2026-10-28_01_subdivision_levels/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `level3` vs `level1` (`eldr:maxRefineLevel`), `subdivOff` (`eldr:subdivision` off).
+
+> **Showcase:** open `showcase/2026-10-29_04_screen_dicing/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `dicing` vs `fixed`.
+
 ## Curves and points
 
 Hair and fur (BasisCurves) render as 6-sided tubes with hair shading; **Curves as Camera-Facing Ribbons** draws flat strips instead (2 triangles a step instead of 12). Points render as small spheres, or discs with **Points as Camera-Facing Discs**. Per object: **Render Curves As** and **Render Points As** on the Render Geometry Settings LOP.
 
 ![Curves as tubes, points as spheres (30_19, curves)](../images/curves_tubes.jpg)
 ![Ribbons (30_19, ribbons)](../images/curves_ribbons.jpg)
+
+> **Showcase:** open `showcase/2026-10-30_19_curves_points/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `curves` vs `ribbons`, `sprites`, `hairOff`.
+
+> **Showcase:** open `showcase/2026-10-28_10_curve_styles/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `styles` (the per-object values) vs `ribbons` (`eldr:curveRibbons`: every curve without its own style becomes a ribbon); `eldr_default` vs `karma` (Karma reads only the karma names).
 
 ## Memory
 

@@ -1,4 +1,11 @@
-# Light path intensity
+# Direct and indirect intensity
+
+<!-- summary -->
+Direct and indirect light scaled separately in the final pixel (`eldr:directIntensity`, `eldr:indirectIntensity`).
+
+- **Compare:** open `showcase/2026-10-30_16_light_path_intensity/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `neutral` vs `indirectBoost` vs `directDim`.
+- **Look at:** The ceiling and the colour bleeding (indirect), the light's pool on the floor (direct).
+<!-- summary -->
 
 The Cornell box under GI, where the ceiling and the colour on the white walls are bounced light. `eldr:directIntensity` and `eldr:indirectIntensity` scale direct or indirect light in the final pixel only, like a comp grade on the light splits: the light transport and the AOVs are unchanged, the beauty is the splits times the intensities. Fog and toon shading stay unscaled.
 

@@ -14,6 +14,8 @@ A volume without a material renders like Karma's: the `density` field scatters w
 
 **Volume Default Fields** also reads `temperature` (as fire), `Cd` (colour) and `emission` without a material.
 
+> **Showcase:** open `showcase/2026-10-29_08_volume_default_material/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `newPhase` (the default) vs `oldPhase` (`eldr:volumeAnisotropy` 0.2).
+
 ## With a material
 
 Eldr reads MaterialX `volume` materials (anisotropic_vdf, absorption_vdf, uniform_edf) and Karma's `kma_volume`:
@@ -28,12 +30,16 @@ Eldr reads MaterialX `volume` materials (anisotropic_vdf, absorption_vdf, unifor
 
 > **Warning:** Karma's **Pyro Shader** isn't read. Eldr renders such a volume with its density only and warns. Build the look with a MaterialX volume or Karma Volume material instead.
 
+> **Showcase:** open `showcase/2026-10-29_05_coloured_volume_shadows/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `maps` vs `shadowsOff` (`eldr:volumeShadows`), `traced` (`eldr:rtShadows`), `halfResolution` (`eldr:volumeResolution` 2).
+
 ## Multiple scattering: Volume Limit
 
 Bright clouds get their glow from light that bounces many times inside. Karma controls that with **Volume Limit** (Render Geometry Settings, `karma:object:volumelimit`); Eldr reads the same value and fits its look to Karma's at that limit. **Volume Multiple Scattering** on the Eldr tab does the same for all volumes.
 
-![Volume limit 1: single scattering (29_05, volumeLimit1)](../images/volume_limit1.jpg)
-![Volume limit 16: the cloud brightens as Karma's (29_05, volumeLimit16)](../images/volume_limit16.jpg)
+![Volume limit 1: single scattering (29_26, volumeLimit1)](../images/volume_limit1.jpg)
+![Volume limit 16: the cloud brightens as Karma's (29_26, volumeLimit16)](../images/volume_limit16.jpg)
+
+> **Showcase:** open `showcase/2026-10-29_26_volume_multiple_scattering/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `volumeLimit1` vs `volumeLimit4` vs `volumeLimit16`.
 
 ## Velocity blur
 
@@ -42,6 +48,8 @@ A volume with **Velocity Blur** on (Render Geometry Settings) blurs along its `v
 ![Velocity blur along vel (29_18, blur)](../images/volume_blur.jpg)
 ![Volume Velocity Blur off (29_18, sharp)](../images/volume_sharp.jpg)
 
+> **Showcase:** open `showcase/2026-10-29_18_volume_motion_blur/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `blur` vs `sharp` (`eldr:volumeVelocityBlur` off).
+
 ## Fog
 
 **Volumetric Fog** (off) fills the scene with height fog: thicker near the ground, lit by every light, with god rays from the sun and cones from spots. Set **Fog Density**, **Fog Height Falloff** and **Fog Color**. There is no USD fog prim, so fog lives only in the render settings.
@@ -49,6 +57,8 @@ A volume with **Velocity Blur** on (Render Geometry Settings) blurs along its `v
 ![Fog with sun shafts between the pillars and a spot's cone (30_12, fog)](../images/fog_on.jpg)
 ![Fog off (30_12, fogOff)](../images/fog_off.jpg)
 ![Dense warm fog without height falloff (30_12, fogDense)](../images/fog_dense.jpg)
+
+> **Showcase:** open `showcase/2026-10-30_12_fog/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `fog` vs `fogOff`, `fogDense`.
 
 ## Speed
 
@@ -60,6 +70,10 @@ Volumes can be the slowest part of a frame. To speed them up:
 | **Volume Step Size** | Longer steps are faster, but thin wisps may vanish |
 | **Volume Shadow Grid** (on) | Each volume's shadowing is kept on a small grid instead of marched every step: 3-4x cheaper |
 | **Volume Quality** | Fewer or more shadow steps (Karma's Volume Quality) |
+
+> **Showcase:** open `showcase/2026-10-30_03_volume_shadow_grid/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `grid` (64, default) vs `exact` (0) vs `grid32`.
+
+> **Showcase:** open `showcase/2026-10-29_20_volume_light_shadow_stride/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `stride2` (default) vs `stride1` vs `stride4`.
 
 ## Limitations
 

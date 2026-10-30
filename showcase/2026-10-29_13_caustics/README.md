@@ -1,5 +1,12 @@
 # Caustics
 
+<!-- summary -->
+Light focused through glass onto other surfaces, by progressive photon mapping (`eldr:caustics`).
+
+- **Compare:** open `showcase/2026-10-29_13_caustics/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `caustics` vs `noCaustics`, `caustics8`, `causticsFewPhotons`.
+- **Look at:** The bright focused patch in front of the glass ball and the ball's shadow around it.
+<!-- summary -->
+
 `tests/scenes/caustics.usda`: a clear glass ball on a white floor, backlit by a 45 degree sun. The ball is a caustic caster (`primvars:karma:object:causticsenable = 1`, Karma's Enable Caustics), so with `eldr:caustics` on Eldr shoots photons from the sun through it and gathers them on the floor (progressive photon mapping, `eldr:caustics`).
 
 - `/Render/caustics` (the final-render settings, 256 samples; `eldr_final` also has caustics on) vs `/Render/noCaustics` (`eldr:caustics` 0): the bright focused patch in front of the ball, and the ball's shadow around it. Without caustics the ball casts a light, tinted shadow instead (traced translucent shadows); with them its glass blocks the shadow rays and the light arrives focused.

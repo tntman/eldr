@@ -17,6 +17,8 @@ The first still frame is full quality again, and the film starts.
 
 > **Tip:** With heavy final settings in the viewport, moving stays fast; only the still frames take long. Choose the draft render settings prim while you lay out a shot.
 
+> **Showcase:** open `showcase/2026-10-30_01_moving_camera/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `moving` (the defaults) vs `full`.
+
 ## Choosing what the viewport renders
 
 > **Where in Houdini:** The viewport's **Display Options** (press D over the viewport) have an **Eldr** section for per-viewport settings. The camera menu at the top right picks a render settings prim; its Eldr tab then applies to the viewport.
@@ -31,11 +33,15 @@ The viewport's **Render Outputs** menu lists the render vars of the chosen Rende
 
 > **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view as far as we know. Use Render Outputs to view one AOV.
 
+> **Showcase:** open `showcase/2026-10-28_05_houdini_render_vars/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag).
+
 ## Render statistics
 
 Turn on the viewport's **Show/Hide Render Stats** toolbar button for a line with the stage ("Accumulating 24%"), the samples done and GPU time. The full stats panel (Eldr's own layout) shows memory and time per pass.
 
 ![Houdini: viewport with the render stats overlay](../images/houdini/viewport_render_stats.png)
+
+> **Showcase:** open `showcase/2026-10-28_08_render_stats/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default` only (no A/B: the feature is metadata).
 
 ## Colour in the viewport
 

@@ -14,6 +14,8 @@ Every setting is a Hydra render setting `eldr:<name>`. Unset settings have the d
 
 **Former modes (old scenes):** `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather` and `eldr:caustics` were ints (0 off, 1 final quality only, 2 always): an int is on at 2 only. `eldr:textureCompression` was an int (0 off, 1 interactive only, 2 always): an int is on at 1 or 2. the former `finalShadows` (`raytraced`: now `eldr:rtShadows` with `eldr:rtShadowLights` 16; `auto`: now `eldr:rtShadowsAuto`) and the former `adaptiveFinalThreshold` (now `eldr:adaptiveThreshold`) are ignored.
 
+**Try a setting:** most features have a scene in `showcase/` (one folder per feature, listed by topic in the user guide's [Showcase scenes](guide/showcase.md) chapter): open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the feature's A/B nodes.
+
 ## Reading the tables
 
 | Mark | Meaning |

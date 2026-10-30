@@ -1,4 +1,11 @@
-# Coloured volume shadows and calibrated multiple scattering
+# Coloured volume shadows
+
+<!-- summary -->
+Coloured smoke casts coloured shadows, per channel, with shadow maps or traced shadows.
+
+- **Compare:** open `showcase/2026-10-29_05_coloured_volume_shadows/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `maps` vs `shadowsOff` (`eldr:volumeShadows`), `traced` (`eldr:rtShadows`), `halfResolution` (`eldr:volumeResolution` 2).
+- **Look at:** The soot's shadow on the floor: orange, not grey; the same with `traced`.
+<!-- summary -->
 
 volume.usda's grey smoke cloud with the fire replaced by orange-brown soot. The soot is an absorbing MaterialX volume with absorption (0.15, 0.6, 1.2) per unit of density, so it lets red through and stops blue.
 
@@ -6,7 +13,6 @@ volume.usda's grey smoke cloud with the fire replaced by orange-brown soot. The 
 - `/Render/traced`: `eldr:rtShadows`. Traced shadow rays march the soot per channel and give the same orange shadow.
 - `/Render/halfResolution`: `eldr:volumeResolution` 2. The soot's own see-through colour stays orange-brown; before, it was only the mean transmittance.
 - `/Render/shadowsOff`: `eldr:volumeShadows` off, for comparison.
-- `/Render/volumeLimit1`, `/Render/volumeLimit16`: `karma:object:volumelimit` on the settings prim. The grey cloud gets brighter with more bounces, fitted to Karma's gain over single scattering (within 7% at limits 1, 4 and 16 on volume.usda and fog.usda clouds).
 
 Against Karma (husk -R BRAY_HdKarma, the same soot over the floor), the floor-shadow transmittance per channel is Karma 0.63 / 0.24 / 0.11 and Eldr 0.63 / 0.24 / 0.12 (maps and traced). Grey shadows were 0.22 in every channel.
 
@@ -16,7 +22,7 @@ Against Karma (husk -R BRAY_HdKarma, the same soot over the floor), the floor-sh
 - Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
 - husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_05_coloured_volume_shadows/scene.usda`
 
-Settings prims: `/Render/maps`, `/Render/traced`, `/Render/halfResolution`, `/Render/shadowsOff`, `/Render/volumeLimit1`, `/Render/volumeLimit4`, `/Render/volumeLimit16`; standard: `eldr_default`, `eldr_final`, `karma`.
+Settings prims: `/Render/maps`, `/Render/traced`, `/Render/halfResolution`, `/Render/shadowsOff`; standard: `eldr_default`, `eldr_final`, `karma`.
 
 ## Houdini scene
 

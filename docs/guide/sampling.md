@@ -17,6 +17,8 @@ Time grows with the samples: 256 samples take about four times as long as 64.
 - **Film Restarts at Once** (off): every change starts a fresh film from sample 1. Off, the viewport shows a fast interactive image while you work and starts the film once things are still for a moment. The final settings turn it on.
 - **Film Pixel Filter Radius** (1.5 pixels): the Gaussian that turns samples into pixels. Smaller is sharper but may alias.
 
+> **Showcase:** open `showcase/2026-10-29_02_offline_batch/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `batched` vs `oneSamplePerExecute`.
+
 ## Effect denoising
 
 Ray-traced shadows, reflections and the final gather are noisy for the first samples. Eldr filters each of them on its own, and fades the filter out over the first 64 samples (**Effect Denoise Fade**), so the converged image keeps all its detail.
@@ -26,6 +28,8 @@ Ray-traced shadows, reflections and the final gather are noisy for the first sam
 ![64 samples: the filters have faded out, full detail (29_11, denoise64)](../images/effects_denoise64.jpg)
 
 > **Tip:** If shadows look slightly blurry in a short render, it is the effect filter: render more samples than Effect Denoise Fade.
+
+> **Showcase:** open `showcase/2026-10-29_11_effect_denoise/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64`.
 
 ## OIDN, the final denoiser
 
@@ -40,11 +44,15 @@ Ray-traced shadows, reflections and the final gather are noisy for the first sam
 
 > **Warning:** OIDN can smear very fine detail (hair, small text). Compare with the raw AOV on such shots.
 
+> **Showcase:** open `showcase/2026-10-29_07_oidn_denoiser/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `raw16` vs `denoise16`, `karmaImageFilter16` (Karma's denoiser string), `raw64`.
+
 ## Adaptive sampling
 
 With **Adaptive Sampling Noise Threshold** above 0 (0.01 is a good start), pixels that are clean stop sampling, and the film converges when 99.9% of pixels stopped (**Adaptive Sampling Converged Pixel Fraction**). 16x16 tiles whose pixels all stopped skip shading and rays (**Adaptive Sampling Skips Stopped Tiles**): Kitchen at 1080p went from 17.4 to 12.8 s with the same image.
 
 Adaptive sampling doesn't run with motion blur time samples: those frames take all their samples.
+
+> **Showcase:** open `showcase/2026-10-29_23_adaptive_tiles/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `adaptiveTiles256` vs `adaptiveFull256`.
 
 ## Quality multipliers
 
@@ -62,6 +70,8 @@ Values below 1 trace every other sample (0.5), values like 1.5 alternate 1 and 2
 
 ![Every quality at 1 (29_12, default)](../images/quality_default.jpg)
 ![Diffuse Quality 2: twice the gather rays, cleaner walls (29_12, diffuse2)](../images/quality_diffuse2.jpg)
+
+> **Showcase:** open `showcase/2026-10-29_12_quality_multipliers/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames` (Karma's names), `allHalf`.
 
 ## Fireflies
 

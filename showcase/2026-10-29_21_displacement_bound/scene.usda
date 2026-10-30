@@ -1,0 +1,145 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# The culling bound of a displacement graph (inputs:eldr:displacementBound):
+# two orange patches 3.3 units below the floor, lifted into the room by a
+# constant MaterialX displacement graph. The left one states its largest
+# offset and shows; the right one keeps the graph's default bound of
+# |scale| = 1, so its box lies below the picture and frustum culling drops it.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/culled
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "culled"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:frustumCulling = 1
+    }
+
+    def RenderSettings "noCulling"
+    {
+        rel camera = </cam>
+        int2 resolution = (480, 270)
+        custom bool eldr:frustumCulling = 0
+    }
+}
+
+def Scope "lifted"
+{
+    def Mesh "liftedBoundAuthored" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0.1, -3, 0.9), (0.45, -3, 0.9), (0.45, -3, 0.55), (0.1, -3, 0.55)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (interpolation = "vertex")
+        rel material:binding = </mtl/liftedAuthored>
+    }
+
+    def Mesh "liftedBoundDefault" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(0.55, -3, 0.9), (0.9, -3, 0.9), (0.9, -3, 0.55), (0.55, -3, 0.55)]
+        normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (interpolation = "vertex")
+        rel material:binding = </mtl/liftedDefault>
+    }
+}
+
+over "mtl"
+{
+    def Material "liftedAuthored"
+    {
+        token outputs:mtlx:surface.connect = </mtl/liftedAuthored/surface.outputs:out>
+        token outputs:mtlx:displacement.connect = </mtl/liftedAuthored/disp.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.5, 0.1)
+            token outputs:out
+        }
+        def NodeGraph "graph"
+        {
+            float outputs:out.connect = </mtl/liftedAuthored/graph/lift.outputs:out>
+            def Shader "lift"
+            {
+                uniform token info:id = "ND_constant_float"
+                float inputs:value = 3.3
+                float outputs:out
+            }
+        }
+        def Shader "disp"
+        {
+            uniform token info:id = "ND_displacement_float"
+            float inputs:displacement.connect = </mtl/liftedAuthored/graph.outputs:out>
+            float inputs:scale = 1
+            float inputs:eldr:displacementBound = 3.3
+            token outputs:out
+        }
+    }
+
+    def Material "liftedDefault"
+    {
+        token outputs:mtlx:surface.connect = </mtl/liftedDefault/surface.outputs:out>
+        token outputs:mtlx:displacement.connect = </mtl/liftedDefault/disp.outputs:out>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.5, 0.1)
+            token outputs:out
+        }
+        def NodeGraph "graph"
+        {
+            float outputs:out.connect = </mtl/liftedDefault/graph/lift.outputs:out>
+            def Shader "lift"
+            {
+                uniform token info:id = "ND_constant_float"
+                float inputs:value = 3.3
+                float outputs:out
+            }
+        }
+        def Shader "disp"
+        {
+            uniform token info:id = "ND_displacement_float"
+            float inputs:displacement.connect = </mtl/liftedDefault/graph.outputs:out>
+            float inputs:scale = 1
+            token outputs:out
+        }
+    }
+}

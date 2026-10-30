@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [@../../tests/scenes/volume.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Volumes without a material now render as Karma's: white scattering, no
+# absorption, isotropic phase; the dome lights them from its upper half.
+# /Render/newPhase is the default; /Render/oldPhase is the old forward phase
+# (g 0.2); /Render/volumeLimit16 adds multiple scattering.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/newPhase
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "newPhase"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+    }
+
+    def RenderSettings "oldPhase"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom float eldr:volumeAnisotropy = 0.2
+    }
+
+}

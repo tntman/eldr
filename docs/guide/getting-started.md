@@ -75,4 +75,4 @@ The `showcase/` folder holds a small scene for every feature. Each `scene.usda` 
 | `karma` | Karma with the same camera, resolution and 256 samples |
 | the others | The feature on and off, for before and after |
 
-Every picture in this guide comes from one of them; the caption names the folder and the prim.
+Open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the A/B nodes. Every picture in this guide comes from one of them; the caption names the folder and the prim. [Showcase scenes](showcase.md) lists every folder by topic, and each chapter's sections end with the matching showcase.

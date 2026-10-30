@@ -17,20 +17,27 @@ The camera's **exposure**, **ISO**, **shutter time**, **f-stop** and **responsiv
 
 On top of it, **Exposure Compensation** adds stops for the whole render.
 
+> **Showcase:** open `showcase/2026-10-30_05_camera_exposure/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `camera` vs `ignored`.
+
 ## Depth of field
 
 Set **F-Stop** and **Focus Distance** on the camera. In the film, Eldr moves the camera across the lens every sample (**Lens Jitter per Sample**): true bokeh, with correct blur around edges. While you move the camera, a fast post blur stands in.
 
-![Depth of field at f/1.4 with a barrel lens (30_14, lens)](../images/lens_dof.jpg)
+![Depth of field at f/1.4 (30_14, lens)](../images/lens_dof.jpg)
 ![Depth of Field off: everything sharp (30_14, dofOff)](../images/lens_dof_off.jpg)
 
 > **Tip:** Strong depth of field needs samples: 128-256 for smooth bokeh.
+
+> **Showcase:** open `showcase/2026-10-30_14_depth_of_field/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `lens` vs `dofOff`.
 
 ## Lens distortion
 
 Karma's **Physical Lens** (OpenCV coefficients on the camera's lens shader) distorts Eldr's image the same way, as do the `lensDistortion:*` camera attributes. The frame renders a bit wider and warps afterwards, ids and depth too.
 
-![Lens Distortion off: straight lines (30_14, distortionOff)](../images/lens_distortion_off.jpg)
+![Barrel lens distortion (30_24, lens)](../images/lens_distortion.jpg)
+![Lens Distortion off: straight lines (30_24, distortionOff)](../images/lens_distortion_off.jpg)
+
+> **Showcase:** open `showcase/2026-10-30_24_lens_distortion/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `lens` vs `distortionOff`.
 
 ## Motion blur
 
@@ -50,6 +57,10 @@ Open the shutter on the camera (**Shutter Open/Close**, for example -0.25 to 0.2
 
 Motion is linear between frames (box shutter). **Residual Motion Blur** smooths the steps between time samples.
 
+> **Showcase:** open `showcase/2026-10-28_02_velocity_blur/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `blurOn` vs `blurOff` (`eldr:motionBlur`), `blurFinal`, `cameraBlur`.
+
+> **Showcase:** open `showcase/2026-10-29_10_reflection_motion_blur/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `planar` vs `frozen` (`eldr:planarMotionBlur` off), `traced` (`eldr:rtReflections`).
+
 ## Tonemapping and bloom
 
 By default the beauty is linear (**Linear Beauty**, on), as Karma's: no tonemap, bloom or auto exposure, Houdini's colour view on top. That is what you want for comp. Turn Linear Beauty off to use Eldr's own look, for example in usdview or for PNG previews:
@@ -63,7 +74,11 @@ By default the beauty is linear (**Linear Beauty**, on), as Karma's: no tonemap,
 ![ACES (30_17, aces)](../images/tonemap_aces.jpg)
 ![AgX: softer highlights (30_17, agx)](../images/tonemap_agx.jpg)
 ![No tonemapper: hard clipping (30_17, linear)](../images/tonemap_linear.jpg)
-![Bloom 0.4 (30_17, bloom)](../images/tonemap_bloom.jpg)
+![Bloom 0.4 (30_25, bloom)](../images/tonemap_bloom.jpg)
+
+> **Showcase:** open `showcase/2026-10-30_17_tonemapping/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `aces` (default) vs `agx` vs `linear`.
+
+> **Showcase:** open `showcase/2026-10-30_25_bloom/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `bloom` (0.4) vs `bloomOff` (0).
 
 ## Limitations
 

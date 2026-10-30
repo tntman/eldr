@@ -1,4 +1,11 @@
-# Fog and atmosphere
+# Height fog
+
+<!-- summary -->
+Height fog with light shafts from the sun and spot lights (`eldr:fog`).
+
+- **Compare:** open `showcase/2026-10-30_12_fog/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `fog` vs `fogOff`, `fogDense`.
+- **Look at:** The shafts between the pillars, the spot's cone and the hazy far wall.
+<!-- summary -->
 
 `tests/scenes/fog.usda`: a low sun behind a colonnade shining towards the camera, a blue spot on the right. Fog is settings only (no USD fog schema): height fog in a 160x90x64 froxel grid, lit by the sun's cascades (the pillars throw shafts), local lights (the spot's cone) and the dome, Henyey-Greenstein phase (`eldr:fogAnisotropy` 0.6).
 
