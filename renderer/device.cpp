@@ -356,7 +356,7 @@ VkDeviceMemory Device::Allocate(VkMemoryRequirements req, VkMemoryPropertyFlags 
                                  int((mp.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != 0));
                 }
                 std::lock_guard<std::mutex> lock(_memoryMutex);
-                _allocations[memory] = {req.size, local, texture};
+                _allocations[memory] = {req.size, local, texture, i};
                 (local ? _memory.deviceLocal : _memory.host) += req.size;
                 _memory.textures += texture ? req.size : 0;
                 _memory.peakDeviceLocal = std::max(_memory.peakDeviceLocal, _memory.deviceLocal);
@@ -457,7 +457,24 @@ Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint
     Check(vkCreateImage(device, &ci, nullptr, &img.image), "vkCreateImage");
     VkMemoryRequirements req;
     vkGetImageMemoryRequirements(device, img.image, &req);
-    img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    {
+        std::lock_guard<std::mutex> lock(_memoryMutex);
+        auto best = _recycled.end();
+        for (auto it = _recycled.begin(); _recycler == std::this_thread::get_id() && it != _recycled.end(); ++it) {
+            const Allocation &a = _allocations.at(*it);
+            if (a.size >= req.size && (req.memoryTypeBits & (1u << a.type)) &&
+                (best == _recycled.end() || a.size < _allocations.at(*best).size)) {
+                best = it;
+            }
+        }
+        if (best != _recycled.end()) {
+            img.memory = *best;
+            _recycled.erase(best);
+        }
+    }
+    if (!img.memory) {
+        img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    }
     Check(vkBindImageMemory(device, img.image, img.memory, 0), "vkBindImageMemory");
 
     VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
@@ -517,8 +534,38 @@ void Device::Destroy(Image &img)
     }
     vkDestroyImageView(device, img.view, nullptr);
     vkDestroyImage(device, img.image, nullptr);
-    Free(img.memory);
+    bool kept = false;
+    if (img.memory) {
+        std::lock_guard<std::mutex> lock(_memoryMutex);
+        const auto it = _allocations.find(img.memory);
+        kept = _recycler == std::this_thread::get_id() && it != _allocations.end() && it->second.deviceLocal && !it->second.texture;
+        if (kept) {
+            _recycled.push_back(img.memory);
+        }
+    }
+    if (!kept) {
+        Free(img.memory);
+    }
     img = Image();
+}
+
+void Device::BeginRecycle()
+{
+    std::lock_guard<std::mutex> lock(_memoryMutex);
+    _recycler = std::this_thread::get_id();
+}
+
+void Device::EndRecycle()
+{
+    std::vector<VkDeviceMemory> left;
+    {
+        std::lock_guard<std::mutex> lock(_memoryMutex);
+        _recycler = std::thread::id();
+        left.swap(_recycled);
+    }
+    for (VkDeviceMemory m : left) {
+        Free(m);
+    }
 }
 
 void Device::Destroy(Buffer &b)

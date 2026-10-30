@@ -7,8 +7,10 @@
 #include <filesystem>
 #include <functional>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace vkr {
 
@@ -90,6 +92,13 @@ public:
                       uint32_t mips, VkImageUsageFlags usage, VkImageAspectFlags aspect,
                       VkImageViewType viewType, VkImageCreateFlags flags = 0);
     void Destroy(Image &image);
+    // Between BeginRecycle and EndRecycle (one thread, the GPU idle),
+    // Destroy(Image) keeps the image's memory and CreateImage binds the
+    // smallest kept block that fits: render targets resized smaller and
+    // back (eldr:rampFrames, eldr:movingFrameBudget) allocate nothing new.
+    // EndRecycle frees the blocks left over.
+    void BeginRecycle();
+    void EndRecycle();
 
     // Records one command buffer with `record`, submits it and waits.
     void Submit(const std::function<void(VkCommandBuffer)> &record);
@@ -155,7 +164,10 @@ private:
     struct Allocation {
         VkDeviceSize size;
         bool deviceLocal, texture;
+        uint32_t type;  // memory type index
     };
+    std::vector<VkDeviceMemory> _recycled;
+    std::thread::id _recycler;  // the thread between BeginRecycle and EndRecycle, else none
     mutable std::mutex _memoryMutex;
     std::unordered_map<VkDeviceMemory, Allocation> _allocations;
     MemoryStats _memory;
