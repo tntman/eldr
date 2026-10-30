@@ -153,15 +153,20 @@ public:
     // images for `width` x `height`, and writes this frame's uniforms.
     void Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height);
     // Waits for the pipelines `work` traces with (Prepare does it too). The
-    // constructor starts compiling them on threads, one per ray generation
+    // constructor starts compiling most of them on threads, one per ray generation
     // shader (a cold driver cache took 22 s for all of them in one pipeline
     // on Pascal's compute fallback), so they overlap the scene's load;
-    // HDVK_RT_EARLY_COMPILE=0 compiles each here on its first use instead.
+    // refraction and photons once the scene has glass or casters
+    // (StartPipelines) or on first use, as every one with HDVK_RT_EARLY_COMPILE=0.
     void WaitPipelines(const Work &work);
     // True while a constructor-started compile still runs: the device's
     // pipeline cache can't be a merge destination meanwhile.
     bool Compiling() const;
-    void WaitCompiles();  // for the running ones; deferred ones stay uncompiled
+    void WaitCompiles();  // for the started ones
+    // Starts the refraction and photon compiles when the scene has glass or
+    // caustic casters (Device::sceneTraces, from Scene::Commit): they overlap
+    // the rest of the load. Not with HDVK_RT_EARLY_COMPILE=0.
+    void StartPipelines(bool refraction, bool caustics);
     // Writes bindings 52..59, 86, 87 and 92 of the scene set (see shaders/rt.glsl, gi.glsl, caustics.glsl).
     void UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu);
     // Records the TLAS build (when the scene changed) and the traces;
@@ -240,7 +245,8 @@ private:
     enum Raygen { kPixels, kProbes, kRefraction, kPhotons, kRaygens };
     void _CompileCompute();
     void _CompileRaygen(Raygen k);
-    void _Wait(int job);  // kRaygens: the compute pipelines
+    void _Start(int job);  // its compile on a thread, once; kRaygens: the compute pipelines
+    void _Wait(int job);
     void _FitProbes(const Scene::Gpu &gpu);
     void _PrepareCaustics(RayTracingData &d);
 
@@ -253,7 +259,8 @@ private:
     VkPipelineLayout _layout = VK_NULL_HANDLE;
     VkPipeline _pipelines[kRaygens] = {};  // ray tracing: shaders/rt*, per Raygen
     std::future<void> _compiles[kRaygens + 1];  // per Raygen, then the compute pipelines
-    bool _ready[kRaygens + 1] = {};             // waited for (and its table written)
+    bool _ready[kRaygens + 1] = {};
+    bool _early = true;  // HDVK_RT_EARLY_COMPILE isn't 0             // waited for (and its table written)
     VkPipeline _tlasPipeline = VK_NULL_HANDLE;
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
     VkPipeline _displacePipeline = VK_NULL_HANDLE;  // rt_displace.comp

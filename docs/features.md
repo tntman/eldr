@@ -51,7 +51,7 @@ engine.SetRendererSetting("eldr:filmSamples", 256)
 | `HDVK_NO_RAY_TRACING=1` | Pretend the GPU has no ray tracing |
 | `HDVK_NO_POSE_SHARE=1` | A/B: with deferred skinning each mesh poses its skeleton itself (default: once per skeleton and shutter time, shared by its meshes) |
 | `HDVK_PIPELINE_CACHE_DIR` | Move the pipeline cache (default `%LOCALAPPDATA%\Eldr`) |
-| `HDVK_RT_EARLY_COMPILE=0` | Compile the ray tracing pipelines on their first trace instead of on threads from the delegate's start (A/B) |
+| `HDVK_RT_EARLY_COMPILE=0` | Compile the ray tracing pipelines on their first trace instead of starting the pixels and probes ones on threads at the delegate's start (A/B) |
 | `USD_ROOT`, `USD_VENV`, `HDVK_BUILD` | Read by `usdenv.cmd` (sets plugin paths) |
 
 ## Frame pipeline

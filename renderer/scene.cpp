@@ -2800,6 +2800,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.instanceCapacity = capacity;
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;
+    if (_device && _device->sceneTraces) {
+        _device->sceneTraces(_gpu.refraction,
+                             _gpu.causticMin[0] <= _gpu.causticMax[0] && !_gpu.causticLights.empty());
+    }
 }
 
 } // namespace vkr

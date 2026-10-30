@@ -613,6 +613,7 @@ Renderer::Renderer(Device &device)
     lap("constant images");
     if (_dev.rayTracing) {
         _rt = std::make_unique<RayTracing>(_dev, _setLayout);
+        _dev.sceneTraces = [this](bool refraction, bool caustics) { _rt->StartPipelines(refraction, caustics); };
     }
     lap("ray tracing");
     _volumePass = std::make_unique<VolumePass>(_dev, _setLayout);
@@ -651,6 +652,7 @@ Renderer::~Renderer()
     }
     vkDestroyPipelineCache(_dev.device, _prewarmCache, nullptr);
     _dev.waitFrame = nullptr;
+    _dev.sceneTraces = nullptr;
     vkDeviceWaitIdle(_dev.device);
     lap("wait idle");
     _rt.reset();
