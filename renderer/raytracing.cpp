@@ -1,7 +1,11 @@
 #include "raytracing.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <future>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -152,10 +156,25 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     _giIrradiance = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, 8, 8);
     _giVisibility = _CreateAtlas(VK_FORMAT_R32G32_SFLOAT, 16, 16);
     _giOffsets = _CreateAtlas(VK_FORMAT_R32G32B32A32_SFLOAT, 1, 1);
+
+    const VkDeviceSize stride = AlignUp(_props.shaderGroupHandleSize, _props.shaderGroupHandleAlignment);
+    const VkDeviceSize base = _props.shaderGroupBaseAlignment;
+    const VkDeviceSize tableBytes = AlignUp(AlignUp(stride, base) + AlignUp(2 * stride, base) + 2 * stride, base);
+    _dev.Reserve(_sbt, kRaygens * tableBytes + base,
+                 VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    // The pipelines compile from here, in parallel with the scene's load
+    // (WaitPipelines); HDVK_RT_EARLY_COMPILE=0: on first use, as before.
+    const char *early = std::getenv("HDVK_RT_EARLY_COMPILE");
+    const std::launch when = early && early[0] == '0' ? std::launch::deferred : std::launch::async;
+    _compiles[kRaygens] = std::async(when, [this] { _CompileCompute(); });
+    for (int k = 0; k < kRaygens; ++k) {
+        _compiles[k] = std::async(when, [this, k] { _CompileRaygen(Raygen(k)); });
+    }
 }
 
 RayTracing::~RayTracing()
 {
+    WaitCompiles();
     vkDeviceWaitIdle(_dev.device);
     Release();
     for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_gatherTemp,
@@ -170,8 +189,8 @@ RayTracing::~RayTracing()
     _dev.Destroy(_displacedTable);
     _dev.Destroy(_instanceBlasBuffer);
     _dev.Destroy(_photons);
-    for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _displacePipeline, _giUpdate[0], _giUpdate[1],
-                         _gatherDenoise[0], _gatherDenoise[1]}) {
+    for (VkPipeline p : {_pipelines[0], _pipelines[1], _pipelines[2], _pipelines[3], _tlasPipeline, _skinPipeline,
+                         _displacePipeline, _giUpdate[0], _giUpdate[1], _gatherDenoise[0], _gatherDenoise[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -278,13 +297,10 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     Check(vkCreatePipelineLayout(device, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
 }
 
-// When a frame first traces (Prepare): a scene that never does doesn't
-// compile them (8 s with a cold driver cache).
-void RayTracing::_EnsurePipelines()
+// The compute pipelines (Prepare's TLAS, skinning and displacement, the
+// probes' update and the gather's denoise): on a thread of their own.
+void RayTracing::_CompileCompute()
 {
-    if (_pipeline) {
-        return;
-    }
     const VkDevice device = _dev.device;
     VkResult r = VK_SUCCESS;
     // The displacement, as displace.glsl's displaced pipelines (constant 10;
@@ -335,26 +351,39 @@ void RayTracing::_EnsurePipelines()
     }
     vkDestroyShaderModule(device, denoiseModule, nullptr);
     Check(r, "vkCreateComputePipelines");
+}
 
-    // Shader groups: the ray generation shaders, misses (closest surface,
-    // shadow), hit groups (closest surface: closest hit + cutout any hit;
-    // shadow: rt_shadow.rahit, cutouts and translucent casters). Rays pick
-    // the shadow ones by SBT offset 1.
+// A ray tracing pipeline per ray generation shader: the compute fallback
+// compiles each into a kernel with every hit and miss shader, so one pipeline
+// with all four cost their sum (cold) before the first trace; apart, they
+// compile in parallel and a frame waits for the ones it traces with.
+// Shader groups: the ray generation shader, misses (closest surface,
+// shadow), hit groups (closest surface: closest hit + cutout any hit;
+// shadow: rt_shadow.rahit, cutouts and translucent casters). Rays pick the
+// shadow ones by SBT offset 1. A thread each, with the device's cache
+// (internally synchronized; Renderer::_MergePrewarmCache waits for them).
+void RayTracing::_CompileRaygen(Raygen k)
+{
+    const auto start = std::chrono::steady_clock::now();
+    const VkDevice device = _dev.device;
     struct Stage {
         const uint32_t *code;
         size_t bytes;
         VkShaderStageFlagBits stage;
     };
-    const Stage stages[] = {
+    const Stage raygens[kRaygens] = {
         {kPixelsRgen, sizeof(kPixelsRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kRefractionRgen, sizeof(kRefractionRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kPhotonsRgen, sizeof(kPhotonsRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+    };
+    const Stage stages[] = {
+        raygens[k],
         {kMiss, sizeof(kMiss), VK_SHADER_STAGE_MISS_BIT_KHR},
         {kShadowMiss, sizeof(kShadowMiss), VK_SHADER_STAGE_MISS_BIT_KHR},
         {kClosestHit, sizeof(kClosestHit), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR},
         {kAnyHit, sizeof(kAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
-        {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {kShadowAnyHit, sizeof(kShadowAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
-        {kRefractionRgen, sizeof(kRefractionRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
-        {kPhotonsRgen, sizeof(kPhotonsRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
     constexpr uint32_t kStages = sizeof(stages) / sizeof(stages[0]);
     VkPipelineShaderStageCreateInfo stageInfos[kStages] = {};
@@ -373,62 +402,99 @@ void RayTracing::_EnsurePipelines()
     };
     constexpr uint32_t kUnused = VK_SHADER_UNUSED_KHR;
     const VkRayTracingShaderGroupCreateInfoKHR groups[] = {
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 0, kUnused, kUnused),  // pixels
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 0, kUnused, kUnused),  // ray generation
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 1, kUnused, kUnused),  // miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 2, kUnused, kUnused),  // shadow miss
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, 3, 4),
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 6),
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 5, kUnused, kUnused),  // probes
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 7, kUnused, kUnused),  // refraction
-        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 8, kUnused, kUnused),  // caustic photons
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 5),
     };
-    constexpr uint32_t kGroups = sizeof(groups) / sizeof(groups[0]);
     VkRayTracingPipelineCreateInfoKHR rci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
     rci.stageCount = kStages;
     rci.pStages = stageInfos;
-    rci.groupCount = kGroups;
+    rci.groupCount = sizeof(groups) / sizeof(groups[0]);
     rci.pGroups = groups;
     rci.maxPipelineRayRecursionDepth = 1;  // only ray generation shaders trace
     rci.layout = _layout;
-    r = _fn->createPipelines(device, VK_NULL_HANDLE, _dev.pipelineCache, 1, &rci, nullptr, &_pipeline);
+    const VkResult r =
+        _fn->createPipelines(device, VK_NULL_HANDLE, _dev.pipelineCache, 1, &rci, nullptr, &_pipelines[k]);
     for (const VkPipelineShaderStageCreateInfo &s : stageInfos) {
         vkDestroyShaderModule(device, s.module, nullptr);
     }
     Check(r, "vkCreateRayTracingPipelinesKHR");
+    if (std::getenv("HDVK_TIMING")) {
+        static const char *const names[kRaygens] = {"pixels", "probes", "refraction", "photons"};
+        std::fprintf(stderr, "HdVk rt pipeline %s: %.1f ms\n", names[k],
+                     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+    }
+}
 
-    // Shader binding table: each region starts on the base alignment; the
-    // raygen regions are one record each (pixels, probes, refraction,
-    // photons), miss and hit regions two records each.
+// Waits for a compile; a ray tracing pipeline's then gets its shader binding
+// table (here: the SBT buffer is the render thread's). Each table starts on
+// the base alignment: its raygen region one record, its miss and hit regions
+// two records each.
+void RayTracing::_Wait(int job)
+{
+    if (_ready[job]) {
+        return;
+    }
+    _compiles[job].get();  // rethrows a failed compile
+    _ready[job] = true;
+    if (job == kRaygens) {
+        return;
+    }
     const uint32_t handleSize = _props.shaderGroupHandleSize;
     const VkDeviceSize stride = AlignUp(handleSize, _props.shaderGroupHandleAlignment);
     const VkDeviceSize base = _props.shaderGroupBaseAlignment;
-    std::vector<uint8_t> handles(size_t(kGroups) * handleSize);
-    Check(_fn->getGroupHandles(device, _pipeline, 0, kGroups, handles.size(), handles.data()),
+    const VkDeviceSize missOffset = AlignUp(stride, base), hitOffset = missOffset + AlignUp(2 * stride, base),
+                       tableBytes = AlignUp(hitOffset + 2 * stride, base);
+    std::vector<uint8_t> handles(size_t(5) * handleSize);
+    Check(_fn->getGroupHandles(_dev.device, _pipelines[job], 0, 5, handles.size(), handles.data()),
           "vkGetRayTracingShaderGroupHandlesKHR");
-    const VkDeviceSize raygenOffset = 0, probesOffset = AlignUp(stride, base),
-                       refractionOffset = probesOffset + AlignUp(stride, base),
-                       photonsOffset = refractionOffset + AlignUp(stride, base),
-                       missOffset = photonsOffset + AlignUp(stride, base),
-                       hitOffset = missOffset + AlignUp(2 * stride, base);
-    const VkDeviceSize bytes = hitOffset + 2 * stride;
-    _dev.Reserve(_sbt, bytes + base,
-                 VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    const VkDeviceAddress address = AlignUp(_Address(_sbt.buffer), base);
+    const VkDeviceAddress address = AlignUp(_Address(_sbt.buffer), base) + VkDeviceSize(job) * tableBytes;
     auto *table = static_cast<uint8_t *>(_sbt.mapped) + (address - _Address(_sbt.buffer));
-    std::memcpy(table + raygenOffset, &handles[0], handleSize);
-    std::memcpy(table + probesOffset, &handles[size_t(5) * handleSize], handleSize);
-    std::memcpy(table + refractionOffset, &handles[size_t(6) * handleSize], handleSize);
-    std::memcpy(table + photonsOffset, &handles[size_t(7) * handleSize], handleSize);
+    std::memcpy(table, &handles[0], handleSize);
     for (uint32_t i = 0; i < 2; ++i) {
         std::memcpy(table + missOffset + i * stride, &handles[size_t(1 + i) * handleSize], handleSize);
         std::memcpy(table + hitOffset + i * stride, &handles[size_t(3 + i) * handleSize], handleSize);
     }
-    _raygen = {address + raygenOffset, stride, stride};
-    _raygenProbes = {address + probesOffset, stride, stride};
-    _raygenRefraction = {address + refractionOffset, stride, stride};
-    _raygenPhotons = {address + photonsOffset, stride, stride};
-    _miss = {address + missOffset, stride, 2 * stride};
-    _hit = {address + hitOffset, stride, 2 * stride};
+    _tables[job] = {{address, stride, stride}, {address + missOffset, stride, 2 * stride},
+                    {address + hitOffset, stride, 2 * stride}};
+}
+
+void RayTracing::WaitPipelines(const Work &work)
+{
+    _Wait(kRaygens);
+    if (work.shadows || work.reflections || work.gather) {
+        _Wait(kPixels);
+    }
+    if (work.gi) {
+        _Wait(kProbes);
+    }
+    if (work.refraction) {
+        _Wait(kRefraction);
+    }
+    if (work.caustics) {
+        _Wait(kPhotons);
+    }
+}
+
+void RayTracing::WaitCompiles()
+{
+    for (std::future<void> &f : _compiles) {
+        if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::deferred) {
+            f.wait();  // a failed one's error stays for _Wait; its pipeline is null
+        }
+    }
+}
+
+bool RayTracing::Compiling() const
+{
+    for (const std::future<void> &f : _compiles) {
+        if (f.valid() && f.wait_for(std::chrono::seconds(0)) == std::future_status::timeout) {
+            return true;
+        }
+    }
+    return false;
 }
 
 VkDeviceAddress RayTracing::_Address(VkBuffer buffer) const
@@ -1132,7 +1198,7 @@ void RayTracing::_FitProbes(const Scene::Gpu &gpu)
 
 void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height)
 {
-    _EnsurePipelines();
+    WaitPipelines(work);
     if (work.gi && !_work.gi) {
         _giFrames = 0;  // switched on: start over
     }
@@ -1163,10 +1229,13 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowSample[0] = work.shadowSample[0];
     d.shadowSample[1] = work.shadowSample[1];
     d.shadowSample[3] = float(height);
-    d.shadowInfo[0] = kRtMaskShadow | (work.shadowColor ? kRtMaskTranslucent : 0);
+    // Under caustics shadow rays see the translucent meshes whatever
+    // shadowColor says: casters block them (rt_shadow.rahit), the others
+    // tint only with shadowColor (w's bit 2).
+    d.shadowInfo[0] = kRtMaskShadow | (work.shadowColor || work.caustics ? kRtMaskTranslucent : 0);
     d.shadowInfo[1] = work.shadowVolumes;
     d.shadowInfo[2] = perTexel;
-    d.shadowInfo[3] = work.hitShadows ? 1u : 0u;
+    d.shadowInfo[3] = (work.hitShadows ? 1u : 0u) | (work.shadowColor ? 2u : 0u);
     d.shadowVolume[0] = work.volumeStep;
     d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;
@@ -1191,6 +1260,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.denoise[0] = work.shadowDenoise;
     d.denoise[1] = work.reflectionDenoise;
     d.denoise[2] = float(_shadowLayers);
+    d.denoise[3] = float(work.reflectionRoulette);
     _PrepareCaustics(d);
     if (!work.gi) {
         return;
@@ -1463,10 +1533,11 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelines[kPhotons]);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
         const RayTracingData &d = *static_cast<const RayTracingData *>(_uniforms.mapped);
-        _fn->cmdTraceRays(cmd, &_raygenPhotons, &_miss, &_hit, &_callable, d.causticInfo[0], d.causticInfo[1], 1);
+        const Table &t = _tables[kPhotons];
+        _fn->cmdTraceRays(cmd, &t.raygen, &t.miss, &t.hit, &_callable, d.causticInfo[0], d.causticInfo[1], 1);
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
@@ -1475,10 +1546,11 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
     if (_work.gi && !_work.giPause) {
         // Probe rays (reading last frame's probes for further bounces), then
         // blended into the probes, before shading and reflections read them.
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelines[kProbes]);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
         const uint32_t probes = _giCounts[0] * _giCounts[1] * _giCounts[2];
-        _fn->cmdTraceRays(cmd, &_raygenProbes, &_miss, &_hit, &_callable, _work.giRays, probes, 1);
+        const Table &pt = _tables[kProbes];
+        _fn->cmdTraceRays(cmd, &pt.raygen, &pt.miss, &pt.hit, &_callable, _work.giRays, probes, 1);
         MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                       VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -1494,9 +1566,9 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                 MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                               VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                               VK_ACCESS_2_UNIFORM_READ_BIT);
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelines[kProbes]);
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
-                _fn->cmdTraceRays(cmd, &_raygenProbes, &_miss, &_hit, &_callable, _work.giRays, probes, 1);
+                _fn->cmdTraceRays(cmd, &pt.raygen, &pt.miss, &pt.hit, &_callable, _work.giRays, probes, 1);
                 MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                               VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                               VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
@@ -1519,16 +1591,19 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
         const bool traced = (_work.shadows && _work.shadowSamples > 0) ||
                             (_work.reflections && _work.reflectionSamples > 0) || (_work.gather && _work.gatherRays > 0);
         if (traced) {
-            _fn->cmdTraceRays(cmd, &_raygen, &_miss, &_hit, &_callable, _width, _height, 1);
+            const Table &t = _tables[kPixels];
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelines[kPixels]);
+            _fn->cmdTraceRays(cmd, &t.raygen, &t.miss, &t.hit, &_callable, _width, _height, 1);
         }
         if (_work.refraction) {
             // Its own launch: the per pixel shader above stays as it was.
-            _fn->cmdTraceRays(cmd, &_raygenRefraction, &_miss, &_hit, &_callable, _width, _height, 1);
+            const Table &t = _tables[kRefraction];
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipelines[kRefraction]);
+            _fn->cmdTraceRays(cmd, &t.raygen, &t.miss, &t.hit, &_callable, _width, _height, 1);
         }
         VkPipelineStageFlags2 written = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
         if (_work.gather && _work.gatherRays > 0 && _work.gatherDenoise > 0.0f) {  // in place: once per traced image

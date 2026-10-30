@@ -25,6 +25,8 @@ void main()
     }
     if (Feature(kFeatureCaustics) && (draws[instances[EntrySlot(inEntry)].draw].caustics & 1u) != 0u) {
         t = vec3(0.0);  // DrawInfo::caustics' caster bit
+    } else if (Feature(kFeatureTintCastersOnly)) {
+        discard;  // Frame::translucentShadows off: the casters alone
     }
     if (all(greaterThanEqual(t, vec3(0.999)))) {
         discard;

@@ -136,6 +136,7 @@ HDVK_SETTING(ssrDenoise, "Denoised Glossy SSR (GGX rays, ratio estimator)", fram
 HDVK_SETTING(ssrHitFilter, "SSR Hit Footprint Filter (mip by the ray's cone)", frame.ssrHitFilter)
 HDVK_SETTING(rtReflectionSamples, "Ray-Traced Reflection Rays per Pixel (1-16)", int(frame.rtReflectionSamples))
 HDVK_SETTING(rtReflectionDenoise, "Ray-Traced Reflection Denoise", frame.rtReflectionDenoise)
+HDVK_SETTING(rtReflectionRoulette, "Ray-Traced Reflection Roulette (dim reflections in fewer samples)", frame.rtReflectionRoulette)
 HDVK_SETTING(rtHitShadows, "Ray-Traced Hit Shadows (all lights at reflection/refraction hits; 0 off, 1 final quality, 2 always)", int(frame.rtHitShadows))
 HDVK_SETTING(reflectionProbe, "Reflection Probe (captured cube)", frame.reflectionProbe)
 HDVK_SETTING(probeResolution, "Reflection Probe Resolution (16-512)", int(frame.probeResolution))

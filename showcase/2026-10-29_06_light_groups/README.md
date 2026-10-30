@@ -9,7 +9,7 @@ The Cornell box with a product `aovs` listing the render vars a Karma Render Set
 - `sss`: the subsurface ball on the box; its light is out of the diffuse vars.
 - `coat`: the blue ball's clear coat, also counted in glossy (as Karma).
 - `combinedvolume`: the small cloud; what is behind it is dimmed in every split, so the splits still add up.
-- `holdout_shadow`: the black block on the floor is a holdout (`karma:object:holdoutmode`): no light in any var, its shadows here for comp.
+- `holdout_shadow`: the block on the floor at the front right is a holdout (`karma:object:holdoutmode`): cut out of the beauty (zero alpha) and no light in any var, its shadows here for comp.
 - `/Render/noHoldouts` (`eldr:holdouts` off): the block is drawn, its shadows move to `shadow`.
 
 ## Open

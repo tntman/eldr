@@ -247,6 +247,10 @@ public:
         // averaged over up to 12 pixels in their plane, the radius fading
         // out over the film (effectDenoiseSamples).
         bool rtReflectionDenoise = true;
+        // Traced reflections' roulette (rt_pixels.rgen ReflectionKeep): surfaces
+        // reflecting nothing trace none; from the film's second sample dim ones
+        // trace in some of the samples, block by block, weighted by 1 over that share.
+        bool rtReflectionRoulette = true;
         uint32_t rtSkinnedInstances = 16;  // skinned instances that block rays (0..kMaxRtSkinned), for every ray-traced effect
         // Global illumination (ray-traced DDGI probes; ignored without
         // Device::rayTracing): the diffuse light bounced off the scene,
@@ -668,10 +672,11 @@ public:
         bool reduced = false;  // a moving reduction (Frame::moving*) applied this frame
     };
     const Stats &GetStats() const { return _stats; }
-    // Time in shading pipeline compiles and acceleration structure builds
-    // since the last call (the render delegate's load summary).
+    // Time in shading pipeline compiles, waiting for the ray tracing
+    // pipelines (compiling since construction) and acceleration structure
+    // builds since the last call (the render delegate's load summary).
     struct LoadTimes {
-        double shadersMs = 0, bvhMs = 0;
+        double shadersMs = 0, rtPipelinesMs = 0, bvhMs = 0;
     };
     LoadTimes TakeLoadTimes()
     {

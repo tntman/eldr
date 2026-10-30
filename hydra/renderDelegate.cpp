@@ -41,6 +41,8 @@
 #include <mutex>
 #include <thread>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 #ifdef _WIN32
 #include <corecrt_startup.h>  // _crt_atexit
 #endif
@@ -231,12 +233,33 @@ std::mutex _teardownMutex;
 std::condition_variable _teardownDone;
 int _teardowns = 0;
 bool _exiting = false;
+// The instances of finished background teardowns. Never destroyed on the
+// worker: vkDestroyInstance unloads the driver's DLLs, whose detach takes
+// the CRT's exit lock, which exit() holds while _WaitForTeardowns waits
+// (every husk run waited the full 30 s for it). Destroyed by the next
+// delegate's teardown on the caller's thread, or by the exit wait itself.
+std::vector<VkInstance> _doneInstances;
+
+void _DestroyDoneInstances()
+{
+    std::vector<VkInstance> done;
+    {
+        std::lock_guard<std::mutex> lock(_teardownMutex);
+        done.swap(_doneInstances);
+    }
+    for (VkInstance instance : done) {
+        vkDestroyInstance(instance, nullptr);
+    }
+}
 
 void _WaitForTeardowns()
 {
-    std::unique_lock<std::mutex> lock(_teardownMutex);
-    _exiting = true;  // later deletes tear down on their own thread
-    _teardownDone.wait_for(lock, std::chrono::seconds(30), [] { return _teardowns == 0; });
+    {
+        std::unique_lock<std::mutex> lock(_teardownMutex);
+        _exiting = true;  // later deletes tear down on their own thread
+        _teardownDone.wait_for(lock, std::chrono::seconds(30), [] { return _teardowns == 0; });
+    }
+    _DestroyDoneInstances();  // this thread holds the exit lock already
 }
 
 // Into the exit() sequence before other threads are killed: on Windows a
@@ -337,35 +360,39 @@ HdVkRenderDelegate::~HdVkRenderDelegate()
     // the next delegate makes its own device. The cache file is saved as sets
     // are compiled, so that one still finds it. HDVK_SYNC_TEARDOWN=1 waits
     // (validation runs then see the leak check). A process exit waits for
-    // it (_WaitForTeardowns, at most 30 s).
+    // it (_WaitForTeardowns, at most 30 s). An offline render (husk,
+    // usdrecord) tears down here: its process exits right after.
     _renderer->StopPrewarm();
-    auto teardown = [renderer = std::move(_renderer), scene = std::move(_scene), device = std::move(_device),
-                     timing]() mutable {
-        const auto start = std::chrono::steady_clock::now();
-        renderer.reset();
-        scene.reset();
-        device.reset();
-        if (timing) {
-            std::fprintf(stderr, "HdVk teardown (background): %.3f s\n",
-                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
-        }
-    };
+    _DestroyDoneInstances();
     _WaitForTeardownsAtExit();
-    bool background = !std::getenv("HDVK_SYNC_TEARDOWN");
+    bool background = !std::getenv("HDVK_SYNC_TEARDOWN") && !Offline();
     {
         std::lock_guard<std::mutex> lock(_teardownMutex);
         background = background && !_exiting;
         _teardowns += background;
     }
-    if (!background) {
-        teardown();
-    } else {
-        std::thread([teardown = std::move(teardown)]() mutable {
-            teardown();
+    auto teardown = [renderer = std::move(_renderer), scene = std::move(_scene), device = std::move(_device), timing,
+                     background]() mutable {
+        const auto start = std::chrono::steady_clock::now();
+        renderer.reset();
+        scene.reset();
+        const VkInstance instance = background ? std::exchange(device->instance, VK_NULL_HANDLE) : VK_NULL_HANDLE;
+        device.reset();
+        if (timing) {
+            std::fprintf(stderr, "HdVk teardown%s: %.3f s\n", background ? " (background)" : "",
+                         std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+        }
+        if (background) {
             std::lock_guard<std::mutex> lock(_teardownMutex);
+            _doneInstances.push_back(instance);
             --_teardowns;
             _teardownDone.notify_all();
-        }).detach();
+        }
+    };
+    if (background) {
+        std::thread(std::move(teardown)).detach();
+    } else {
+        teardown();
     }
     lap("handed off");
 }
@@ -919,7 +946,7 @@ void HdVkRenderDelegate::NoteCameraShutter(SdfPath const &camera, float open, fl
 // arrives with houdini:renderer = husk), but its viewport always sends
 // houdini:interactive (normal, tumbling, editing); husk sends neither, only
 // rasterRenderProducts (a batch frame). Offline: husk, or hdPrman's
-// convention, enableInteractive false (usdrecord sets neither).
+// convention, enableInteractive false (usdrecord sets it too).
 bool HdVkRenderDelegate::HoudiniViewport() const
 {
     const VtValue flag = GetRenderSetting(TfToken("houdini:viewport"));
@@ -993,7 +1020,7 @@ void HdVkRenderDelegate::NoteFrame()
     std::lock_guard<std::mutex> lock(_loadMutex);
     const double sync = _loadSyncMs;
     _loadSyncMs = 0;
-    const double total = t.shadersMs + textures + t.bvhMs + sync;
+    const double total = t.shadersMs + textures + t.rtPipelinesMs + t.bvhMs + sync;
     if (total < 250.0) {  // an edit or a camera move, not a load
         return;
     }
@@ -1003,8 +1030,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
-                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, rt pipelines %.1f, BVH %.1f, sync %.1f | GPU %.2f GB "
+                  "(textures %.0f MB), RAM %.1f GB (peak %.1f)",
+                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.rtPipelinesMs / 1000.0, t.bvhMs / 1000.0,
+                  sync / 1000.0,
                   double(_device ? _device->Memory().deviceLocal : 0) / gb,
                   double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);

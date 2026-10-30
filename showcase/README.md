@@ -35,5 +35,6 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_19_texture_compression` | 8-bit textures block-compressed (BC7, BC4, BC5) and cached on disk, against the exact texels | `eldr:textureCompression` |
 | 2026-10-29 | `2026-10-29_20_rt_volume_cost` | Cheaper traced refraction (first ray looks for glass only) and volume local-light shadows (a tap every second step), same image | `eldr:rtRefractionClip`, `eldr:volumeLocalShadowStride` |
 | 2026-10-30 | `2026-10-30_01_moving_camera` | Moving camera mode: half size, one shadow ray, GI paused while moving; full quality on the first still frame | `eldr:movingRenderScale`, `eldr:movingShadowRays`, `eldr:movingGiPause` |
+| 2026-10-30 | `2026-10-30_02_reflection_roulette` | Dim traced reflections trace in a share of the film's samples per 8x8 block, weighted to match: same converged image, crowd 249 to 146 ms per sample | `eldr:rtReflectionRoulette` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.

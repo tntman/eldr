@@ -148,6 +148,13 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     if (!Feature(kFeatureRefraction)) {
         return 1.0 - gStraight - dot(through, vec3(1.0 / 3.0));  // no background: seen straight through, untinted
     }
+    // Only where no opaque surface lies straight behind does light that
+    // refracts out of the scene (no dome) give coverage back to the app's
+    // background; elsewhere that surface would show unrefracted through the
+    // glass (caustics.usda's ball showed the lit floor behind it, Karma
+    // black below its middle), so that light is black.
+    float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
+    float open = depth < 1.0 ? 0.0 : 1.0;
     if (frame.rtRefraction.x != 0u) {
         vec4 traced = imageLoad(rtRefractionImage, ivec2(gl_FragCoord.xy));
         if (kShadingPass == 3u && traced.a != 0.0) {
@@ -158,11 +165,10 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
             vec3 transmitted = through * over * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;
             gRefractedLight += transmitted * traced.rgb;  // indirect glossy (light splits)
-            return 1.0 - gStraight - (traced.a < 0.0 ? dot(transmitted, vec3(1.0 / 3.0)) : 0.0);
+            return 1.0 - gStraight - (traced.a < 0.0 ? open * dot(transmitted, vec3(1.0 / 3.0)) : 0.0);
         }
     }
 
-    float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
     vec4 behindP = frame.invViewProj * vec4(gl_FragCoord.xy / frame.viewport.xy * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
     float camera = length(inWorldPos - frame.cameraPos.xyz);
     float behind = depth < 1.0 ? length(behindP.xyz / behindP.w - inWorldPos) : 1e30;
@@ -191,7 +197,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         gRefractedLight += reflected * mirrored.rgb;
         lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
     }
-    return 1.0 - gStraight - lost;
+    return 1.0 - gStraight - open * lost;
 }
 
 // frame.features.x: translucent casters tint the sun's and local lights'

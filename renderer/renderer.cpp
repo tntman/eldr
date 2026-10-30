@@ -163,6 +163,8 @@ constexpr uint32_t kFeatureTimeSample = 1u << 25;
 constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 // caustics.glsl: mesh.frag gathers caustic photons.
 constexpr uint32_t kFeatureCaustics = 1u << 27;
+// shadow_tint.frag: only caustic casters go into the tint maps (Frame::translucentShadows off).
+constexpr uint32_t kFeatureTintCastersOnly = 1u << 28;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -636,6 +638,10 @@ Renderer::~Renderer()
         _prewarmThread.join();
     }
     lap("prewarm join");
+    if (_rt) {
+        _rt->WaitCompiles();  // before the merge into the cache they use
+    }
+    lap("rt pipelines join");
     _MergePrewarmCache();
     lap("merge+save");
     for (const Prewarmed &p : _prewarmed) {
@@ -1565,6 +1571,9 @@ void Renderer::_PrewarmWorker()
 // pipelines (and saves) with that cache, so the worker merging into it raced.
 void Renderer::_MergePrewarmCache()
 {
+    if (_rt && _rt->Compiling()) {
+        return;  // its threads create pipelines with the destination; a later call merges
+    }
     bool save;
     {
         std::lock_guard<std::mutex> lock(_prewarmMutex);
@@ -3486,6 +3495,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     constexpr float kShadowDenoiseRadius = 3.0f;  // pixels, on the first sample
     rt.shadowDenoise = frame.rtShadowDenoise ? kShadowDenoiseRadius * effectDenoise : 0.0f;
     rt.reflectionDenoise = frame.rtReflectionDenoise ? effectDenoise : 0.0f;
+    // Surfaces that reflect nothing skip their rays always; the roulette not on the film's first
+    // sample (it would show the blocks) nor without a film (TAA has none to converge).
+    rt.reflectionRoulette = !frame.rtReflectionRoulette ? 0 : film && _filmSamples > 1 ? 2 : 1;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics: in final quality (or always), with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):
@@ -3684,7 +3696,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        const auto rtStart = std::chrono::steady_clock::now();
+        _rt->WaitPipelines(rt);
         const auto bvhStart = std::chrono::steady_clock::now();
+        _load.rtPipelinesMs += std::chrono::duration<double, std::milli>(bvhStart - rtStart).count();
         _rt->Prepare(gpu, rt, _width, _height);
         _load.bvhMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bvhStart).count();
     } else if (_rt) {
@@ -3721,8 +3736,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool refraction = draw && frame.translucency && frame.refraction && frame.depthPrepass && gpu.refraction;
     // Translucent shadows: tint maps at a fraction of the shadow maps'
     // size (1 x 1 while unused); new ones invalidate the cached atlas.
-    const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
+    // Under caustics the casters' glass blocks the light whatever
+    // Frame::translucentShadows says (its light arrives as photons): with it
+    // off the tint maps hold the casters alone.
+    const bool translucentShadows = draw && frame.translucency && (frame.translucentShadows || rt.caustics) &&
                                     !gpu.translucent.empty();
+    if (translucentShadows && !frame.translucentShadows) {
+        fd.features[0] |= kFeatureTintCastersOnly;
+    }
     // Volume shadows: the volumes' transmittance goes into the sun's tint
     // map as well (VolumePass::RecordShadow), read with the translucent
     // casters'.
