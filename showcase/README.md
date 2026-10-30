@@ -110,4 +110,4 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | Folder | Feature | A/B nodes |
 |---|---|---|
 | `2026-10-28_08_render_stats` | Eldr's render statistics (renderer, memory, time) show in the Render Gallery's statistics panel and in husk EXRs as `husk:render_stats`. | `default` only (no A/B: the feature is metadata) |
-| `2026-10-30_01_moving_camera` | While the camera moves, Eldr renders at half size with one shadow ray and paused GI, and full quality returns on the first still frame. | `moving` (the defaults) vs `full` |
+| `2026-10-30_01_moving_camera` | While the camera moves, Eldr renders smaller (to a GPU frame budget) with one shadow ray and paused GI; after the stop, quality steps up over a few frames and the film starts from the TAA image. | `moving` (the defaults) vs `full` vs `abrupt` |
