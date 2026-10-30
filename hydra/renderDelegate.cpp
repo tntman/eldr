@@ -507,8 +507,11 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
 {
     const auto &t = *HdVkRenderSettingsTokens;
     const auto &t2 = *HdVkRenderSettingsTokens;
-    const bool changed = GetRenderSetting(key) != value;
+    const VtValue previous = GetRenderSetting(key);
+    const bool changed = previous != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    static const TfToken houdiniInteractive("houdini:interactive");
+    _hostOnlyChanges += changed && key == houdiniInteractive && !previous.IsEmpty();
     // Any setting may change whether materials want compressed textures
     // (the setting, or a former int of it): they fetch them again.
     if (_textures) {
@@ -1059,7 +1062,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     // Nothing synced (camera-only frames: cameras note no edit) and no
     // setting changed since the last commit: the scene can skip its rebuild.
     const uint64_t edits = _sceneEdits;
-    const unsigned settings = GetRenderSettingsVersion();
+    const unsigned settings = SettingsVersion();
     const bool unchanged = edits == _committedEdits && settings == _committedSettings;
     _committedEdits = edits;
     _committedSettings = settings;

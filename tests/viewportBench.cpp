@@ -733,9 +733,7 @@ int main(int argc, char **argv)
                     }
                     const double ms = Ms(t0, Clock::now()), since = Ms(s0, Clock::now());
                     worst = std::max(worst, ms);
-                    if (first.size() < 4) {
-                        first.push_back(ms);
-                    }
+                    first.push_back(ms);
                     const VtDictionary stats = delegate->GetRenderStats();
                     auto get = [&](const char *key) {
                         auto it = stats.find(key);
@@ -756,10 +754,16 @@ int main(int argc, char **argv)
                 }
                 std::printf("  stop: full quality after %d frames (%.1f ms), film after %d (%.1f ms), converged after %d "
                             "(%.0f ms); first still frames", full, fullMs, filmAt, filmMs, convergedAt, convergedMs);
-                for (double ms : first) {
-                    std::printf(" %.1f", ms);
+                // The first four, then the switch to full quality (eldr:stillDelay
+                // holds it back) and its neighbours; hitches over twice the moving p50.
+                int over = 0;
+                for (size_t i = 0; i < first.size(); ++i) {
+                    over += first[i] > 2.0 * median;
+                    if (i < 4 || (full > 0 && i + 3 >= size_t(full) && i <= size_t(full) + 1)) {
+                        std::printf("%s %.1f", i >= 4 && i + 3 == size_t(full) ? " ..." : "", first[i]);
+                    }
                 }
-                std::printf(" ms, worst %.1f ms\n", worst);
+                std::printf(" ms, worst %.1f ms, %d over 2x moving p50 (%.1f)\n", worst, over, median);
             }
         }
 

@@ -3006,7 +3006,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         }
     }
     const bool moving = _historyValid && (std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0 ||
-                                          gpu.moved);
+                                          gpu.moved || frame.cameraHold);
     // eldr:movingRenderScale: smaller still while moving, full size again
     // from the first still frame. Post depth of field and motion blur work
     // at the scene's size (their pixel radii scale; the blur draws at the
@@ -3164,6 +3164,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool shutterOn =
         nestedShutter || (frame.motionBlurTimeSamples && frame.postProcess && frame.motionBlur && frame.shutter > 0);
     const bool film = taa && frame.filmAccumulation && (!motionBlur || shutterOn) && !giSettling &&
+                      !(frame.cameraHold && !fresh && !frame.filmRestart) &&
                       (fresh || frame.filmRestart || _stillFrames >= kFilmStillFrames || (_filmSamples > 0 && !changed));
     // 0 adds, 1 starts over, 2 starts over from the TAA image.
     const uint32_t filmMode = !film                            ? 0
@@ -3452,7 +3453,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
     // eldr:movingGiPause: settled probes keep their light while only the camera moves.
-    rt.giPause = frame.movingGiPause && cameraOnly && !film && _rt && _rt->Converged();
+    rt.giPause = frame.movingGiPause && (cameraOnly || (frame.cameraHold && !changed)) && !film && _rt && _rt->Converged();
     _stats.reduced = (rtScene && frame.depthPrepass && tracedShadows && fewerShadowRays) || (rt.gi && rt.giPause);
     rt.giRelocation = frame.giRelocation;
     // Final gather, on top of the probes.

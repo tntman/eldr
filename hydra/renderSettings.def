@@ -254,3 +254,4 @@ HDVK_SETTING(interactiveSamples, "Interactive Noise Loop (samples while moving, 
 HDVK_SETTING(movingRenderScale, "Render Scale while Moving (TAA upscales; 1 = off, 0.25-1)", frame.movingRenderScale)
 HDVK_SETTING(movingShadowRays, "Ray-Traced Shadow Rays while Moving (0 = as still, 0-16)", int(frame.movingShadowRays))
 HDVK_SETTING(movingGiPause, "Pause Settled GI Probes while the Camera Moves", frame.movingGiPause)
+HDVK_SETTING(stillDelay, "Still Delay (seconds the camera stays moving after it stops, 0-2)", 0.3f)

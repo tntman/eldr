@@ -85,9 +85,10 @@ engine.Render(stage.GetPseudoRoot(), params)
 tmp = engine.GetRenderStats()
 expect(tmp.get("rendererStage") == "interactive" and tmp.get("percentDone") == 100.0, "interactive TAA stage")
 engine.SetRendererSetting("eldr:filmAccumulation", True)
-# The film that follows a camera move starts from the interactive image: "accumulating".
+# The film that follows a camera move starts from the interactive image: "accumulating"
+# (after eldr:stillDelay, 0.3 s of wall time: frames until then stay interactive).
 stages = set()
-for _ in range(100):
+for _ in range(5000):
     engine.Render(stage.GetPseudoRoot(), params)
     stages.add(engine.GetRenderStats().get("rendererStage"))
     if engine.IsConverged():
