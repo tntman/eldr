@@ -595,6 +595,23 @@ int main(int argc, char **argv)
                 controller.SetCameraPath(camPath);
             }
             std::vector<uint8_t> appCopy;
+            // --stop: the colour of the last moving frame and of the still
+            // ones until full quality and 5 after, against the converged one.
+            HdRenderBuffer *colorOut = controller.GetRenderOutput(HdAovTokens->color);
+            auto grabColor = [&](std::vector<float> *out) {
+                out->clear();
+                if (!colorOut || colorOut->GetFormat() != HdFormatFloat16Vec4) {
+                    return;
+                }
+                const auto *c = static_cast<const GfHalf *>(colorOut->Map());
+                const size_t n = size_t(colorOut->GetWidth()) * colorOut->GetHeight();
+                out->resize(n);
+                for (size_t i = 0; i < n; ++i) {  // luminance
+                    (*out)[i] = 0.2126f * float(c[4 * i]) + 0.7152f * float(c[4 * i + 1]) + 0.0722f * float(c[4 * i + 2]);
+                }
+                colorOut->Unmap();
+            };
+            std::vector<float> lastMoving;
             const auto runStart = Clock::now();
             for (int f = 0; f < warmup + frames; ++f) {
                 // Orbit about the view's centre line: a camera move every frame.
@@ -622,6 +639,9 @@ int main(int argc, char **argv)
                     }
                     b->Unmap();
                     frameMaps[name] = Ms(m0, Clock::now());
+                }
+                if (stopFrames > 0 && f + 1 == warmup + frames) {
+                    grabColor(&lastMoving);
                 }
                 const auto tMapped = Clock::now();
                 for (const auto mapped = Clock::now(); Ms(mapped, Clock::now()) < appMs;) {
@@ -713,6 +733,7 @@ int main(int argc, char **argv)
                 int full = -1, filmAt = -1, convergedAt = -1;
                 double fullMs = 0, filmMs = 0, convergedMs = 0, worst = 0;
                 std::vector<double> first;
+                std::vector<std::vector<float>> stills;  // colour of the still frames until full + 5
                 if (houdini) {
                     delegate->SetRenderSetting(TfToken("houdini:interactive"), VtValue(TfToken("normal")));
                 }
@@ -751,6 +772,10 @@ int main(int argc, char **argv)
                     if (stageNow == "converged") {
                         convergedAt = f + 1, convergedMs = since;
                     }
+                    if (full < 0 || f < full + 5) {
+                        stills.emplace_back();
+                        grabColor(&stills.back());
+                    }
                 }
                 std::printf("  stop: full quality after %d frames (%.1f ms), film after %d (%.1f ms), converged after %d "
                             "(%.0f ms); first still frames", full, fullMs, filmAt, filmMs, convergedAt, convergedMs);
@@ -764,6 +789,39 @@ int main(int argc, char **argv)
                     }
                 }
                 std::printf(" ms, worst %.1f ms, %d over 2x moving p50 (%.1f)\n", worst, over, median);
+                // The whole move -> stop -> converge sequence: moving and still frames.
+                std::vector<double> all = times;
+                all.insert(all.end(), first.begin(), first.end());
+                std::sort(all.begin(), all.end());
+                const double p50 = all[all.size() / 2], p95 = all[std::min(all.size() - 1, size_t(0.95 * all.size()))];
+                int over2 = 0;
+                for (double t : all) {
+                    over2 += t > 2.0 * p50;
+                }
+                // Noise: RMS luminance error against the last still frame (converged
+                // or the last rendered): the last moving frame's, and the worst of
+                // the still frames up to 5 after full quality.
+                std::vector<float> ref;
+                grabColor(&ref);
+                auto rms = [&](const std::vector<float> &img) {
+                    if (img.size() != ref.size() || ref.empty()) {
+                        return 0.0;
+                    }
+                    double e = 0;
+                    for (size_t i = 0; i < ref.size(); ++i) {
+                        e += double(img[i] - ref[i]) * (img[i] - ref[i]);
+                    }
+                    return std::sqrt(e / double(ref.size()));
+                };
+                double worstStill = 0;
+                for (const auto &img : stills) {
+                    worstStill = std::max(worstStill, rms(img));
+                }
+                const double moved = rms(lastMoving);
+                std::printf("  sequence: %zu frames, worst %.1f ms, p50 %.1f p95 %.1f (p95/p50 %.2f), %d over 2x p50, "
+                            "full quality %.0f ms; noise rms last moving %.4f, worst still %.4f (x%.2f)\n",
+                            all.size(), all.back(), p50, p95, p95 / p50, over2, fullMs, moved, worstStill,
+                            moved > 0 ? worstStill / moved : 0.0);
             }
         }
 

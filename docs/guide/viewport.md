@@ -4,12 +4,12 @@ In the Solaris viewport Eldr has two states: **moving** (you tumble the camera o
 
 ## While the camera moves
 
-- The image renders at half size (**Render Scale while Moving**, 0.5) and a temporal filter (TAA) rebuilds full resolution from the frames before.
+- The image renders as large as fits **Frame Budget while Moving** (33 ms of GPU time per frame) and a temporal filter (TAA) rebuilds full resolution from the frames before. Light scenes stay full size; heavy ones drop as far as needed (to a quarter). Set the budget to 0 for a fixed size (**Render Scale while Moving**, 0.5).
 - Traced shadows take one ray per light (**Ray-Traced Shadow Rays while Moving**).
 - Settled GI probes pause (**Pause Settled GI Probes while the Camera Moves**).
 - Eldr returns a frame while the next one renders (**Overlap Readback while Moving**): smoother tumbling, one frame of lag.
 
-Once the camera has been still for **Still Delay** (0.3 s), the next frame is full quality again and the film starts from the TAA image. Short pauses mid-navigation stay in moving mode, so the view doesn't switch to full size and back (a start-stop feel); the half-size image keeps refining meanwhile. Raise Still Delay if you pause longer between moves, or set 0 to switch on the first still frame. To keep TAA instead of the film (a steady image, no restart when the camera stops), turn off **Film when Still**; it, **TAA Samples** and **Still Delay** are in the open **Viewport** group of the Eldr tab.
+Once the camera has been still for **Still Delay** (0.3 s), quality steps up over **Ramp to Full Quality** (6 frames): size, shadow rays and GI updates rise a little each frame, so no single frame takes the whole cost. Then the film starts from the TAA image (**Film Warm Start**), so the first still frames are as clean as the last moving one. Short pauses mid-navigation stay in moving mode, so the view doesn't switch to full size and back (a start-stop feel); the moving image keeps refining meanwhile. Raise Still Delay if you pause longer between moves, or set 0 to switch on the first still frame. To keep TAA instead of the film (a steady image, no restart when the camera stops), turn off **Film when Still**; it, **TAA Samples**, **Still Delay** and the settings above are in the open **Viewport** group of the Eldr tab.
 
 | Kitchen, 1080p, camera moving | Full settings | Moving mode |
 |---|---|---|
