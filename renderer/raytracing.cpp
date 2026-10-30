@@ -1191,7 +1191,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.denoise[0] = work.shadowDenoise;
     d.denoise[1] = work.reflectionDenoise;
     d.denoise[2] = float(_shadowLayers);
-    d.denoise[3] = work.reflectionRoulette ? 1.0f : 0.0f;
+    d.denoise[3] = float(work.reflectionRoulette);
     _PrepareCaustics(d);
     if (!work.gi) {
         return;
