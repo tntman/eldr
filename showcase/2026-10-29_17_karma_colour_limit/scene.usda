@@ -3,7 +3,7 @@
     upAxis = "Y"
     metersPerUnit = 1
     subLayers = [@../../tests/scenes/emissive.usda@]
-    renderSettingsPrimPath = "/Render/limit20"
+    renderSettingsPrimPath = "/Render/eldr_default"
 )
 
 # Lane 40, Karma's colour limit. The Cornell box lit only by an emissive
@@ -16,6 +16,7 @@
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/limit20
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

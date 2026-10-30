@@ -1,5 +1,6 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     upAxis = "Y"
     metersPerUnit = 1
     subLayers = [@../../tests/scenes/light_reflections.usda@]
@@ -50,6 +51,7 @@ def DiskLight "disk"
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/shapes
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

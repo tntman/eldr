@@ -56,8 +56,10 @@ KARMA_TWINS = {
     "eldr:colorLimit": "karma:global:colorlimit",
     "eldr:lightQuality": "karma:global:light_sampling_quality",
 }
+DEFAULT_PRIM = "/Render/eldr_default"  # the viewport's "Default" render settings
 STANDARD = ("eldr_default", "eldr_final", "karma")
 BEGIN = "    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---\n"
+MAIN = "    # main settings prim: "
 END = "    # --- end standard settings ---\n"
 
 
@@ -92,6 +94,9 @@ def read_scene(usda):
     stage = Usd.Stage.Open(usda)
     prims = [p for p in stage.Traverse() if p.IsA(UsdRender.Settings) and p.GetName() not in STANDARD]
     main = stage.GetMetadata("renderSettingsPrimPath")
+    marked = re.search(re.escape(MAIN) + r"(\S+)", open(usda, encoding="utf-8").read())
+    if marked:  # a rerun: the metadata points at eldr_default now
+        main = marked.group(1)
     prims.sort(key=lambda p: str(p.GetPath()) != main)
 
     def info(p):
@@ -123,7 +128,7 @@ def write_standard_prims(usda, main):
     clash = re.search(r'RenderSettings "(%s)"' % "|".join(STANDARD), text)
     if clash:
         raise RuntimeError("%s: rename its own %s prim, the standard one takes the name" % (usda, clash.group(1)))
-    lines = [BEGIN]
+    lines = [BEGIN, "%s%s\n" % (MAIN, main["path"])]
     for p in standard_prims(main):
         lines.append('    def RenderSettings "%s"\n    {\n' % p["name"])
         if main["camera"]:
@@ -139,6 +144,13 @@ def write_standard_prims(usda, main):
     if not m:
         raise RuntimeError("%s: no Render scope" % usda)
     text = text[:m.end()] + "".join(lines) + text[m.end():]
+    meta = 'renderSettingsPrimPath = "%s"' % DEFAULT_PRIM
+    if "renderSettingsPrimPath = " in text:
+        text = re.sub(r"renderSettingsPrimPath = .*", lambda _: meta, text, count=1)
+    elif text.startswith("#usda 1.0\n(\n"):
+        text = text.replace("#usda 1.0\n(\n", "#usda 1.0\n(\n    " + meta + "\n", 1)
+    else:
+        text = text.replace("#usda 1.0\n", "#usda 1.0\n(\n    " + meta + "\n)\n", 1)
     open(usda, "w", encoding="utf-8", newline="\n").write(text)
 
 
@@ -169,11 +181,7 @@ def set_parm(node, name, value, warn=True):
     c = node.parm(control)
     if c is not None:
         c.set("set")
-    SET.setdefault(node.path(), set()).update((name, control))
     return True
-
-
-SET = {}  # node path -> parm names set_parm set (slim keeps these)
 
 
 def set_attr(node, attr, value, warn=True):
@@ -212,32 +220,7 @@ def settings_node(net, inp, prim, camera, res):
             set_parm(n, "products", " ".join(prim["products"]))
         for attr, (_, v) in sorted(prim["attrs"].items()):
             set_attr(n, attr, v)
-        slim(n, full=prim["name"] == "eldr_default")
     return n
-
-
-def slim(node, full):
-    """Every Render Settings LOP saves all renderers' tabs as spare parms
-    (~440 KB per node). Keep Eldr's tab only: whole on eldr_default (to tick more),
-    on the others just the settings the node sets."""
-    g = node.parmTemplateGroup()
-    for folder in ("Karma", "Husk"):
-        f = g.findFolder(folder)
-        if f:
-            g.remove(f)
-    if not full:
-        eldr = g.findFolder("Eldr")
-        keep = SET.get(node.path(), set())
-
-        def prune(folder):
-            for t in folder.parmTemplates():
-                if t.type() == hou.parmTemplateType.Folder:
-                    prune(t)
-                elif t.name() not in keep:
-                    g.remove(t.name())
-        if eldr:
-            prune(eldr)
-    node.setParmTemplateGroup(g)
 
 
 def rop_node(net, inp, prim, out_dir="$HIP/render"):
@@ -266,10 +249,15 @@ def sticky(net, text):
 def add_render_nodes(net, inp, camera, res, prims, note=""):
     """Chains one settings node per prim after `inp`, ends in an OUT null with
     the display flag, hangs a ROP per prim off it."""
-    SET.clear()
     last = inp
     for p in prims:
         last = settings_node(net, last, p, camera, res)
+    # each settings LOP makes its own prim the stage's default, so this goes after them all
+    cfg = net.createNode("configurelayer", "default_render_settings")
+    cfg.setInput(0, last)
+    set_parm(cfg, "setrendersettings", 1)
+    set_parm(cfg, "rendersettings", DEFAULT_PRIM)
+    last = cfg
     out = net.createNode("null", "OUT")
     out.setInput(0, last)
     out.setDisplayFlag(True)

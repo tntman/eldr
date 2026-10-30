@@ -2,7 +2,7 @@
 (
     upAxis = "Y"
     metersPerUnit = 1
-    renderSettingsPrimPath = "/Render/graphsOn"
+    renderSettingsPrimPath = "/Render/eldr_default"
 )
 
 # Lane 38, MaterialX coverage. Top row: compositing nodes of a left-right
@@ -764,6 +764,7 @@ def Sphere "k_flakes" (prepend apiSchemas = ["MaterialBindingAPI"])
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/graphsOn
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>

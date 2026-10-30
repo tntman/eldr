@@ -1,5 +1,6 @@
 #usda 1.0
 (
+    renderSettingsPrimPath = "/Render/eldr_default"
     subLayers = [@../../tests/scenes/volume.usda@]
     upAxis = "Y"
     metersPerUnit = 1
@@ -40,6 +41,7 @@ def SphereLight "low"
 def Scope "Render"
 {
     # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/stride2
     def RenderSettings "eldr_default"
     {
         rel camera = </cam>
