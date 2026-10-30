@@ -96,8 +96,8 @@ def Cube "matteBlock"
 {
     double size = 1
     int primvars:karma:object:holdoutmode = 1
-    double3 xformOp:translate = (0.7, 0.08, -0.45)
-    float3 xformOp:scale = (0.45, 0.16, 0.45)
+    double3 xformOp:translate = (0.7, 0.08, 0.8)
+    float3 xformOp:scale = (0.4, 0.16, 0.3)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
 }
 
