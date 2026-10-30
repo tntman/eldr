@@ -309,6 +309,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     _materialFallbacks = std::make_unique<HdVkMaterialFallbacks>();
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
+    _textures->compress = TextureCompression();  // husk hands its settings to the constructor
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate()
@@ -583,7 +584,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
-        {"Texture Compression (8-bit textures as BC7/BC4/BC5; off: exact)", t2.textureCompression, VtValue(true)},
+        {"Texture Compression (0 off, 1 interactive only, 2 always)", t2.textureCompression, VtValue(1)},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
@@ -710,8 +711,14 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens2;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
-    if (key == t2.textureCompression) {
-        _textures->compress = GetRenderSetting<bool>(key, true);
+    // Any setting may change whether materials want compressed textures
+    // (the mode, final quality, who renders): they fetch them again.
+    if (_textures) {
+        const bool compress = TextureCompression();
+        if (_textures->compress.exchange(compress) != compress && _terminalSceneIndex) {
+            HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->material},
+                           {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
+        }
     }
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
@@ -730,9 +737,6 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
         } else if (key == t2.curveRibbons) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->basisCurves}, {HdPrimvarsSchema::GetDefaultLocator()});
-        } else if (key == t2.textureCompression) {
-            // Materials fetch their textures again, in the other form.
-            HdVkDirtyPrims(terminal, {HdPrimTypeTokens->material}, {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||
@@ -1155,6 +1159,16 @@ bool HdVkRenderDelegate::Offline() const
 {
     return !HoudiniViewport() && (!GetRenderSetting(TfToken("rasterRenderProducts")).IsEmpty() ||
                                   !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
+}
+
+// eldr:textureCompression: 0 off, 1 interactive only (exact in final
+// quality and offline, as Karma's), 2 always; a bool is 0 or 2.
+bool HdVkRenderDelegate::TextureCompression() const
+{
+    const VtValue v = GetRenderSetting(HdVkRenderSettingsTokens2->textureCompression);
+    const int mode = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2 : 0)
+                                         : std::clamp(GetRenderSetting<int>(HdVkRenderSettingsTokens2->textureCompression, 1), 0, 2);
+    return mode == 2 || (mode == 1 && !GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) && !Offline());
 }
 
 bool HdVkRenderDelegate::ScreenDicing() const

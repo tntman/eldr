@@ -395,6 +395,8 @@ public:
     // last re-diced for (null before the first). SetDicingView re-syncs the
     // meshes; only the render pass calls it, between syncs.
     bool ScreenDicing() const;
+    // Whether materials load block-compressed textures now.
+    bool TextureCompression() const;
     const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
     void SetDicingView(std::optional<HdVkDicingView> const &view);
 

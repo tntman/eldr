@@ -415,7 +415,10 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 continue;
             }
             applied = value;
-            const VtValue typed = VtValue::CastToTypeOf(value, current);
+            // eldr:textureCompression: a bool means 0 or 2 (a cast would make true 1).
+            const VtValue typed = token == HdVkRenderSettingsTokens2->textureCompression && value.IsHolding<bool>()
+                                      ? VtValue(value.UncheckedGet<bool>() ? 2 : 0)
+                                      : VtValue::CastToTypeOf(value, current);
             if (!typed.IsEmpty()) {
                 delegate->SetRenderSetting(token, typed);
                 // These re-sync the meshes (SetRenderSetting): wait for that.

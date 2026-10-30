@@ -36,7 +36,7 @@ public:
     std::vector<std::shared_ptr<vkr::Texture>> GetUdim(std::string const &path,
                                                        TfToken const &sourceColorSpace, bool compress = false);
 
-    // eldr:textureCompression, set by the render delegate.
+    // HdVkRenderDelegate::TextureCompression, set by the render delegate.
     std::atomic<bool> compress{true};
 
     // Milliseconds spent decoding since the last call (the load summary).
