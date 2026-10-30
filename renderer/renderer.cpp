@@ -3410,6 +3410,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refractionBounces = frame.rtRefractionBounces;
     rt.hitShadows = frame.rtHitShadows >= 2 || (frame.rtHitShadows == 1 && film && _filmFinal);
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
+    rt.refractionClip = frame.rtRefractionClip;
     // Rays per sample times the quality multipliers (SampleRays; 0: the
     // effect keeps the last sample's image this sample).
     // Not across time samples: the kept image would be of another time.

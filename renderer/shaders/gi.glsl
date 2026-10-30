@@ -22,7 +22,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // (4: one channel each; 1: colour, rgb), w 1: every light shadowed at
                          // reflection and refraction hits (ShadeHit)
     vec4 shadowVolume;   // x: step size (density voxels, VolumeParams), y: density multiplier
-    uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen)
+    uvec4 refraction;    // x: interfaces a traced refraction ray passes (rt_refraction.rgen), y 1: displaced
+                         // glass bends them, z 1: the first ray sees glass only, up to the prepass depth
     vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
     vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
     vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
@@ -41,7 +42,9 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
 // every ray, translucent ones only by shadow rays that tint (and
 // refraction). By the rays that see a mesh (DrawInfo::visible): shadow
 // rays look for kRtMaskShadow, the camera's primary rays for kRtMaskCamera,
-// all other rays for kRtMaskSurfaces.
+// all other rays for kRtMaskSurfaces. kRtMaskTranslucent is the
+// translucent meshes' alone (rt_refraction.rgen's first rays look for glass
+// by it; shadow rays that tint add it).
 const uint kRtMaskSurfaces = 1u, kRtMaskTranslucent = 2u, kRtMaskShadow = 4u, kRtMaskCamera = 8u;
 
 // DDGI probe atlases (Majercik et al. 2019): per probe an octahedral tile

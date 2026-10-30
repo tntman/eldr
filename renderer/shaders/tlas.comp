@@ -32,7 +32,7 @@ uint Mask(uint flags, uint rays)
         return kRtMaskTranslucent;
     }
     return ((rays & kRaysCamera) != 0u ? kRtMaskCamera : 0u) | ((rays & kRaysShadow) != 0u ? kRtMaskShadow : 0u) |
-           ((rays & kRaysSecondary) != 0u ? 0xFFu & ~(kRtMaskCamera | kRtMaskShadow) : 0u);
+           ((rays & kRaysSecondary) != 0u ? 0xFFu & ~(kRtMaskCamera | kRtMaskShadow | kRtMaskTranslucent) : 0u);
 }
 
 uint InstanceFlags(uint flags)

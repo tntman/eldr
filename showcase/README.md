@@ -33,6 +33,7 @@ Every new feature adds a folder here, named `date_NN_name`, so they sort old to 
 | 2026-10-29 | `2026-10-29_18_volume_motion_blur` | Volumes blur along their `vel` field (vector VDB or Houdini's vel.x/.y/.z), as Karma's Lookup Offset | `eldr:volumeVelocityBlur`, `karma:object:vblur`, `karma:object:volumevblurscale` |
 | 2026-10-29 | `2026-10-29_10_reflection_motion_blur` | Planar and traced reflections blur with motion blur time samples; probes stay at the frame's time | `eldr:planarMotionBlur`, `eldr:rtReflections` |
 | 2026-10-29 | `2026-10-29_19_texture_compression` | 8-bit textures block-compressed (BC7, BC4, BC5) and cached on disk, against the exact texels | `eldr:textureCompression` |
+| 2026-10-29 | `2026-10-29_20_rt_volume_cost` | Cheaper traced refraction (first ray looks for glass only) and volume local-light shadows (a tap every second step), same image | `eldr:rtRefractionClip`, `eldr:volumeLocalShadowStride` |
 
 Open: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda`, then pick a settings prim; or `husk -R Eldr -s /Render/<name> <scene.usda>`.
 
