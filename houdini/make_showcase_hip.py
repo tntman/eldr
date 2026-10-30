@@ -79,7 +79,8 @@ def karma_attrs(own):
         if name.startswith("karma:"):
             out[name] = (t, v)
         elif name in KARMA_TWINS:
-            out[KARMA_TWINS[name]] = (t, v)
+            # Eldr's colour limit 0 is off; Karma's 0 renders black, so off is a huge limit there.
+            out[KARMA_TWINS[name]] = (t, 1e6 if name == "eldr:colorLimit" and v == 0 else v)
     if any(a == "eldr:denoise" and v for a, _, v in FINAL) and "karma:global:imagefilter" not in out:
         out["karma:global:imagefilter"] = ("string", OIDN)
     return out

@@ -90,6 +90,10 @@ struct TextureRef {
     // Bit per axis (s, t): outside [0, 1] the constant (MaterialX's
     // address mode constant: the image's default); wrap is Black there.
     uint8_t constantWrap = 0;
+    // The texture node's own value where it yields nothing (a missing UDIM
+    // tile): UsdUVTexture's fallback, a MaterialX image's default; with
+    // channel, that channel. The material's constant becomes it.
+    float fallback[4] = {0, 0, 0, 0};
 };
 
 // Material inputs a shading graph computes per pixel (MaterialX math,

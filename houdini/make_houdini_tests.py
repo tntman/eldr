@@ -113,14 +113,14 @@ def _04_ies(net):
 
 
 @test("Karma Render Settings > Color Limit: at 20 Eldr shows the emitters at 20 like Karma;\n"
-      "at 0 the visible emitters keep full HDR (40 and 60). Render karma_limit20 and karma_limit0\n"
+      "at 1e6 (Karma's 0 renders black, not off) the visible emitters keep full HDR (40 and 60). Render karma_limit20 and karma_limit1e6\n"
       "with Eldr (render_*_eldr) and Karma (render_*_karma) and compare.")
 def _05_colour_limit(net):
     sub = sublayer(net, SCENES + "emissive.usda")
     return sub, "/cam", (960, 540), [
         karma_node("karma_limit20_eldr", m.ELDR, karma__global__colorlimit=20),
-        karma_node("karma_limit0_eldr", m.ELDR, karma__global__colorlimit=0),
-        karma_node("karma_limit0_karma", m.KARMA, karma__global__colorlimit=0)]
+        karma_node("karma_limit1e6_eldr", m.ELDR, karma__global__colorlimit=1e6),
+        karma_node("karma_limit1e6_karma", m.KARMA, karma__global__colorlimit=1e6)]
 
 
 @test("Karma quality parms (Diffuse / Reflect / Light / SSS / Volume Quality) affect Eldr:\n"

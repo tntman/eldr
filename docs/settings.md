@@ -108,7 +108,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
 | Local Lights<br>`eldr:localLights` | on | Sphere, rect, disk, cylinder lights. | |
-| Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, 63 lights per cluster. Off loops all lights per pixel. | |
+| Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, up to 255 lights per cluster (more: that cluster shades all lights). Off loops all lights per pixel. | |
 | Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation). | |
 | Light Linking<br>`eldr:lightLinking` | on | UsdLux `collection:lightLink` and `collection:shadowLink` (Houdini's Light Linker LOP) in every light loop and shadow pass. Up to 32 linked collections; more light everything (warned). Domes and fog ignore links. Off: all lights light and shadow all. | A shadow-linked light's traced shadow rays run any-hit on every surface |
 | IES Profiles<br>`eldr:lightIes` | on | Local lights multiply radiance per direction by `inputs:shaping:ies:file` (LM-63 type C) with `angleScale` and `normalize`, in raster, traced hits, GI, fog and volumes. Theta from the light's -Z, phi 0 at its -X (Karma's). | One texture tap per light and pixel |
@@ -142,7 +142,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
 | Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps bounce light (SSGI, SSR, traced hits, GI rays), the emission they see, and emissive-mesh lights (radiance x albedo, as Karma). Wins over `eldr:colorLimit` and Karma's. Not the dome. | |
-| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR emitters: 0, with `eldr:indirectClamp` 20. | |
+| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR: 0, with `eldr:indirectClamp` 20. Karma's 0 is black (ignored): use 1e6. | |
 | Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | 0 off, 1 on. Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
 
 ### Shadows
