@@ -108,7 +108,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
 | Local Lights<br>`eldr:localLights` | on | Sphere, rect, disk, cylinder lights. | |
-| Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, 63 lights per cluster. Off loops all lights per pixel. | |
+| Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, up to 255 lights per cluster (more: that cluster shades all lights). Off loops all lights per pixel. | |
 | Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation). | |
 | Light Linking<br>`eldr:lightLinking` | on | UsdLux `collection:lightLink` and `collection:shadowLink` (Houdini's Light Linker LOP) in every light loop and shadow pass. Up to 32 linked collections; more light everything (warned). Domes and fog ignore links. Off: all lights light and shadow all. | A shadow-linked light's traced shadow rays run any-hit on every surface |
 | IES Profiles<br>`eldr:lightIes` | on | Local lights multiply radiance per direction by `inputs:shaping:ies:file` (LM-63 type C) with `angleScale` and `normalize`, in raster, traced hits, GI, fog and volumes. Theta from the light's -Z, phi 0 at its -X (Karma's). | One texture tap per light and pixel |

@@ -521,7 +521,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                 }
                 vec3 open = vec3(0.0), shadowed = vec3(0.0), l;
                 for (uint k = 0u; k < n; ++k) {
-                    uint index = clusters ? clusterLights[base + 1u + k] : frame.counts.x + k;
+                    uint index = clusters ? ClusterLight(base, k) : frame.counts.x + k;
                     if (!LightLinked(lights[index], linkMask)) {
                         continue;
                     }
