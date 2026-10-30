@@ -663,6 +663,7 @@ Renderer::~Renderer()
     _dev.Destroy(_frameReadback[1]);
     _dev.Destroy(_frameData);
     _dev.Destroy(_commands);
+    _dev.Destroy(_cameraCommands);
     _dev.Destroy(_prevJoints);
     _dev.Destroy(_lodState);
     _dev.Destroy(_prevBlendWeights);
@@ -1762,8 +1763,8 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
                               VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _gtao.Resize(width, height, _depth.view);
     _taa.SetInput(width, height, _color.view, _depth.view, _velocity.view);
-    _lens.Resize(width, height, _color.image, _color.view, _depth.view, _velocity.view, _taa.OutputImage(),
-                 _taa.Output(), _taa.History());
+    _lens.Resize(width, height, _outWidth, _outHeight, _color.image, _color.view, _depth.view, _velocity.view,
+                 _taa.OutputImage(), _taa.Output(), _taa.History());
     _transparency.Resize(width, height);
     _subsurface.Resize(width, height, _depth.view);
     _ssr.Resize(width, height, _depth.view);
@@ -2936,7 +2937,7 @@ bool Renderer::IsConverged() const
 
 uint32_t Renderer::VisibleInstances() const
 {
-    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
+    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_cameraCommands.mapped);
     uint32_t total = 0;
     for (uint32_t i = 0; i < _lastDrawCount; ++i) {
         total += commands[i].instanceCount;
@@ -2986,14 +2987,18 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     const bool moving = _historyValid && (std::memcmp(appFrame.viewProj, _prevViewProj, sizeof(_prevViewProj)) != 0 ||
                                           gpu.moved);
-    const bool upscale = frame.renderScale < 1.0f && _upscaleBlit == 1 && frame.postProcess && frame.taa &&
+    // eldr:movingRenderScale: smaller still while moving, full size again
+    // from the first still frame. Post depth of field and motion blur work
+    // at the scene's size (their pixel radii scale; the blur draws at the
+    // frame's size).
+    const float renderScale = moving ? std::min(frame.renderScale, frame.movingRenderScale) : frame.renderScale;
+    const bool upscale = renderScale < 1.0f && _upscaleBlit == 1 && frame.postProcess && frame.taa &&
                          _taaValid && !frame.finalQuality &&
                          (moving || !frame.filmAccumulation ||
                           (_filmSamples == 0 && _stillFrames + 1 < kFilmStillFrames)) &&
-                         !(frame.depthOfField && frame.fStop > 0) && !(frame.motionBlur && frame.shutter > 0) &&
                          !(frame.lensDistortion && frame.distortion.Active()) &&
                          !(frame.extraAovs && Aovs::Any(out.aovs));
-    const float scale = upscale ? std::max(frame.renderScale, 0.25f) : 1.0f;
+    const float scale = upscale ? std::max(renderScale, 0.25f) : 1.0f;
     const uint32_t sceneWidth = std::max(uint32_t(float(frame.width) * scale + 0.5f), 1u);
     const uint32_t sceneHeight = std::max(uint32_t(float(frame.height) * scale + 0.5f), 1u);
     if (sceneWidth != _width || sceneHeight != _height) {
@@ -3119,6 +3124,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     const bool fresh = !_taaValid;
     const bool changed = !fresh && (cameraMoved || gpu.moved || filmKey != _filmKey);
+    const bool cameraOnly = !fresh && cameraMoved && !gpu.moved && filmKey == _filmKey;
     _filmKey = filmKey;
     _stillFrames = changed ? 0 : _stillFrames + 1;
     // Final without finalQuality: only a run from the renderer's very first frame.
@@ -3416,8 +3422,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Not across time samples: the kept image would be of another time.
     const bool spread = film && !timeSample;
     uint32_t shadowFirst = 0, reflectionFirst = 0, gatherFirst = 0;
-    rt.shadowSamples = SampleRays(double(finalRun ? 1 : frame.rtShadowSamples) * frame.lightQuality, spread, sobolIndex,
-                                  16, &shadowFirst);
+    // eldr:movingShadowRays: fewer while moving (TAA smooths them).
+    const bool fewerShadowRays = moving && !film && frame.movingShadowRays > 0 &&
+                                 frame.movingShadowRays < frame.rtShadowSamples;
+    const uint32_t shadowRays = finalRun ? 1 : fewerShadowRays ? frame.movingShadowRays : frame.rtShadowSamples;
+    rt.shadowSamples = SampleRays(double(shadowRays) * frame.lightQuality, spread, sobolIndex, 16, &shadowFirst);
     std::fill_n(rt.shadowLights, kMaxRtShadowLights, kNone);
     // Through glass and smoke: translucent casters colour each light's
     // shadow (a texel per light), volumes are marched (per channel).
@@ -3428,7 +3437,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
     rt.volumeDensity = std::max(frame.volume.density, 0.0f);
     // One light point per traced sample (more rays per light: R2 steps from it).
-    ScrambledSobol(spread && frame.lightQuality * (finalRun ? 1 : frame.rtShadowSamples) < 1.0f ? shadowFirst : sobolIndex,
+    ScrambledSobol(spread && frame.lightQuality * shadowRays < 1.0f ? shadowFirst : sobolIndex,
                    kSeedRtShadow, rt.shadowSample, 2);
     rt.reflectionSamples = SampleRays(double(frame.rtReflectionSamples) * frame.reflectQuality, spread, sobolIndex, 16,
                                       &reflectionFirst);
@@ -3438,6 +3447,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.giRays = uint32_t(std::lround(double(frame.giRays) * std::max(frame.diffuseQuality, 0.0f)));  // clamped in Prepare
     rt.giHysteresis = frame.giHysteresis;
     rt.giBurst = frame.giPreconverge;
+    // eldr:movingGiPause: settled probes keep their light while only the camera moves.
+    rt.giPause = frame.movingGiPause && cameraOnly && !film && _rt && _rt->Converged();
+    _stats.reduced = (rtScene && frame.depthPrepass && tracedShadows && fewerShadowRays) || (rt.gi && rt.giPause);
     rt.giRelocation = frame.giRelocation;
     // Final gather: in final quality (or always), on top of the probes.
     rt.gather = rt.gi && frame.depthPrepass &&
@@ -3604,11 +3616,21 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             fd.planarInfo[i] = planar.slot;
         }
     }
-    // Culling output; host-visible so VisibleInstances() can read it back.
-    // One set of commands for the camera, one per cascade, one for atlas tiles.
-    _dev.Reserve(_commands, VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand),
-                 VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
-                     VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    // Culling output: one set of commands for the camera, one per cascade,
+    // one for atlas tiles. Device-local (culling writes and the draws read
+    // it); the camera's set is copied to host-cached memory at the end of
+    // the frame for VisibleInstances() and the stats. Host-visible, the
+    // CPU's read of it after each frame took crowd_9k 27 ms (uncached).
+    const VkDeviceSize commandBytes = std::max<VkDeviceSize>(256,
+        VkDeviceSize(gpu.drawCount) * (2 + kCascades) * sizeof(VkDrawIndexedIndirectCommand));
+    if (_commands.size < commandBytes) {
+        _dev.Destroy(_commands);
+        _commands = _dev.CreateDeviceBuffer(commandBytes + commandBytes / 2,
+                                            VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    }
+    _dev.Reserve(_cameraCommands, VkDeviceSize(std::max(gpu.drawCount, 1u)) * sizeof(VkDrawIndexedIndirectCommand),
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     // Last frame's joints exist when the pool is still the buffer they were
     // built in (it is rebuilt by every frame's skin.comp).
     // Sampled motion: the scene's joints one frame before as the shutter
@@ -4460,11 +4482,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         if (dof) {
             // Thin lens: a circle of confusion f^2 / (N (S - f)) * |D - S| / D
             // across on the sensor, as a radius in pixels.
-            lens.cocScale = cocPixels * (lensJitter ? residualScale : 1.0f);
+            lens.cocScale = cocPixels * (lensJitter ? residualScale : 1.0f) * scale;  // in the scene's pixels
             lens.focusDistance = frame.focusDistance;
         }
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
-        lens.maxRadius = std::min(0.04f * float(frame.width), 32.0f);
+        lens.maxRadius = std::min(0.04f * float(frame.width) * scale, 32.0f);
         lens.frame = float(_haltonIndex % 64);
         lens.shutter = postBlur       ? frame.shutter
                        : residualBlur ? frame.shutter / (float(std::max(frame.filmSamples, 1u)) * shutterT)
@@ -4472,7 +4494,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const float stratum = shutterU * float(std::max(frame.filmSamples, 1u));
         lens.window[0] = std::floor(stratum) - stratum;
         lens.window[1] = lens.window[0] + 1.0f;
-        lens.maxHalfBlur = std::min(0.025f * float(frame.width), 32.0f);
+        lens.maxHalfBlur = std::min(0.025f * float(frame.width) * scale, 32.0f);
         _lens.RecordTiles(_cmd, lens);
     }
     if (dof) {
@@ -4828,6 +4850,24 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     dep.pBufferMemoryBarriers = &toHost;
     vkCmdPipelineBarrier2(_cmd, &dep);
     pass("readback");
+    if (_lastDrawCount > 0) {  // the camera's commands for the CPU (VisibleInstances, stats)
+        VkMemoryBarrier2 drawn{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+        drawn.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        drawn.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        drawn.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        drawn.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
+        VkDependencyInfo d{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        d.memoryBarrierCount = 1;
+        d.pMemoryBarriers = &drawn;
+        vkCmdPipelineBarrier2(_cmd, &d);
+        const VkBufferCopy camera{0, 0, VkDeviceSize(_lastDrawCount) * sizeof(VkDrawIndexedIndirectCommand)};
+        vkCmdCopyBuffer(_cmd, _commands.buffer, _cameraCommands.buffer, 1, &camera);
+        drawn.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        drawn.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        drawn.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+        drawn.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+        vkCmdPipelineBarrier2(_cmd, &d);
+    }
 
     // Motion blur time samples: this frame's pools back, for the next
     // commit's uploads and frames.
@@ -4978,7 +5018,7 @@ void Renderer::_WaitInFlight()
     _inFlight = false;
 
     // What the camera drew: the culled commands' instances and triangles.
-    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_commands.mapped);
+    const auto *commands = static_cast<const VkDrawIndexedIndirectCommand *>(_cameraCommands.mapped);
     _stats.instances = 0;
     _stats.triangles = 0;
     for (uint32_t i = 0; i < _lastDrawCount; ++i) {

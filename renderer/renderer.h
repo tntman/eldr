@@ -389,6 +389,15 @@ public:
         // as do frames with depth of field, a motion-blur shutter, lens
         // distortion or extra AOVs (their passes are full size).
         float renderScale = 1.0f;
+        // While the camera or the scene moves (not the frames after it
+        // stops), the scale is at most this (eldr:movingRenderScale; 1: off).
+        float movingRenderScale = 0.5f;
+        // While moving, traced shadow rays per light are at most this
+        // (eldr:movingShadowRays; 0: rtShadowSamples as when still).
+        uint32_t movingShadowRays = 1;
+        // While only the camera moves, settled GI probes skip their update
+        // (they don't depend on the camera; eldr:movingGiPause).
+        bool movingGiPause = true;
         float filmFilterRadius = 1.5f;
         // Final quality (offline renders): the film starts over at the
         // first sample after any change instead of from the TAA image.
@@ -656,6 +665,7 @@ public:
         uint64_t accelerationStructureBytes = 0;  // ray tracing's graphics memory (in Device's too)
         uint32_t prewarmedSets = 0;  // shading sets taken from Frame::pipelinePrewarm's worker, so far
         uint32_t renderWidth = 0, renderHeight = 0;  // the scene's size (Frame::renderScale), else the frame's
+        bool reduced = false;  // a moving reduction (Frame::moving*) applied this frame
     };
     const Stats &GetStats() const { return _stats; }
     // Time in shading pipeline compiles and acceleration structure builds
@@ -848,6 +858,7 @@ private:
     VkPipeline _shutterPipeline = VK_NULL_HANDLE;   // motion blur time samples (shutter.comp)
     Buffer _clusters;                               // light lists, see shaders/lights.glsl
     Buffer _commands;               // culled indirect commands, one per mesh slot
+    Buffer _cameraCommands;         // the camera's, copied for the CPU after each frame
     // Last frame's joint matrices for motion vectors, copied before skin.comp
     // rewrites them; usable while the joint pool is the same buffer.
     Buffer _prevJoints;

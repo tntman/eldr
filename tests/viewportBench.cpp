@@ -71,6 +71,7 @@ static double Ms(Clock::time_point a, Clock::time_point b)
 
 int main(int argc, char **argv)
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);  // results survive a crash at teardown
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
                   "[--share 0|1] [--render-purpose] [--still] [--ids] [--check] [--nav] [--overlap] [--no-overlap] [--app-ms N]");

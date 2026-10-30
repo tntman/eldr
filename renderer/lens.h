@@ -33,8 +33,11 @@ public:
     // `color` is the HDR target depth of field rewrites; `resolved` is
     // TAA's output, rewritten by motion blur from `history` (TAA's copy of
     // it). All must stay valid until the next Resize.
-    void Resize(uint32_t width, uint32_t height, VkImage color, VkImageView colorView, VkImageView depth,
-                VkImageView velocity, VkImage resolved, VkImageView resolvedView, VkImageView history);
+    // width x height: the scene's targets; outWidth x outHeight: TAA's
+    // resolve (larger while upscaling), where motion blur draws.
+    void Resize(uint32_t width, uint32_t height, uint32_t outWidth, uint32_t outHeight, VkImage color,
+                VkImageView colorView, VkImageView depth, VkImageView velocity, VkImage resolved,
+                VkImageView resolvedView, VkImageView history);
 
     // Each frame with either effect, first: the tiles (depth read-only,
     // motion vectors SHADER_READ_ONLY_OPTIMAL).
@@ -67,7 +70,8 @@ private:
     Image _tiles;    // RGBA16F, one texel per 32x32 pixels, GENERAL layout
     VkImage _color = VK_NULL_HANDLE, _resolved = VK_NULL_HANDLE;
     VkImageView _colorView = VK_NULL_HANDLE, _resolvedView = VK_NULL_HANDLE;
-    uint32_t _width = 0, _height = 0;
+    uint32_t _width = 0, _height = 0;        // the scene's
+    uint32_t _outWidth = 0, _outHeight = 0;  // the resolve's (motion blur)
 };
 
 } // namespace vkr

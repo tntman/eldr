@@ -246,3 +246,6 @@ HDVK_SETTING(extraAovs, "Extra AOVs (normal, st, albedo, Cryptomatte...)", frame
 HDVK_SETTING(lazyExtraAovs, "Unread AOVs Once Converged", frame.lazyExtraAovs)
 HDVK_SETTING(renderScale, "Render Scale (interactive: TAA upscales from it; < 1 = on, 0.25-1)", frame.renderScale)
 HDVK_SETTING(interactiveSamples, "Interactive Noise Loop (samples while moving, 1-256)", int(frame.interactiveSamples))
+HDVK_SETTING(movingRenderScale, "Render Scale while Moving (TAA upscales; 1 = off, 0.25-1)", frame.movingRenderScale)
+HDVK_SETTING(movingShadowRays, "Ray-Traced Shadow Rays while Moving (0 = as still, 0-16)", int(frame.movingShadowRays))
+HDVK_SETTING(movingGiPause, "Pause Settled GI Probes while the Camera Moves", frame.movingGiPause)

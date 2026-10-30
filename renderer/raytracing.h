@@ -87,6 +87,7 @@ public:
         uint32_t giRays = 64;       // per probe and frame
         float giHysteresis = 0.97f; // of the probes' running average
         bool giBurst = false;       // fresh probes: all their settling updates in this frame
+        bool giPause = false;       // no probe update this frame (Frame::movingGiPause)
         // Probes move out of walls (gi_update.comp), on kGiFixedRays more
         // rays per probe and frame.
         bool giRelocation = true;
