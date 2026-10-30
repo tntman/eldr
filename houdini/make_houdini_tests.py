@@ -345,6 +345,9 @@ def _14_aov_menu_sample_blending(net):
         m.set_parm(v, "primpath", "/Render/Products/Vars/" + name)
         m.set_parm(v, "sourceName", src)
         m.set_attr(v, "driver:parameters:aov:husk:name", name)
+        # The LOP authors Format "float" (its UI follows Data Type, a script's set doesn't): husk then
+        # writes one channel per var. Unauthored, husk takes the channels from dataType.
+        v.parm(hou.text.encodeParm("driver:parameters:aov:husk:format_control")).set("none")
         m.set_parm(v, "sourceType", "raw" if src in ("depth", "N", "primid", "instanceid", "eldr:beautyRaw") else "lpe")
         m.set_parm(v, "dataType", dt)
         if filt:
