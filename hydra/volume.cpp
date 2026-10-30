@@ -857,7 +857,7 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
                 fps = rate->GetTypedValue(0.0f) > 0.0 ? rate->GetTypedValue(0.0f) : fps;
             }
         }
-        const bool blur = vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->volumeVelocityBlur, true) &&
+        const bool blur = vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens->volumeVelocityBlur, true) &&
                           HdVkObjectPrimvar<int>(sceneDelegate, id, "object:vblur", 0) > 0 &&
                           HdVkMotionBlur(sceneDelegate, id);
         v.velocityScale =

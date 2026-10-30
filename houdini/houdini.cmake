@@ -79,6 +79,7 @@ add_custom_target(eldrHoudiniUi ALL
         $<TARGET_FILE_DIR:hdVk>/houdini ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/settings.py
     DEPENDS ${CMAKE_CURRENT_LIST_DIR}/gen_ui.py ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/settings.py
             ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/tooltips.py ${CMAKE_CURRENT_LIST_DIR}/../docs/settings.md
+            ${CMAKE_CURRENT_LIST_DIR}/../hydra/renderSettings.def
             ${CMAKE_CURRENT_LIST_DIR}/../usdview/hdvkUsdview/__init__.py ${CMAKE_CURRENT_LIST_DIR}/UsdRenderers.json
     COMMENT "Generating Eldr's Solaris UI"
     VERBATIM)

@@ -419,7 +419,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
             applied = value;
             // eldr:textureCompression: a bool means 0 or 2 (a cast would make true 1).
-            const VtValue typed = token == HdVkRenderSettingsTokens2->textureCompression && value.IsHolding<bool>()
+            const VtValue typed = token == HdVkRenderSettingsTokens->textureCompression && value.IsHolding<bool>()
                                       ? VtValue(value.UncheckedGet<bool>() ? 2 : 0)
                                       : VtValue::CastToTypeOf(value, current);
             if (!typed.IsEmpty()) {
@@ -428,15 +428,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 const auto &ts = *HdVkRenderSettingsTokens;
                 resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
                                                          token == ts.finalQuality ||
-                                                         token == HdVkRenderSettingsTokens2->screenDicing ||
-                                                         token == HdVkRenderSettingsTokens2->textureCompression));
+                                                         token == HdVkRenderSettingsTokens->screenDicing ||
+                                                         token == HdVkRenderSettingsTokens->textureCompression));
             }
         }
     }
     // Each setting over the renderer's default (renderDelegate.cpp lists
     // them); counts are ints in Hydra, at least 1.
     const auto &t = *HdVkRenderSettingsTokens;
-    const auto &t2 = *HdVkRenderSettingsTokens2;
+    const auto &t2 = *HdVkRenderSettingsTokens;
     for (auto [token, value] : {std::pair{t.postProcess, &frame.postProcess}, {t.taa, &frame.taa},
                                 {t.ambientOcclusion, &frame.ambientOcclusion}, {t.ssr, &frame.ssr},
                                 {t.autoExposure, &frame.post.autoExposure}, {t.shadows, &frame.shadows},
@@ -658,7 +658,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.ssrSteps, &frame.ssrSteps}, {t.anisotropy, &frame.anisotropy},
                                 {t.rtShadowSamples, &frame.rtShadowSamples},
                                 {t.rtReflectionSamples, &frame.rtReflectionSamples},
-                                {t.giProbes, &frame.giProbes}, {t.giRays, &frame.giRays},
+                                {t.giProbes, &frame.giProbes}, {t.giRaysPerProbe, &frame.giRays},
                                 {t.ssgiSteps, &frame.ssgiSteps}, {t.ssgiResolution, &frame.ssgiResolution},
                                 {t.refractionSamples, &frame.refractionSamples}, {t.refractionLayers, &frame.refractionLayers},
                                 {t.translucentShadowDivisor, &frame.translucentShadowDivisor},

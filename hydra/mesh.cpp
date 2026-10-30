@@ -698,7 +698,7 @@ VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const
 {
     auto *vk = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
     float open, close;
-    if (!vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens2->deformationBlur, true) ||
+    if (!vk->GetRenderSetting<bool>(HdVkRenderSettingsTokens->deformationBlur, true) ||
         !HdVkMotionBlur(sceneDelegate, id) ||
         !vk->SampledMotionShutter(&open, &close)) {
         return {};

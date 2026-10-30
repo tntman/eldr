@@ -1,5 +1,6 @@
 """Every eldr: setting the renderer exposes is documented in docs/settings.md,
-in GROUPS' order, with a "What it does" text short enough for a tooltip.
+in hydra/renderSettings.def's order under its group's heading, with the
+renderer's default and a "What it does" text short enough for a tooltip.
 Run: usdenv.cmd python tests\test_docs.py"""
 import os
 import re
@@ -20,7 +21,8 @@ glContext.create()
 glContext.makeCurrent(surface)
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-keys = [str(s.key) for s in engine.GetRendererSettingsList() if str(s.key).startswith("eldr:")]
+settings = [s for s in engine.GetRendererSettingsList() if str(s.key).startswith("eldr:")]
+keys = [str(s.key) for s in settings]
 if os.environ.get("HDVK_DUMP_SETTINGS"):  # key, display name, type, default: for writing the docs
     for s in engine.GetRendererSettingsList():
         print("\t".join([str(s.key), str(s.name), str(s.type).split(".")[-1], str(s.defValue)]))
@@ -36,11 +38,40 @@ for k in missing:
 for k in unknown:
     print("FAIL: docs/settings.md names %s, which the renderer doesn't have" % k, file=sys.stderr)
 bad = []
-rows = re.findall(r"^\| [^|]*<br>`(eldr:\w+)` \|", text, re.M)  # table rows, in document order
-want = ["eldr:" + k for _, _, ks in GROUPS for k in ks.split()]
-if rows != want:
-    bad.append("docs/settings.md rows are not in GROUPS' order (first difference: %s)" %
-               next((a for a, b in zip(rows, want) if a != b), "length"))
+# Table rows by heading ("## Advanced" + "### Shadows" is "Advanced: Shadows"), in document order.
+docGroups, h2, defaults = [], "", {}
+for line in text.splitlines():
+    heading = re.match(r"(##+) (.*)", line)
+    row = re.match(r"\| [^|]*<br>`(eldr:\w+)` \| ([^|]*)\|", line)
+    if heading:
+        h2 = heading.group(2) if heading.group(1) == "##" else h2
+        title = heading.group(2) if heading.group(1) == "##" else h2 + ": " + heading.group(2)
+    elif row:
+        if not docGroups or docGroups[-1][0] != title:
+            docGroups.append((title, []))
+        docGroups[-1][1].append(row.group(1)[5:])
+        defaults[row.group(1)] = row.group(2).strip()
+want = [(title, keys.split()) for title, _, keys in GROUPS]
+if docGroups != want:
+    diff = next((a, b) for a, b in zip(docGroups + [None], want + [None]) if a != b)
+    bad.append("docs/settings.md's tables are not renderSettings.def's groups (first difference: docs %s, def %s)" % diff)
+
+
+def Shown(v):
+    """How the Default column starts for the renderer's default v."""
+    if isinstance(v, bool):
+        return ["on" if v else "off"]
+    if isinstance(v, int):
+        return ["int %d" % v]
+    if isinstance(v, float):
+        return ["float %g" % v]
+    return ["string empty"] if v == "" else ["string " + v, 'string "%s"' % v]
+
+
+for s in settings:
+    cell = defaults.get(str(s.key), "")
+    if not any(cell == w or cell.startswith(w + " ") for w in Shown(s.defValue)):
+        bad.append("%s: docs default '%s', renderer's %s" % (s.key, cell, Shown(s.defValue)[0]))
 for k, tip in Tooltips(docs).items():
     if not tip or len(tip) > MAX:
         bad.append("%s: tooltip is %d characters (1-%d): shorten its row" % (k, len(tip), MAX))
