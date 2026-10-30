@@ -4,13 +4,13 @@ Karma is the reference look for Eldr: the same scene, lights and materials shoul
 
 ## Side by side
 
-Each pair renders a showcase's `eldr_final` prim (Eldr, linear, no tonemap) and its `karma` prim (Karma CPU, 256 samples, denoised), at the same size.
+Each pair is husk rendering a showcase's `eldr_final` prim with Eldr and its `karma` prim with Karma CPU (256 samples, denoised): same camera, same size, both linear.
 
 ![Eldr: material lobes (30_22, eldr_final)](../images/eldr_lobes.jpg)
 ![Karma (30_22, karma)](../images/karma_lobes.jpg)
 
-![Eldr: light shapes and highlights (30_07, eldr_final)](../images/eldr_light_shapes.jpg)
-![Karma (30_07, karma)](../images/karma_light_shapes.jpg)
+![Eldr: light linking and an IES spot (29_15, eldr_final)](../images/eldr_light_linking.jpg)
+![Karma (29_15, karma)](../images/karma_light_linking.jpg)
 
 ![Eldr: subsurface (30_13, eldr_final)](../images/eldr_subsurface.jpg)
 ![Karma (30_13, karma)](../images/karma_subsurface.jpg)

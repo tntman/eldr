@@ -17,7 +17,7 @@ Deferred skinning is USD's switch `HD_ENABLE_DEFERRED_SKINNING=1`, read once whe
 1. On the **USD Render ROP**, set **Render Command** to `$ELDR_HUSK`.
 2. Render to disk as usual.
 
-![Houdini: USD Render ROP, Render Command set to $ELDR_HUSK](../images/houdini/usd_render_rop_eldr_husk.png)
+![Houdini: USD Render ROP with Render Settings and Render Command set to $ELDR_HUSK](../images/houdini/usd_render_rop.png)
 
 > **Warning:** Don't set `HD_ENABLE_DEFERRED_SKINNING` for a whole Houdini session that also renders with Karma: Karma renders the agents wrongly with it. The `$ELDR_HUSK` wrapper sets it for Eldr's render jobs only.
 
@@ -41,9 +41,6 @@ Subdivision surfaces (`subdivisionScheme` catmullClark, loop or bilinear) are re
 - **Subdivision Max Level** (3) caps it everywhere.
 - **Subdivision Level** on the Render Geometry Settings LOP's Eldr tab fixes one mesh's level.
 - **Render as Subdivision** on the same tab subdivides a polygon mesh without editing it.
-
-![Subdivision Max Level 1 (28_01, level1)](../images/subdiv_level1.jpg)
-![Level 3 (28_01, level3)](../images/subdiv_level3.jpg)
 
 > **Where in Houdini:** SOP Import LOP > **Treat Polygons as Subdivision Surfaces** makes a mesh a subdivision surface. Render Geometry Settings LOP > **Eldr** tab > **Subdivision and dicing** sets its level.
 

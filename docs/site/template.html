@@ -80,7 +80,7 @@ body:not(.searching) article > section.doc + section.doc { border-top: 0; margin
 .pager .next { margin-left: auto; text-align: right; }
 body.searching .pager { display: none; }
 /* Pictures: alt text is the caption; paragraphs of pictures become a grid of before/after. */
-.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 480px)); gap: 14px; margin: 16px 0 24px; max-width: 100%; }
+.figs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 400px), 1fr)); gap: 14px; margin: 16px 0 24px; max-width: 100%; }
 figure { margin: 0; }
 figure img { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
 figcaption { font-size: 12.5px; line-height: 1.45; color: var(--muted); margin-top: 6px; }

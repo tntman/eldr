@@ -33,7 +33,7 @@ Load a scene (a showcase `scene.usda` with a Sublayer LOP is a good start) and p
 - **While you move the camera** you see a fast, slightly soft image at half size.
 - **When you stop**, Eldr starts its *film*: it keeps adding samples until it reaches **Film Samples** (64) and stops. The image gets cleaner for a second or two, then stays still.
 
-![The first still frame of a showcase scene with Eldr's defaults](../images/first_render.jpg)
+![A converged frame with Eldr's defaults: soft sun and sphere-light shadows (30_10, eldr_default)](../images/first_render.jpg)
 
 Your viewport shows linear colour, like Karma's: Houdini's own colour view (OCIO) applies on top, not an Eldr tonemap.
 

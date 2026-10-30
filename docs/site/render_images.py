@@ -1,7 +1,8 @@
 """Renders the user guide's pictures (docs/images/*.jpg) from the showcase scenes.
 Run from the repo root: usdenv.cmd python docs\\site\\render_images.py [name ...]
 (names: only those images). HDVK_BUILD picks the Eldr build (usdenv's default: build).
-Karma pictures need Houdini: ELDR_HFS (default Houdini 22.0.466). Images are 480 wide JPEGs."""
+Pictures rendered with husk need Houdini (ELDR_HFS, default 22.0.466) and, for Eldr, its Houdini
+build (ELDR_H22_BUILD, default build-h22 next to HDVK_BUILD). Images are 480 wide JPEGs."""
 import os
 import pathlib
 import subprocess
@@ -14,13 +15,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT = ROOT / "docs" / "images"
 USDRECORD = pathlib.Path(os.environ.get("USD_ROOT", r"C:\dev\usd-26.08-vdb")) / "bin" / "usdrecord"
 HFS = pathlib.Path(os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects Software\Houdini 22.0.466"))
+H22 = pathlib.Path(os.environ.get("ELDR_H22_BUILD",
+                                  pathlib.Path(os.environ.get("HDVK_BUILD", ROOT / "build")).parent / "build-h22"))
 WIDTH = 480
 
-# (image, showcase folder suffix, settings prim); renderer "karma" renders with husk, "linear" is
-# Eldr with eldr:tonemapper none (what husk and Karma write) for side-by-side pictures with Karma.
+# (image, showcase folder suffix, settings prim[, how]): Eldr through usdrecord, or with husk:
+# "karma" (Karma CPU) or "husk" (Eldr's Houdini build), side by side in the same framing.
 IMAGES = [
     ("hero", "30_22_material_lobes", "eldr_final"),
-    ("first_render", "30_07_light_shapes", "eldr_default"),
+    ("first_render", "30_10_shadow_modes", "eldr_default"),
     ("solaris_default", "28_03_emitters_shadows_reflections", "eldr_default"),
     ("solaris_final", "28_03_emitters_shadows_reflections", "eldr_final"),
     # Lights
@@ -109,15 +112,13 @@ IMAGES = [
     ("curves_tubes", "30_19_curves_points", "curves"),
     ("curves_ribbons", "30_19_curves_points", "ribbons"),
     ("instancing", "30_20_instancing", "instances"),
-    ("subdiv_level1", "28_01_memory_subdivision", "level1"),
-    ("subdiv_level3", "28_01_memory_subdivision", "level3"),
     # Eldr next to Karma
     ("karma_lobes", "30_22_material_lobes", "karma", "karma"),
-    ("eldr_lobes", "30_22_material_lobes", "eldr_final", "linear"),
-    ("karma_light_shapes", "30_07_light_shapes", "karma", "karma"),
-    ("eldr_light_shapes", "30_07_light_shapes", "eldr_final", "linear"),
+    ("eldr_lobes", "30_22_material_lobes", "eldr_final", "husk"),
+    ("karma_light_linking", "29_15_light_linking_ies", "karma", "karma"),
+    ("eldr_light_linking", "29_15_light_linking_ies", "eldr_final", "husk"),
     ("karma_subsurface", "30_13_subsurface", "karma", "karma"),
-    ("eldr_subsurface", "30_13_subsurface", "eldr_final", "linear"),
+    ("eldr_subsurface", "30_13_subsurface", "eldr_final", "husk"),
 ]
 
 
@@ -137,20 +138,21 @@ def run(cmd, cwd, env=None):
 def render(name, suffix, prim, kind="eldr", tmp=None):
     scene = folder(suffix) / "scene.usda"
     png = pathlib.Path(tmp) / (name + ".png")
-    if kind == "karma":
+    if kind in ("karma", "husk"):
         env = dict(os.environ, HOUDINI_USER_PREF_DIR=str(pathlib.Path(tmp) / "hprefs__HVER__"),
                    PXR_AR_DEFAULT_SEARCH_PATH=str(HFS / "bin/usd_plugins/hdx/resources/textures"))
         for k in ("PXR_PLUGINPATH_NAME", "PYTHONPATH"):  # husk must not load the USD 26.08 Eldr
             env.pop(k, None)
-        ok = run([HFS / "bin" / "husk.exe", "-R", "BRAY_HdKarma", "-s", "/Render/" + prim,
-                  "--res", WIDTH, WIDTH * 9 // 16, "-o", png, scene], tmp, env)
+        if kind == "husk":  # Eldr's Houdini build: same framing and linear output as Karma's
+            env.update(HOUDINI_PACKAGE_DIR=str(H22 / "houdini"), PXR_PLUGINPATH_NAME=str(H22))
+        ok = run([HFS / "bin" / "husk.exe", "-R", "BRAY_HdKarma" if kind == "karma" else "HdVkRendererPlugin",
+                  "-s", "/Render/" + prim, "--res", WIDTH, WIDTH * 9 // 16, "-o", png, scene], tmp, env)
     else:
-        if kind == "linear":  # a layer over the scene: no tonemap, as husk's PNG of Karma
-            layer = pathlib.Path(tmp) / (name + ".usda")
-            layer.write_text('#usda 1.0\n(\n    subLayers = [@%s@]\n)\nover "Render"\n{\n    over "%s"\n'
-                             '    {\n        custom string eldr:tonemapper = "none"\n    }\n}\n'
-                             % (scene.as_posix(), prim))
-            scene = layer
+        # usdrecord writes a prim's render products instead of the PNG: a layer over the scene drops them.
+        layer = pathlib.Path(tmp) / (name + ".usda")
+        layer.write_text('#usda 1.0\n(\n    subLayers = [@%s@]\n)\nover "Render"\n{\n    over "%s"\n    {\n'
+                         '        rel products = []\n    }\n}\n' % (scene.as_posix(), prim))
+        scene = layer
         ok = run([sys.executable, USDRECORD, "--renderer", "Eldr", "--camera", "/cam",
                   "--renderSettingsPrimPath", "/Render/" + prim, "--imageWidth", WIDTH,
                   "--disableCameraLight", scene, png], tmp)
