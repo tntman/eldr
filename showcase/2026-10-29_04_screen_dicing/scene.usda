@@ -41,8 +41,8 @@ def Mesh "ground"
 }
 
 # About 5, 26, 66, 156 and 406 from the camera: levels 3, 3, 3, 2 and 1 at
-# 960x540 and the default quality 0.5 (husk: 3200 triangles with
-# eldr:screenDicing off, 2336 on; 347 pixels differ slightly).
+# 960x540 and the default quality 0.5 (husk trianglesTotal: 4736 with
+# eldr:screenDicing off at --complexity veryhigh, 3440 on).
 def Mesh "near" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
     uniform token subdivisionScheme = "catmullClark"
