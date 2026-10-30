@@ -45,6 +45,9 @@ const uint32_t kProbesRgen[] =
 const uint32_t kRefractionRgen[] =
 #include "rt_refraction.rgen.inc"
 ;
+const uint32_t kPhotonsRgen[] =
+#include "rt_photons.rgen.inc"
+;
 const uint32_t kGiUpdateComp[] =
 #include "gi_update.comp.inc"
 ;
@@ -96,6 +99,8 @@ struct RayTracing::Functions {
     PFN_vkGetAccelerationStructureBuildSizesKHR getBuildSizes;
     PFN_vkGetAccelerationStructureDeviceAddressKHR getAddress;
     PFN_vkCmdBuildAccelerationStructuresKHR cmdBuild;
+    PFN_vkCmdWriteAccelerationStructuresPropertiesKHR writeProperties;
+    PFN_vkCmdCopyAccelerationStructureKHR copy;
     PFN_vkCreateRayTracingPipelinesKHR createPipelines;
     PFN_vkGetRayTracingShaderGroupHandlesKHR getGroupHandles;
     PFN_vkCmdTraceRaysKHR cmdTraceRays;
@@ -116,6 +121,8 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     load(_fn->getBuildSizes, "vkGetAccelerationStructureBuildSizesKHR");
     load(_fn->getAddress, "vkGetAccelerationStructureDeviceAddressKHR");
     load(_fn->cmdBuild, "vkCmdBuildAccelerationStructuresKHR");
+    load(_fn->writeProperties, "vkCmdWriteAccelerationStructuresPropertiesKHR");
+    load(_fn->copy, "vkCmdCopyAccelerationStructureKHR");
     load(_fn->createPipelines, "vkCreateRayTracingPipelinesKHR");
     load(_fn->getGroupHandles, "vkGetRayTracingShaderGroupHandlesKHR");
     load(_fn->cmdTraceRays, "vkCmdTraceRaysKHR");
@@ -162,6 +169,7 @@ RayTracing::~RayTracing()
     _dev.Destroy(_skinnedTable);
     _dev.Destroy(_displacedTable);
     _dev.Destroy(_instanceBlasBuffer);
+    _dev.Destroy(_photons);
     for (VkPipeline p : {_pipeline, _tlasPipeline, _skinPipeline, _displacePipeline, _giUpdate[0], _giUpdate[1],
                          _gatherDenoise[0], _gatherDenoise[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
@@ -201,9 +209,10 @@ void RayTracing::Release()
     _tlasCapacity = 0;
     _tlasDirty = true;
     _slotWords.clear();
-    for (Buffer *b : {&_scratch, &_instances, &_tlasBuffer}) {
+    for (Buffer *b : {&_scratch, &_instances, &_tlasBuffer, &_photons}) {
         _dev.Destroy(*b);
     }
+    _photonCapacity = 0;
     _work = Work();
 }
 
@@ -228,7 +237,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         // Skinned posed vertices and table: hits, and rt_refraction.rgen's.
         {4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
-        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute | hits | VK_SHADER_STAGE_ANY_HIT_BIT_KHR},  // + rt_shadow.rahit's RtLinkMask
         {6, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         {7, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, compute},
         // Per instance slot, the BLAS of its own (per-instance displacement).
@@ -345,6 +354,7 @@ void RayTracing::_EnsurePipelines()
         {kProbesRgen, sizeof(kProbesRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
         {kShadowAnyHit, sizeof(kShadowAnyHit), VK_SHADER_STAGE_ANY_HIT_BIT_KHR},
         {kRefractionRgen, sizeof(kRefractionRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        {kPhotonsRgen, sizeof(kPhotonsRgen), VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
     constexpr uint32_t kStages = sizeof(stages) / sizeof(stages[0]);
     VkPipelineShaderStageCreateInfo stageInfos[kStages] = {};
@@ -370,6 +380,7 @@ void RayTracing::_EnsurePipelines()
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, kUnused, kUnused, 6),
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 5, kUnused, kUnused),  // probes
         group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 7, kUnused, kUnused),  // refraction
+        group(VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 8, kUnused, kUnused),  // caustic photons
     };
     constexpr uint32_t kGroups = sizeof(groups) / sizeof(groups[0]);
     VkRayTracingPipelineCreateInfoKHR rci{VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR};
@@ -386,8 +397,8 @@ void RayTracing::_EnsurePipelines()
     Check(r, "vkCreateRayTracingPipelinesKHR");
 
     // Shader binding table: each region starts on the base alignment; the
-    // raygen regions are one record each (pixels, probes, refraction), miss and hit
-    // regions two records each.
+    // raygen regions are one record each (pixels, probes, refraction,
+    // photons), miss and hit regions two records each.
     const uint32_t handleSize = _props.shaderGroupHandleSize;
     const VkDeviceSize stride = AlignUp(handleSize, _props.shaderGroupHandleAlignment);
     const VkDeviceSize base = _props.shaderGroupBaseAlignment;
@@ -396,7 +407,8 @@ void RayTracing::_EnsurePipelines()
           "vkGetRayTracingShaderGroupHandlesKHR");
     const VkDeviceSize raygenOffset = 0, probesOffset = AlignUp(stride, base),
                        refractionOffset = probesOffset + AlignUp(stride, base),
-                       missOffset = refractionOffset + AlignUp(stride, base),
+                       photonsOffset = refractionOffset + AlignUp(stride, base),
+                       missOffset = photonsOffset + AlignUp(stride, base),
                        hitOffset = missOffset + AlignUp(2 * stride, base);
     const VkDeviceSize bytes = hitOffset + 2 * stride;
     _dev.Reserve(_sbt, bytes + base,
@@ -406,6 +418,7 @@ void RayTracing::_EnsurePipelines()
     std::memcpy(table + raygenOffset, &handles[0], handleSize);
     std::memcpy(table + probesOffset, &handles[size_t(5) * handleSize], handleSize);
     std::memcpy(table + refractionOffset, &handles[size_t(6) * handleSize], handleSize);
+    std::memcpy(table + photonsOffset, &handles[size_t(7) * handleSize], handleSize);
     for (uint32_t i = 0; i < 2; ++i) {
         std::memcpy(table + missOffset + i * stride, &handles[size_t(1 + i) * handleSize], handleSize);
         std::memcpy(table + hitOffset + i * stride, &handles[size_t(3 + i) * handleSize], handleSize);
@@ -413,6 +426,7 @@ void RayTracing::_EnsurePipelines()
     _raygen = {address + raygenOffset, stride, stride};
     _raygenProbes = {address + probesOffset, stride, stride};
     _raygenRefraction = {address + refractionOffset, stride, stride};
+    _raygenPhotons = {address + photonsOffset, stride, stride};
     _miss = {address + missOffset, stride, 2 * stride};
     _hit = {address + hitOffset, stride, 2 * stride};
 }
@@ -464,7 +478,8 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _dev.Destroy(_gatherImage);
     _dev.Destroy(_gatherTemp);
     _dev.Destroy(_gatherGuide);
-    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers);
+    // Then as many layers of the denoise's penumbra radii (four lights a texel, rt_pixels.rgen).
+    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers * 2);
     _shadowLayers = shadowLayers;
     _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     if (_work.refraction) {
@@ -495,19 +510,23 @@ void RayTracing::_DestroyBlas(Blas &blas)
 {
     _fn->destroyAccelerationStructure(_dev.device, blas.as, nullptr);
     _blocks[blas.block].ranges.Free(blas.offset, blas.units);
+    --_blocks[blas.block].used;
     blas = Blas();
 }
 
 // A BLAS's storage in a block (a new block when none has room) and the
 // acceleration structure over it.
-RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
+RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes, int onlyBlock)
 {
     Blas blas;
     blas.units = uint32_t((bytes + kUnit - 1) / kUnit);
     bool placed = false;
-    for (uint32_t b = 0; b < _blocks.size() && !placed; ++b) {
-        placed = _blocks[b].ranges.Allocate(blas.units, &blas.offset);
+    for (uint32_t b = onlyBlock >= 0 ? onlyBlock : 0; b < _blocks.size() && !placed; ++b) {
+        placed = _blocks[b].buffer.buffer && _blocks[b].ranges.Allocate(blas.units, &blas.offset);
         blas.block = b;
+        if (onlyBlock >= 0) {
+            break;
+        }
     }
     if (!placed) {
         Block block;
@@ -519,6 +538,7 @@ RayTracing::Blas RayTracing::_CreateBlas(VkDeviceSize bytes)
         blas.block = uint32_t(_blocks.size());
         _blocks.push_back(std::move(block));
     }
+    ++_blocks[blas.block].used;
     VkAccelerationStructureCreateInfoKHR ci{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
     ci.buffer = _blocks[blas.block].buffer.buffer;
     ci.offset = VkDeviceSize(blas.offset) * kUnit;
@@ -555,8 +575,10 @@ VkAccelerationStructureGeometryKHR RayTracing::_Triangles(VkDeviceAddress vertic
 // One BLAS per traced slot geometry, built in batches (one submit each) as
 // soon as a mesh's geometry is new; unused ones are freed. Skinned meshes
 // get theirs per instance (_PrepareSkinned).
-// ponytail: no compaction (BLASes take about twice the memory they could),
-// and empty blocks are kept until Release.
+// Static BLASes are compacted after their build (_Compact); displaced and
+// skinned ones refit, so they keep the built size.
+// ponytail: blocks that compaction emptied are freed, other empty ones are
+// kept until Release.
 void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 {
     std::unordered_set<uint64_t> used;
@@ -637,6 +659,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
         std::vector<VkAccelerationStructureBuildGeometryInfoKHR> infos;
         std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
         std::vector<VkDeviceSize> scratchOffsets;
+        std::vector<uint64_t> versions;
         geometries.reserve(batch);  // infos point into it
         VkDeviceSize scratch = 0;
         while (infos.size() < batch && (infos.empty() || scratch < kScratchBudget)) {
@@ -647,7 +670,8 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             VkAccelerationStructureBuildGeometryInfoKHR info{
                 VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
             info.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-            info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            info.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR |
+                         (_work.compaction ? VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR : 0);
             info.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
             info.geometryCount = 1;
             info.pGeometries = &geometries.back();
@@ -658,6 +682,7 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
 
             const Blas blas = _CreateBlas(sizes.accelerationStructureSize);
             _blas[g.version] = blas;
+            versions.push_back(g.version);
 
             info.dstAccelerationStructure = blas.as;
             infos.push_back(info);
@@ -672,12 +697,94 @@ void RayTracing::_BuildBlases(const Scene::Gpu &gpu)
             infos[i].scratchData.deviceAddress = scratchBase + scratchOffsets[i];
             rangeInfos.push_back(&ranges[i]);
         }
+        // Compacted sizes, asked in the build's own submit.
+        VkQueryPool pool = VK_NULL_HANDLE;
+        if (_work.compaction) {
+            VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qci.queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR;
+            qci.queryCount = uint32_t(infos.size());
+            if (vkCreateQueryPool(_dev.device, &qci, nullptr, &pool) != VK_SUCCESS) {
+                pool = VK_NULL_HANDLE;  // no compaction queries: keep the built size
+            }
+        }
         _dev.Submit([&](VkCommandBuffer cmd) {
+            if (pool) {
+                vkCmdResetQueryPool(cmd, pool, 0, uint32_t(infos.size()));
+            }
             _fn->cmdBuild(cmd, uint32_t(infos.size()), infos.data(), rangeInfos.data());
+            if (pool) {
+                MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                              VK_ACCESS_2_ACCELERATION_STRUCTURE_WRITE_BIT_KHR,
+                              VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                              VK_ACCESS_2_ACCELERATION_STRUCTURE_READ_BIT_KHR);
+                std::vector<VkAccelerationStructureKHR> handles;
+                for (const auto &info : infos) {
+                    handles.push_back(info.dstAccelerationStructure);
+                }
+                _fn->writeProperties(cmd, uint32_t(handles.size()), handles.data(),
+                                     VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, pool, 0);
+            }
         });
+        if (pool) {
+            std::vector<VkDeviceSize> sizes(infos.size());
+            if (vkGetQueryPoolResults(_dev.device, pool, 0, uint32_t(sizes.size()), sizes.size() * sizeof(VkDeviceSize),
+                                      sizes.data(), sizeof(VkDeviceSize),
+                                      VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) == VK_SUCCESS) {
+                _Compact(versions, sizes);
+            }
+            vkDestroyQueryPool(_dev.device, pool, nullptr);
+        }
     }
     if (_displacedBuilds.empty()) {
         _dev.Destroy(_scratch);  // the TLAS needs far less
+    }
+}
+
+// Copies the just-built BLASes of `versions` to their compacted `sizes`,
+// frees the originals and the blocks that held only those.
+void RayTracing::_Compact(const std::vector<uint64_t> &versions, const std::vector<VkDeviceSize> &sizes)
+{
+    std::vector<size_t> copied;
+    uint64_t units = 0;
+    for (size_t i = 0; i < versions.size(); ++i) {
+        if (sizes[i] == 0 || (sizes[i] + kUnit - 1) / kUnit >= _blas[versions[i]].units) {
+            continue;  // no gain
+        }
+        units += (sizes[i] + kUnit - 1) / kUnit;
+        copied.push_back(i);
+    }
+    if (copied.empty()) {
+        return;
+    }
+    // The copies share a block of their own, exactly as large as they are,
+    // so the blocks holding the originals empty out and are freed.
+    Block block;
+    block.buffer = _dev.CreateDeviceBuffer(units * kUnit, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR |
+                                                              VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    block.ranges.Grow(uint32_t(units));
+    _blocks.push_back(std::move(block));
+    std::vector<Blas> compact;
+    for (size_t i : copied) {
+        compact.push_back(_CreateBlas(sizes[i], int(_blocks.size()) - 1));
+    }
+    _dev.Submit([&](VkCommandBuffer cmd) {
+        for (size_t k = 0; k < copied.size(); ++k) {
+            VkCopyAccelerationStructureInfoKHR ci{VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR};
+            ci.src = _blas[versions[copied[k]]].as;
+            ci.dst = compact[k].as;
+            ci.mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR;
+            _fn->copy(cmd, &ci);
+        }
+    });
+    for (size_t k = 0; k < copied.size(); ++k) {
+        Blas &old = _blas[versions[copied[k]]];
+        _DestroyBlas(old);
+        old = compact[k];
+    }
+    for (Block &b : _blocks) {
+        if (b.used == 0 && b.buffer.buffer) {
+            _dev.Destroy(b.buffer);
+        }
     }
 }
 
@@ -1063,8 +1170,10 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowVolume[0] = work.volumeStep;
     d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;
-    d.params[1] = std::clamp(work.shadowSamples, 1u, 16u);
-    d.params[2] = std::clamp(work.reflectionSamples, 1u, 16u);
+    // 0 rays (quality multipliers below 1, film samples between traced
+    // ones): rt_pixels.rgen leaves that image as the last sample wrote it.
+    d.params[1] = std::min(work.shadowSamples, 16u);
+    d.params[2] = std::min(work.reflectionSamples, 16u);
     d.params[3] = work.sun;
     d.skinned[0] = gpu.instanceCapacity;
     d.skinned[1] = uint32_t(_skinnedOrder.size());
@@ -1072,13 +1181,17 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
     d.refraction[2] = work.refractionClip ? 1u : 0u;
     d.gather[1] = work.gather && work.gi ? 1.0f : 0.0f;
-    const uint32_t gatherRays = std::clamp(work.gatherRays, 1u, kMaxGatherRays);
+    const uint32_t gatherRays = std::min(work.gatherRays, kMaxGatherRays);
     for (uint32_t i = 0; i < gatherRays; ++i) {
         d.gatherSamples[i / 2][i % 2 * 2] = work.gatherSamples[i][0];
         d.gatherSamples[i / 2][i % 2 * 2 + 1] = work.gatherSamples[i][1];
     }
     d.gatherInfo[0] = float(gatherRays);
     d.gatherInfo[1] = std::clamp(work.gatherDenoise, 0.0f, 1.0f);
+    d.denoise[0] = work.shadowDenoise;
+    d.denoise[1] = work.reflectionDenoise;
+    d.denoise[2] = float(_shadowLayers);
+    _PrepareCaustics(d);
     if (!work.gi) {
         return;
     }
@@ -1146,6 +1259,42 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
 }
 
+// Caustics' uniforms and photon buffer: a count, the hash grid's heads
+// (kPhotonCells, a cell twice the gather radius), then 8 words per photon
+// (caustics.glsl). Kept while big enough; freed with caustics off.
+void RayTracing::_PrepareCaustics(RayTracingData &d)
+{
+    const uint32_t lights = std::min<uint32_t>(uint32_t(_work.causticLights.size()), kMaxCausticLights);
+    if (!_work.caustics || lights == 0) {
+        _work.caustics = false;
+        _dev.Destroy(_photons);
+        _photonCapacity = 0;
+        return;
+    }
+    // ponytail: 2^20 cells (4 MB) whatever the photon count; scale with it
+    // if huge counts crowd them.
+    constexpr uint32_t kPhotonCells = 1u << 20;
+    const uint32_t perLight = std::clamp(_work.causticPhotons, 1024u, 1u << 22);
+    const uint32_t capacity = perLight * lights;
+    if (!_photons.buffer || capacity > _photonCapacity) {
+        _dev.Destroy(_photons);
+        _photons = _dev.CreateDeviceBuffer((VkDeviceSize(4) + kPhotonCells + VkDeviceSize(capacity) * 8) * sizeof(uint32_t),
+                                           VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        _photonCapacity = capacity;
+    }
+    _photonCells = kPhotonCells;
+    const float radius = std::max(_work.causticRadius, 1e-6f);
+    d.caustics[0] = radius;
+    d.caustics[1] = 2.0f * radius;
+    d.caustics[2] = _work.causticSphere[3] + std::max(_work.sceneExtent, 0.0f);
+    std::copy(_work.causticSphere, _work.causticSphere + 4, d.causticSphere);
+    d.causticInfo[0] = perLight;
+    d.causticInfo[1] = lights;
+    d.causticInfo[2] = kPhotonCells;
+    d.causticInfo[3] = _photonCapacity;
+    std::copy_n(_work.causticLights.begin(), lights, d.causticLights);
+}
+
 void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
 {
     VkWriteDescriptorSetAccelerationStructureKHR tlas{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
@@ -1185,6 +1334,10 @@ void RayTracing::UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu)
     }
     if (_gatherImage.view) {
         write(87, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &gather);  // partially bound
+    }
+    const VkDescriptorBufferInfo photons{_photons.buffer, 0, VK_WHOLE_SIZE};
+    if (_photons.buffer) {
+        write(92, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &photons, nullptr);  // partially bound
     }
     if (gpu.vertices && gpu.indices) {
         write(55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &vertices, nullptr);
@@ -1298,6 +1451,27 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
         _tlasVersion = gpu.version;
         pass("accelerationStructures");
     }
+    if (_work.caustics) {
+        // Caustic photons: the grid emptied (count 0, heads kNone) once last
+        // frame's shading pass is done reading it, then traced into it
+        // before this frame's probes, rays and shading gather them.
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdFillBuffer(cmd, _photons.buffer, 0, 4 * sizeof(uint32_t), 0);
+        vkCmdFillBuffer(cmd, _photons.buffer, 4 * sizeof(uint32_t), VkDeviceSize(_photonCells) * sizeof(uint32_t),
+                        0xFFFFFFFFu);
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
+        const RayTracingData &d = *static_cast<const RayTracingData *>(_uniforms.mapped);
+        _fn->cmdTraceRays(cmd, &_raygenPhotons, &_miss, &_hit, &_callable, d.causticInfo[0], d.causticInfo[1], 1);
+        MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR,
+                      VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        pass("caustics");
+    }
     if (_work.gi) {
         // Probe rays (reading last frame's probes for further bounces), then
         // blended into the probes, before shading and reflections read them.
@@ -1347,7 +1521,9 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _layout, 0, 2, sets, 0, nullptr);
-        if (_work.shadows || _work.reflections || _work.gather) {
+        const bool traced = (_work.shadows && _work.shadowSamples > 0) ||
+                            (_work.reflections && _work.reflectionSamples > 0) || (_work.gather && _work.gatherRays > 0);
+        if (traced) {
             _fn->cmdTraceRays(cmd, &_raygen, &_miss, &_hit, &_callable, _width, _height, 1);
         }
         if (_work.refraction) {
@@ -1355,7 +1531,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
             _fn->cmdTraceRays(cmd, &_raygenRefraction, &_miss, &_hit, &_callable, _width, _height, 1);
         }
         VkPipelineStageFlags2 written = VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;
-        if (_work.gather && _work.gatherDenoise > 0.0f) {
+        if (_work.gather && _work.gatherRays > 0 && _work.gatherDenoise > 0.0f) {  // in place: once per traced image
             // The gathered light's denoise (gather_denoise.comp), two passes.
             for (VkPipeline p : _gatherDenoise) {
                 MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,

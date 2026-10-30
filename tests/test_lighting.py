@@ -1,6 +1,6 @@
 """Headless check of HdVk's lights and lighting effects through Hydra:
 cylinder lights, soft sun shadows, volumetric fog, the reflection probe,
-planar reflections and light textures.
+planar reflections, light textures, light linking and IES profiles.
 Run: usdenv.cmd python tests\\test_lighting.py"""
 import os
 import sys
@@ -243,6 +243,60 @@ lit = render(stage, {**linear, "eldr:shadows": False})
 traced = render(stage, {**linear, "eldr:rtShadows": True})
 dark = sum(gray(traced, x, y) < 0.9 * gray(lit, x, y) for x in range(8, 56, 2) for y in range(8, 56, 2))
 expect(gray(lit, 32, 32) > 50 and dark == 0, "ray-traced shadows: no self-shadowing (%d of 576 darker)" % dark)
+
+# Light linking: a sphere light whose collection:lightLink excludes the
+# wall leaves it dark (eldr:lightLinking off: lit); one whose
+# collection:shadowLink excludes a square between it and the wall lights
+# the wall behind the square, with shadow maps and traced.
+stage = wall_stage()
+lamp = UsdLux.SphereLight.Define(stage, "/lamp")
+lamp.CreateIntensityAttr(1000)
+lamp.CreateRadiusAttr(0.05)
+lamp.AddTranslateOp().Set(Gf.Vec3d(0, 0, 1))
+link = UsdLux.LightAPI(lamp).GetLightLinkCollectionAPI()
+link.CreateIncludeRootAttr(True)
+link.CreateExcludesRel().AddTarget("/wall")
+expect(gray(render(stage, linear), 32, 32) < 3, "light linking: an excluded wall is unlit")
+expect(gray(render(stage, {**linear, "eldr:lightLinking": False}), 32, 32) > 50,
+       "eldr:lightLinking off: the wall is lit")
+link.GetExcludesRel().ClearTargets(True)
+lamp.GetPrim().GetAttribute("xformOp:translate").Set(Gf.Vec3d(2, 0, 1))
+square = UsdGeom.Mesh.Define(stage, "/square")
+square.CreatePointsAttr([(-0.25, -0.25, 0), (0.25, -0.25, 0), (0.25, 0.25, 0), (-0.25, 0.25, 0)])
+square.CreateFaceVertexCountsAttr([4])
+square.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+square.CreateDisplayColorAttr([(0, 0, 0)])
+square.AddTranslateOp().Set(Gf.Vec3d(1, 0, 0.5))
+for mode, settings in (("shadow maps", {}), ("traced", {"eldr:rtShadows": True})):
+    shadowed = render(stage, {**linear, **settings})
+    expect(gray(shadowed, 32, 32) < 0.3 * gray(shadowed, 32, 8),
+           "light linking: the square shadows the wall (%s)" % mode)
+    shadowLink = UsdLux.LightAPI(lamp).GetShadowLinkCollectionAPI()
+    shadowLink.CreateIncludeRootAttr(True)
+    shadowLink.CreateExcludesRel().SetTargets(["/square"])
+    unshadowed = render(stage, {**linear, **settings})
+    expect(gray(unshadowed, 32, 32) > 0.7 * gray(unshadowed, 32, 8),
+           "shadow linking: a square outside the shadow link casts none (%s)" % mode)
+    shadowLink.GetExcludesRel().ClearTargets(True)
+
+# IES profile (tests/scenes/textures/spot_asym.ies, a 40 degree spot from
+# the light's -Z, brighter towards phi 0, the light's -X as in Karma): the
+# wall is lit under the light, dark 35 degrees off axis, brighter on -X;
+# eldr:lightIes off: lit evenly.
+stage = wall_stage()
+spot = UsdLux.SphereLight.Define(stage, "/spot")
+spot.CreateIntensityAttr(6)
+spot.CreateRadiusAttr(0.01)
+spot.AddTranslateOp().Set(Gf.Vec3d(0, 0, 1))
+UsdLux.ShapingAPI.Apply(spot.GetPrim()).CreateShapingIesFileAttr(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes", "textures", "spot_asym.ies"))
+image = render(stage, linear)
+expect(gray(image, 32, 32) > 50 and gray(image, 56, 32) < 0.1 * gray(image, 32, 32),
+       "IES profile: lit on its axis, dark past its beam (%d, %d)" % (gray(image, 32, 32), gray(image, 56, 32)))
+expect(gray(image, 20, 32) > 1.5 * gray(image, 44, 32), "IES profile: brighter towards the light's -X (phi 0, Karma) (%d, %d)" % (gray(image, 20, 32), gray(image, 44, 32)))
+spot.GetIntensityAttr().Set(6000)  # times the profile's peak, 1000 cd
+image = render(stage, {**linear, "eldr:lightIes": False})
+expect(gray(image, 56, 32) > 0.3 * gray(image, 32, 32), "eldr:lightIes off: no profile")
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

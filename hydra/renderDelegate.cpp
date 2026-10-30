@@ -40,6 +40,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #ifdef _WIN32
 #include <corecrt_startup.h>  // _crt_atexit
 #endif
@@ -77,6 +78,9 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
         // The beauty before eldr:denoise (once the film converged).
         {k.beautyRaw, A::kBeautyRaw, HdFormatFloat32Vec4},
+        // Caustic photons' light (eldr:caustics), part of indirect diffuse;
+        // Karma has no AOV of its own for it (its LPEs below).
+        {k.caustics, A::kCaustics, HdFormatFloat32Vec3},
     };
     return aovs;
 }
@@ -123,6 +127,9 @@ int LpeKind(std::string e)
         {"C<TD>.*L", A::kSubsurface}, {"C<TD>.*[LO]", A::kSubsurface},
         {"C<...'coat'>.*L", A::kCoat}, {"C<RG'coat'>.*L", A::kCoat},
         {"CV.*L", A::kVolume}, {"CVL", A::kVolume}, {"CV.*[LO]", A::kVolume},
+        // Caustics: diffuse seen, then glass or metal on the way to a light.
+        {"C<RD>.+<TS>L", A::kCaustics}, {"C<RD><TS>.*L", A::kCaustics}, {"C<RD>[<TS><RS>].*L", A::kCaustics},
+        {"C<RD>[<TS><RS>]+L", A::kCaustics},
         {"shadow;C.*[LO]", A::kShadow}, {"shadow;C.*L", A::kShadow},
         {"holdouts;shadow;CDL", A::kHoldoutShadow}, {"holdouts;shadow;C.*[LO]", A::kHoldoutShadow},
     };
@@ -151,6 +158,34 @@ std::vector<std::string> HdVkLightGroups()
 {
     std::lock_guard<std::mutex> lock(lightGroupsMutex);
     return lightGroups;
+}
+
+uint32_t HdVkLinkCategory(TfToken const &category, bool light)
+{
+    static std::mutex mutex;
+    static std::unordered_map<TfToken, uint32_t, TfToken::HashFunctor> ids;
+    static std::unordered_set<uint32_t> lightIds;
+    if (category.IsEmpty()) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
+    const uint32_t id = ids.emplace(category, uint32_t(ids.size()) + 1).first->second;
+    if (light && lightIds.insert(id).second && lightIds.size() == vkr::Scene::kMaxLinkCategories + 1) {
+        TF_WARN("Eldr: more than %zu light link collections; lights past them light and shadow everything",
+                vkr::Scene::kMaxLinkCategories);
+    }
+    return id;
+}
+
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories)
+{
+    std::vector<uint32_t> ids;
+    for (TfToken const &c : categories) {
+        if (const uint32_t id = HdVkLinkCategory(c)) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
 }
 
 bool HdVkFindAov(TfToken const &name, HdVkExtraAov *found)
@@ -274,6 +309,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     _materialFallbacks = std::make_unique<HdVkMaterialFallbacks>();
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
+    _textures->compress = TextureCompression();  // husk hands its settings to the constructor
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate()
@@ -448,9 +484,13 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"GI Hysteresis (0-0.99)", t.giHysteresis, VtValue(frame.giHysteresis)},
         {"GI Probe Relocation (out of walls)", t2.giRelocation, VtValue(frame.giRelocation)},
         {"Final Gather (0 off, 1 final quality, 2 always)", t2.finalGather, VtValue(int(frame.finalGather))},
+        {"Caustics (0 off, 1 final quality, 2 always; caster objects)", t2.caustics, VtValue(int(frame.caustics))},
+        {"Caustic Photons per Light and Sample", t2.causticsPhotons, VtValue(int(frame.causticsPhotons))},
+        {"Caustic Gather Radius (world units, 0 = auto)", t2.causticsRadius, VtValue(frame.causticsRadius)},
         {"Final Gather Distance (world units)", t2.finalGatherDistance, VtValue(frame.finalGatherDistance)},
         {"Final Gather Rays per Pixel (1-16)", t2.finalGatherRays, VtValue(int(frame.finalGatherRays))},
         {"Final Gather Denoise (0-1)", t2.finalGatherDenoise, VtValue(frame.finalGatherDenoise)},
+        {"Effect Denoise Fade (film samples; 0: never)", t2.effectDenoiseSamples, VtValue(int(frame.effectDenoiseSamples))},
         {"Screen-Space GI (replaces AO)", t.ssgi, VtValue(frame.ssgi)},
         {"SSGI Steps (1-32)", t.ssgiSteps, VtValue(int(frame.ssgiSteps))},
         {"SSGI Radius", t.ssgiRadius, VtValue(frame.ssgiRadius)},
@@ -474,6 +514,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Local Lights (sphere, rect, disk, cylinder)", t.localLights, VtValue(frame.localLights)},
         {"Clustered Local Lights (off: all lights per pixel)", t.clusteredLights, VtValue(frame.clusteredLights)},
         {"Light Textures (rect/disk inputs:texture:file)", t2.lightTextures, VtValue(frame.lightTextures)},
+        {"Light Linking (UsdLux lightLink/shadowLink collections)", t2.lightLinking, VtValue(frame.lightLinking)},
+        {"IES Profiles (UsdLux shaping:ies:file)", t2.lightIes, VtValue(frame.lightIes)},
         {"Ambient Occlusion (GTAO)", t.ambientOcclusion, VtValue(frame.ambientOcclusion)},
         {"Ambient Occlusion Radius", t.aoRadius, VtValue(frame.aoRadius)},
         {"Ambient Occlusion Directions (1-8)", t.aoSlices, VtValue(int(frame.aoSlices))},
@@ -483,8 +525,10 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"SSR Hit Footprint Filter (mip by the ray's cone)", t2.ssrHitFilter, VtValue(frame.ssrHitFilter)},
         {"Ray-Traced Reflections (0 off, 1 final quality, 2 always; replace SSR)", t.rtReflections, VtValue(int(frame.rtReflections))},
         {"Ray Tracing Sees Displacement", t2.rtDisplacement, VtValue(frame.rtDisplacement)},
+        {"Ray Tracing Compacts Static BLASes", t2.rtCompaction, VtValue(frame.rtCompaction)},
         {"Ray-Traced Reflection Rays per Pixel (1-16)", t.rtReflectionSamples,
          VtValue(int(frame.rtReflectionSamples))},
+        {"Ray-Traced Reflection Denoise", t2.rtReflectionDenoise, VtValue(frame.rtReflectionDenoise)},
         {"Ray-Traced Hit Shadows (all lights at reflection/refraction hits; 0 off, 1 final quality, 2 always)",
          t2.rtHitShadows, VtValue(int(frame.rtHitShadows))},
         {"Reflection Probe (captured cube)", t.reflectionProbe, VtValue(frame.reflectionProbe)},
@@ -496,6 +540,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
         {"Planar Reflection Mirrors (most)", t2.planarCount, VtValue(int(frame.planarCount))},
         {"Planar Reflection Blur (0 = sharp)", t2.planarBlur, VtValue(frame.planarBlur)},
+        {"Planar Reflections at Time Samples (motion blur)", t2.planarMotionBlur, VtValue(frame.planarMotionBlur)},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},
@@ -521,6 +566,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(int(frame.translucentShadowDivisor))},
         {"Ray-Traced Shadows (RTX; replace shadow maps)", t.rtShadows, VtValue(frame.rtShadows)},
         {"Ray-Traced Shadow Rays per Light (1-16)", t.rtShadowSamples, VtValue(int(frame.rtShadowSamples))},
+        {"Ray-Traced Shadow Denoise", t2.rtShadowDenoise, VtValue(frame.rtShadowDenoise)},
         {"Ray-Traced Skinned Instances (largest on screen, 0-256)", t.rtSkinnedInstances,
          VtValue(int(frame.rtSkinnedInstances))},
         {"Normal Maps", t.normalMaps, VtValue(frame.normalMaps)},
@@ -538,6 +584,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
+        {"Texture Compression (0 off, 1 interactive only, 2 always)", t2.textureCompression, VtValue(1)},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
@@ -575,6 +622,12 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Adaptive Sampling Noise Threshold (0 = off)", t.adaptiveThreshold, VtValue(frame.adaptiveThreshold)},
         {"Adaptive Sampling Threshold, Final Quality (0 = off)", t2.adaptiveFinalThreshold,
          VtValue(frame.adaptiveFinalThreshold)},
+        // -1: not set, Karma's quality applies (else 1).
+        {"Diffuse Quality (GI, final gather, AO rays; -1 = Karma's)", t2.diffuseQuality, VtValue(-1.0f)},
+        {"Reflection Quality (traced reflection rays; -1 = Karma's)", t2.reflectQuality, VtValue(-1.0f)},
+        {"Light Quality (traced shadow rays; -1 = Karma's)", t2.lightQuality, VtValue(-1.0f)},
+        {"Subsurface Quality (taps; -1 = Karma's)", t2.sssQuality, VtValue(-1.0f)},
+        {"Volume Quality (shadow steps; -1 = Karma's)", t2.volumeQuality, VtValue(-1.0f)},
         {"Adaptive Sampling Converged Pixel Fraction", t2.adaptivePixelFraction, VtValue(frame.adaptivePixelFraction)},
         {"Adaptive Sampling Min Samples (max: Film Samples)", t.adaptiveMinSamples,
          VtValue(int(frame.adaptiveMinSamples))},
@@ -599,6 +652,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Extra AOVs (normal, st, albedo, Cryptomatte...)", t.extraAovs, VtValue(frame.extraAovs)},
         {"Light Splits: Dome as Direct (Karma)", t2.splitDomeDirect, VtValue(frame.splitDomeDirect)},
         {"Cryptomatte: Soft Edges and Ranks (film samples)", t2.cryptomatteSoft, VtValue(frame.cryptomatteSoft)},
+        {"Per-AOV Sample Filters (render var filter)", t2.aovFilters, VtValue(true)},
         {"Direct Light Intensity (final pixel only)", t2.directIntensity, VtValue(frame.directIntensity)},
         {"Indirect Light Intensity (final pixel only)", t2.indirectIntensity, VtValue(frame.indirectIntensity)},
         {"Local Volume Shadows (volumes shadow surfaces from local lights)", t2.localVolumeShadows,
@@ -609,6 +663,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
          VtValue(frame.volume.defaultFields)},
         {"Volume Multiple Scattering (octaves; off: single, as Karma's volume limit 0)",
          t2.volumeMultipleScattering, VtValue(frame.volume.multipleScattering)},
+        {"Volume Velocity Blur (vel field, volumes with velocity blur on)", t2.volumeVelocityBlur, VtValue(true)},
         {"Light Shapes Visible (to the camera; off by default)", t2.lightShapesVisible,
          VtValue(frame.lightShapesVisible)},
         {"Dome in the Camera (background)", t2.domeCameraVisible, VtValue(frame.showEnvironment)},
@@ -659,6 +714,15 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens2;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    // Any setting may change whether materials want compressed textures
+    // (the mode, final quality, who renders): they fetch them again.
+    if (_textures) {
+        const bool compress = TextureCompression();
+        if (_textures->compress.exchange(compress) != compress && _terminalSceneIndex) {
+            HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->material},
+                           {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
+        }
+    }
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
         debug && changed && !TfStringStartsWith(key.GetString(), "eldr:")) {
@@ -679,7 +743,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||
-                   key == t2.sampledMotion || key == t.postProcess) {
+                   key == t2.sampledMotion || key == t.postProcess || key == t2.volumeVelocityBlur) {
             // The motion a commit hands the renderer is gone after it (the
             // renderer keeps it while the blur is on): the prims and the
             // camera sample their motion again, moved or not
@@ -1100,6 +1164,16 @@ bool HdVkRenderDelegate::Offline() const
                                   !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
 }
 
+// eldr:textureCompression: 0 off, 1 interactive only (exact in final
+// quality and offline, as Karma's), 2 always; a bool is 0 or 2.
+bool HdVkRenderDelegate::TextureCompression() const
+{
+    const VtValue v = GetRenderSetting(HdVkRenderSettingsTokens2->textureCompression);
+    const int mode = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2 : 0)
+                                         : std::clamp(GetRenderSetting<int>(HdVkRenderSettingsTokens2->textureCompression, 1), 0, 2);
+    return mode == 2 || (mode == 1 && !GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) && !Offline());
+}
+
 bool HdVkRenderDelegate::ScreenDicing() const
 {
     return GetRenderSetting<bool>(HdVkRenderSettingsTokens2->screenDicing, kHdVkScreenDicing) &&
@@ -1109,6 +1183,7 @@ bool HdVkRenderDelegate::ScreenDicing() const
 void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
 {
     _dicingView = view;
+    _keepMotion = true;
     if (_terminalSceneIndex) {
         HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
                        {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
@@ -1158,9 +1233,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB, RAM %.1f GB (peak %.1f)",
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
                   total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
-                  double(_device ? _device->Memory().deviceLocal : 0) / gb, double(ram.resident) / gb,
+                  double(_device ? _device->Memory().deviceLocal : 0) / gb,
+                  double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);
     _loadLine = text;
     std::printf("Eldr: %s\n", text);  // husk's log
@@ -1178,8 +1254,12 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     _committedEdits = edits;
     _committedSettings = settings;
     _motionSettingsChanged = false;  // the prims synced for it
+#ifdef HDVK_VOLUMES
+    HdVkReleaseFiles();  // the fields that synced read their files
+#endif
     try {
-        _scene->Commit(false, unchanged);
+        _scene->Commit(_keepMotion, unchanged);
+        _keepMotion = false;
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::lock_guard<std::mutex> lock(_loadMutex);
         _loadSyncMs += _commitMs;

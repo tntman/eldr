@@ -9,6 +9,7 @@
 | Native USD / Hydra render delegate | Yes | No | Partial | Unreal imports USD stages; Blender only has a separate Hydra Storm add-on. |
 | Converging final frames (sample accumulation) | Yes | Yes | Yes | Eldr: film. Unreal: Movie Render Queue. |
 | Per-effect low-discrepancy sampling | Yes | Yes | Yes | Eldr: Sobol and blue-noise sample dimensions. |
+| Per-component sample quality (Karma's diffuse/reflect/light quality) | Yes | Partial | Yes | Eldr: `eldr:*Quality` or Karma's names, global (from the render settings), not per object. EEVEE: shadow rays and steps. Unreal: Lumen final gather and reflection quality. |
 | Adaptive sampling | Yes | No | No | Eldr stops when 99.9% of pixels converged; 16x16 tiles that stopped skip shading and per-pixel rays (not under refraction, subsurface or post depth of field). Not with motion blur time samples. |
 | Denoiser for the final image | Yes | Yes (OIDN, OptiX) | Partial | Eldr: Intel Open Image Denoise on the CPU (`eldr:denoise`), albedo and normal guides, once per converged film. Unreal: its path tracer only. |
 | Path-traced reference mode | No | Yes (Cycles) | Yes | Eldr: use Karma in Houdini for ground truth. |
@@ -20,8 +21,8 @@
 |---|---|---|---|---|
 | Sphere, rect, disk, cylinder, distant and dome lights | Yes | Yes | Yes | |
 | Textured area lights | Yes | No | Yes | Eldr: rect and disk lights, oriented per UsdLux. |
-| IES profiles | No | No | Yes | Planned. |
-| Light linking | No | Yes | Partial | Unreal has lighting channels. Planned for Eldr. |
+| IES profiles | Yes | No | Yes | Eldr: UsdLux `shaping:ies:*`, type C. |
+| Light linking | Yes | Yes | Partial | Unreal has lighting channels. Eldr: UsdLux light and shadow links, 32 collections, not on domes. |
 | Light functions / gobos | No | No | Yes | |
 | Light shapes visible to the camera | Yes | Yes | Yes | Eldr: `eldr:lightShapesVisible`; Karma's `renderlightgeo` hides single lights. |
 | Soft shadows that converge exactly | Yes | Yes | Yes | Eldr jitters the light shape per film sample in final quality. |
@@ -40,6 +41,7 @@
 | Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes with relocation, plus a per-pixel final gather in final quality. EEVEE: baked irradiance volumes. Unreal: Lumen. |
 | Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask SSGI. |
 | GI at Lumen quality (surface cache, many bounces) | No | No | Yes | |
+| Every diffuse bounce by default | Yes | Partial | Partial | Eldr's GI has no bounce limit. Karma's default `karma:object:diffuselimit` is 1, so a closed room renders darker in Karma (Cornell box: Eldr 1.27x Karma's default, within 3% of Karma at 10; docs/testing.md). |
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |
 | Ray-traced reflections | Yes | No | Yes | |
 | Authored reflection probes | Yes | Yes | Yes | Eldr: up to 8, from flagged meshes. |
@@ -83,7 +85,7 @@
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
 | Depth of field from lens samples | Yes | Yes | Yes | Eldr adds a residual post blur at low sample counts. |
-| Motion blur from shutter time samples | Yes | Yes | Yes | Eldr: smooth blur between time samples (`eldr:motionBlurResidual`); not adaptive. |
+| Motion blur from shutter time samples | Yes | Yes | Yes | Eldr: smooth blur between time samples (`eldr:motionBlurResidual`); not adaptive. Traced and planar reflections blur too, probes don't. |
 | Deformation blur (point caches, skinning, blend shapes) | Yes | Yes | Partial | Eldr: skinned joints and blend shapes blur in time samples, from the shutter's samples in a single frame (sampled motion). |
 | Motion blur on a single frame | Yes | Yes | Yes | Eldr: Hydra transform and point samples. |
 | OpenCV lens distortion | Yes | No | Partial | |
@@ -95,6 +97,7 @@
 |---|---|---|---|---|
 | Multi-layer EXR with AOVs | Yes | Yes | Yes | |
 | Light-split AOVs that sum to the beauty | Yes | Yes | Partial | Eldr: Karma's LPE names. |
+| Per-AOV sample filter (min, max, closest, nearest, box, Gauss) | Yes | No | No | Eldr: Karma's Render Var "Sample Blending" or `driver:parameters:aov:eldr:filter`, film only. |
 | Cryptomatte with soft edges (3 layers, 6 ranks) | Yes | Partial | No | Eldr: coverage from the film's samples, Karma's `<var>00..02` layout. EEVEE: hard edges. |
 | Cryptomatte | Yes | Yes | Yes | |
 | UsdRenderSettings and render products | Yes | No | No | Eldr honours resolution, pixel aspect and data window. |

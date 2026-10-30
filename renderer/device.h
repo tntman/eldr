@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -32,6 +33,10 @@ struct DeviceInfo {
 // renderer needs: Vulkan 1.3, bindless descriptor indexing, multi-draw
 // indirect with count, dynamic rendering, synchronization2.
 DeviceInfo ProbeDevice();
+
+// Where Eldr caches on disk (pipelines, compressed textures):
+// HDVK_PIPELINE_CACHE_DIR, else LOCALAPPDATA's Eldr, else the temp folder's.
+std::filesystem::path CacheFolder();
 
 // Device-local image with one view over all of it.
 struct Image {

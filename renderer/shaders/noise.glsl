@@ -269,8 +269,9 @@ float MxCellNoise(vec3 p, uint dims)
 // worleynoise2d/3d with the euclidean metric (all MaterialX uses): the
 // three nearest feature distances, or with style 1 (solid) the nearest
 // cell's cell noise; one loop for every output width, as the float,
-// vector2 and vector3 variants find the same nearest cell.
-vec4 MxWorley(vec3 p, uint dims, uint components, float jitter, int style)
+// vector2 and vector3 variants find the same nearest cell. `metric` (Karma's
+// kma_voronoinoise3d): 0 euclidean, 1 squared, 2 manhattan, 3 chebyshev.
+vec4 MxWorley(vec3 p, uint dims, uint components, float jitter, int style, uint metric)
 {
     int X, Y, Z = 0;
     vec3 localpos = vec3(mx_floorfrac(p.x, X), mx_floorfrac(p.y, Y), dims == 3u ? mx_floorfrac(p.z, Z) : 0.0);
@@ -282,7 +283,8 @@ vec4 MxWorley(vec3 p, uint dims, uint components, float jitter, int style)
             [[dont_unroll]] for (int z = -zRange; z <= zRange; ++z) {
                 vec3 cellpos = dims == 3u ? mx_worley_cell_position(x, y, z, X, Y, Z, jitter) - localpos
                                           : vec3(mx_worley_cell_position(x, y, X, Y, jitter) - localpos.xy, 0.0);
-                float dist = dot(cellpos, cellpos);
+                vec3 d = abs(cellpos);
+                float dist = metric == 2u ? d.x + d.y + d.z : metric == 3u ? max(d.x, max(d.y, d.z)) : dot(d, d);
                 if (dist < sqdist.x) {
                     sqdist.z = sqdist.y;
                     sqdist.y = sqdist.x;
@@ -303,5 +305,6 @@ vec4 MxWorley(vec3 p, uint dims, uint components, float jitter, int style)
         }
         return vec4(dims == 2u ? mx_cell_noise_vec3(minpos.xy + p.xy) : mx_cell_noise_vec3(minpos + p), 0.0);
     }
-    return components == 1u ? vec4(sqrt(sqdist.x)) : vec4(sqrt(sqdist), 0.0);
+    vec3 dist = metric == 0u ? sqrt(sqdist) : sqdist;  // the others are distances already (1: squared)
+    return components == 1u ? vec4(dist.x) : vec4(dist, 0.0);
 }
