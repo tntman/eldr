@@ -638,6 +638,10 @@ Renderer::~Renderer()
         _prewarmThread.join();
     }
     lap("prewarm join");
+    if (_rt) {
+        _rt->WaitCompiles();  // before the merge into the cache they use
+    }
+    lap("rt pipelines join");
     _MergePrewarmCache();
     lap("merge+save");
     for (const Prewarmed &p : _prewarmed) {
@@ -1563,6 +1567,9 @@ void Renderer::_PrewarmWorker()
 // pipelines (and saves) with that cache, so the worker merging into it raced.
 void Renderer::_MergePrewarmCache()
 {
+    if (_rt && _rt->Compiling()) {
+        return;  // its threads create pipelines with the destination; a later call merges
+    }
     bool save;
     {
         std::lock_guard<std::mutex> lock(_prewarmMutex);
@@ -3681,7 +3688,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        const auto rtStart = std::chrono::steady_clock::now();
+        _rt->WaitPipelines(rt);
         const auto bvhStart = std::chrono::steady_clock::now();
+        _load.rtPipelinesMs += std::chrono::duration<double, std::milli>(bvhStart - rtStart).count();
         _rt->Prepare(gpu, rt, _width, _height);
         _load.bvhMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bvhStart).count();
     } else if (_rt) {
