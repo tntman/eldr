@@ -13,13 +13,20 @@
 # tube's is a streak, the rect's a stretched box, the sphere's and disk's
 # round, stretched along the view. Energy-conserving: power, peak and shape
 # match a brute-force GGX integral within 5% (docs/features.md).
-# /Render/shapes (the default): light shapes hidden from the camera, as
-# UsdLux wants by default. /Render/shapesVisible: the shapes themselves
-# drawn (eldr:lightShapesVisible), so you see which light gives which
-# highlight.
+# Every light authors inputs:karma:light:renderlightgeo = 1, so it shows its
+# shape to the camera, as in Karma (unauthored hides it). /Render/shapes sets
+# the master switch eldr:lightShapesVisible = 0, hiding every shape; the
+# default settings and /Render/shapesVisible leave it on, so you see which
+# light gives which highlight.
+
+over CylinderLight "tube"
+{
+    bool inputs:karma:light:renderlightgeo = 1
+}
 
 def SphereLight "bulb"
 {
+    bool inputs:karma:light:renderlightgeo = 1
     color3f inputs:color = (1, 0.7, 0.4)
     float inputs:intensity = 30
     float inputs:radius = 0.25
@@ -29,6 +36,7 @@ def SphereLight "bulb"
 
 def RectLight "panel"
 {
+    bool inputs:karma:light:renderlightgeo = 1
     color3f inputs:color = (1, 1, 1)
     float inputs:intensity = 8
     float inputs:width = 1.2
@@ -40,6 +48,7 @@ def RectLight "panel"
 
 def DiskLight "disk"
 {
+    bool inputs:karma:light:renderlightgeo = 1
     color3f inputs:color = (0.4, 1, 0.5)
     float inputs:intensity = 20
     float inputs:radius = 0.3
@@ -86,12 +95,12 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
+        custom bool eldr:lightShapesVisible = 0
     }
 
     def RenderSettings "shapesVisible"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:lightShapesVisible = 1
     }
 }

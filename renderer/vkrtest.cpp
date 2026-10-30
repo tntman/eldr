@@ -65,6 +65,7 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
+    frame.lightShapesVisible = false;  // the light shape tests turn it on
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
 }
@@ -3548,7 +3549,7 @@ int main()
             scene.Commit();
             const Image camera = Render(renderer, scene, frame);
             Expect(hidden.At(48, 48, 0) < 10.0f && hidden.At(48, 16, 0) < 10.0f,
-                   "light shapes are off by default");
+                   "Frame::lightShapesVisible off draws no light shapes");
             Expect(std::abs(seen.At(48, 48, 0) - 50.0f) < 0.5f && std::abs(seen.At(48, 16, 0) - 50.0f) < 0.5f,
                    "a sphere and a cylinder light show their radiance to the camera");
             Expect(seen.At(16, 48, 0) < 10.0f, "a light shape behind a surface stays hidden");

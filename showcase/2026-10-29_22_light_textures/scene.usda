@@ -9,10 +9,12 @@
 # Light textures (eldr:lightTextures): the Cornell box's ceiling light made
 # a large panel with a four-colour image (inputs:texture:file, Karma's
 # orientation). Each quarter of the panel lights the room in its colour, in
-# direct light, in bounce light (GI) and in the chrome ball.
+# direct light, in bounce light (GI) and in the chrome ball. The panel
+# authors inputs:karma:light:renderlightgeo = 1, so the camera sees it.
 
 over RectLight "light"
 {
+    bool inputs:karma:light:renderlightgeo = 1
     float inputs:intensity = 4
     float inputs:width = 1.6
     float inputs:height = 1.6
@@ -59,7 +61,6 @@ def Scope "Render"
         int2 resolution = (480, 270)
         custom bool eldr:gi = 1
         custom bool eldr:lightTextures = 1
-        custom bool eldr:lightShapesVisible = 1
     }
 
     def RenderSettings "lightTexturesOff"
@@ -68,6 +69,5 @@ def Scope "Render"
         int2 resolution = (480, 270)
         custom bool eldr:gi = 1
         custom bool eldr:lightTextures = 0
-        custom bool eldr:lightShapesVisible = 1
     }
 }

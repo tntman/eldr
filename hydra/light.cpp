@@ -223,11 +223,11 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         return sceneDelegate->GetLightParamValue(id, name).GetWithDefault(fallback);
     };
     // "Render Light Geometry": inputs:eldr:light:renderlightgeo when authored,
-    // else Karma's inputs:karma:light:renderlightgeo, else shown.
-    auto renderLightGeo = [&] {
+    // else Karma's inputs:karma:light:renderlightgeo, else the fallback.
+    auto renderLightGeo = [&](bool fallback) {
         const VtValue eldr = sceneDelegate->GetLightParamValue(id, TfToken("inputs:eldr:light:renderlightgeo"));
-        return eldr.IsEmpty() ? param(TfToken("inputs:karma:light:renderlightgeo"), true)
-                              : eldr.GetWithDefault(true);
+        return eldr.IsEmpty() ? param(TfToken("inputs:karma:light:renderlightgeo"), fallback)
+                              : eldr.GetWithDefault(fallback);
     };
     // Its light group: inputs:eldr:light:lpetag when authored, else Karma's
     // LPE tag (inputs:karma:light:lpetag; Karma's C.*<L.'tag'>).
@@ -269,8 +269,8 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         _dome->texture = texture();
         _dome->visible = visible;
         // Karma's "Render Light Geometry" hides the dome from the camera only.
-        // Karma's schema default is off; Eldr shows it unless authored false.
-        _dome->cameraVisible = renderLightGeo();
+        // Karma's schema default is off; Eldr shows a dome unless authored false.
+        _dome->cameraVisible = renderLightGeo(true);
         _dome->lpeTag = lpeTag();
         *dirtyBits = Clean;
         return;
@@ -279,10 +279,10 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     vkr::Light &light = *_light;
     light.visible = visible;
     // Karma's "Render Light Geometry" (inputs:karma:light:renderlightgeo,
-    // bool): false hides the light's shape from the camera. UsdLux has no
-    // such attribute. ponytail: it can only hide; the shapes still need
-    // eldr:lightShapesVisible.
-    light.cameraVisible = renderLightGeo();
+    // bool): a local light shows its shape to the camera only when it is
+    // authored true, as in Karma (schema default 0). UsdLux has no such
+    // attribute. eldr:lightShapesVisible is the master switch.
+    light.cameraVisible = renderLightGeo(false);
     light.lpeTag = lpeTag();
     // Caustic photons: inputs:eldr:light:contributescaustics when authored,
     // else Karma's inputs:karma:light:contributescaustics, else on.

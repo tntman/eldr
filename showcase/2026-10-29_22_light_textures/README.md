@@ -7,7 +7,7 @@ A rect or disk light's `inputs:texture:file` colours its light, in direct light,
 - **Look at:** The four colours of the ceiling panel and the matching tints on the walls, floor and in the chrome ball; plain white with it off.
 <!-- summary -->
 
-`tests/scenes/cornell.usda` with its ceiling light made a 1.6 m panel showing `tests/scenes/textures/quadrants.png` (Karma's orientation). Both prims turn on GI and draw the light's shape (`eldr:lightShapesVisible`).
+`tests/scenes/cornell.usda` with its ceiling light made a 1.6 m panel showing `tests/scenes/textures/quadrants.png` (Karma's orientation). Both prims turn on GI, and the light authors `inputs:karma:light:renderlightgeo = 1` so its shape shows to the camera.
 
 ## Open
 

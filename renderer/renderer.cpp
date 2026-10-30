@@ -4514,7 +4514,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         pass(volumesUnder ? "volumesInFront" : "volumes");
     }
     // Light shapes: the local lights seen by the camera, in front of the opaque depth.
-    if (draw && frame.lightShapesVisible && gpu.localLightCount > 0) {
+    if (draw && frame.lightShapesVisible && gpu.shapeLightCount > 0) {
         _volumePass->RecordLightShapes(_cmd, _set, gpu.lightCount, gpu.localLightCount, _color.view, _width,
                                        _height);
         pass("lightShapes");

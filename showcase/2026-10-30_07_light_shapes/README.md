@@ -1,7 +1,7 @@
 # Light shapes and highlights
 
 <!-- summary -->
-Sun, sphere, rect, disk and tube lights give highlights of their own shape, and the shapes can be drawn (`eldr:lightShapesVisible`).
+Sun, sphere, rect, disk and tube lights give highlights of their own shape, and each light with Render Light Geometry on shows its shape to the camera.
 
 - **Compare:** open `showcase/2026-10-30_07_light_shapes/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `shapes` vs `shapesVisible`.
 - **Look at:** The highlights on the glossy floor: a streak for the tube, a stretched rectangle for the rect; with shapes visible, which light gives which.
@@ -11,8 +11,9 @@ A 4 degree sun low ahead, a blue tube (cylinder light), a warm sphere, a rect pa
 
 ## What to look at
 
-- `/Render/shapes` (the default): light shapes hidden from the camera; only their highlights show.
-- `/Render/shapesVisible` (`eldr:lightShapesVisible`): the shapes themselves drawn, so you see which light gives which highlight. One light can opt out with `inputs:karma:light:renderlightgeo = 0`.
+- Every light authors `inputs:karma:light:renderlightgeo = 1`; a light without it stays hidden, as in Karma.
+- `/Render/shapes` (`eldr:lightShapesVisible = 0`, the master switch): every shape hidden; only the highlights show.
+- `/Render/shapesVisible` (the default setting, on): the shapes themselves drawn, so you see which light gives which highlight.
 
 ## Open
 

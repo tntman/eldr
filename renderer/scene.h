@@ -852,6 +852,7 @@ public:
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
+        uint32_t shapeLightCount = 0;   // of those, the ones whose shape shows to the camera
         std::vector<VkImageView> textures;  // index = TexRef index in shaders
         // Per texture its sampler's wrap modes: s + kWrapModes * t (Wrap).
         std::vector<uint8_t> textureWraps;

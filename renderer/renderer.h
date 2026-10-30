@@ -168,8 +168,8 @@ public:
         // atlas; needs volumes.shadows and localShadows).
         bool localVolumeShadows = true;
         // The local lights' shapes (sphere, rect, disk, cylinder) show to the camera as emitters of their
-        // radiance, unless the light is hidden from the camera (Light::cameraVisible).
-        bool lightShapesVisible = false;
+        // radiance, unless the light is hidden from the camera (Light::cameraVisible). Off hides all.
+        bool lightShapesVisible = true;
         // GGX multiple-scattering energy compensation (MaterialX's, Turquin's) where the surface model
         // has it (standard_surface, OpenPBR; UsdPreviewSurface is single scattering). Off: single
         // scattering everywhere, darker when rough.
