@@ -46,7 +46,7 @@ vec4 programRegisters[kProgramRegisters];
 // The lobe inputs a program computes (MaterialProgram::Input from
 // kSpecularColor on, in that order), for brdf.glsl's PrepareLayers: their
 // values, and a bit each in programLobes.
-const uint kProgramLobes = 22u;
+const uint kProgramLobes = 24u;
 vec4 programLobe[kProgramLobes];
 uint programLobes = 0u;
 #endif
@@ -75,6 +75,8 @@ Material ProgramMaterial(Material m)
         m.thinFilm.z = (lobes & 2048u) != 0u ? programLobe[11].x : m.thinFilm.z;
         m.anisotropy.y = (lobes & 4096u) != 0u ? programLobe[12].x : m.anisotropy.y;
         m.refraction.x = (lobes & 8192u) != 0u ? programLobe[13].x : m.refraction.x;
+        m.specular.w = (lobes & 4194304u) != 0u ? programLobe[22].x : m.specular.w;
+        m.specular.rgb = (lobes & 8388608u) != 0u ? programLobe[23].rgb : m.specular.rgb;
     }
     // Transmission and subsurface (transparency.glsl, subsurface.glsl):
     // the radius and its scale multiply the constant (their product).
@@ -459,7 +461,7 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
             } else if (imm0 == 6u) {
                 alpha = clamp(a.x, 0.0, 1.0);
 #ifdef PROGRAM_VERTEX
-            } else if (imm0 == 29u) {  // MaterialProgram::kDisplacement
+            } else if (imm0 == 31u) {  // MaterialProgram::kDisplacement
                 programDisplacement = a.x;
 #endif
 #ifdef LAYERS

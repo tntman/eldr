@@ -196,7 +196,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Hair Shading<br>`eldr:hairShading` | on | BasisCurves shade as hair (Kajiya-Kay), no SSR. `primvars:eldr:hair = 0` opts a prim out. | |
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
-| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specularColor, IOR inputs may be textures or graphs. Off reads constants. | Only such materials |
+| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specular weight and colour, IOR inputs may be textures or graphs. Off reads constants. | Only such materials |
 | MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p; Houdini's Ceramic 3.5 ms, CarPaintMetallic (205 ops, cell noise) 38 ms |
 | Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes in programs. Off: noise reads 0. | fractal3d 0.74 ms; worleynoise3d 0.5 ms (full screen) |
 | Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Screen-space per-channel Gaussian blur of diffuse light, plus sun through thin parts. | About 0.3 ms, only with subsurface materials |

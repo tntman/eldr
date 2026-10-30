@@ -161,7 +161,8 @@ struct MaterialProgram {
         kSubsurfaceRadius,  // multiplies the constant (standard_surface's scale, OpenPBR's radius_scale)
         kTransmissionDepth, kThinWalled,  // replace the constants (thin walled above 0.5)
         kSubsurfaceScale,   // multiplies the constant too (standard_surface's scale, OpenPBR's radius_scale)
-        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 29)
+        kSpecular, kSpecularTint,  // the dielectric's weight and colour (Material::specularWeight, specular)
+        kDisplacement       // Material::displacementProgram's offset (mesh.vert; program.glsl's 31)
 
     };
 
@@ -305,7 +306,7 @@ struct Material {
         if (specularWorkflow || coat > 0 || sheen > 0 || thinFilm > 0 || anisotropy > 0 || toonBands > 0) {
             return true;
         }
-        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSubsurfaceScale; ++i) {
+        for (uint32_t i = MaterialProgram::kSpecularColor; i <= MaterialProgram::kSpecularTint; ++i) {
             if (program.Outputs(MaterialProgram::Input(i))) {
                 return true;  // a textured or graph-driven lobe
             }

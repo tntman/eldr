@@ -539,7 +539,7 @@ struct SurfaceInputs {
     TfToken id;
     TfToken baseColor, baseWeight, emission, emissionWeight, metallic, roughness, occlusion, normal, opacity;
     float baseColorDefault, baseWeightDefault, emissionDefault, emissionWeightDefault, roughnessDefault;
-    TfToken specular, specularColor;  // dielectric specular weight and colour (constants only)
+    TfToken specular, specularColor;  // dielectric specular weight and colour (connected: ReadLobes' program)
     float metallicDefault = 0.0f;
 };
 
@@ -2048,6 +2048,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_IOR, P::kThinFilmIor);
         program(_tokens->specular_rotation, P::kAnisotropyRotation);
         program(_tokens->specular_IOR, P::kIor);
+        program(_tokens->specular, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
         program(_tokens->transmission, P::kTransmission);
         program(_tokens->transmission_color, P::kTransmissionColor);
         program(_tokens->subsurface, P::kSubsurface);
@@ -2084,6 +2086,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(_tokens->thin_film_weight, P::kThinFilm);
         program(_tokens->thin_film_ior, P::kThinFilmIor);
         program(_tokens->specular_ior, P::kIor);
+        program(_tokens->specular_weight, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
         program(_tokens->transmission_weight, P::kTransmission);
         program(_tokens->transmission_color, P::kTransmissionColor);
         program(_tokens->subsurface_weight, P::kSubsurface);
@@ -2134,6 +2138,8 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         program(TfToken("iridescence"), P::kThinFilm);
         program(TfToken("iridescence_thickness"), P::kThinFilmThickness);
         program(TfToken("anisotropy_strength"), P::kAnisotropy);
+        program(_tokens->specular, P::kSpecular);
+        program(_tokens->specular_color, P::kSpecularTint);
         program(_tokens->transmission, P::kTransmission);
     } else if (id == _tokens->ND_disney_principled) {
         // MaterialX's disney_principled graph: Schlick dielectric of F0
