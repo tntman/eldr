@@ -211,7 +211,7 @@ void main()
                 Trace(reflectOrigin, l, a);
                 EvaluateHit(l, a);
                 reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
-                                              : ShadeHit(l, seed, true, rt.shadowInfo.w != 0u);
+                                              : ShadeHit(l, seed, true, (rt.shadowInfo.w & 1u) != 0u);
             }
             reflection.rgb /= float(samples);
             reflection.a = 1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual);
@@ -252,7 +252,7 @@ void main()
             } else if ((hit.flags & kHitBackface) == 0u) {
                 EvaluateHit(l, 0.5);
                 radiance += ShadeHit(l, seed + uvec3(0u, 0u, i * 7919u), (hit.flags & kHitEmitter) == 0u,
-                                     rt.shadowInfo.w != 0u);
+                                     (rt.shadowInfo.w & 1u) != 0u);
             }
         }
         imageStore(rtGatherImage, pixel, vec4(radiance / float(rays), 1.0));

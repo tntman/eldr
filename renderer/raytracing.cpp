@@ -1163,10 +1163,13 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.shadowSample[0] = work.shadowSample[0];
     d.shadowSample[1] = work.shadowSample[1];
     d.shadowSample[3] = float(height);
-    d.shadowInfo[0] = kRtMaskShadow | (work.shadowColor ? kRtMaskTranslucent : 0);
+    // Under caustics shadow rays see the translucent meshes whatever
+    // shadowColor says: casters block them (rt_shadow.rahit), the others
+    // tint only with shadowColor (w's bit 2).
+    d.shadowInfo[0] = kRtMaskShadow | (work.shadowColor || work.caustics ? kRtMaskTranslucent : 0);
     d.shadowInfo[1] = work.shadowVolumes;
     d.shadowInfo[2] = perTexel;
-    d.shadowInfo[3] = work.hitShadows ? 1u : 0u;
+    d.shadowInfo[3] = (work.hitShadows ? 1u : 0u) | (work.shadowColor ? 2u : 0u);
     d.shadowVolume[0] = work.volumeStep;
     d.shadowVolume[1] = work.volumeDensity;
     d.params[0] = _frame++;

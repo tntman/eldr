@@ -114,6 +114,8 @@ const uint kFeatureTimeSample = 33554432u;
 const uint kFeatureMultiScatter = 67108864u;
 // Caustic photons gathered (caustics.glsl, RayTracing::Work::caustics).
 const uint kFeatureCaustics = 134217728u;
+// Only caustic casters go into the tint maps (shadow_tint.frag; Frame::translucentShadows off).
+const uint kFeatureTintCastersOnly = 268435456u;
 
 // The optional frame.features.x bits whose code a pipeline has: the
 // shading pipelines are specialized with the ones their frame uses
