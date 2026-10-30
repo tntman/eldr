@@ -2556,6 +2556,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.shadowLinkBit = 0;
     _gpu.shadowAngle = 0;
     _gpu.shadowCasters.clear();
+    _gpu.extraSuns.clear();
     _gpu.causticLights.clear();
     _gpu.sunRegion = false;
     // A light's group + 1 (0: none), as color.w's bits 2 and up.
@@ -2585,11 +2586,15 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 _gpu.causticLights.push_back(lightCount + localLightCount);
             }
             if (distant) {
-                if (l->castShadows && _gpu.shadowLight == kNone) {
+                // A black sun (intensity 0) leaves the cascades to the next one.
+                const bool shadowed = l->castShadows && l->irradiance[0] + l->irradiance[1] + l->irradiance[2] > 0.0f;
+                if (shadowed && _gpu.shadowLight == kNone) {
                     _gpu.shadowLight = lightCount;
                     _gpu.shadowAngle = l->angle;
                     _gpu.shadowLinkBit = shadowLinkBit;
                     std::copy(l->direction, l->direction + 3, _gpu.shadowDirection);
+                } else if (shadowed) {
+                    _gpu.extraSuns.push_back(lightCount);
                 }
                 std::copy(l->direction, l->direction + 3, g.position);
                 std::copy(l->irradiance, l->irradiance + 3, g.color);

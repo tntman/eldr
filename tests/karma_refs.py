@@ -65,7 +65,7 @@ _MTL = """
         token outputs:surface.connect = </goldenMtl/{name}/pbr.outputs:surface>
         def Shader "pbr" {{
             uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor = ({c}, {c}, {c})
+            color3f inputs:diffuseColor = ({c})
             token outputs:surface
         }}
     }}"""
@@ -75,16 +75,19 @@ over "{prim}" (prepend apiSchemas = ["MaterialBindingAPI"]) {{
 }}"""
 
 
-def bare(binds):  # {prim: grey}
-    greys = sorted(set(binds.values()))
-    name = lambda c: "grey" + str(c).replace(".", "")
-    return _BARE.format(mtls="".join(_MTL.format(name=name(c), c=c) for c in greys),
+def bare(binds):  # {prim: grey or (r, g, b)}
+    rgb = lambda c: c if isinstance(c, tuple) else (c, c, c)
+    name = lambda c: ("rgb" + "_".join(str(x).replace(".", "") for x in c) if isinstance(c, tuple)
+                      else "grey" + str(c).replace(".", ""))
+    return _BARE.format(mtls="".join(_MTL.format(name=name(c), c=", ".join(map(str, rgb(c))))
+                                     for c in sorted(set(binds.values()), key=rgb)),
                         overs="".join(_BIND.format(prim=p, name=name(c)) for p, c in binds.items()))
 
 
-# displayColor 0.7 on the ground; the cubes and ball have none: a mid grey
+# displayColor 0.7 on the ground; the cubes and ball have none: a mid grey. volume: its displayColors.
 OVERS = {"sunangle": bare({"ground": 0.7, "postLeft": 0.5, "postRight": 0.5, "beam": 0.5, "ball": 0.5}),
-         "displacement": bare({"ground": 0.5})}
+         "displacement": bare({"ground": 0.5}),
+         "volume": bare({"floor": 0.5, "orb": (0.8, 0.2, 0.1)})}
 
 
 def scene_path(name):

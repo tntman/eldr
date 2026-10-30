@@ -11,49 +11,54 @@
       "mald": 0.0285
     },
     "emissive": {
-      "lum": 1.008,
-      "region": 0.0714,
+      "lum": 1.0079,
+      "region": 0.0715,
       "mald": 0.0633
     },
     "lights": {
-      "lum": 1.0141,
-      "region": 0.0807,
-      "mald": 0.0338
+      "lum": 1.0147,
+      "region": 0.0804,
+      "mald": 0.0339
     },
     "step4": {
-      "lum": 1.1061,
-      "region": 0.6872,
-      "mald": 0.0962
+      "lum": 1.076,
+      "region": 0.6773,
+      "mald": 0.0505
     },
     "sunangle": {
       "lum": 1.0072,
-      "region": 0.0123,
+      "region": 0.0121,
       "mald": 0.0095
     },
     "mtlx": {
-      "lum": 1.1616,
-      "region": 1.1936,
-      "mald": 0.0772
+      "lum": 1.0078,
+      "region": 0.0788,
+      "mald": 0.013
     },
     "glass": {
-      "lum": 0.9462,
-      "region": 1.1279,
-      "mald": 0.2321
+      "lum": 0.9338,
+      "region": 1.1467,
+      "mald": 0.2193
     },
     "volume": {
-      "lum": 1.4036,
-      "region": 0.858,
-      "mald": 0.2693
+      "lum": 0.9913,
+      "region": 0.0458,
+      "mald": 0.044,
+      "tolerance": {
+        "lum": 0.02,
+        "region": 0.03,
+        "mald": 0.015
+      }
     },
     "displacement": {
       "lum": 0.9848,
-      "region": 0.0426,
+      "region": 0.0425,
       "mald": 0.0172
     },
     "subsurface": {
-      "lum": 0.9614,
-      "region": 1.0094,
-      "mald": 0.2006
+      "lum": 0.9419,
+      "region": 1.0092,
+      "mald": 0.2022
     },
     "caustics": {
       "lum": 0.974,
@@ -61,13 +66,13 @@
       "mald": 0.0747
     },
     "transparency_order": {
-      "lum": 1.0627,
-      "region": 0.0781,
-      "mald": 0.0721
+      "lum": 1.0492,
+      "region": 0.0761,
+      "mald": 0.0606
     },
     "lightlink": {
       "lum": 1.0158,
-      "region": 0.0749,
+      "region": 0.0747,
       "mald": 0.0327
     },
     "ies": {

@@ -3458,7 +3458,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     };
     const bool tracedShadows =
         frame.rtShadows || (frame.rtShadowsAuto && autoTraced());
-    rt.shadows = rtScene && frame.depthPrepass && tracedShadows;
+    // Distant lights past the first shadowed one (a dome's extracted sun
+    // beside the scene's sun) have no cascades: they are always traced.
+    // ponytail: without ray tracing they stay unshadowed.
+    const bool extraSuns = frame.shadows && frame.rtExtraSunShadows && !gpu.extraSuns.empty();
+    rt.shadows = rtScene && frame.depthPrepass && (tracedShadows || extraSuns);
     rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
     // Traced refraction, for scenes with refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
@@ -3564,8 +3568,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     rt.displacementGraphs = frame.displacementGraphs;
     rt.compaction = frame.rtCompaction;
-    const uint32_t rtSun = rt.shadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
+    const uint32_t rtSun = rt.shadows && tracedShadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
+    uint32_t rtSuns = rtSun;
+    for (size_t i = 0; rt.shadows && extraSuns && i < gpu.extraSuns.size() && rtSuns < kMaxRtShadowLights; ++i) {
+        rt.shadowLights[rtSuns++] = gpu.extraSuns[i];
+    }
     // Jittered light shapes (film samples only): this sample's point on
     // every shape, the sun's direction within its disc.
     const bool shapeJitter = film && frame.shadowJitter && frame.softShadows;
@@ -3619,9 +3627,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (localLights > 0) {
         _FitClusters(gpu, frame, &fd);
     }
+    const uint32_t rtSlots = rt.shadows && tracedShadows ? std::clamp(frame.rtShadowLights, 1u, kMaxRtShadowLights) : 0;
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSun,
-                          rt.shadows ? std::clamp(frame.rtShadowLights, 1u, kMaxRtShadowLights) - rtSun : 0, cascadeUsers,
+        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSuns, rtSlots - std::min(rtSuns, rtSlots),
+                          cascadeUsers,
                           shapeJitter ? shapeSample : nullptr);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |

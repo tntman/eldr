@@ -242,6 +242,9 @@ public:
         // their transmittance, marched as volume_shadow.frag does); off:
         // translucent meshes cast none, volumes neither.
         bool rtTranslucentShadows = true;
+        // Distant lights past the first shadowed one (a dome's extracted sun
+        // beside the scene's sun) trace their shadows; off: unshadowed.
+        bool rtExtraSunShadows = true;
         // Traced reflections (needs Device::rayTracing).
         bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
