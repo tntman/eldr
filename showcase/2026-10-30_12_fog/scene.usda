@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/fog.usda@]
+)
+
+# Fog and atmosphere: tests/scenes/fog.usda, a low sun behind a colonnade
+# shining towards the camera and a blue spot on the right. Fog is settings
+# only (no USD fog schema): height fog in a froxel grid, lit by the sun's
+# cascades (the pillars throw shafts), the spot (its cone) and the dome.
+# /Render/fog: density 0.03, height falloff 0.15: light shafts between
+# the pillars, the spot's cone, the far wall hazy.
+# /Render/fogOff: eldr:fog off: clear air.
+# /Render/fogDense: density 0.08, warm tint (eldr:fogColor), no falloff.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "fog"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:fog = 1
+        custom float eldr:fogDensity = 0.03
+        custom float eldr:fogHeightFalloff = 0.15
+    }
+
+    def RenderSettings "fogOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:fog = 0
+    }
+
+    def RenderSettings "fogDense"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:fog = 1
+        custom float eldr:fogDensity = 0.08
+        custom string eldr:fogColor = "1 0.9 0.75"
+    }
+}

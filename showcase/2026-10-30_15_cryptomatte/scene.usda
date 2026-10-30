@@ -1,0 +1,113 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/cornell.usda@]
+)
+
+# Cryptomatte: the Cornell box with a product writing the beauty and two
+# Cryptomatte layers, by object (primvars:__name: the rprim path) and by
+# material (primvars:__materialname), as Karma's Cryptomatte LOP names
+# them. The EXR (cryptomatte.exr next to the scene, or husk's output) has
+# CryptoObject00..02 and CryptoMaterial00..02 (ranks 0-5, id and coverage
+# pairs) with the spec's metadata (name, MurmurHash3_32, manifest), so
+# Nuke's Cryptomatte gizmo or Houdini's COP Cryptomatte picks mattes.
+# /Render/crypto (the default): soft Cryptomatte, film only: up to 6 ids per
+# pixel with their filtered coverage; mattes of edges sum to 1.
+# /Render/cryptoHard: eldr:cryptomatteSoft off: one id per pixel, coverage
+# 1 (aliased mattes). The beauty is the same in both: look at the EXR.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/cryptoProduct>]
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/cryptoProduct>]
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/cryptoProduct>]
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "crypto"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/cryptoProduct>]
+    }
+
+    def RenderSettings "cryptoHard"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        rel products = [</Render/cryptoProduct>]
+        custom bool eldr:cryptomatteSoft = 0
+    }
+
+    def RenderProduct "cryptoProduct"
+    {
+        rel camera = </cam>
+        token productName = "cryptomatte.exr"
+        rel orderedVars = [</Render/Vars/C>, </Render/Vars/CryptoObject>, </Render/Vars/CryptoMaterial>]
+    }
+
+    def Scope "Vars"
+    {
+        def RenderVar "C" (
+            prepend apiSchemas = ["HuskRenderVarAPI"]
+        )
+        {
+            string driver:parameters:aov:husk:name = "C"
+            token driver:parameters:aov:husk:format = "half4"
+            uniform token dataType = "color4f"
+            uniform token sourceType = "lpe"
+            uniform string sourceName = "C.*[LO]"
+        }
+
+        def RenderVar "CryptoObject" (
+            prepend apiSchemas = ["HuskRenderVarAPI"]
+        )
+        {
+            string driver:parameters:aov:husk:name = "CryptoObject"
+            token driver:parameters:aov:husk:format = "float3"
+            uniform token dataType = "float3"
+            uniform token sourceType = "primvar"
+            uniform string sourceName = "__name"
+        }
+
+        def RenderVar "CryptoMaterial" (
+            prepend apiSchemas = ["HuskRenderVarAPI"]
+        )
+        {
+            string driver:parameters:aov:husk:name = "CryptoMaterial"
+            token driver:parameters:aov:husk:format = "float3"
+            uniform token dataType = "float3"
+            uniform token sourceType = "primvar"
+            uniform string sourceName = "__materialname"
+        }
+    }
+}

@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/cornell.usda@]
+)
+
+# Light path intensity: the Cornell box under GI, where the ceiling and the
+# colour on the white walls are bounced light. eldr:directIntensity and
+# eldr:indirectIntensity scale direct or indirect light in the final pixel
+# only (a look control, like a comp grade on the light splits); the light
+# transport and the AOVs are unchanged.
+# /Render/neutral: both 1 (GI on).
+# /Render/indirectBoost: eldr:indirectIntensity 3: a bright ceiling, strong
+# red and green bleeding, the shadows filled in.
+# /Render/directDim: eldr:directIntensity 0.3: the light's pool on the
+# floor dims, the bounce stays.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "neutral"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:gi = 1
+    }
+
+    def RenderSettings "indirectBoost"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:gi = 1
+        custom float eldr:indirectIntensity = 3
+    }
+
+    def RenderSettings "directDim"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:gi = 1
+        custom float eldr:directIntensity = 0.3
+    }
+}

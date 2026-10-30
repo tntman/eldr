@@ -1,0 +1,78 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/lobes.usda@]
+)
+
+# Material lobes beyond the metallic base: tests/scenes/lobes.usda, one
+# sphere per lobe under a sun and StinsonBeach.hdr. Top row: specular
+# workflow, clearcoat, car paint, OpenPBR coat, velvet sheen, OpenPBR fuzz.
+# Bottom row: thin film (oil slick), anodized metal, brushed steel and
+# brushed gold (anisotropic), toon (per material), plain reference. Third
+# row: hair curves, textured specular F0, textured thin film, textured
+# transmission.
+# /Render/lobes (the default): every lobe on.
+# /Render/lobesOff: eldr:clearcoat, eldr:sheen, eldr:thinFilm,
+# eldr:anisotropicSpecular and eldr:multiScatter off: coats, sheen,
+# iridescence and stretched highlights vanish; rough metals darken a
+# little (single scattering).
+# /Render/toon: eldr:toonBands 3 on every material: flat bands of light.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "lobes"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "lobesOff"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:clearcoat = 0
+        custom bool eldr:sheen = 0
+        custom bool eldr:thinFilm = 0
+        custom bool eldr:anisotropicSpecular = 0
+        custom bool eldr:multiScatter = 0
+    }
+
+    def RenderSettings "toon"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:toonBands = 3
+    }
+}
