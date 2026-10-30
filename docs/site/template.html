@@ -64,6 +64,34 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; }
   #menu { display: inline-flex; position: fixed; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); z-index: 21; font: inherit; font-weight: 600; color: var(--bg); background: var(--accent); border: 0; border-radius: 999px; padding: 10px 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.25); }
   main { padding: 24px max(16px, env(safe-area-inset-right, 0px)) 100px max(16px, env(safe-area-inset-left, 0px)); }
 }
+/* Chapters: one shown at a time (all while searching); the nav lists the active chapter's sections. */
+body:not(.searching) section.doc:not(.current) { display: none; }
+body:not(.searching) article > section.doc + section.doc { border-top: 0; margin-top: 0; padding-top: 0; }
+.toc .part { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 14px 0 4px; }
+.toc a.chapter { font-weight: 500; }
+.toc .subs { display: none; flex-direction: column; gap: 1px; margin: 2px 0 6px 10px; border-left: 1px solid var(--line); }
+.toc .subs.open, body.searching .toc .subs { display: flex; }
+.toc .subs a { font-size: 13px; color: var(--muted); }
+.toc .subs a.active { color: var(--accent); }
+.pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); }
+.pager a { text-decoration: none; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; max-width: 48%; }
+.pager a:hover { border-color: var(--accent); }
+.pager small { display: block; color: var(--muted); font-size: 12px; }
+.pager .next { margin-left: auto; text-align: right; }
+body.searching .pager { display: none; }
+/* Pictures: alt text is the caption; paragraphs of pictures become a grid of before/after. */
+.figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 480px)); gap: 14px; margin: 16px 0 24px; max-width: 100%; }
+figure { margin: 0; }
+figure img { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); }
+figcaption { font-size: 12.5px; line-height: 1.45; color: var(--muted); margin-top: 6px; }
+.shot { display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; border: 2px dashed var(--line); border-radius: 6px; background: var(--panel); color: var(--muted); font-size: 13px; text-align: center; padding: 12px; }
+/* Callouts: blockquotes starting with Tip:, Note:, Warning: or Where in Houdini:. */
+blockquote { margin: 16px 0; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--panel); border-radius: 0 8px 8px 0; max-width: 74ch; }
+blockquote p { margin: 4px 0; }
+blockquote.tip { border-left-color: #1f7a3a; } blockquote.note { border-left-color: #3b6fb6; }
+blockquote.warning { border-left-color: #b45309; background: var(--accent-soft); }
+blockquote.houdini { border-left-color: var(--accent); }
+blockquote.houdini strong:first-child::before { content: "\25B8  "; color: var(--accent); }
 </style>
 
 <div class="layout">
@@ -84,16 +112,37 @@ const DOCS = JSON.parse(document.getElementById("docs").textContent);
 const slug = t => t.toLowerCase().trim().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/ /g, "-");
 const content = document.getElementById("content"), toc = document.getElementById("toc");
 content.textContent = "";
+const chapters = new Map();  // id -> {sec, link, subs}
+let part = "";
 
-for (const d of DOCS) {
+for (const [i, d] of DOCS.entries()) {
   const sec = document.createElement("section");
   sec.className = "doc"; sec.id = d.id;
   sec.innerHTML = marked.parse(d.md);
-  // Headings get "<doc>-<slug>" ids; links to "x.md#y" go to "#x-y".
+  // Headings get "<doc>-<slug>" ids; links to "x.md#y" (also "../x.md", "guide/x.md") go to "#x-y".
   sec.querySelectorAll("h1,h2,h3").forEach(h => { h.id = h.tagName === "H1" ? d.id : d.id + "-" + slug(h.textContent); });
   sec.querySelectorAll("a[href]").forEach(a => {
-    const m = a.getAttribute("href").match(/^([\w-]+)\.md(?:#(.*))?$/) || a.getAttribute("href").match(/^()#(.*)$/);
+    const m = a.getAttribute("href").match(/^(?:\.\.\/|guide\/)?([\w-]+)\.md(?:#(.*))?$/) || a.getAttribute("href").match(/^()#(.*)$/);
     if (m) a.setAttribute("href", "#" + (m[1] || d.id) + (m[2] ? "-" + m[2] : ""));
+  });
+  // Pictures: the alt text becomes the caption; a paragraph of pictures only becomes a grid.
+  sec.querySelectorAll("p").forEach(p => {
+    const imgs = p.querySelectorAll("img");
+    if (!imgs.length || p.textContent.trim()) return;
+    const grid = document.createElement("div"); grid.className = "figs";
+    for (const img of imgs) {
+      const fig = document.createElement("figure"), cap = document.createElement("figcaption");
+      cap.textContent = img.alt; img.loading = "lazy";
+      // A picture not taken yet (Houdini screenshots) shows as a labelled box.
+      img.onerror = () => { const s = document.createElement("div"); s.className = "shot"; s.textContent = "Screenshot to come: " + img.alt; img.replaceWith(s); };
+      fig.append(img, cap); grid.append(fig);
+    }
+    p.replaceWith(grid);
+  });
+  sec.querySelectorAll("blockquote").forEach(b => {
+    const k = (b.querySelector("strong")?.textContent || "").toLowerCase();
+    const c = k.startsWith("tip") ? "tip" : k.startsWith("warning") ? "warning" : k.startsWith("note") ? "note" : k.startsWith("where in houdini") ? "houdini" : "";
+    if (c) b.classList.add(c);
   });
   // Comparison cells that start with Yes / Partial / No get a coloured badge.
   sec.querySelectorAll("td").forEach(td => {
@@ -102,34 +151,66 @@ for (const d of DOCS) {
   });
   sec.querySelectorAll("table").forEach(t => { const w = document.createElement("div"); w.className = "tw"; t.replaceWith(w); w.append(t); });
   // Group each h2 with what follows it, so search can hide whole parts.
-  const kids = [...sec.children]; let part = null;
-  for (const k of kids) {
-    if (k.tagName === "H2") { part = document.createElement("div"); part.className = "part"; k.before(part); }
-    if (part) part.append(k);
+  let grp = null;
+  for (const k of [...sec.children]) {
+    if (k.tagName === "H2") { grp = document.createElement("div"); grp.className = "part"; k.before(grp); }
+    if (grp) grp.append(k);
   }
+  // Previous / next chapter.
+  const pager = document.createElement("nav"); pager.className = "pager";
+  for (const [j, cls, label] of [[i - 1, "prev", "Previous"], [i + 1, "next", "Next"]]) {
+    if (!DOCS[j]) continue;
+    const a = document.createElement("a"); a.className = cls; a.href = "#" + DOCS[j].id;
+    a.innerHTML = `<small>${label}</small>`; a.append(DOCS[j].title); pager.append(a);
+  }
+  sec.append(pager);
   content.append(sec);
-  const doc = document.createElement("div"); doc.className = "doc"; doc.textContent = d.title; toc.append(doc);
-  const top = document.createElement("a"); top.href = "#" + d.id; top.textContent = "Overview"; toc.append(top);
-  sec.querySelectorAll("h2").forEach(h => { const a = document.createElement("a"); a.href = "#" + h.id; a.textContent = h.textContent; toc.append(a); });
+  if (d.part !== part) { part = d.part; const h = document.createElement("div"); h.className = "part"; h.textContent = part; toc.append(h); }
+  const link = document.createElement("a"); link.className = "chapter"; link.href = "#" + d.id; link.textContent = d.title; toc.append(link);
+  const subs = document.createElement("div"); subs.className = "subs"; toc.append(subs);
+  sec.querySelectorAll("h2").forEach(h => { const a = document.createElement("a"); a.href = "#" + h.id; a.textContent = h.textContent; subs.append(a); });
+  chapters.set(d.id, { sec, link, subs });
 }
 
+// Show the chapter that holds the hash's target, then scroll to it.
+function show(id = decodeURIComponent(location.hash.slice(1))) {
+  const target = (id && document.getElementById(id)) || content.querySelector("section.doc");
+  const sec = target.closest("section.doc");
+  for (const [id, c] of chapters) {
+    const on = c.sec === sec;
+    c.sec.classList.toggle("current", on); c.link.classList.toggle("active", on); c.subs.classList.toggle("open", on);
+  }
+  if (target === sec) window.scrollTo(0, 0); else target.scrollIntoView();
+}
+window.addEventListener("hashchange", () => show());
+// In-page links switch chapters themselves: some hosts (data: URLs, sandboxed frames) don't update the hash.
+document.addEventListener("click", e => {
+  const a = e.target.closest('a[href^="#"]'); if (!a) return;
+  e.preventDefault();
+  const id = a.getAttribute("href").slice(1);
+  try { history.pushState(null, "", "#" + id); } catch (err) {}
+  show(id);
+});
+show();
+
 // Highlight the section in view.
-const links = new Map([...toc.querySelectorAll("a")].map(a => [a.getAttribute("href").slice(1), a]));
+const links = new Map([...toc.querySelectorAll(".subs a")].map(a => [a.getAttribute("href").slice(1), a]));
 const spy = new IntersectionObserver(es => {
   for (const e of es) if (e.isIntersecting) {
-    toc.querySelectorAll("a.active").forEach(a => a.classList.remove("active"));
+    toc.querySelectorAll(".subs a.active").forEach(a => a.classList.remove("active"));
     const a = links.get(e.target.id); if (a) { a.classList.add("active"); a.scrollIntoView({ block: "nearest" }); }
   }
 }, { rootMargin: "0px 0px -75% 0px" });
-content.querySelectorAll("h1,h2").forEach(h => spy.observe(h));
+content.querySelectorAll("h2").forEach(h => spy.observe(h));
 
-// Search: table rows, list items and paragraphs that don't match are hidden;
-// parts with no match at all collapse, and the nav dims them.
+// Search runs over every chapter: blocks that don't match are hidden, parts with no match collapse,
+// and the nav dims them.
 const q = document.getElementById("q"), hits = document.getElementById("hits");
-const blocks = [...content.querySelectorAll("tbody tr, li, p, pre, h3")];
+const blocks = [...content.querySelectorAll("tbody tr, li, p, pre, h3, figure")];
 const original = new Map();
 function search() {
   const t = q.value.trim().toLowerCase();
+  document.body.classList.toggle("searching", !!t);
   for (const [el, html] of original) el.innerHTML = html;
   original.clear();
   let n = 0;
@@ -139,12 +220,12 @@ function search() {
     if (ok && t) { n++; mark(b, t); }
   }
   content.querySelectorAll(".part").forEach(p => {
-    const any = !t || p.querySelector("h2").textContent.toLowerCase().includes(t) || [...p.querySelectorAll("tbody tr, li, p, pre, h3")].some(b => !b.classList.contains("hidden"));
+    const any = !t || p.querySelector("h2").textContent.toLowerCase().includes(t) || [...p.querySelectorAll("tbody tr, li, p, pre, h3, figure")].some(b => !b.classList.contains("hidden"));
     p.classList.toggle("hidden", !any);
-    if (any && t) p.querySelectorAll(".hidden").length && p.querySelectorAll("table").forEach(tb => tb.closest(".tw").classList.toggle("hidden", !tb.querySelector("tbody tr:not(.hidden)")));
+    if (any && t) p.querySelectorAll("table").forEach(tb => tb.closest(".tw").classList.toggle("hidden", !tb.querySelector("tbody tr:not(.hidden)")));
     const a = links.get(p.querySelector("h2").id); if (a) a.classList.toggle("dim", !any);
   });
-  if (!t) content.querySelectorAll(".tw.hidden").forEach(w => w.classList.remove("hidden"));
+  if (!t) { content.querySelectorAll(".tw.hidden").forEach(w => w.classList.remove("hidden")); show(); }
   hits.textContent = t ? `${n} matching ${n === 1 ? "block" : "blocks"}` : "";
 }
 function mark(el, t) {
@@ -159,10 +240,11 @@ function mark(el, t) {
   }
 }
 let timer; q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 120); });
+// Clicking a result while searching ends the search and opens its chapter.
+toc.addEventListener("click", e => { if (e.target.tagName === "A" && q.value) { q.value = ""; search(); } });
 
 // Phone: the nav slides in from the left.
 const nav = document.getElementById("nav"), menu = document.getElementById("menu");
 menu.addEventListener("click", () => { const o = nav.classList.toggle("open"); menu.setAttribute("aria-expanded", o); });
 toc.addEventListener("click", e => { if (e.target.tagName === "A") { nav.classList.remove("open"); menu.setAttribute("aria-expanded", "false"); } });
-if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView();
 </script>
