@@ -31,11 +31,13 @@ void main()
     Trace(origin, dir, 2.0 * sqrt(PI / float(rays)));
     vec4 result;
     if (hit.t < 0.0) {
-        result = vec4(Dome(dir, 0.5 * float(frame.counts.z)), 1e30);
+        result = vec4(VolumeThrough(origin, dir, -1.0, -1) * Dome(dir, 0.5 * float(frame.counts.z)), 1e30);
     } else if ((hit.flags & kHitBackface) != 0u) {
         result = vec4(0.0, 0.0, 0.0, -0.2 * hit.t);
     } else {
-        result = vec4(ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u, false), hit.t);
+        result = vec4(VolumeThrough(origin, dir, hit.t, -1) *
+                          ShadeHit(dir, uvec3(ray, probe, rt.params.x), (hit.flags & kHitEmitter) == 0u, false),
+                      hit.t);
     }
     giRays[probe * rays + ray] = result;
 }

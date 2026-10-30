@@ -149,6 +149,7 @@ HDVK_SETTING(rtShadowSamples, "Ray-Traced Shadow Rays per Light (1-16)", int(fra
 HDVK_SETTING(rtShadowLights, "Ray-Traced Shadow Lights", int(frame.rtShadowLights))
 HDVK_SETTING(rtShadowDenoise, "Ray-Traced Shadow Denoise", frame.rtShadowDenoise)
 HDVK_SETTING(rtTranslucentShadows, "Ray-Traced Shadows through Glass and Volumes", frame.rtTranslucentShadows)
+HDVK_SETTING(rtExtraSunShadows, "Ray-Traced Shadows of Further Suns", frame.rtExtraSunShadows)
 
 HDVK_GROUP("Advanced: Reflections", false)
 HDVK_SETTING(ssr, "Screen-Space Reflections", frame.ssr)

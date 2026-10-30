@@ -1194,6 +1194,8 @@ void main()
         vec3 shadow = vec3(1.0);
         if (i == frame.counts.y) {
             shadow = Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
+        } else {
+            RtTraced(i, inWorldPos, ng, shadow);  // further suns: traced only (vec3(1) when not)
         }
         color += radiance * shadow;
         if (LightSplits()) {

@@ -227,6 +227,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | [RT] How many lights `eldr:rtShadows` traces: the sun and the most important local lights (1-16). The rest use shadow maps. | Up to a ray per light and pixel |
 | Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | [RT] Blurs traced shadows across their soft edge only, so hard contact shadows stay hard. Fades out over `eldr:effectDenoiseSamples`. Off: raw rays. | One extra ray per light on shadowed pixels while active; no bias on the Kitchen |
 | Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced shadows pass through glass (taking its colour) and through volumes. Off: those objects cast no traced shadow. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
+| Ray-Traced Shadows of Further Suns<br>`eldr:rtExtraSunShadows` | on | [RT] Distant lights after the first one, such as a dome's extracted sun beside the scene's sun, cast traced shadows (shadow maps cover one sun). Off: they cast none. | volume.usda 720p: 3.4 ms on a GTX 1080 Ti |
 
 ### Reflections
 

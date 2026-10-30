@@ -21,6 +21,22 @@ void Trace(vec3 origin, vec3 dir, float cone)
     TraceMask(origin, dir, cone, kRtMaskSurfaces);
 }
 
+// What the volumes (rt.shadowInfo.y) let through from tMax along dir
+// (a miss: tMax < 0 or 1e30) to origin. Shadow, final gather and probe
+// rays all pass it, so smoke shadows the sun, the dome and bounce light
+// alike. shadowLink: as TraceShadow's (-1: every volume).
+// ponytail: a ray marches at most 1e4 units (the volumes' boxes clip it).
+vec3 VolumeThrough(vec3 origin, vec3 dir, float tMax, int shadowLink)
+{
+    if (rt.shadowInfo.y == 0u) {
+        return vec3(1.0);
+    }
+    float weighted, weighted2;
+    float len = tMax < 0.0 ? 1e4 : min(tMax, 1e4);
+    return exp(-VolumeOpticalDepth(origin, dir * len, rt.shadowInfo.y, rt.shadowVolume.x, rt.shadowVolume.y,
+                                   shadowLink, weighted, weighted2));
+}
+
 // What reaches origin from tMax along dir: 0 behind an opaque surface,
 // else what the translucent casters (rt.shadowInfo.x) and the volumes
 // (rt.shadowInfo.y) on the way let through. shadowLink: the light's
@@ -34,13 +50,7 @@ vec3 TraceShadow(vec3 origin, vec3 dir, float tMax, int shadowLink)
                  (shadowLink >= 0 ? gl_RayFlagsNoOpaqueEXT : 0u);
     traceRayEXT(tlas, flags, rt.shadowInfo.x, 1, 0, 1, origin, 0.0, dir, tMax, 1);
     vec3 through = shadowRay.rgb * max(shadowRay.a, 0.0);
-    if (rt.shadowInfo.y > 0u && shadowRay.a > 0.0) {
-        // ponytail: a sun's ray marches 1e4 units (the volumes' boxes clip it).
-        float weighted, weighted2;
-        through *= exp(-VolumeOpticalDepth(origin, dir * min(tMax, 1e4), rt.shadowInfo.y, rt.shadowVolume.x,
-                                           rt.shadowVolume.y, shadowLink, weighted, weighted2));
-    }
-    return through;
+    return shadowRay.a > 0.0 ? through * VolumeThrough(origin, dir, tMax, shadowLink) : through;
 }
 
 // Ray origin just off a surface on the side of normal ng, robust at any

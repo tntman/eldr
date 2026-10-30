@@ -51,8 +51,8 @@ materials and light rather than defaults:
   with Karma's default Eldr is 1.27x brighter there. That is Karma's default, not a lighting difference:
   to match Karma's look, raise the limit in Karma or accept the brighter bounce. The setting is part of
   every reference's hash.
-- **Prims without a material get a plain UsdPreviewSurface of their displayColor** in sunangle and
-  displacement (`OVERS` in karma_refs.py, also hashed), because Karma's materialless surface differs
+- **Prims without a material get a plain UsdPreviewSurface of their displayColor** in sunangle,
+  displacement and volume (`OVERS` in karma_refs.py, also hashed), because Karma's materialless surface differs
   (see below).
 
 ### Karma's colour limit
@@ -66,8 +66,9 @@ so a white wall gets about 20/0.73 of the panel's 40. Eldr does both, from the s
 ### Baseline
 
 Mean luminance ratio Eldr / Karma, Houdini 22.0.466: cornell 1.03, emissive 1.01, lights 1.01, step4
-1.11, sunangle 1.01, mtlx 1.16, glass 0.95, volume 1.40, displacement 0.99, subsurface 0.96, caustics
-1.01, transparency_order 1.06, lightlink 1.02, ies 1.01. `tests/karma_golden.json` has all metrics.
+1.08, sunangle 1.01, mtlx 1.01, glass 0.93, volume 0.99, displacement 0.98, subsurface 0.94, caustics
+0.97, transparency_order 1.05, lightlink 1.02, ies 1.01. `tests/karma_golden.json` has all metrics; volume has its
+own tighter tolerance.
 ies's mald is 0.12: its near-black corners get 0.0002-0.0003 of bounce light in Eldr against 0.0001 in
 Karma, under the 1% eps; its lit cells match within 2%.
 
