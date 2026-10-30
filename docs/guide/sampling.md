@@ -2,7 +2,7 @@
 
 Eldr builds a still image from many *samples*: each sample renders the whole frame with the camera, lights and rays moved a tiny bit. The *film* averages them. Noise (from soft shadows, depth of field, GI rays) fades as samples add up; when the film has **Film Samples** samples, the image is done (*converged*).
 
-> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Film and sampling**.
+> **Where in Houdini:** Render Settings LOP > **Eldr** tab > **Sampling** (the film and denoising) and **Advanced: Sampling** (adaptive sampling, clamps).
 
 ## Film samples
 
@@ -29,7 +29,7 @@ Ray-traced shadows, reflections and the final gather are noisy for the first sam
 
 ## OIDN, the final denoiser
 
-**Denoise (OIDN)** runs Intel Open Image Denoise once on the converged image, on the CPU, guided by the albedo and normals. 16 denoised samples beat 64 raw ones. It takes about 1.3 s at 1080p.
+**Denoise** (OIDN) runs Intel Open Image Denoise once on the converged image, on the CPU, guided by the albedo and normals. 16 denoised samples beat 64 raw ones. It takes about 1.3 s at 1080p.
 
 ![16 samples raw (29_07, raw16)](../images/oidn_raw16.jpg)
 ![16 samples denoised with OIDN (29_07, denoise16)](../images/oidn_denoise16.jpg)

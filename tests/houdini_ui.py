@@ -26,7 +26,7 @@ rs = stage.createNode("rendersettings")
 n = len(tab(rs).parmTemplates())
 assert n >= 8, n  # the groups
 last = tab(rs).parmTemplates()[-1]
-assert last.label() == "Performance and debug", last.label()
+assert last.label() == "Performance and Debug", last.label()
 author(rs, "eldr:gi", 1)
 author(rs, "eldr:filmSamples", 7)
 author(rs, "eldr:bloomIntensity", 0.5)
@@ -70,9 +70,9 @@ names = [hou.text.decodeParm(t.name()) for t in parms]
 assert len(names) == len(set(names)), "a setting appears twice"
 assert all(t.help().strip() for t in parms), [t.name() for t in parms if not t.help().strip()]
 folders = tab(rs).parmTemplates()  # the Render Settings LOP tab (the viewport's are plain tabs)
-assert [f.label() for f in folders if f.tags().get("group_default") == "1"] == ["Film and sampling", "Lighting and GI", "Image"], \
+assert [f.label() for f in folders if f.tags().get("group_default") == "1"] == ["Sampling", "Ray Tracing", "Global Illumination", "Camera", "Image", "Volumes and Fog", "Viewport"], \
     [(f.label(), f.tags()) for f in folders]
-assert folders[-1].label() == "Performance and debug"
+assert folders[-1].label() == "Performance and Debug"
 for t in tab(rs).parmTemplates():  # the Render Settings LOP tab
     if t.type() == hou.parmTemplateType.Folder:
         assert all(p.help().strip() for p in t.parmTemplates() if "_control" not in p.name()), t.label()

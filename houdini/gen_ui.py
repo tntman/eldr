@@ -145,9 +145,8 @@ def q(text):
 
 
 def label_help(name, tip=""):
-    """'Depth Prepass (off: no AO)' -> label 'Depth Prepass'; help = the docs' text.
-    A "(Linear Beauty off)" note stays in the label."""
-    return re.sub(r"\s*\((?!Linear Beauty off)[^()]*\)", "", name), tip or name
+    """'Sun Shadow Resolution (256-8192)' -> label 'Sun Shadow Resolution'; help = the docs' text."""
+    return re.sub(r"\s*\([^()]*\)", "", name), tip or name
 
 
 def tooltips_py(settings_py):

@@ -9,7 +9,7 @@ In the Solaris viewport Eldr has two states: **moving** (you tumble the camera o
 - Settled GI probes pause (**Pause Settled GI Probes while the Camera Moves**).
 - Eldr returns a frame while the next one renders (**Overlap Readback while Moving**): smoother tumbling, one frame of lag.
 
-The first still frame is full quality again, and the film starts.
+The first still frame is full quality again, and the film starts. To keep TAA instead of the film (a steady image, no restart when the camera stops), turn off **Film when Still** in the open **Viewport** group of the Eldr tab; **TAA Samples** sets how many frames TAA averages.
 
 | Kitchen, 1080p, camera moving | Full settings | Moving mode |
 |---|---|---|

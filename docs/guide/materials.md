@@ -27,7 +27,7 @@ The [MaterialX coverage page](../materialx.md) has the measured node list.
 
 ## Material lobes
 
-Each lobe has its own switch on the Eldr tab (**Advanced > Materials**), so you can see what it adds. Plain materials don't pay for lobes they don't use.
+Each lobe has its own switch on the Eldr tab (**Advanced: Materials**), so you can see what it adds. Plain materials don't pay for lobes they don't use.
 
 ![Clearcoat, sheen, fuzz, thin film, anisotropy and hair (30_22, lobes)](../images/lobes.jpg)
 ![The lobes off: coats, sheen, iridescence and stretched highlights gone (30_22, lobesOff)](../images/lobes_off.jpg)
