@@ -1,6 +1,6 @@
 # Textures, UDIMs and colour spaces
 
-Middle: `tests/scenes/colorspace.usda`: each column pairs a colour authored in ACEScg (top, tagged `lin_ap1_scene`) with the same colour pre-converted to linear Rec.709 (bottom); Eldr shades in linear Rec.709, so each pair matches. Left column constants, right column 16-bit textures. Right: a MaterialX image of `udim.<UDIM>.png` on uvs 0..2: tiles 1001 (bottom left), 1002 (bottom right), 1011 (top left); 1012 is missing. Bottom: a floor tiling `quadrants.png` (sRGB) 40 times towards the horizon.
+Middle: `tests/scenes/colorspace.usda`: each column pairs a colour authored in ACEScg (top, tagged `lin_ap1_scene`) with the same colour pre-converted to linear Rec.709 (bottom); Eldr shades in linear Rec.709, so each pair matches. Left column constants, right column 16-bit textures. Right: a MaterialX image of `udim.<UDIM>.png` on uvs 0..2: tiles 1001 (bottom left), 1002 (bottom right), 1011 (top left); 1012 is missing and shows the image's `default` (black, lit only by the specular), as Karma. Bottom: a floor tiling `quadrants.png` (sRGB) 40 times towards the horizon.
 
 ## What to look at
 

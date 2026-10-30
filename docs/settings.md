@@ -142,7 +142,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
 | Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps bounce light (SSGI, SSR, traced hits, GI rays), the emission they see, and emissive-mesh lights (radiance x albedo, as Karma). Wins over `eldr:colorLimit` and Karma's. Not the dome. | |
-| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR emitters: 0, with `eldr:indirectClamp` 20. | |
+| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR emitters: 0, with `eldr:indirectClamp` 20. Karma's 0 renders black (not off): Eldr ignores it with a warning; in Karma use a large value such as 1e6. | |
 | Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | 0 off, 1 on. Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
 
 ### Shadows

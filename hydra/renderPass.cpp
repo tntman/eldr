@@ -37,6 +37,7 @@
 #include <cstring>
 #include <exception>
 #include <map>
+#include <mutex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -705,7 +706,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             const float v = number(token, -1.0f);
             return v >= 0.0f ? v : fallback;
         };
-        const float shared = set(t2.colorLimit, set(karmaLimit, 20.0f));
+        // Karma's colour limit 0 renders black (husk 22.0.466, mean 0), not off; Eldr's 0 is off. A
+        // Karma 0 is ignored with a warning (Eldr's default applies) rather than copied as off or black.
+        float karmaShared = set(karmaLimit, 20.0f);
+        if (karmaShared == 0.0f) {
+            static std::once_flag warned;
+            std::call_once(warned, [] {
+                TF_WARN("Eldr: karma:global:colorlimit 0 renders black in Karma; ignored (limit 20). For no "
+                        "limit set eldr:colorLimit 0, or Karma's to a large value such as 1e6");
+            });
+            karmaShared = 20.0f;
+        }
+        const float shared = set(t2.colorLimit, karmaShared);
         const VtValue sharedSetting = delegate->GetRenderSetting(t2.colorLimitShared);
         const int sharedValue = sharedSetting.IsHolding<bool>() ? int(sharedSetting.UncheckedGet<bool>())
                                                                 : int(number(t2.colorLimitShared, -1.0f));

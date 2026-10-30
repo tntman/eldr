@@ -846,6 +846,13 @@ void ReadTexture(HdMaterialNetwork2 const &net, HdMaterialNode2 const *node, TfT
             std::copy(bias, bias + 3, ref->bias);
         }
         ref->channel = channel;
+        // Where it yields nothing (a missing UDIM tile) the node reads its own
+        // fallback / default, as Karma and the graph compiler (kImage) do.
+        static const TfToken defaultToken("default");
+        const GfVec4f fb = HdVkParameter(*node, preview ? _tokens->fallback : defaultToken);
+        for (int i = 0; i < 4; ++i) {
+            ref->fallback[i] = fb[channel < 0 ? i : channel];
+        }
         // tiledimage: its own tiling after the incoming coordinates
         // (NG_tiledimage: (uv uvtiling - uvoffset) realworldtilesize / realworldimagesize).
         if (StartsWith(type, "ND_tiledimage_")) {
@@ -2280,6 +2287,11 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         }
         TfToken primvar;
         ReadTexture(net, &surface, name, textures, m, ref, &primvar);
+        // With a texture the constant only shows where it yields nothing:
+        // the texture node's fallback, weighted as its texels are.
+        for (int i = 0; ref->texture && i < size; ++i) {
+            constant[i] = ref->fallback[i] * weight;
+        }
         if (ref->texture && uvPrimvar->IsEmpty()) {
             *uvPrimvar = primvar;
         }
