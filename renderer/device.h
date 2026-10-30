@@ -104,6 +104,10 @@ public:
         }
     }
     std::function<void()> waitFrame;
+    // Scene::Commit's news: the scene has glass (refraction) or caustic
+    // casters and lights, so their ray tracing pipelines can start compiling
+    // before a frame traces with them. Set by the Renderer.
+    std::function<void(bool refraction, bool caustics)> sceneTraces;
 
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical = VK_NULL_HANDLE;

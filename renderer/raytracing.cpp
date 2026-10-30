@@ -164,14 +164,25 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
                  VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     // What nearly every traced frame uses compiles from here, in parallel
     // with the scene's load (WaitPipelines). Refraction and photons (12.5 and
-    // 2 s cold) start with the first frame tracing them: a scene without
-    // glass or casters doesn't wait for them at exit.
+    // 2 s cold) start once a commit has glass or casters (StartPipelines): a
+    // scene without them never compiles them nor waits for them at exit.
     // HDVK_RT_EARLY_COMPILE=0: all on first use.
     const char *early = std::getenv("HDVK_RT_EARLY_COMPILE");
-    if (!(early && early[0] == '0')) {
+    _early = !(early && early[0] == '0');
+    if (_early) {
         for (int job : {int(kRaygens), int(kPixels), int(kProbes)}) {
             _Start(job);
         }
+    }
+}
+
+void RayTracing::StartPipelines(bool refraction, bool caustics)
+{
+    if (_early && refraction) {
+        _Start(kRefraction);
+    }
+    if (_early && caustics) {
+        _Start(kPhotons);
     }
 }
 
