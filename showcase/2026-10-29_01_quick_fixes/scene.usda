@@ -78,12 +78,13 @@ def Scope "Render"
 def Scope "quick"
 {
     # Left: opacityMode "transparent" (the default), right: "presence". Both
-    # half opaque, mirror-like; presence fades the highlight too.
+    # half opaque, mirror-like, tilted to mirror the glowing ceiling panel;
+    # presence fades that highlight too.
     def Mesh "transparentQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
     {
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
-        point3f[] points = [(-0.9, 0.05, 0.9), (-0.55, 0.05, 0.9), (-0.55, 0.5, 0.9), (-0.9, 0.5, 0.9)]
+        point3f[] points = [(-0.753, 0.145, 1.022), (-0.502, 0.145, 0.778), (-0.697, 0.355, 0.578), (-0.948, 0.355, 0.822)]
         rel material:binding = </mtl/transparentMode>
     }
 
@@ -91,7 +92,7 @@ def Scope "quick"
     {
         int[] faceVertexCounts = [4]
         int[] faceVertexIndices = [0, 1, 2, 3]
-        point3f[] points = [(-0.45, 0.05, 0.9), (-0.1, 0.05, 0.9), (-0.1, 0.5, 0.9), (-0.45, 0.5, 0.9)]
+        point3f[] points = [(-0.382, 0.166, 1.007), (-0.056, 0.166, 0.879), (-0.168, 0.334, 0.593), (-0.494, 0.334, 0.721)]
         rel material:binding = </mtl/presenceMode>
     }
 

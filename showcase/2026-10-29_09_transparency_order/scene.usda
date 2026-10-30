@@ -9,6 +9,61 @@
 # and behind blue glass, and smoke balls behind two panes and between two
 # panes. Settings prims flip how translucent layers are ordered and seen.
 
+# Bottom left: two overlapping translucent quads with no glass between them,
+# yellow behind cyan. Sorted (eldr:oit 0) blends them in order; weighted
+# blended OIT averages them by depth weight, so the overlap shifts colour.
+over "mtl"
+{
+    def Material "cyan"
+    {
+        token outputs:surface.connect = </mtl/cyan/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.8, 0.9)
+            float inputs:opacity = 0.7
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+    }
+    def Material "yellow"
+    {
+        token outputs:surface.connect = </mtl/yellow/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.85, 0.1)
+            float inputs:opacity = 0.7
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+    }
+}
+
+def Xform "oitPair"
+{
+    def Mesh "yellowBack" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/yellow>
+        double3 xformOp:translate = (-3.8, -0.9, 0)
+        float3 xformOp:scale = (1.4, 1.1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+    def Mesh "cyanFront" (
+        prepend apiSchemas = ["MaterialBindingAPI"]
+        inherits = </Quad>
+    )
+    {
+        rel material:binding = </mtl/cyan>
+        double3 xformOp:translate = (-3.0, -0.9, 1)
+        float3 xformOp:scale = (1.4, 1.1, 1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+
 def Scope "Render"
 {
     def RenderSettings "default"
