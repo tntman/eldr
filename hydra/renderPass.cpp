@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "glInterop.h"
+#include "instancer.h"
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
@@ -186,7 +187,9 @@ struct FrameTiming {
             std::fputs("frame,t_ms,interval_ms,app_ms,commit_ms,setup_ms,collect_ms,wait_ms,render_ms,after_ms,execute_ms,"
                        "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged,"
                        "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
-                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms\n",
+                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms,sync_wall_ms,mesh_topology_ms,"
+                       "mesh_points_ms,mesh_instancer_ms,mesh_primvars_ms,mesh_skin_ms,mesh_shutter_ms,mesh_program_ms,"
+                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -415,14 +418,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 continue;
             }
             applied = value;
-            const VtValue typed = VtValue::CastToTypeOf(value, current);
+            // eldr:textureCompression: a bool means 0 or 2 (a cast would make true 1).
+            const VtValue typed = token == HdVkRenderSettingsTokens2->textureCompression && value.IsHolding<bool>()
+                                      ? VtValue(value.UncheckedGet<bool>() ? 2 : 0)
+                                      : VtValue::CastToTypeOf(value, current);
             if (!typed.IsEmpty()) {
                 delegate->SetRenderSetting(token, typed);
                 // These re-sync the meshes (SetRenderSetting): wait for that.
                 const auto &ts = *HdVkRenderSettingsTokens;
                 resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
                                                          token == ts.finalQuality ||
-                                                         token == HdVkRenderSettingsTokens2->screenDicing));
+                                                         token == HdVkRenderSettingsTokens2->screenDicing ||
+                                                         token == HdVkRenderSettingsTokens2->textureCompression));
             }
         }
     }
@@ -473,7 +480,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.ssgiThickness, &frame.ssgiThickness},
                                 {t2.ssgiBitmask, &frame.ssgiBitmask}, {t2.rtDisplacement, &frame.rtDisplacement},
                                 {t2.rtCompaction, &frame.rtCompaction},
-                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement}, {t2.opacityMode, &frame.opacityMode},
+                                {t2.rtRefractionDisplacement, &frame.rtRefractionDisplacement},
+                                {t2.rtRefractionClip, &frame.rtRefractionClip}, {t2.opacityMode, &frame.opacityMode},
                                 {t2.giRelocation, &frame.giRelocation},
                                 {t2.rtShadowDenoise, &frame.rtShadowDenoise},
                                 {t2.rtReflectionDenoise, &frame.rtReflectionDenoise},
@@ -658,6 +666,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.fogGridSize, &frame.fogGridSize}, {t.probeResolution, &frame.probeResolution},
                                 {t.volumeMaxSteps, &frame.volume.maxSteps},
                                 {t.volumeShadowSteps, &frame.volume.shadowSteps},
+                                {t.volumeLocalShadowStride, &frame.volume.localShadowStride},
                                 {t.volumeResolution, &frame.volume.resolution},
                                 {t2.planarCount, &frame.planarCount},
                                 {t2.rtRefractionBounces, &frame.rtRefractionBounces},
@@ -1407,7 +1416,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             eldrMs += ms;
             std::fprintf(timing->csv, ",%.3f,%lld", ms, (long long)calls.calls[e].exchange(0));
         }
-        std::fprintf(timing->csv, ",%.3f\n", T::Ms(timing->lastEnd, tBegin) - eldrMs);
+        // The syncs' wall span, then the parts of the meshes' (thread time).
+        const int64_t syncBegin = calls.syncBegin.exchange(INT64_MAX), syncEnd = calls.syncEnd.exchange(0);
+        std::fprintf(timing->csv, ",%.3f,%.3f", T::Ms(timing->lastEnd, tBegin) - eldrMs,
+                     syncEnd > syncBegin ? (syncEnd - syncBegin) / 1e6 : 0.0);
+        for (int e = HdVkCallTimes::kCount; e < HdVkCallTimes::kAll; ++e) {
+            std::fprintf(timing->csv, ",%.3f", calls.ns[e].exchange(0) / 1e6);
+            calls.calls[e] = 0;
+        }
+        std::fprintf(timing->csv, ",%lld\n", (long long)HdVkTakeShutterHits());
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;

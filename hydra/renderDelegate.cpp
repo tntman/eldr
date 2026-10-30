@@ -309,6 +309,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     _materialFallbacks = std::make_unique<HdVkMaterialFallbacks>();
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
+    _textures->compress = TextureCompression();  // husk hands its settings to the constructor
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate()
@@ -583,6 +584,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"MaterialX Graphs (material programs)", t.materialGraphs, VtValue(frame.materialGraphs)},
         {"Procedural Textures (MaterialX noise)", t.proceduralTextures, VtValue(frame.proceduralTextures)},
         {"Texture Anisotropic Filtering (1-16)", t.anisotropy, VtValue(int(frame.anisotropy))},
+        {"Texture Compression (0 off, 1 interactive only, 2 always)", t2.textureCompression, VtValue(1)},
         {"Subsurface Scattering", t.subsurface, VtValue(frame.subsurface)},
         {"Subsurface Samples (1-64)", t.subsurfaceSamples, VtValue(int(frame.subsurfaceSamples))},
         {"Displacement", t.displacement, VtValue(frame.displacement)},
@@ -601,6 +603,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Ray-Traced Refraction (0 off, 1 final quality, 2 always)", t2.rtRefraction, VtValue(int(frame.rtRefraction))},
         {"Ray-Traced Refraction Interfaces (1-16)", t2.rtRefractionBounces, VtValue(int(frame.rtRefractionBounces))},
         {"Ray-Traced Refraction Sees Displacement", t2.rtRefractionDisplacement, VtValue(frame.rtRefractionDisplacement)},
+        {"Ray-Traced Refraction Starts at Glass (faster)", t2.rtRefractionClip, VtValue(frame.rtRefractionClip)},
         {"Object Motion Vectors", t.objectMotion, VtValue(frame.objectMotion)},
         {"Blend Shape Motion Vectors", t.blendShapeMotion, VtValue(frame.blendShapeMotion)},
         {"Temporal Anti-Aliasing", t.taa, VtValue(frame.taa)},
@@ -691,6 +694,8 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Volume Step Size (voxels)", t.volumeStepSize, VtValue(volume.stepSize)},
         {"Volume Max Steps", t.volumeMaxSteps, VtValue(int(volume.maxSteps))},
         {"Volume Shadow Steps", t.volumeShadowSteps, VtValue(int(volume.shadowSteps))},
+        {"Volume Local Shadow Stride (steps per local-light shadow tap)", t.volumeLocalShadowStride,
+         VtValue(int(volume.localShadowStride))},
         {"Volume Density Multiplier (on the material's)", t.volumeDensity, VtValue(volume.density)},
         {"Volume Emission Multiplier (on the material's)", t.volumeEmission, VtValue(volume.emission)},
         {"Volume Phase Anisotropy (without a material, -1..1)", t.volumeAnisotropy, VtValue(volume.anisotropy)},
@@ -709,6 +714,15 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens2;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    // Any setting may change whether materials want compressed textures
+    // (the mode, final quality, who renders): they fetch them again.
+    if (_textures) {
+        const bool compress = TextureCompression();
+        if (_textures->compress.exchange(compress) != compress && _terminalSceneIndex) {
+            HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->material},
+                           {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
+        }
+    }
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
         debug && changed && !TfStringStartsWith(key.GetString(), "eldr:")) {
@@ -1150,6 +1164,16 @@ bool HdVkRenderDelegate::Offline() const
                                   !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
 }
 
+// eldr:textureCompression: 0 off, 1 interactive only (exact in final
+// quality and offline, as Karma's), 2 always; a bool is 0 or 2.
+bool HdVkRenderDelegate::TextureCompression() const
+{
+    const VtValue v = GetRenderSetting(HdVkRenderSettingsTokens2->textureCompression);
+    const int mode = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2 : 0)
+                                         : std::clamp(GetRenderSetting<int>(HdVkRenderSettingsTokens2->textureCompression, 1), 0, 2);
+    return mode == 2 || (mode == 1 && !GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) && !Offline());
+}
+
 bool HdVkRenderDelegate::ScreenDicing() const
 {
     return GetRenderSetting<bool>(HdVkRenderSettingsTokens2->screenDicing, kHdVkScreenDicing) &&
@@ -1209,9 +1233,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB, RAM %.1f GB (peak %.1f)",
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
                   total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
-                  double(_device ? _device->Memory().deviceLocal : 0) / gb, double(ram.resident) / gb,
+                  double(_device ? _device->Memory().deviceLocal : 0) / gb,
+                  double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);
     _loadLine = text;
     std::printf("Eldr: %s\n", text);  // husk's log
@@ -1229,6 +1254,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     _committedEdits = edits;
     _committedSettings = settings;
     _motionSettingsChanged = false;  // the prims synced for it
+    HdVkNewSyncPass();  // the prims' shutter samples were for this time
 #ifdef HDVK_VOLUMES
     HdVkReleaseFiles();  // the fields that synced read their files
 #endif

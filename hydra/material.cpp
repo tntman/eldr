@@ -4,6 +4,7 @@
 
 #include "instancer.h"
 #include "scene.h"
+#include "device.h"
 #ifdef HDVK_VOLUMES
 #include "volume.h"
 #endif
@@ -19,6 +20,7 @@
 #include "pxr/base/gf/vec3f.h"
 #include "pxr/base/gf/vec4f.h"
 #include "pxr/base/tf/diagnostic.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/errorMark.h"
 #ifdef interface
 #undef interface  // windows.h's (via Vulkan): HdMaterialNetworkSchema has a member of that name
@@ -44,6 +46,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <set>
 #include <vector>
@@ -686,12 +690,13 @@ bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textu
     if (colorSpace.IsEmpty() && !preview && !space) {
         colorSpace = GfColorSpaceNames->LinearRec709;
     }
+    const bool compress = textures->compress;
     if (path.find("<UDIM>") != std::string::npos) {
-        ref->udim = textures->GetUdim(path, colorSpace);
+        ref->udim = textures->GetUdim(path, colorSpace, compress);
         const auto tile = std::find_if(ref->udim.begin(), ref->udim.end(), [](auto const &t) { return t; });
         ref->texture = tile == ref->udim.end() ? nullptr : *tile;
     } else {
-        ref->texture = textures->Get(path, colorSpace);
+        ref->texture = textures->Get(path, colorSpace, compress);
     }
     ReadWrap(node, preview, ref);
     return true;
@@ -2539,15 +2544,118 @@ void ReadDisplacement(HdMaterialNetwork2 const &net, HdVkTextureCache *textures,
 
 } // namespace
 
+namespace {
+
+// Compressed textures on disk, one file each: "EldrBC1", the key, format,
+// width, height, levels, the file's wrap modes, the mip chain.
+constexpr char kCacheMagic[8] = "EldrBC1";
+
+std::shared_ptr<vkr::Texture> ReadCached(std::filesystem::path const &file, std::string const &key)
+{
+    std::ifstream in(file, std::ios::binary);
+    char magic[8];
+    uint32_t keySize = 0;
+    if (!in.read(magic, 8) || std::memcmp(magic, kCacheMagic, 8) != 0 ||
+        !in.read(reinterpret_cast<char *>(&keySize), 4) || keySize != key.size()) {
+        return nullptr;
+    }
+    std::string stored(keySize, ' ');
+    uint32_t header[4];
+    uint8_t wrap[2];
+    uint64_t bytes = 0;
+    if (!in.read(stored.data(), keySize) || stored != key || !in.read(reinterpret_cast<char *>(header), 16) ||
+        !in.read(reinterpret_cast<char *>(wrap), 2) || !in.read(reinterpret_cast<char *>(&bytes), 8) ||
+        header[0] < uint32_t(vkr::Texture::Format::BC4) || header[0] > uint32_t(vkr::Texture::Format::BC7_SRGB) ||
+        wrap[0] >= vkr::kWrapModes || wrap[1] >= vkr::kWrapModes || bytes > (uint64_t(1) << 32)) {
+        return nullptr;
+    }
+    auto tex = std::make_shared<vkr::Texture>();
+    tex->format = vkr::Texture::Format(header[0]);
+    tex->width = header[1];
+    tex->height = header[2];
+    tex->levels = header[3];
+    tex->fileWrap[0] = vkr::Wrap(wrap[0]);
+    tex->fileWrap[1] = vkr::Wrap(wrap[1]);
+    tex->pixels.resize(size_t(bytes));
+    // Scene checks the size against the levels before uploading.
+    if (!in.read(reinterpret_cast<char *>(tex->pixels.data()), std::streamsize(bytes))) {
+        return nullptr;
+    }
+    return tex;
+}
+
+void WriteCached(std::filesystem::path const &file, std::string const &key, vkr::Texture const &t)
+{
+    std::error_code ec;
+    std::filesystem::create_directories(file.parent_path(), ec);
+    // Written aside, then renamed: another process never reads half a file.
+    std::filesystem::path temp = file;
+    temp += ".tmp" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    {
+        std::ofstream out(temp, std::ios::binary);
+        const uint32_t keySize = uint32_t(key.size());
+        const uint32_t header[4] = {uint32_t(t.format), t.width, t.height, t.levels};
+        const uint8_t wrap[2] = {uint8_t(t.fileWrap[0]), uint8_t(t.fileWrap[1])};
+        const uint64_t bytes = t.pixels.size();
+        out.write(kCacheMagic, 8);
+        out.write(reinterpret_cast<const char *>(&keySize), 4);
+        out.write(key.data(), keySize);
+        out.write(reinterpret_cast<const char *>(header), 16);
+        out.write(reinterpret_cast<const char *>(wrap), 2);
+        out.write(reinterpret_cast<const char *>(&bytes), 8);
+        out.write(reinterpret_cast<const char *>(t.pixels.data()), std::streamsize(bytes));
+        if (!out) {
+            out.close();
+            std::filesystem::remove(temp, ec);
+            return;
+        }
+    }
+    std::filesystem::rename(temp, file, ec);
+    if (ec) {
+        std::filesystem::remove(temp, ec);
+    }
+}
+
+// eldr:textureCompression: 8-bit textures BC-compressed once, then read
+// from CacheFolder()/textures, keyed by the file's path, size, modification
+// time and colour space (and the encoder's version). Files the filesystem
+// doesn't see (inside a usdz) are compressed on every load.
+// ponytail: the folder is never pruned; delete it to reclaim the space.
+std::shared_ptr<vkr::Texture> LoadCompressed(std::string const &path, TfToken const &colorSpace)
+{
+    std::error_code ec;
+    const std::filesystem::path source = std::filesystem::u8path(path);
+    const uintmax_t size = std::filesystem::file_size(source, ec);
+    const auto time = ec ? std::filesystem::file_time_type() : std::filesystem::last_write_time(source, ec);
+    std::string key;
+    std::filesystem::path file;
+    if (!ec) {
+        key = TfStringPrintf("bc1|%s|%llu|%lld|%s", path.c_str(), static_cast<unsigned long long>(size),
+                             static_cast<long long>(time.time_since_epoch().count()), colorSpace.GetText());
+        file = vkr::CacheFolder() / "textures" /
+               TfStringPrintf("%016llx.bc", static_cast<unsigned long long>(std::hash<std::string>()(key)));
+        if (std::shared_ptr<vkr::Texture> cached = ReadCached(file, key)) {
+            return cached;
+        }
+    }
+    std::shared_ptr<vkr::Texture> tex = LoadTexture(path, colorSpace);
+    if (tex && vkr::CompressTexture(*tex) && !file.empty()) {
+        WriteCached(file, key, *tex);
+    }
+    return tex;
+}
+
+} // namespace
+
 std::shared_ptr<vkr::Texture> HdVkTextureCache::Get(std::string const &path,
-                                                    TfToken const &sourceColorSpace)
+                                                    TfToken const &sourceColorSpace, bool compress)
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::weak_ptr<vkr::Texture> &slot = _textures[{path, sourceColorSpace}];
+    std::weak_ptr<vkr::Texture> &slot = _textures[{path, sourceColorSpace, compress}];
     std::shared_ptr<vkr::Texture> texture = slot.lock();
     if (!texture) {
         const auto start = std::chrono::steady_clock::now();
-        texture = LoadTexture(path, sourceColorSpace);
+        texture = compress ? LoadCompressed(path, sourceColorSpace) : LoadTexture(path, sourceColorSpace);
         _loadMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         slot = texture;
     }
@@ -2557,7 +2665,7 @@ std::shared_ptr<vkr::Texture> HdVkTextureCache::Get(std::string const &path,
 // As Storm: the tiles 1001..1100 the resolver finds (it also looks into
 // packages such as usdz).
 std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string const &path,
-                                                                     TfToken const &sourceColorSpace)
+                                                                     TfToken const &sourceColorSpace, bool compress)
 {
     const size_t at = path.find("<UDIM>");
     std::vector<std::shared_ptr<vkr::Texture>> tiles(vkr::kUdimTiles);
@@ -2565,7 +2673,7 @@ std::vector<std::shared_ptr<vkr::Texture>> HdVkTextureCache::GetUdim(std::string
         const ArResolvedPath tile = ArGetResolver().Resolve(path.substr(0, at) + std::to_string(1001 + i) +
                                                             path.substr(at + 6));
         if (!tile.empty()) {
-            tiles[i] = Get(tile.GetPathString(), sourceColorSpace);
+            tiles[i] = Get(tile.GetPathString(), sourceColorSpace, compress);
         }
     }
     return tiles;

@@ -21,7 +21,7 @@ GROUPS = [
      "exposureCompensation productLinear autoExposure tonemapper bloomIntensity"),
     ("Advanced: Geometry and products", False,
      "lod lodBias lodFade subdivision maxRefineLevel screenDicing displacement curveRibbons pointSprites "
-     "displacementScale displacementGraphs anisotropy splitDomeDirect cryptomatteSoft aovFilters directIntensity "
+     "displacementScale displacementGraphs anisotropy textureCompression splitDomeDirect cryptomatteSoft aovFilters directIntensity "
      "indirectIntensity renderProducts productResolution"),
     ("Advanced: Lighting", False,
      "localLights clusteredLights lightTextures lightLinking lightIes lightShapesVisible domeCameraVisible emissiveLights emissiveLightThreshold "
@@ -41,11 +41,11 @@ GROUPS = [
      "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),
     ("Advanced: Transparency", False,
      "texturedTransmission translucency oit oitDepthWeight refraction refractionSamples holdouts "
-     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement "
+     "refractionBackFaces multiRefraction refractionLayers rtRefractionBounces rtRefractionDisplacement rtRefractionClip "
      "holdoutAlpha opacityMode"),
     ("Advanced: Fog and volumes", False,
      "fogDensity fogHeight fogHeightFalloff fogAnisotropy fogGiAmbient fogColor fogMaxDistance fogGridSize "
-     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeDensity volumeEmission "
+     "fogZUp fogFilmJitter volumeStepSize volumeMaxSteps volumeShadowSteps volumeLocalShadowStride volumeDensity volumeEmission "
      "volumeAnisotropy volumeResolution volumeUnderTransparency volumeShadows localVolumeShadows "
      "volumeMutualShadows volumeDefaultFields volumeMultipleScattering volumeVelocityBlur"),
     ("Advanced: Camera and film", False,

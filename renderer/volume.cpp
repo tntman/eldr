@@ -49,6 +49,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
     int32_t shadowLink;      // volume_shadow.frag: the light's shadow link bit (-1: every volume casts)
+    uint32_t localShadowStride;      // Settings::localShadowStride
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -63,6 +64,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.count = count;
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
+    p.localShadowStride = std::clamp(s.localShadowStride, 1u, 16u);
     // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
     // gain over single scattering at limits 1, 4 and 16 (within 9% on
     // volume.usda's and fog.usda's clouds, front and back lit, sun and dome;

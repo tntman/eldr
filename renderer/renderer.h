@@ -487,6 +487,10 @@ public:
         // rays by its displaced surface: its facets and the height map's
         // bump, as the shading pass bumps its fragments.
         bool rtRefractionDisplacement = true;
+        // Traced refraction's first ray looks for glass only (translucent
+        // meshes), up to the prepass depth: pixels without glass in front
+        // cost one cheap ray. Off: it traces every surface (the A/B).
+        bool rtRefractionClip = true;
         // Translucent holdouts (with holdouts) cut the image's colour and
         // alpha by their opacity; off: they draw nothing.
         bool holdoutAlpha = true;

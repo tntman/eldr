@@ -90,6 +90,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Displacement Scale<br>`eldr:displacementScale` | float 1 | Multiplies every displacement offset. | Rebuilds displaced BLASes |
 | Displacement Graphs<br>`eldr:displacementGraphs` | on | Runs shading graphs (math, noise, several textures, primvars) per vertex for displacement. Off: such materials don't displace. | Graph-displaced surfaces shade with facet normals. Ray tracing builds BLASes per mesh, or per instance (256 largest on screen) for graphs reading world position, normal or instance primvars. |
 | Texture Anisotropic Filtering<br>`eldr:anisotropy` | int 16 | Filter level (1 = off, 16 max). | Small |
+| Texture Compression<br>`eldr:textureCompression` | int 1 | 8-bit material textures block-compressed with mips (colour BC7, gray BC4, gray + alpha BC5), cached on disk. 0 off, 1 interactive only (exact in final quality and husk, as Karma), 2 always. True is 2, false 0. 16-bit, float and light textures stay exact. | 4x less memory (BC4: 2x). crowd_9k: textures 172 to 112 MB (the float dome stays); texture load 0.8 s exact, 1.2 s first compressed, 0.7 s cached; render 52 dB PSNR vs exact |
 | Light Splits: Dome as Direct (Karma)<br>`eldr:splitDomeDirect` | on | Dome light unblocked by AO/SSGI counts as direct, as in Karma. Off: all dome light is indirect. Beauty unchanged. | Only with light splits |
 | Cryptomatte: Soft Edges and Ranks (film samples)<br>`eldr:cryptomatteSoft` | on | [film] Keeps the 6 heaviest ids per pixel with coverages, as layers `<var>00..02` (Karma layout); soft edges. Off or interactive: one id at coverage 1. | 14 floats per pixel, only with a Cryptomatte AOV |
 | Per-AOV Sample Filters (render var filter)<br>`eldr:aovFilters` | on | [film] Each render var's `driver:parameters:aov:eldr:filter` (else Karma's `...karma:filter`): beauty, nearest, gauss, box, min, max, closest, farthest. Off: colour like the beauty, data nearest. | None: a branch in the AOV pass |
@@ -219,6 +220,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most copies per frame (1-16); more layers share the last. Also the translucent layers volumes see (at most 4). | Volumes under glass: 8 bytes per pixel per layer, a draw of the translucent meshes each |
 | Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced triangles and height-map bump (with `eldr:rtDisplacement`). Off: flat glass look. | Displaced glass only |
+| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] The first ray of each pixel looks only for glass (translucent meshes) in front of the prepass depth; pixels without glass cost one cheap ray. Same image. Off: it traces every surface, as before. | glass.usda 1080p final: rayTracing 41.7 to 37.5 ms per sample; same image |
 | Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A translucent holdout cuts colour and alpha by its opacity. | Small pass when present |
 | Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" scales the highlights with the opacity and never refracts; "transparent" keeps them. Off: presence shades as transparent. | Free |
 
@@ -241,6 +243,7 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Volume Step Size<br>`eldr:volumeStepSize` | float 1 | March step in voxels; larger is faster, coarser. | |
 | Volume Max Steps<br>`eldr:volumeMaxSteps` | int 256 | Steps per pixel and volume box. | |
 | Volume Shadow Steps<br>`eldr:volumeShadowSteps` | int 8 | Steps of the light-direction march. | volume.usda 21 ms at 8, about 17 at 4, about 11 at 1 |
+| Volume Local Shadow Stride<br>`eldr:volumeLocalShadowStride` | int 2 | Local lights' shadows in volumes (atlas tap, other volumes) every this many march steps (1-16); the steps between scale the unshadowed light by the last tap's shadowed fraction. 1: every step. | volume + 3 sphere lights, final: 257.9 to 237.3 ms per sample at 2 (63 dB PSNR vs 1), 4: 57 dB |
 | Volume Density Multiplier<br>`eldr:volumeDensity` | float 1 | Scales density (extinction). | |
 | Volume Emission Multiplier<br>`eldr:volumeEmission` | float 1 | Scales emission. | |
 | Volume Phase Anisotropy<br>`eldr:volumeAnisotropy` | float 0 | Phase g for volumes without a MaterialX volume material (0: isotropic, as Karma). | |

@@ -128,6 +128,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((volumeStepSize, "eldr:volumeStepSize"))                \
     ((volumeMaxSteps, "eldr:volumeMaxSteps"))                \
     ((volumeShadowSteps, "eldr:volumeShadowSteps"))          \
+    ((volumeLocalShadowStride, "eldr:volumeLocalShadowStride")) \
     ((volumeDensity, "eldr:volumeDensity"))                  \
     ((volumeEmission, "eldr:volumeEmission"))                \
     ((volumeAnisotropy, "eldr:volumeAnisotropy"))            \
@@ -215,7 +216,7 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((screenBackface, "eldr:screenBackface")) \
     ((screenBackfaceScale, "eldr:screenBackfaceScale")) \
     ((ssrHitFilter, "eldr:ssrHitFilter")) \
-    ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) \
+    ((ssgiTileOrder, "eldr:ssgiTileOrder"))     ((rtRefraction, "eldr:rtRefraction"))     ((rtRefractionBounces, "eldr:rtRefractionBounces")) ((rtRefractionDisplacement, "eldr:rtRefractionDisplacement")) ((rtRefractionClip, "eldr:rtRefractionClip")) \
     ((rtHitShadows, "eldr:rtHitShadows"))     ((giRelocation, "eldr:giRelocation"))     ((finalGather, "eldr:finalGather"))     ((finalGatherDistance, "eldr:finalGatherDistance")) ((finalGatherRays, "eldr:finalGatherRays")) ((finalGatherDenoise, "eldr:finalGatherDenoise"))     ((effectDenoiseSamples, "eldr:effectDenoiseSamples")) ((rtShadowDenoise, "eldr:rtShadowDenoise")) ((rtReflectionDenoise, "eldr:rtReflectionDenoise")) \
     ((screenDicing, "eldr:screenDicing")) \
     ((denoise, "eldr:denoise")) \
@@ -224,7 +225,8 @@ PXR_NAMESPACE_OPEN_SCOPE
     ((caustics, "eldr:caustics")) \
     ((causticsPhotons, "eldr:causticsPhotons")) \
     ((causticsRadius, "eldr:causticsRadius")) \
-    ((rtCompaction, "eldr:rtCompaction"))
+    ((rtCompaction, "eldr:rtCompaction")) \
+    ((textureCompression, "eldr:textureCompression"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens, HDVK_RENDER_SETTING_TOKENS);
 TF_DECLARE_PUBLIC_TOKENS(HdVkRenderSettingsTokens2, HDVK_RENDER_SETTING_TOKENS2);
@@ -394,6 +396,8 @@ public:
     // last re-diced for (null before the first). SetDicingView re-syncs the
     // meshes; only the render pass calls it, between syncs.
     bool ScreenDicing() const;
+    // Whether materials load block-compressed textures now.
+    bool TextureCompression() const;
     const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
     void SetDicingView(std::optional<HdVkDicingView> const &view);
 

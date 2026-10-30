@@ -1,10 +1,14 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/imaging/hd/instancer.h"
 
+#include <cstdint>
+#include <list>
 #include <map>
+#include <mutex>
 #include <vector>
 
 namespace vkr {
@@ -46,7 +50,27 @@ public:
 private:
     std::map<TfToken, VtValue> _primvars;
     bool _visible = true;
+    // Shutter samples of this instancer (its transform and primvars), shared
+    // by its prototypes within one sync pass (HdVkNewSyncPass).
+    struct Sampled {
+        uint64_t pass = 0;
+        float time = 0, open = 0, close = 0;
+        GfMatrix4d transform;
+        bool hasTransform = false;
+        std::map<TfToken, VtValue> primvars;
+    };
+    std::mutex _sampledMutex;
+    std::list<Sampled> _sampled;  // stable: prototypes read theirs unlocked
 };
+
+// A new sync pass (the render delegate's commit ends one): caches of samples
+// taken during the last pass (instancers' shutter samples, skinned shutter
+// poses) are stale from here.
+void HdVkNewSyncPass();
+uint64_t HdVkSyncPass();
+// HDVK_TIMING=2: shutter sample cache hits since the last call.
+int64_t HdVkTakeShutterHits();
+void HdVkNoteShutterHit();
 
 // A numeric primvar value (a scalar or vector, or an array of them) as
 // floats, `components` (1..4) per element. False for anything else.

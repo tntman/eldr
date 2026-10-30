@@ -177,6 +177,10 @@ public:
         bool multipleScattering = false;
         float volumeLimit = 0.0f;
         static constexpr float kDefaultVolumeLimit = 16.0f;
+        // Local lights' shadows (atlas tap, other volumes) every this many
+        // march steps; the steps between scale the unshadowed light by the
+        // last tap's shadowed fraction. 1: every step.
+        uint32_t localShadowStride = 2;
     };
 
     // Which part of each ray Record marches: all of it; the part behind the
