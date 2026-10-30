@@ -9,8 +9,9 @@
 # and behind blue glass, and smoke balls behind two panes and between two
 # panes. Settings prims flip how translucent layers are ordered and seen.
 
-# Bottom left: two overlapping translucent quads with no glass between them,
-# yellow behind cyan. Sorted (eldr:oit 0) blends them in order; weighted
+# Bottom left: two overlapping translucent quads nearer than all the glass
+# (no refracting mesh between them in the back-to-front walk), yellow
+# behind cyan. Sorted (eldr:oit 0) blends them in order; weighted
 # blended OIT averages them by depth weight, so the overlap shifts colour.
 over "mtl"
 {
@@ -48,8 +49,8 @@ def Xform "oitPair"
     )
     {
         rel material:binding = </mtl/yellow>
-        double3 xformOp:translate = (-3.8, -0.9, 0)
-        float3 xformOp:scale = (1.4, 1.1, 1)
+        double3 xformOp:translate = (-2.6, -0.9, 3)
+        float3 xformOp:scale = (1, 0.8, 1)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
     }
     def Mesh "cyanFront" (
@@ -58,8 +59,8 @@ def Xform "oitPair"
     )
     {
         rel material:binding = </mtl/cyan>
-        double3 xformOp:translate = (-3.0, -0.9, 1)
-        float3 xformOp:scale = (1.4, 1.1, 1)
+        double3 xformOp:translate = (-1.8, -0.9, 4)
+        float3 xformOp:scale = (1, 0.8, 1)
         uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
     }
 }
