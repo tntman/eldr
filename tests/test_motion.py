@@ -320,9 +320,8 @@ chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
 UsdShade.MaterialBindingAPI.Apply(floor.GetPrim()).Bind(chrome)
 stage.GetRootLayer().Save()
 REFLECTIONS = {"eldr:finalQuality": True, "eldr:ssr": False, "eldr:rtReflections": 0,
-               "eldr:planarReflections": True, "eldr:planarScale": 1.0}
+               "eldr:planarReflections": True}  # the default planarScale: a 32-pixel mirror render
 # The cube's reflection covers rows 53-63, the cube itself 27-46.
-# ponytail: planarScale 1, a 32-pixel mirror render shows nothing (a bug of its own).
 row = SIZE - 6
 
 
