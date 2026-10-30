@@ -294,7 +294,7 @@ public:
         float finalGatherDenoise = 1.0f;
         // From the film's second sample half the 8 x 8 blocks gather per
         // sample (in turn), weighted by 2 (rt_pixels.rgen).
-        bool finalGatherRoulette = true;
+        bool finalGatherRoulette = false;  // off: same RMSE costs more samples than it saves (lane 59)
         // Per-effect denoise (final gather, traced shadows and reflections):
         // film samples over which the filters fade out, linearly from the
         // first (full) to none from this one on, so the early samples are
