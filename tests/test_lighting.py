@@ -298,5 +298,32 @@ spot.GetIntensityAttr().Set(6000)  # times the profile's peak, 1000 cd
 image = render(stage, {**linear, "eldr:lightIes": False})
 expect(gray(image, 56, 32) > 0.3 * gray(image, 32, 32), "eldr:lightIes off: no profile")
 
+# IES pole: spot_asym.ies differs by phi at theta 0, so from the light's
+# centre its pool pinches to a point. Karma evaluates it from each point
+# on the light: a 0.1 radius light 1 above the wall blurs the pole over
+# its extent. Seen orthographically, 0.6 wide (0.54 degrees a pixel from
+# the light), the light over pixel (32, 32): the centre lies within a few %
+# of its neighbours, and the -X : +X ratio at 2.67, 5.9 and 11.1 degrees
+# is Karma's (husk 22.0.466, the same setup on a floor: 1.57, 2.52, 2.90).
+stage = wall_stage()
+camera = UsdGeom.Camera(stage.GetPrimAtPath("/cam"))
+camera.CreateProjectionAttr(UsdGeom.Tokens.orthographic)
+camera.CreateHorizontalApertureAttr(6)
+camera.CreateVerticalApertureAttr(6)
+spot = UsdLux.SphereLight.Define(stage, "/spot")
+spot.CreateIntensityAttr(0.1)
+spot.CreateRadiusAttr(0.1)
+spot.AddTranslateOp().Set(Gf.Vec3d(0.6 / 128, -0.6 / 128, 1))  # pixel (32, 32)'s centre
+UsdLux.ShapingAPI.Apply(spot.GetPrim()).CreateShapingIesFileAttr(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "scenes", "textures", "spot_asym.ies"))
+image = render(stage, linear)
+c = gray(image, 32, 32)
+near = [gray(image, 32 + dx, 32 + dy) for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1))]
+expect(50 < c < 250 and all(abs(n / c - 1) < 0.08 for n in near),
+       "IES pole: the pool's centre lies within 8%% of its neighbours (%d; %s)" % (c, near))
+for k, karma in ((5, 1.57), (11, 2.52), (21, 2.90)):
+    ratio = gray(image, 32 - k, 32) / max(gray(image, 32 + k, 32), 1)
+    expect(abs(ratio / karma - 1) < 0.1, "IES pole: -X : +X %d px off the pole %.2f, Karma %.2f" % (k, ratio, karma))
+
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
