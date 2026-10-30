@@ -2,6 +2,7 @@
 
 #include "camera.h"
 #include "glInterop.h"
+#include "instancer.h"
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
@@ -186,7 +187,9 @@ struct FrameTiming {
             std::fputs("frame,t_ms,interval_ms,app_ms,commit_ms,setup_ms,collect_ms,wait_ms,render_ms,after_ms,execute_ms,"
                        "fetch_ms,gpu_ms,render_cpu_ms,moving,deferred,collected,read_mask,width,height,converged,"
                        "stats_ms,stats_calls,map_ms,map_calls,alloc_ms,alloc_calls,isconverged_ms,isconverged_calls,"
-                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms\n",
+                       "camsync_ms,camsync_calls,sync_ms,sync_calls,app_outside_eldr_ms,sync_wall_ms,mesh_topology_ms,"
+                       "mesh_points_ms,mesh_instancer_ms,mesh_primvars_ms,mesh_skin_ms,mesh_shutter_ms,mesh_program_ms,"
+                       "mesh_flatten_ms,mesh_transforms_ms,mesh_joints_ms,mesh_share_ms,shutter_hits\n",
                        csv);
             auto *t = new FrameTiming;
             t->csv = csv;
@@ -1413,7 +1416,15 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             eldrMs += ms;
             std::fprintf(timing->csv, ",%.3f,%lld", ms, (long long)calls.calls[e].exchange(0));
         }
-        std::fprintf(timing->csv, ",%.3f\n", T::Ms(timing->lastEnd, tBegin) - eldrMs);
+        // The syncs' wall span, then the parts of the meshes' (thread time).
+        const int64_t syncBegin = calls.syncBegin.exchange(INT64_MAX), syncEnd = calls.syncEnd.exchange(0);
+        std::fprintf(timing->csv, ",%.3f,%.3f", T::Ms(timing->lastEnd, tBegin) - eldrMs,
+                     syncEnd > syncBegin ? (syncEnd - syncBegin) / 1e6 : 0.0);
+        for (int e = HdVkCallTimes::kCount; e < HdVkCallTimes::kAll; ++e) {
+            std::fprintf(timing->csv, ",%.3f", calls.ns[e].exchange(0) / 1e6);
+            calls.calls[e] = 0;
+        }
+        std::fprintf(timing->csv, ",%lld\n", (long long)HdVkTakeShutterHits());
         std::fflush(timing->csv);
         timing->lastBegin = tBegin;
         timing->lastEnd = tEnd;

@@ -10,9 +10,19 @@
 // the render pass's IsConverged, camera and other prim syncs), for the frame timing CSV
 // (renderPass.cpp) to split the app's time into Eldr's and its own.
 struct HdVkCallTimes {
-    enum Entry { kStats, kMap, kAllocate, kConverged, kCameraSync, kSync, kCount };  // kSync: meshes, lights, materials, instancers
-    std::atomic<int64_t> ns[kCount] = {};
-    std::atomic<int64_t> calls[kCount] = {};
+    // kSync: meshes, lights, materials, instancers (thread time: syncs run in
+    // parallel, and a mesh's includes its instancer's). After kCount: parts
+    // of a mesh's sync, not counted again in app_outside_eldr_ms.
+    enum Entry {
+        kStats, kMap, kAllocate, kConverged, kCameraSync, kSync, kCount,
+        kSyncTopology = kCount, kSyncPoints, kSyncInstancer, kSyncPrimvars, kSyncSkin, kSyncShutter, kSyncProgram,
+        kSyncFlatten, kSyncTransforms, kSyncJoints, kSyncShare, kAll
+    };
+    std::atomic<int64_t> ns[kAll] = {};
+    std::atomic<int64_t> calls[kAll] = {};
+    // The wall-clock span of the kSync calls since the last execute (ns on
+    // steady_clock): the share of the app's time its prim syncs take.
+    std::atomic<int64_t> syncBegin{INT64_MAX}, syncEnd{0};
 
     static bool On()
     {
@@ -43,9 +53,18 @@ public:
     {
         if (_on) {
             HdVkCallTimes &t = HdVkCallTimes::Get();
-            t.ns[_entry] += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() -
-                                                                                  _start).count();
+            const auto end = std::chrono::steady_clock::now();
+            t.ns[_entry] += std::chrono::duration_cast<std::chrono::nanoseconds>(end - _start).count();
             ++t.calls[_entry];
+            if (_entry == HdVkCallTimes::kSync) {
+                using ns = std::chrono::nanoseconds;
+                const int64_t b = std::chrono::duration_cast<ns>(_start.time_since_epoch()).count(),
+                              e = std::chrono::duration_cast<ns>(end.time_since_epoch()).count();
+                for (int64_t v = t.syncBegin; b < v && !t.syncBegin.compare_exchange_weak(v, b);) {
+                }
+                for (int64_t v = t.syncEnd; e > v && !t.syncEnd.compare_exchange_weak(v, e);) {
+                }
+            }
         }
     }
 
