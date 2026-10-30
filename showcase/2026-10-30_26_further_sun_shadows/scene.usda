@@ -8,12 +8,13 @@
 
 # Shadows of further suns: tests/scenes/volume.usda (two smoke clouds, a
 # ball poking out of one, a floor) lit by its own sun and StinsonBeach.hdr,
-# whose sun Eldr extracts as a second distant light. Shadow maps cover one
-# sun; the HDRI's sun casts traced shadows, through the smoke too.
+# whose sun Eldr extracts as a second distant light with a shadow map of
+# its own; while ray tracing runs, it casts traced shadows instead.
 # /Render/furtherSuns (the default): the clouds and the little smoke
 # ball cast dark, sharp shadows on the floor from the HDRI's sun.
-# /Render/furtherSunsOff (eldr:rtExtraSunShadows off): the HDRI's sun
+# /Render/furtherSunsOff (eldr:extraSunShadowMaps off): the HDRI's sun
 # lights the floor under the clouds as if nothing were in the way.
+# /Render/furtherSunsTraced (eldr:rtShadows on): both suns traced.
 # The orb and floor get plain materials, as in Karma's golden comparison.
 
 def Scope "showcaseMtl"
@@ -95,6 +96,13 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:rtExtraSunShadows = 0
+        custom bool eldr:extraSunShadowMaps = 0
+    }
+
+    def RenderSettings "furtherSunsTraced"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:rtShadows = 1
     }
 }

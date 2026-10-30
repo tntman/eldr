@@ -167,6 +167,14 @@ public:
     // caustic casters (Device::sceneTraces, from Scene::Commit): they overlap
     // the rest of the load. Not with HDVK_RT_EARLY_COMPILE=0.
     void StartPipelines(bool refraction, bool caustics);
+    // Starts compiling what nearly every traced frame uses (and refraction,
+    // photons for a scene with glass or casters), once: only when the user
+    // turned a ray traced effect on (Renderer::StartRayTracing, or the first
+    // frame that traces), never for a frame without ray tracing.
+    void StartEarly();
+    bool Wanted() const { return _wanted; }  // StartEarly ran
+    // Ray tracing pipeline compiles started so far (0: none was ever made).
+    uint32_t PipelineStarts() const { return _pipelineStarts; }
     // Writes bindings 52..59, 86, 87 and 92 of the scene set (see shaders/rt.glsl, gi.glsl, caustics.glsl).
     void UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu);
     // Records the TLAS build (when the scene changed) and the traces;
@@ -260,6 +268,9 @@ private:
     VkPipeline _pipelines[kRaygens] = {};  // ray tracing: shaders/rt*, per Raygen
     std::future<void> _compiles[kRaygens + 1];  // per Raygen, then the compute pipelines
     bool _ready[kRaygens + 1] = {};
+    bool _wanted = false;  // StartEarly ran
+    bool _sceneRefraction = false, _sceneCaustics = false;  // the last StartPipelines
+    uint32_t _pipelineStarts = 0;
     bool _early = true;  // HDVK_RT_EARLY_COMPILE isn't 0             // waited for (and its table written)
     VkPipeline _tlasPipeline = VK_NULL_HANDLE;
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp

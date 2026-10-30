@@ -1,20 +1,21 @@
 # Shadows of further suns
 
 <!-- summary -->
-A second distant light, such as the HDRI's extracted sun beside the scene's own sun, casts traced shadows, through smoke too (`eldr:rtExtraSunShadows`).
+A second distant light, such as the HDRI's extracted sun beside the scene's own sun, casts shadows from a map of its own (`eldr:extraSunShadowMaps`), or traced ones while ray tracing runs (`eldr:rtExtraSunShadows`).
 
-- **Compare:** open `showcase/2026-10-30_26_further_sun_shadows/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `furtherSuns` vs `furtherSunsOff`.
+- **Compare:** open `showcase/2026-10-30_26_further_sun_shadows/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `furtherSuns` vs `furtherSunsOff` vs `furtherSunsTraced`.
 - **Look at:** Dark, sharp shadows of the clouds and of the smoke ball at the bottom on the floor; a bright floor under the clouds without.
 <!-- summary -->
 
-`tests/scenes/volume.usda` (two smoke clouds, an orange ball poking out of one, a floor) lit by a distant light and StinsonBeach.hdr. Eldr takes the HDRI's sun out of the dome as a second distant light (`eldr:domeSun`). Shadow maps cover one sun, the scene's own; every further sun casts traced shadows, which also pass through volumes. The orb and floor get plain UsdPreviewSurface materials, as in Karma's golden comparison.
+`tests/scenes/volume.usda` (two smoke clouds, an orange ball poking out of one, a floor) lit by a distant light and StinsonBeach.hdr. Eldr takes the HDRI's sun out of the dome as a second distant light (`eldr:domeSun`). The scene's own sun gets the cascades; the HDRI's sun gets one shadow map over the view, which the clouds' smoke tints and which shadows the clouds where the orb blocks the light. While ray tracing runs for anything, the HDRI's sun casts traced shadows instead. The orb and floor get plain UsdPreviewSurface materials, as in Karma's golden comparison.
 
 ## What to look at
 
-- `/Render/furtherSuns` (the default): the HDRI's sun shadows the floor under the left cloud and behind the right cloud and the smoke ball, as in Karma.
-- `/Render/furtherSunsOff` (`eldr:rtExtraSunShadows` off): the HDRI's sun reaches the floor through clouds and objects.
+- `/Render/furtherSuns` (the default, no ray tracing): the HDRI's sun shadows the floor under the left cloud and behind the right cloud and the smoke ball from its shadow map, as in Karma. Its edges are hard.
+- `/Render/furtherSunsOff` (`eldr:extraSunShadowMaps` off): the HDRI's sun reaches the floor through clouds and objects.
+- `/Render/furtherSunsTraced` (`eldr:rtShadows` on): both suns cast traced shadows, with soft edges.
 
-Traced shadows need a ray-tracing capable GPU; without one, further suns cast no shadow. StinsonBeach.hdr ships with USD: `usdenv.cmd` puts its folder on the resolver's search path. For husk set `PXR_AR_DEFAULT_SEARCH_PATH` to `<USD>\lib\usd\hdx\resources\textures`.
+Traced shadows need a ray-tracing capable GPU; without one, `furtherSunsTraced` looks like `furtherSuns`. StinsonBeach.hdr ships with USD: `usdenv.cmd` puts its folder on the resolver's search path. For husk set `PXR_AR_DEFAULT_SEARCH_PATH` to `<USD>\lib\usd\hdx\resources\textures`.
 
 ## Open
 

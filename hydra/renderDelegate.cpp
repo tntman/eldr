@@ -309,6 +309,25 @@ const TfTokenVector _bprimTypes = {HdPrimTypeTokens->renderBuffer, HdPrimTypeTok
 
 } // namespace
 
+// A setting that turns a ray traced effect on (final gather and hit shadows
+// trace only with one of these).
+static bool _RayTracingOn(TfToken const &key, VtValue const &value)
+{
+    const auto &t = *HdVkRenderSettingsTokens;
+    if (!(key == t.rtShadows || key == t.rtShadowsAuto || key == t.rtReflections || key == t.rtRefraction ||
+          key == t.gi || key == t.caustics)) {
+        return false;
+    }
+    if (HdVkLegacyMode(key)) {
+        return HdVkOnOff(value, false);
+    }
+    if (value.IsHolding<bool>()) {
+        return value.UncheckedGet<bool>();
+    }
+    const VtValue i = VtValue::Cast<int>(value);
+    return !i.IsEmpty() && i.UncheckedGet<int>() != 0;
+}
+
 HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     : HdRenderDelegate(settings)
     , _resourceRegistry(std::make_shared<HdResourceRegistry>())
@@ -332,6 +351,14 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
     _textures->compress = TextureCompression();  // husk hands its settings to the constructor
+    // Ray tracing pipelines compile only when a traced effect is on; then
+    // from here, overlapping the scene's load.
+    for (auto const &[key, value] : settings) {
+        if (_renderer && _RayTracingOn(key, value)) {
+            _renderer->StartRayTracing();
+            break;
+        }
+    }
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate()
@@ -510,6 +537,9 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const VtValue previous = GetRenderSetting(key);
     const bool changed = previous != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    if (_renderer && _RayTracingOn(key, value)) {
+        _renderer->StartRayTracing();
+    }
     static const TfToken houdiniInteractive("houdini:interactive");
     _hostOnlyChanges += changed && key == houdiniInteractive && !previous.IsEmpty();
     // Any setting may change whether materials want compressed textures
@@ -813,6 +843,8 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     stats["processPeakMemory"] = ram.peak;
     stats["accelerationStructureMemory"] = size_t(_renderer->GetStats().accelerationStructureBytes);
     stats["rayTracingSupported"] = _device->rayTracing;  // else the eldr:rt* settings are ignored
+    // Ray tracing pipeline compiles started (0 unless a traced effect was on).
+    stats["rayTracingPipelineStarts"] = int(_renderer->GetStats().rtPipelineStarts);
     stats["totalMemory"] = size_t(memory.deviceLocal + memory.host);
     stats["peakMemory"] = size_t(memory.peakDeviceLocal);
     stats["vramSize"] = size_t(memory.heapSize);

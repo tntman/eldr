@@ -1468,7 +1468,7 @@ void Renderer::_Prewarm(uint32_t features, const Scene::Gpu &gpu, bool save)
     // Settings switch these on; scene-made ones (refraction, translucent
     // shadows, subsurface, holdouts) only off, below. GI and SSGI first.
     uint32_t toggles = kFeatureSsgi | kFeatureFog | kFeatureProbe | kFeaturePlanar | kFeatureToon | features;
-    toggles |= _rt ? kFeatureGi | kFeatureRtShadows | kFeatureRtReflections : 0;
+    toggles |= _rt && _rt->Wanted() ? kFeatureGi | kFeatureRtShadows | kFeatureRtReflections : 0;  // once ray tracing is on
     toggles |= gpu.shadowLight != kNone && gpu.shadowAngle > 0 ? kFeatureSoftSun : 0;
     // What to flip: GI, SSGI and both (often turned on together) first.
     std::vector<uint32_t> order;
@@ -2009,8 +2009,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
 // Splits the camera frustum (clamped to the scene) into Frame::shadowCascades
 // slices and fits a stable, texel-snapped orthographic shadow frustum to
 // each. Splits past the last are -1, so Shadow() finds none there.
+// `cascades` and `texels` (0: Frame::shadowCascades, the cascades' size)
+// fit other maps the same way (a further sun's atlas tile: 1).
 bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, const float toLightDir[3],
-                            FrameData *data) const
+                            FrameData *data, uint32_t cascades, uint32_t texels) const
 {
     if (gpu.shadowLight == kNone || !gpu.hasBounds) {
         return false;
@@ -2062,7 +2064,8 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, const flo
     }
     const float margin = 0.01f * (zMax - zMin) + 1e-3f;
 
-    const uint32_t cascades = std::clamp(frame.shadowCascades, 1u, kCascades);
+    cascades = std::clamp(cascades ? cascades : frame.shadowCascades, 1u, kCascades);
+    texels = texels ? texels : _shadowSize;
     std::fill(data->cascadeSplits, data->cascadeSplits + kCascades, -1.0f);
     float splitNear = n;
     for (uint32_t c = 0; c < cascades; ++c) {
@@ -2086,7 +2089,7 @@ bool Renderer::_FitCascades(const Scene::Gpu &gpu, const Frame &frame, const flo
         radius = std::ceil(radius * 16.0f) / 16.0f;  // quantized so it doesn't shimmer
 
         // Snap the center to whole shadow texels in light space.
-        const float texel = 2 * radius / float(_shadowSize);
+        const float texel = 2 * radius / float(texels);
         Vec3 lc = TransformPoint(lightView, center);
         lc.x = std::floor(lc.x / texel) * texel;
         lc.y = std::floor(lc.y / texel) * texel;
@@ -2225,9 +2228,12 @@ struct Renderer::ShadowTile {
 // rtLights; tiles only with tileTraced, from what the others leave).
 // With shapeSample (three values in [0, 1), Frame::shadowJitter) each
 // light is seen from that point of its shape, and looked up hard.
+// Further suns (`suns`, at most kMaxSunTiles) take the atlas's lower right
+// and lower left quadrants, orthographic; the local lights the rest.
 std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &gpu, const Frame &frame,
                                                               float cutoff, uint32_t *rtLights, uint32_t rtSlots,
-                                                              bool tileTraced, const float *shapeSample)
+                                                              bool tileTraced, const float *shapeSample,
+                                                              const std::vector<SunTile> &suns)
 {
     const uint32_t lights = gpu.lightCount + gpu.localLightCount;
     _dev.Reserve(_lightShadows, std::max(lights, 1u) * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -2274,10 +2280,20 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
     for (size_t i = tileTraced ? 0 : std::min<size_t>(rtSlots, candidates.size()); i < candidates.size(); ++i) {
         demand += candidates[i].caster->coneAngle <= kSpotShadowCone ? 1 : 6;
     }
-    while (tileSize > 64 && (kShadowAtlasSize / tileSize) * (kShadowAtlasSize / tileSize) < demand) {
+    const uint32_t sunCount = uint32_t(std::min<size_t>(suns.size(), kMaxSunTiles));
+    auto cells = [&](uint32_t size) {
+        return (kShadowAtlasSize / size) * (kShadowAtlasSize / size) * (4 - sunCount) / 4;
+    };
+    while (tileSize > 64 && cells(tileSize) < demand) {
         tileSize /= 2;
     }
-    const uint32_t perRow = kShadowAtlasSize / tileSize, capacity = perRow * perRow;
+    const uint32_t perRow = kShadowAtlasSize / tileSize, capacity = cells(tileSize);
+    // The suns' quadrants: the lower right, then the lower left.
+    auto sunCell = [&](uint32_t cell) {
+        const uint32_t half = perRow / 2;
+        return cell / perRow >= half && (cell % perRow >= half ? sunCount >= 1 : sunCount >= 2);
+    };
+    uint32_t nextCell = 0;
     // With tileTraced the traced lights get tiles too, after the others (whose
     // tiles stay as without), for what the traced image misses.
     std::vector<Candidate> chosen, traced;
@@ -2377,7 +2393,10 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
                                  : n;
             const Mat4 viewProj = Translate(position * -1.0f) * LookAlong(direction) * Perspective(tanHalf, nf, f);
             std::memcpy(t.viewProj, viewProj.m, sizeof(t.viewProj));
-            const uint32_t k = uint32_t(tiles.size());
+            while (sunCell(nextCell)) {
+                ++nextCell;
+            }
+            const uint32_t k = nextCell++;
             t.rect[0] = float(k % perRow) * tileUv;
             t.rect[1] = float(k / perRow) * tileUv;
             t.rect[2] = t.rect[3] = tileUv;
@@ -2398,6 +2417,19 @@ std::vector<Renderer::ShadowTile> Renderer::_PlanLocalShadows(const Scene::Gpu &
                 add(d);  // same face order as LocalShadow() in mesh.frag
             }
         }
+    }
+    for (uint32_t i = 0; i < sunCount; ++i) {
+        const SunTile &sun = suns[i];
+        firstTile[sun.light] = uint32_t(tiles.size());
+        ShadowTile t{};
+        std::memcpy(t.viewProj, sun.viewProj, sizeof(t.viewProj));
+        t.rect[0] = i == 0 ? 0.5f : 0.0f;
+        t.rect[1] = 0.5f;
+        t.rect[2] = t.rect[3] = 0.5f;
+        t.params[0] = sun.texel;  // world units per texel (orthographic)
+        t.params[3] = -1.0f;      // a sun's (orthographic: cull.comp; mesh.frag's SunTileShadow)
+        t.origin[3] = float(sun.shadowLinkBit);
+        tiles.push_back(t);
     }
     _dev.Reserve(_shadowTiles, std::max<size_t>(tiles.size(), 1) * sizeof(ShadowTile),
                  VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -2486,6 +2518,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         cull.drawCount = gpu.drawCount;
         cull.pixelScale = 1.0f / t.params[0];  // shadow texels per unit at distance 1
         cull.nearDistance = t.params[1];
+        cull.orthographic = t.params[3] < 0.0f ? 1.0f : 0.0f;  // a sun's tile
         cull.minRadius = 0.5f;
         cull.listBase = tileList;
         cull.commandBase = (1 + kCascades) * gpu.drawCount;
@@ -2969,6 +3002,14 @@ uint32_t Renderer::VisibleInstances() const
     return total;
 }
 
+void Renderer::StartRayTracing()
+{
+    std::lock_guard<std::mutex> lock(_frameMutex);  // the host's settings thread against Render's
+    if (_rt) {
+        _rt->StartEarly();
+    }
+}
+
 // ponytail: one frame in flight, waited for here unless Frame::deferReadback
 // leaves it to Collect (the app's work overlaps the GPU's, one frame
 // behind). The Hydra layer's GPU sharing (interop.h) skips the readback.
@@ -3088,7 +3129,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (shadowSize != _shadowSize) {
         _CreateShadowMap(shadowSize);
     }
-    const bool fullAtlas = frame.localShadows && frame.localLights && !gpu.shadowCasters.empty();
+    // ponytail: further suns allocate it even when traced without readers
+    // of their tiles (no volumes, fog or translucency): 64 MB idle then.
+    const bool fullAtlas = (frame.localShadows && frame.localLights && !gpu.shadowCasters.empty()) ||
+                           (frame.shadows && frame.extraSunShadowMaps && !gpu.extraSuns.empty());
     if (fullAtlas != _fullShadowAtlas) {
         _CreateShadowAtlas(fullAtlas);
     }
@@ -3459,10 +3503,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool tracedShadows =
         frame.rtShadows || (frame.rtShadowsAuto && autoTraced());
     // Distant lights past the first shadowed one (a dome's extracted sun
-    // beside the scene's sun) have no cascades: they are always traced.
-    // ponytail: without ray tracing they stay unshadowed.
-    const bool extraSuns = frame.shadows && frame.rtExtraSunShadows && !gpu.extraSuns.empty();
-    rt.shadows = rtScene && frame.depthPrepass && (tracedShadows || extraSuns);
+    // beside the scene's sun) have no cascades: atlas tiles, or traced
+    // shadows while ray tracing runs anyway (below).
+    const bool extraSuns = frame.shadows && !gpu.extraSuns.empty();
     rt.reflections = rtScene && frame.depthPrepass && tracedReflections;
     // Traced refraction, for scenes with refracting meshes.
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
@@ -3568,11 +3611,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     rt.displacementGraphs = frame.displacementGraphs;
     rt.compaction = frame.rtCompaction;
+    // Further suns are traced only where something the user turned on
+    // traces already (never starting ray tracing of their own).
+    const bool rtOther = rt.reflections || rt.refraction || rt.gi || rt.caustics;
+    const bool traceSuns = extraSuns && frame.rtExtraSunShadows && rtScene && frame.depthPrepass &&
+                           (tracedShadows || rtOther);
+    rt.shadows = (rtScene && frame.depthPrepass && tracedShadows) || traceSuns;
     const uint32_t rtSun = rt.shadows && tracedShadows && frame.shadows && gpu.shadowLight != kNone ? 1 : 0;
     rt.shadowLights[0] = rtSun ? gpu.shadowLight : kNone;
     uint32_t rtSuns = rtSun;
-    for (size_t i = 0; rt.shadows && extraSuns && i < gpu.extraSuns.size() && rtSuns < kMaxRtShadowLights; ++i) {
-        rt.shadowLights[rtSuns++] = gpu.extraSuns[i];
+    for (size_t i = 0; traceSuns && i < gpu.extraSuns.size() && rtSuns < kMaxRtShadowLights; ++i) {
+        rt.shadowLights[rtSuns++] = gpu.extraSuns[i].light;
     }
     // Jittered light shapes (film samples only): this sample's point on
     // every shape, the sun's direction within its disc.
@@ -3628,10 +3677,25 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _FitClusters(gpu, frame, &fd);
     }
     const uint32_t rtSlots = rt.shadows && tracedShadows ? std::clamp(frame.rtShadowLights, 1u, kMaxRtShadowLights) : 0;
+    // Further suns' atlas tiles: one orthographic map over the view each
+    // (fitted as a single cascade), for the first kMaxSunTiles. Traced ones
+    // keep them for what the traced image misses, as the main sun its cascades.
+    std::vector<SunTile> sunTiles;
+    for (size_t i = 0; extraSuns && frame.extraSunShadowMaps && (!traceSuns || cascadeUsers) &&
+                       gpu.drawCount > 0 && i < std::min<size_t>(gpu.extraSuns.size(), kMaxSunTiles);
+         ++i) {
+        const Scene::Gpu::ExtraSun &sun = gpu.extraSuns[i];
+        FrameData fit{};
+        constexpr uint32_t kSunTile = kShadowAtlasSize / 2;
+        if (_FitCascades(gpu, frame, sun.direction, &fit, 1, kSunTile)) {
+            SunTile t{sun.light, {}, fit.cascadeTexel[0], sun.shadowLinkBit};
+            std::memcpy(t.viewProj, fit.cascadeViewProj[0], sizeof(t.viewProj));
+            sunTiles.push_back(t);
+        }
+    }
     const std::vector<ShadowTile> shadowTiles =
         _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSuns, rtSlots - std::min(rtSuns, rtSlots),
-                          cascadeUsers,
-                          shapeJitter ? shapeSample : nullptr);
+                          cascadeUsers, shapeJitter ? shapeSample : nullptr, sunTiles);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
                       (rt.gi ? kFeatureGi : 0) | (rt.caustics ? kFeatureCaustics : 0);
@@ -3737,6 +3801,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                                                                VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     }
     const bool rayTracing = rt.shadows || rt.reflections || rt.gi || rt.refraction || rt.caustics;
+    if (rayTracing) {
+        _rt->StartEarly();  // with the rest of the early compiles (refraction, photons)
+    }
+    _stats.rayTraced = rayTracing;
     // Time samples move the scene without a new version; the TLAS follows
     // (and once more when they end).
     rt.moving = timeSample || _shutterMoved;
@@ -3798,8 +3866,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool volumeBase = draw && frame.volumes && frame.volume.shadows && gpu.volumeCount > 0;
     const bool volumeShadows = shadows && volumeBase;
     // and the local lights' (Frame::localVolumeShadows): into the atlas tint map, tile by tile.
-    const bool localVolumeShadows = volumeBase && frame.localVolumeShadows && frame.localShadows &&
-                                    frame.localLights && !gpu.shadowCasters.empty();
+    const bool localVolumeShadows =
+        volumeBase && frame.localVolumeShadows &&
+        ((frame.localShadows && frame.localLights && !gpu.shadowCasters.empty()) || !sunTiles.empty());
     const uint32_t divisor = std::clamp(frame.translucentShadowDivisor, 1u, 4u);
     if (_transparency.EnsureTintMaps(translucentShadows || volumeShadows ? std::max(_shadowSize / divisor, 1u) : 1u,
                                      kCascades,
@@ -5007,6 +5076,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     _stats.drawCalls += draw ? uint32_t(gpu.translucent.size()) : 0;
     _stats.accelerationStructureBytes = _rt ? _rt->AccelerationStructureBytes() : 0;
+    _stats.rtPipelineStarts = _rt ? _rt->PipelineStarts() : 0;
     _stats.film = film;
     if (defer) {
         _deferredOutputs = true;

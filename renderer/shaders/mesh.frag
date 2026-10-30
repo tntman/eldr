@@ -786,6 +786,43 @@ float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
     return sum / 9.0;
 }
 
+// A further sun's shadow (distant light `index` past the first): its atlas
+// tile, one orthographic map over the view (params.x: world units per
+// texel), with Shadow()'s normal offset and 3x3 PCF, times the translucent
+// casters' and volumes' tint. Unshadowed without a tile (kMaxSunTiles).
+// ponytail: hard (no PCSS); one map, so far from the camera coarser than
+// the main sun's cascades.
+vec3 SunTileShadow(uint index, vec3 p, vec3 ng, vec3 l)
+{
+    uint tile = lightShadow[index];
+    if (tile == kNone) {
+        return vec3(1.0);
+    }
+    ShadowTile t = shadowTiles[tile];
+    float texel = t.params.x;
+    float NoL = clamp(dot(ng, l), 0.0, 1.0);
+    vec4 clip = t.viewProj * vec4(p + ng * texel * 1.5 * (1.0 - NoL) + l * texel * 0.5, 1.0);
+    vec3 ndc = clip.xyz / clip.w;
+    if (any(greaterThan(abs(ndc.xy), vec2(1.0)))) {
+        return vec3(1.0);
+    }
+    vec2 uv = t.rect.xy + (ndc.xy * 0.5 + 0.5) * t.rect.zw;
+    float ref = ndc.z * 0.5 + 0.5;  // same z remap as the vertex shader
+    float atlasSize = float(textureSize(shadowAtlas, 0).x);
+    vec2 lo = t.rect.xy + 0.5 / atlasSize, hi = t.rect.xy + t.rect.zw - 0.5 / atlasSize;
+    float sum = 0.0;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            sum += texture(shadowAtlas, vec3(clamp(uv + vec2(x, y) / atlasSize, lo, hi), ref));
+        }
+    }
+    vec3 tint = Feature(kFeatureTranslucentShadows)
+                    ? TintLookup(sunTint, sunTintDepth, atlasTint, atlasTintDepth, false, uv, 0.0, ref, t.rect.xy,
+                                 t.rect.xy + t.rect.zw)
+                    : vec3(1.0);
+    return sum / 9.0 * tint;
+}
+
 // Interreflections brighten occlusion on light surfaces (Jimenez 2016).
 vec3 MultiBounce(float visibility, vec3 albedo)
 {
@@ -1194,8 +1231,8 @@ void main()
         vec3 shadow = vec3(1.0);
         if (i == frame.counts.y) {
             shadow = Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
-        } else {
-            RtTraced(i, inWorldPos, ng, shadow);  // further suns: traced only (vec3(1) when not)
+        } else if (!RtTraced(i, inWorldPos, ng, shadow)) {
+            shadow = SunTileShadow(i, inWorldPos, ng, l);  // further suns: traced, else their atlas tile
         }
         color += radiance * shadow;
         if (LightSplits()) {
