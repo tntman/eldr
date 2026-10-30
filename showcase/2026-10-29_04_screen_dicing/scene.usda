@@ -4,8 +4,9 @@
     metersPerUnit = 1
 )
 
-# Dicing by screen size: loop octahedra (tests/scenes/subdivision.usda's
-# /loop) from near to far. With eldr:screenDicing each gets the refine level its
+# Dicing by screen size: octahedra (tests/scenes/subdivision.usda's /loop,
+# here catmullClark: Karma has no loop or bilinear scheme and renders those as
+# the cage) from near to far. With eldr:screenDicing each gets the refine level its
 # size on screen needs (Karma's dicing quality 0.5) instead of the host's.
 
 def Camera "cam"
@@ -44,30 +45,35 @@ def Mesh "ground"
 # eldr:screenDicing off, 2336 on; 347 pixels differ slightly).
 def Mesh "near" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     double3 xformOp:translate = (-1.2, 1.3, 1.5)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def Mesh "mid" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     double3 xformOp:translate = (3, 1.3, -20)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def Mesh "far" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     double3 xformOp:translate = (-6, 1.3, -60)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def Mesh "farther" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     double3 xformOp:translate = (10, 1.3, -150)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def Mesh "farthest" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     double3 xformOp:translate = (-20, 1.3, -400)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
@@ -76,6 +82,7 @@ def Mesh "farthest" (references = @../../tests/scenes/subdivision.usda@</loop>)
 # polygons of 0.5, so level 3 again.
 def Mesh "farthestFine" (references = @../../tests/scenes/subdivision.usda@</loop>)
 {
+    uniform token subdivisionScheme = "catmullClark"
     float primvars:karma:object:dicingquality = 4
     double3 xformOp:translate = (20, 1.3, -400)
     uniform token[] xformOpOrder = ["xformOp:translate"]

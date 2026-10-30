@@ -1,6 +1,6 @@
 # Dicing by screen size
 
-Five loop-subdivision octahedra from near to far. `eldr:screenDicing` (on by default) gives each mesh the refine level its size on screen needs, as Karma's Dicing Quality (`primvars:karma:object:dicingquality` or `primvars:eldr:object:dicingquality`, 0.5: about a polygon per 4 pixels): the near one at level 3, the far ones lower. The farthest has its own quality 4, so it refines more than its size alone would ask.
+Five Catmull-Clark octahedra from near to far (catmullClark, not the referenced mesh's loop: Karma has no loop or bilinear scheme and renders those as the cage, so Karma would not compare). `eldr:screenDicing` (on by default) gives each mesh the refine level its size on screen needs, as Karma's Dicing Quality (`primvars:karma:object:dicingquality` or `primvars:eldr:object:dicingquality`, 0.5: about a polygon per 4 pixels): the near one at level 3, the far ones lower. The farthest has its own quality 4, so it refines more than its size alone would ask.
 
 - `/Render/dicing`: the final-render settings with `eldr:screenDicing` on. `eldr_final` and `eldr_default` dice the same way.
 - `/Render/fixed`: the same with `eldr:screenDicing` off: every mesh at the host's level (husk's `--complexity veryhigh`: 3).
