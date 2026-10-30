@@ -1,0 +1,37 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# Camera exposure, as Karma: /cam is two stops over (exposure 1 at ISO 200,
+# 4x). /Render/camera (the default) renders the box 4x brighter than
+# /Render/ignored (eldr:cameraExposure off), beauty and light AOVs alike;
+# depth stays.
+
+over "cam"
+{
+    float exposure = 1
+    float exposure:iso = 200
+}
+
+def Scope "Render"
+{
+    def RenderSettings "camera"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:gi = 1
+        custom int eldr:filmSamples = 64
+    }
+
+    def RenderSettings "ignored"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:gi = 1
+        custom int eldr:filmSamples = 64
+        custom bool eldr:cameraExposure = 0
+    }
+}

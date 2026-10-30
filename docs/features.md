@@ -39,7 +39,7 @@ engine.SetRendererSetting("eldr:filmSamples", 256)
 | Goal | Settings |
 |---|---|
 | Final render | A settings prim with the final settings (docs/settings.md, "Final render"; `tests/scenes/final_settings.usda`), `eldr:filmSamples` 128-512 |
-| Linear ungraded EXR for comp | Default (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values |
+| Linear ungraded EXR for comp | Default (`eldr:productLinear`); `eldr:autoExposure` off and `eldr:exposureCompensation` 0 for unexposed values (the camera's exposure still applies, as in Karma; `eldr:cameraExposure` off ignores it) |
 | True soft shadows, bokeh, motion blur | Leave `eldr:shadowJitter`, `eldr:dofJitter`, `eldr:motionBlurTimeSamples` on (defaults) |
 | Indirect light | `eldr:gi`, `eldr:ssgi` (+ `eldr:ssgiBitmask` for thin occluders) |
 | Accurate off-screen shadows and reflections | `eldr:rtShadows` (`eldr:rtShadowLights` 16, `eldr:rtShadowSamples` 1) or `eldr:rtShadowsAuto`; `eldr:rtReflections` with 1 ray |
@@ -310,6 +310,8 @@ UsdPreviewSurface `opacityMode` "presence" (without a threshold) scales the whol
 
 Reads UsdGeomCamera `focalLength`, `horizontalAperture`, `fStop`, `focusDistance`, `shutter:open`, `shutter:close`. usdview's free camera has no lens (no DOF or blur).
 
+**Exposure** (`eldr:cameraExposure`, on): the camera's `exposure`, `exposure:iso`, `exposure:time`, `exposure:fStop` and `exposure:responsivity` scale the image by USD's linear exposure scale (`responsivity * time * iso / 100 * 2^exposure / fStop^2`, `HdCamera::GetLinearExposureScale()`), as Karma: the beauty and the light AOVs (emission, the diffuse, glossy and other splits, light groups); data AOVs (depth, normals, positions, ids, albedo) stay. On the beauty it is EV added to `eldr:exposureCompensation`, so it applies before tonemapping and, with auto exposure on, offsets the metered exposure as compensation does. Not with `eldr:postProcess` off (raw HDR). Changing it restarts the film. usdview's free camera has none.
+
 | Feature | Interactive | Film |
 |---|---|---|
 | Depth of field | Thin-lens gather on a golden-angle spiral before TAA, with a 32x32 near-field tile pass (foreground spreads, background never bleeds over sharper foreground) | `eldr:dofJitter` moves the camera across the aperture per sample (sheared, focus plane stays): true bokeh with occlusion. `eldr:dofResidualBlur` runs post DOF at 1/sqrt(samples) of the blur to fill gaps. |
@@ -445,6 +447,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | `inputs:shaping:ies:file`, `shaping:ies:angleScale`, `shaping:ies:normalize` | sphere, rect, disk, cylinder lights | IES profile |
 | `emissiveColor` (constant) | UsdPreviewSurface / standard_surface emission | Small bright emitters become lights |
 | `fStop`, `focalLength`, `focusDistance`, `horizontalAperture`, `shutter:open`, `shutter:close` | UsdGeomCamera | Depth of field, motion blur |
+| `exposure`, `exposure:iso`, `exposure:time`, `exposure:fStop`, `exposure:responsivity` | UsdGeomCamera | Image exposure, beauty and light AOVs (as Karma) |
 | `wrapS/wrapT` | UsdUVTexture | repeat, mirror, clamp, black, useMetadata (default). MaterialX `image` `uaddressmode`/`vaddressmode`: periodic, mirror, clamp, constant. |
 | `<UDIM>` asset paths | textures | Tiles 1001-1100 found by the resolver, also in usdz |
 | Subdivision tags, GeomSubsets, `displayColor` | meshes | As UsdGeom defines |

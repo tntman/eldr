@@ -150,8 +150,11 @@ public:
     void Record(VkCommandBuffer cmd, const Params &params, uint32_t width, uint32_t height, VkImage depth,
                 VkImageView depthView, VkImage primId, VkImageView primIdView, float *const targets[kCount],
                 const std::function<void()> &drawGeometry);
-    // After the frame's fence: copies what Record wrote into `targets`.
-    void Read(float *const targets[kCount]) const;
+    // After the frame's fence: copies what Record wrote into `targets`, the
+    // light kinds (IsLight) times `lightScale`.
+    void Read(float *const targets[kCount], float lightScale = 1.0f) const;
+    // Light, not data: emission, the light splits and groups.
+    static bool IsLight(uint32_t k) { return k == kEmission || (k >= kDirectDiffuse && k < kBeautyRaw); }
 
 private:
     void _Resize(uint32_t width, uint32_t height);

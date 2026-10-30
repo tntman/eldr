@@ -859,12 +859,22 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             // The aperture the conformed projection shows (2 f / P[0][0]).
             frame.sensorWidth = float(2.0 * frame.focalLength / projection[0][0]);
         }
+        // The camera's exposure (UsdGeomCamera exposure, exposure:iso, :time,
+        // :fStop, :responsivity), as Karma: the image times its linear scale,
+        // beauty and light AOVs, not data AOVs. On the beauty it is EV added
+        // to eldr:exposureCompensation (before tonemapping; with auto exposure
+        // it offsets the metered exposure as compensation does).
+        const float scale = camera->GetLinearExposureScale();
+        if (HdVkOnOff(delegate->GetRenderSetting(t2.cameraExposure), true) && scale > 0.0f && std::isfinite(scale)) {
+            frame.post.exposureCompensation += std::log2(scale);
+            frame.lightAovScale = frame.postProcess ? scale : 1.0f;  // raw HDR (eldr:postProcess off): neither
+        }
     }
     {
         const vkr::LensDistortion::Params &d = frame.distortion;
         const float lens[] = {frame.shutter, frame.shutterOpen, frame.fStop, frame.focusDistance, frame.focalLength,
                               d.k1, d.k2, d.k3, d.k4, d.k5, d.k6, d.p1, d.p2, d.center[0], d.center[1], d.anaSq,
-                              d.asym[0], d.asym[1], d.scale, float(d.fisheye)};
+                              d.asym[0], d.asym[1], d.scale, float(d.fisheye), frame.post.exposureCompensation};
         for (const float v : lens) {
             uint32_t bits;
             std::memcpy(&bits, &v, sizeof(bits));

@@ -68,6 +68,7 @@ The settings people change most come first and are open in the UIs; rarely touch
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
 | Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added, always (also with Linear Beauty on); the fixed exposure when auto exposure is off. | |
+| Camera Exposure<br>`eldr:cameraExposure` | on | The USD camera's exposure, as Karma: the beauty and the light AOVs times `HdCamera::GetLinearExposureScale()` (`exposure`, `exposure:iso`, `:time`, `:fStop`, `:responsivity`); data AOVs (depth, normals, ids, albedo) unscaled. Adds to the exposure compensation (EV), before tonemapping and under auto exposure. Off: the camera's exposure is ignored. | |
 | Linear Beauty<br>`eldr:productLinear` | on | Houdini viewport and husk beauty are linear scene colour. Turns off the tonemapper (none), bloom (0) and auto exposure (unless the settings prim sets it); exposure compensation stays. Off: Eldr's tonemapped colour. | One extra pass |
 | Auto Exposure (Linear Beauty off)<br>`eldr:autoExposure` | off | Histogram exposure that adapts over time, in every host when on. Off by default (lane 65): a fixed exposure (`eldr:exposureCompensation`), as Karma, in the viewport too. With Linear Beauty on in Houdini's viewport it stays off unless the settings prim sets it. | 0.11 ms |
 | Tonemapper (Linear Beauty off)<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). Ignored while Linear Beauty is on (Houdini viewport, husk products): none there. | |
