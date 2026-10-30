@@ -33,7 +33,7 @@ Point instancers (nested too) and native USD instances render as one draw per pr
 
 ## Levels of detail
 
-Meshes of 1000+ triangles get up to three simpler versions, and Eldr draws the coarsest one that still looks the same (under about a pixel of error): the crowd went from 54.5M to 13.6M triangles. **Level of Detail Bias** -1 keeps more detail; **Levels of Detail** off always draws the full mesh.
+Meshes of 1000+ triangles get up to three simpler versions, and Eldr draws the coarsest one that still looks the same (under about a pixel of error). On the 9,000-agent crowd this cuts 54.5M triangles to 13.6M. **Level of Detail Bias** -1 keeps more detail; **Levels of Detail** off always draws the full mesh.
 
 ## Subdivision and dicing
 

@@ -1,6 +1,6 @@
 # Eldr render settings
 
-Every setting is a Hydra render setting `eldr:<name>`. Unset settings have the default shown.
+Every setting is a Hydra render setting named `eldr:<name>`. A setting you don't set uses the default shown.
 
 | Where | How |
 |---|---|
@@ -8,71 +8,95 @@ Every setting is a Hydra render setting `eldr:<name>`. Unset settings have the d
 | Python | `engine.SetRendererSetting("eldr:ssr", False)` |
 | USD | an `eldr:<name>` attribute on the active UsdRenderSettings prim (typed like the default) |
 
-**No quality modes.** Every setting is an individual setting; the defaults give a reasonable image in the viewport and in husk/usdrecord (the film converges whenever the camera is still). Offline renders (husk, usdrecord) only change speed (batching, readback, teardown), never the image. Before lane 65, the former `finalQuality` setting, husk and usdrecord switched to "final quality" by themselves; that mode is gone and the former `finalQuality` setting is ignored.
+**One set of settings everywhere.** There are no quality presets: the viewport, husk and usdrecord render the same image from the same settings. The defaults give a clean image quickly; when the camera stops, the film keeps adding samples until it converges. Offline renders (husk, usdrecord) only run faster (batched samples, fewer readbacks), never differently.
 
-**Final render:** a render settings prim that ticks the expensive settings itself. The old final quality is `tests/scenes/final_settings.usda`'s `/Render/final` (reference it): `eldr:filmRestart`, `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather`, `eldr:caustics` on, `eldr:rtShadowSamples` 1, `eldr:rtShadowLights` 16 (auto exposure is off by default). A production final adds `eldr:gi`, `eldr:rtShadows`, `eldr:denoise` and `eldr:filmSamples` 256 or more. In Houdini's viewport, pick that render settings prim to see it (docs/houdini.md).
+**Final renders:** turn on the expensive settings on your render settings prim. `tests/scenes/final_settings.usda`'s `/Render/final` is a ready-made one to reference: `eldr:filmRestart`, `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather` and `eldr:caustics` on, `eldr:rtShadowSamples` 1, `eldr:rtShadowLights` 16. A production final also turns on `eldr:gi`, `eldr:rtShadows` and `eldr:denoise` and sets `eldr:filmSamples` to 256 or more. In Houdini's viewport, pick that render settings prim to see it (docs/houdini.md).
 
-**Former modes (old scenes):** `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather` and `eldr:caustics` were ints (0 off, 1 final quality only, 2 always): an int is on at 2 only. `eldr:textureCompression` was an int (0 off, 1 interactive only, 2 always): an int is on at 1 or 2. the former `finalShadows` (`raytraced`: now `eldr:rtShadows` with `eldr:rtShadowLights` 16; `auto`: now `eldr:rtShadowsAuto`) and the former `adaptiveFinalThreshold` (now `eldr:adaptiveThreshold`) are ignored.
+**Settings in old scenes:** a few settings changed type. Eldr still reads the old values:
 
-**Try a setting:** most features have a scene in `showcase/` (one folder per feature, listed by topic in the user guide's [Showcase scenes](guide/showcase.md) chapter): open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the feature's A/B nodes.
+| Setting | Old value | Read as |
+|---|---|---|
+| `eldr:rtReflections`, `eldr:rtRefraction`, `eldr:rtHitShadows`, `eldr:finalGather`, `eldr:caustics` | int 0, 1, 2 | on at 2 only |
+| `eldr:textureCompression` | int 0, 1, 2 | on at 1 or 2 |
+| `finalQuality`, `finalShadows`, `adaptiveFinalThreshold` | any | ignored (use the final render settings above, `eldr:rtShadows`, `eldr:rtShadowsAuto`, `eldr:adaptiveThreshold`) |
+
+**Try a setting:** most features have a scene in `showcase/`, listed by topic in the guide's [Showcase scenes](guide/showcase.md) chapter. Open `showcase/<folder>/scene.hip` and compare `eldr_default`, `eldr_final` and `karma`, then the feature's A/B nodes.
 
 ## Reading the tables
 
 | Mark | Meaning |
 |---|---|
-| flag, int, float, string | Type; ranges are clamped |
-| [film] | Acts only under film accumulation |
+| flag, int, float, string | Type; values outside the range are clamped |
+| [film] | Acts only while the film accumulates (camera still) |
 | [interactive] | Acts only while the camera or scene moves |
-| [RT] | Needs a ray-tracing GPU; ignored without (`HDVK_NO_RAY_TRACING=1` pretends there is none) |
+| [RT] | Needs a GPU with ray tracing; ignored without one (`HDVK_NO_RAY_TRACING=1` pretends there is none) |
 | [prepass] | Needs `eldr:depthPrepass` |
-| Cost | GPU ms, GTX 1080 Ti, 1280x720. Crowd = 20,000 skinned agents (21 ms at defaults). Kitchen = Pixar Kitchen_set. Under 1 ms is noise. |
+| Cost | GPU time, GTX 1080 Ti, 1280x720 unless stated. Crowd = 20,000 skinned agents (21 ms at defaults). Kitchen = Pixar's Kitchen_set. Under 1 ms is noise. "A to B" compares the two states the row describes. |
 
-Optional shader code compiles out when its setting is off. The first frame using a new combination compiles a pipeline set (seconds, unless cached).
+Shader code for a setting that is off is left out. The first frame that uses a new combination of settings compiles its shaders (seconds, unless cached on disk).
 
-Groups follow topics. The switches people change most come first, in open groups (Sampling, Ray Tracing, Global Illumination, Camera, Image, Volumes and Fog, Viewport); their fine controls follow under Advanced with the same topics, folded in the UIs; AOVs and Products and Performance and Debug come last. Labels are a name plus, at most, a unit or range; what a setting does and its Karma twin are in the tables (the tooltips). Same order as `hydra/renderSettings.def`, where every setting is defined (one line: name, label, default).
+Groups follow topics. The switches people change most come first, in open groups (Sampling, Ray Tracing, Global Illumination, Camera, Image, Volumes and Fog, Viewport). Their fine controls follow under Advanced, with the same topics, folded in the UIs. AOVs and Products and Performance and Debug come last. The order matches `hydra/renderSettings.def`, where every setting is defined.
+
+**Terms used below**
+
+| Term | Meaning |
+|---|---|
+| Film | Averaging of many samples (jittered renders) while the camera is still, until `eldr:filmSamples`. |
+| TAA | Temporal anti-aliasing: blends each frame with the previous ones while things move. |
+| AOV | An extra image output (render var), such as normals, depth or a light group. |
+| GI | Global illumination: light bouncing off surfaces. Eldr stores it in a grid of probes (DDGI). |
+| Final gather | One traced ray per pixel and sample that collects bounced light directly. |
+| SSR, SSGI | Screen-space reflections and GI: rays tested against the depth image, so off-screen things are missing. |
+| AO (GTAO) | Ambient occlusion: darkening in corners and contact areas. |
+| Shadow maps, PCF, PCSS | Shadows from depth images rendered from the light. PCF softens edges by a fixed amount; PCSS softens them by the light's size and the distance to the blocker. |
+| BLAS | The ray-tracing structure of one mesh. |
+| OIT | Order-independent transparency: blends transparent layers without sorting them. |
+| Froxel | A cell of the fog grid, aligned with the camera's view. |
+| Firefly | A single very bright pixel from a rare light path. |
+| RMSE, PSNR | Error against a reference image: lower RMSE and higher PSNR (dB) mean closer. |
 
 ## Sampling
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Film Samples<br>`eldr:filmSamples` | int 64 | [film] Samples until converged, in every host (husk and usdrecord too). 256+ for noise-free finals. | Linear |
-| Film Restarts at Once<br>`eldr:filmRestart` | off | [film] Every change restarts the film at once from its first sample, never from the TAA image after a few still frames (what final quality did). Off: TAA while things move, the film once still. | Interactive: no TAA upscaling, a fresh film per change |
-| Denoise<br>`eldr:denoise` | off | [film] Once the film converged, Intel Open Image Denoise cleans it on the CPU, guided by albedo and normal. Can smear fine detail. Else Karma's `karma:hydra:denoise` or a `denoise` image filter. Undenoised: the eldr:beautyRaw AOV. | 1080p: about 1.3 s once per frame (CPU); guide pass +10 ms per sample |
-| Diffuse Quality<br>`eldr:diffuseQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:diffusequality`: final gather rays, GI probe rays and AO/SSGI directions times this. Under the film 0.5 gathers every other sample, 1.5 alternates 1 and 2 rays. | emissive.usda 960x540: 15 / 20 / 35 ms per sample at 0.5 / 1 / 2; 2 at 32 samples is as clean as 64 |
-| Reflection Quality<br>`eldr:reflectQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:reflectquality`: traced reflection rays times this (fractions spread over film samples). | Linear in the reflections |
-| Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:global:light_sampling_quality`: traced shadow rays per light times this (fractions spread over film samples). Shadow maps don't change. | Linear in the traced shadows |
-| Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:sssquality`: `eldr:subsurfaceSamples` times this. | Linear in the subsurface blur |
-| Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:volumequality`: `eldr:volumeShadowSteps` times this. | Linear in the volume lighting |
+| Film Samples<br>`eldr:filmSamples` | int 64 | [film] Samples per pixel until the image is converged, in every host. Use 256 or more for noise-free finals. | Linear |
+| Film Restarts at Once<br>`eldr:filmRestart` | off | [film] Any change restarts the film from its first sample at once. Off: TAA while things move, and the film starts after a few still frames. | Interactive: no TAA upscaling, a fresh film per change |
+| Denoise<br>`eldr:denoise` | off | [film] Cleans the converged image with Intel Open Image Denoise on the CPU, guided by albedo and normals. Can smear fine detail. The eldr:beautyRaw AOV keeps the undenoised image. Karma's `karma:hydra:denoise` also turns it on. | 1080p: about 1.3 s once per frame (CPU); guide pass +10 ms per sample |
+| Diffuse Quality<br>`eldr:diffuseQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:diffusequality`: multiplies the rays used for bounced diffuse light (final gather, GI probes, AO, SSGI). Values below 1 skip some samples. | emissive.usda 960x540: 15 / 20 / 35 ms per sample at 0.5 / 1 / 2; 2 at 32 samples is as clean as 64 |
+| Reflection Quality<br>`eldr:reflectQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:reflectquality`: multiplies the traced reflection rays. Fractions spread over film samples. | Linear in the reflections |
+| Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:global:light_sampling_quality`: multiplies the traced shadow rays per light. Shadow maps don't change. | Linear in the traced shadows |
+| Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:sssquality`: multiplies `eldr:subsurfaceSamples`. | Linear in the subsurface blur |
+| Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:volumequality`: multiplies `eldr:volumeShadowSteps`. | Linear in the volume lighting |
 
 ## Ray Tracing
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Ray-Traced Shadows<br>`eldr:rtShadows` | off | [RT][prepass] Traced shadows for the sun and the most important local lights (`eldr:rtShadowLights`), instead of maps. Soft from light size; the film averages the noise. | Kitchen about 10 ms |
-| Ray-Traced Shadows when Cheaper<br>`eldr:rtShadowsAuto` | off | [RT] Without `eldr:rtShadows`: traced shadows when likely cheaper than the maps (>= 2 triangles per pixel and shadowed light, all skinned instances in RT), else maps. Was the former `finalShadows` `auto`. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
-| Ray-Traced Reflections<br>`eldr:rtReflections` | off | [RT][prepass] Traced reflections replace dome and SSR up to roughness 0.7; shaded at hits. Sees off-screen geometry. An old int is on at 2. | Kitchen about 15 ms when on |
-| Ray-Traced Refraction<br>`eldr:rtRefraction` | off | [RT][prepass] Traces the nearest refracting surface's ray through the glass (back faces, glass behind glass, total internal reflection, absorption), shaded at the hit; rough glass jitters per sample. An old int is on at 2. | glass.usda 8.1-9.7 ms (compute fallback); crowd unchanged |
-| Ray-Traced Hit Shadows<br>`eldr:rtHitShadows` | off | [RT] Traced reflection, refraction and final gather hits shadow every distant light and up to 16 local lights (one ray each); GI probe hits don't (only the sun). Off: only the sun; shadowed floors reflect lit. An old int is on at 2. | emissive.usda 960x540, 64 samples: 0.18 s with, 0.19 s without (compute fallback); up to one ray per light per hit |
-| Final Gather<br>`eldr:finalGather` | off | [RT][prepass] With GI: a ray per pixel and sample, shaded at its hit (the probes for further bounces), replaces probes, AO and SSGI for diffuse light: contact shadows, corners, colour bleeding. An old int is on at 2. | 1080p, 64 samples, 1080 Ti: emissive.usda +0.34 s, Cornell +0.15 s per frame (short rays); interactive +5.5 ms per frame |
-| Caustics<br>`eldr:caustics` | off | [RT] Photons from sun, sphere, rect and disk lights through caster objects (Karma's Enable Caustics primvar) onto diffuse surfaces, sharper every sample. No casters: nothing. Caustic AOV `caustics`. An old int is on at 2. | caustics.usda 960x540: 5.9 ms per sample off, 13.3 ms on (65536 photons) |
+| Ray-Traced Shadows<br>`eldr:rtShadows` | off | [RT][prepass] Traced shadows for the sun and the most important local lights (`eldr:rtShadowLights`), instead of shadow maps. Softness comes from the light's size; the film averages the noise. | Kitchen about 10 ms |
+| Ray-Traced Shadows when Cheaper<br>`eldr:rtShadowsAuto` | off | [RT] When `eldr:rtShadows` is off, traces shadows instead of using maps where that is likely cheaper: dense scenes (2+ triangles per pixel) whose skinned instances are all ray traced. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
+| Ray-Traced Reflections<br>`eldr:rtReflections` | off | [RT][prepass] Traced reflections up to roughness 0.7, replacing dome and screen-space reflections. They show off-screen objects. | Kitchen about 15 ms |
+| Ray-Traced Refraction<br>`eldr:rtRefraction` | off | [RT][prepass] Traces rays through glass: back faces, glass behind glass, total internal reflection and absorption, with off-screen objects visible. Rough glass blurs over film samples. | glass.usda 8.1-9.7 ms; crowd unchanged |
+| Ray-Traced Hit Shadows<br>`eldr:rtHitShadows` | off | [RT] Objects seen in traced reflections, refraction and final gather get shadows from all distant lights and up to 16 local lights. Off: only the sun's, so shadowed floors reflect as lit. | Up to one ray per light per hit |
+| Final Gather<br>`eldr:finalGather` | off | [RT][prepass] With GI on, traces one ray per pixel and sample for bounced diffuse light, replacing probes, AO and SSGI there. Gives contact shadows, dark corners and colour bleeding. | 1080p, 64 samples: emissive.usda +0.34 s, Cornell +0.15 s per frame; interactive +5.5 ms per frame |
+| Caustics<br>`eldr:caustics` | off | [RT] Light focused through glass or off mirrors onto diffuse surfaces (photon mapping), from sun, sphere, rect and disk lights. Only objects with Karma's Enable Caustics primvar cast them. Sharper every sample; AOV `caustics`. | caustics.usda 960x540: 5.9 ms per sample off, 13.3 ms on (65536 photons) |
 
 ## Global Illumination
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Global Illumination<br>`eldr:gi` | off | [RT] DDGI probe grid: diffuse light is the scene's bounced light. For interiors and emissive lighting. | Kitchen 2-3 ms (1728 probes x 128 rays); crowd 0.2 ms; plus acceleration structure memory |
-| Screen-Space GI<br>`eldr:ssgi` | off | [prepass] Per-pixel indirect diffuse gathered from the screen; close-range colour bleeding. No ray tracing needed. | Half res 0.67 ms, full 1.55 ms (Kitchen) |
-| Ambient Occlusion<br>`eldr:ambientOcclusion` | on | AO on the dome's diffuse and specular light. [prepass] Replaced by SSGI when that is on. | 0.34 ms |
-| Dome Lighting<br>`eldr:imageBasedLighting` | on | Dome diffuse (SH9) and specular (prefiltered cube). Off: direct lights only. Also gates the reflection probe. | Small |
-| Dome Sun Extraction<br>`eldr:domeSun` | on | HDRI texels above the threshold become a shadowed distant light. Off: HDRI only. | CPU work on dome change |
+| Global Illumination<br>`eldr:gi` | off | [RT] Bounced diffuse light from a grid of ray-traced probes. Use it for interiors and scenes lit by emissive surfaces. | Kitchen 2-3 ms (1728 probes x 128 rays); crowd 0.2 ms; plus ray-tracing memory |
+| Screen-Space GI<br>`eldr:ssgi` | off | [prepass] Short-range bounced light and colour bleeding gathered from the visible image. Needs no ray tracing; replaces AO. | Half res 0.67 ms, full 1.55 ms (Kitchen) |
+| Ambient Occlusion<br>`eldr:ambientOcclusion` | on | Darkens the dome's light in corners and contact areas. [prepass] SSGI replaces it when on. | 0.34 ms |
+| Dome Lighting<br>`eldr:imageBasedLighting` | on | Lights the scene with the dome light's image (diffuse and reflections). Off: direct lights only. Also needed by the reflection probe. | Small |
+| Dome Sun Extraction<br>`eldr:domeSun` | on | Turns the sun in an HDRI dome into a distant light that casts shadows. Off: the dome image only. | CPU work when the dome changes |
 
 ## Camera
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Motion Blur<br>`eldr:motionBlur` | on | Blur for an open shutter (`shutter:open`, `shutter:close`). Interactive: post blur. | Post blur 0.2 ms |
-| Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | [film] Each sample renders the whole scene at a shutter time (shadows, rays, refraction included; instances, joints, blend shapes, camera). Off: post blur. | Crowd 1.7-2.1 ms per sample |
-| Depth of Field<br>`eldr:depthOfField` | on | Thin-lens blur from camera `fStop`, `focalLength`, `focusDistance` (perspective cameras; not usdview's free camera). | Post DOF about 1.9 ms at 1080p |
+| Motion Blur<br>`eldr:motionBlur` | on | Blurs moving things while the camera's shutter is open (`shutter:open`, `shutter:close`). While moving, a fast post-process blur. | Post blur 0.2 ms |
+| Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | [film] Each film sample renders the whole scene at one time in the shutter, so shadows, reflections and refraction blur correctly. Off: post-process blur. | Crowd 1.7-2.1 ms per sample |
+| Depth of Field<br>`eldr:depthOfField` | on | Lens blur from the camera's `fStop`, `focalLength` and `focusDistance`. Perspective cameras only; not usdview's free camera. | Post DOF about 1.9 ms at 1080p |
 | Camera Exposure<br>`eldr:cameraExposure` | on | The USD camera's exposure (`exposure`, `exposure:iso`, `:time`, `:fStop`, `:responsivity`) scales the beauty and light AOVs, as Karma; data AOVs stay. EV on top of the exposure compensation; colour limits apply to exposed values. | |
 
 ## Image
@@ -80,8 +104,8 @@ Groups follow topics. The switches people change most come first, in open groups
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
 | Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added, always (also with Linear Beauty on); the fixed exposure when auto exposure is off. | |
-| Linear Beauty<br>`eldr:productLinear` | on | Houdini viewport and husk beauty are linear scene colour. Turns off the tonemapper (none), bloom (0) and auto exposure (unless the settings prim sets it); exposure compensation stays. Off: Eldr's tonemapped colour. | One extra pass |
-| Auto Exposure<br>`eldr:autoExposure` | off | Histogram exposure that adapts over time, in every host when on. Off by default (lane 65): a fixed exposure (`eldr:exposureCompensation`), as Karma, in the viewport too. With Linear Beauty on in Houdini's viewport it stays off unless the settings prim sets it. | 0.11 ms |
+| Linear Beauty<br>`eldr:productLinear` | on | Houdini's viewport and husk get linear scene colour: no tonemapper, no bloom, no auto exposure unless the settings prim sets it. Off: Eldr's tonemapped image. | One extra pass |
+| Auto Exposure<br>`eldr:autoExposure` | off | Adjusts exposure over time from the image's brightness. Off: fixed exposure from `eldr:exposureCompensation`, as Karma. | 0.11 ms |
 | Tonemapper<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). Ignored while Linear Beauty is on (Houdini viewport, husk products): none there. | |
 | Bloom Intensity<br>`eldr:bloomIntensity` | float 0.04 | 0-1, share of the blurred image mixed in. Ignored while Linear Beauty is on (Houdini viewport, husk products). | |
 
@@ -89,40 +113,40 @@ Groups follow topics. The switches people change most come first, in open groups
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Volumetric Fog<br>`eldr:fog` | off | Height fog lit by all lights, over surfaces and sky, with god rays. | 0.19 ms on crowd; shading +0.5 ms |
-| Volumes<br>`eldr:volumes` | on | Ray-marches OpenVDB volumes (NanoVDB on GPU). Only in builds against OpenVDB USD. | See below |
-| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Sun and dome light scatters more than once (octaves), as Karma's Volume Limit 16. Off: single scattering (Karma's default, limit 0). A Volume Limit above 0 (`eldr:` or `karma:object:volumelimit`, on a volume or the settings prim) sets the octaves for that limit. | Fitted to Karma at limits 1, 4, 16: within 9% of its gain over single scattering (sun, dome; front-lit clouds within 6%, backlit sun-only up to 23% too bright at limit 16); up to 6 octaves per sun and step |
+| Volumetric Fog<br>`eldr:fog` | off | Height fog lit by all lights, with light shafts. Set it up under Fog and volumes. | 0.19 ms on crowd; shading +0.5 ms |
+| Volumes<br>`eldr:volumes` | on | Renders OpenVDB volumes (smoke, clouds, fire). Needs a USD build with OpenVDB. | See Fog and volumes |
+| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Light bounces more than once inside volumes, brightening thick clouds, like Karma's Volume Limit 16. A Volume Limit above 0 (`eldr:` or `karma:object:volumelimit`) sets the amount per volume. Off: one bounce, Karma's default. | Within 9% of Karma at limits 1, 4, 16 (backlit sun-only up to 23% too bright) |
 
 ## Viewport
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Film when Still<br>`eldr:filmAccumulation` | on | Once still for 3 frames (or from frame 1 of a fresh history), plain Gaussian-filtered averaging replaces TAA. Off: TAA only, also when still (no film). | 0.23 ms |
+| Film when Still<br>`eldr:filmAccumulation` | on | After 3 still frames, switches from TAA to the film: an exact average of samples. Off: TAA only, also when still. | 0.23 ms |
 | TAA Samples<br>`eldr:taaSamples` | int 16 | Jitter cycle length; frames a still camera averages without the film; AOV averaging limit. | |
-| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds (wall time) a stopped camera still counts as moving: moving reductions stay, no film yet, TAA refines, so short pauses don't pop to full size and back. 0: the first still frame is full quality. Not offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
-| Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25) renders smaller and TAA upscales (depth of field and post motion blur too). Film, `eldr:filmRestart`, lens distortion and extra AOVs render full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
-| Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | [interactive] While the camera or scene moves, at most this scale (as Render Scale) when Frame Budget while Moving is 0; with a budget, the scale it starts from. 1: off. | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below) |
+| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds a stopped camera still counts as moving, so short pauses don't jump to full quality and back. 0: the first still frame is full quality. Not used offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
+| Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25), renders smaller while moving and TAA upscales. The film and extra AOVs stay full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
+| Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | [interactive] While the camera or scene moves, renders at most at this scale, or starts from it when a frame budget is set. 1: off. | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below) |
 | Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | [interactive] Sample dimensions loop over this many samples (1-256) so TAA settles. | |
-| Ray-Traced Shadow Rays while Moving<br>`eldr:movingShadowRays` | int 1 | [interactive][RT] Traced shadow rays per light while moving, at most this (TAA smooths them). 0: `eldr:rtShadowSamples` as when still. | emissive RT 1080p moving at half size: rayTracing 11.7 to 5.1 ms (4 to 1 rays) |
-| Pause Settled GI Probes while the Camera Moves<br>`eldr:movingGiPause` | on | [interactive][RT] While only the camera moves (no scene or setting change), settled GI probes skip their update: their light doesn't depend on the camera. They update again on the first still frame. | emissive RT giProbes 4.0 ms to 0 while moving |
-| Ramp to Full Quality<br>`eldr:rampFrames` | int 6 | [interactive] Frames from the end of moving mode to full quality: render scale and traced shadow rays step up, settled GI probes update every other frame, then the film starts. 0 or 1: at once. Not offline. | Houdini 1866x737, emissive RT: worst frame after the stop 41.7 to 31.7 ms; full quality 0.33 to 0.47 s after the stop. Each step resizes the targets (about 3 ms CPU) |
-| Frame Budget while Moving<br>`eldr:movingFrameBudget` | float 33 | [interactive] GPU milliseconds per frame while moving: the render scale follows the measured GPU time (0.25-1, damped), so light scenes stay full size and heavy ones drop as far as needed. 0: Render Scale while Moving instead. Not offline. | Moving, 1866x737: crowd_9k RT 80 to 36 ms (quarter size), Kitchen 9.4 to 17.6 ms (full size), emissive RT 11.5 to 27.6 ms |
-| Film Warm Start<br>`eldr:filmWarmStart` | float 4 | [interactive] The film starts from the TAA image, weighted as this many samples (fading as samples add up), so its first frames are as clean as the last moving one. 0: a clean start. Film Restart always starts clean. | None |
+| Ray-Traced Shadow Rays while Moving<br>`eldr:movingShadowRays` | int 1 | [interactive][RT] Traced shadow rays per light while moving; TAA smooths them. 0: as many as when still. | emissive 1080p moving: 11.7 to 5.1 ms (4 to 1 rays) |
+| Pause Settled GI Probes while the Camera Moves<br>`eldr:movingGiPause` | on | [interactive][RT] While only the camera moves, settled GI probes stop updating, since their light doesn't depend on the camera. | emissive giProbes 4.0 ms to 0 while moving |
+| Ramp to Full Quality<br>`eldr:rampFrames` | int 6 | [interactive] Frames over which quality steps back up after moving (render scale, shadow rays, GI probes) before the film starts. 0 or 1: at once. Not used offline. | Houdini 1866x737, emissive RT: worst frame after the stop 41.7 to 31.7 ms; full quality 0.33 to 0.47 s after the stop. Each step resizes the targets (about 3 ms CPU) |
+| Frame Budget while Moving<br>`eldr:movingFrameBudget` | float 33 | [interactive] Target GPU milliseconds per frame while moving: the render scale adapts (0.25-1), so light scenes stay full size and heavy ones shrink. 0: use Render Scale while Moving. Not used offline. | Moving, 1866x737: crowd_9k RT 80 to 36 ms (quarter size), Kitchen 9.4 to 17.6 ms (full size), emissive RT 11.5 to 27.6 ms |
+| Film Warm Start<br>`eldr:filmWarmStart` | float 4 | [interactive] The film starts from the last TAA image, counted as this many samples, so its first frames are already clean. 0: a clean start. Film Restarts at Once always starts clean. | None |
 
 ## Advanced
 
-Quality knobs (steps, radii, resolutions, thresholds) and the other feature toggles.
+Quality controls (steps, radii, resolutions, thresholds) and the remaining on/off switches.
 
 ### Sampling
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Sample Dimensions<br>`eldr:sampleDimensions` | on | Each stochastic effect gets its own Sobol dimension and blue-noise rotation: uncorrelated, no screen patterns. Off: interleaved gradient noise. | None |
-| Adaptive Sampling Noise Threshold<br>`eldr:adaptiveThreshold` | float 0 (off) | [film] A pixel whose standard error is under this after min samples stops. Try 0.002 for large flat areas. Not with motion blur time samples. | Off is bit-identical |
-| Adaptive Sampling Converged Pixel Fraction<br>`eldr:adaptivePixelFraction` | float 0.999 | [film] Converged once this fraction of pixels stopped. 1 waits for all. | Cornell at 0.01: 27 samples at 0.9, 58 at 0.95 |
+| Sample Dimensions<br>`eldr:sampleDimensions` | on | Gives each random effect its own well-spread sample pattern, so noise has no visible patterns and converges faster. | None |
+| Adaptive Sampling Noise Threshold<br>`eldr:adaptiveThreshold` | float 0 (off) | [film] Pixels whose noise falls under this stop sampling early. Try 0.002 for large flat areas. Not used with motion blur time samples. | Off is bit-identical |
+| Adaptive Sampling Converged Pixel Fraction<br>`eldr:adaptivePixelFraction` | float 0.999 | [film] The frame is done once this fraction of pixels has stopped. 1 waits for all. | Cornell at 0.01: 27 samples at 0.9, 58 at 0.95 |
 | Adaptive Sampling Min Samples<br>`eldr:adaptiveMinSamples` | int 16 | [film] Samples every pixel takes before it may stop. | |
-| Adaptive Sampling Skips Stopped Tiles<br>`eldr:adaptiveTiles` | on | [film] 16x16 tiles whose pixels and neighbours all stopped skip shading and per-pixel rays, so later samples cost less. Not with refraction, subsurface or post depth of field in view. | Kitchen 1080p, threshold 0.01: 17.4 to 12.8 s; same image |
-| Effect Denoise Fade<br>`eldr:effectDenoiseSamples` | int 64 | [film] Film samples over which the final gather, traced shadow and reflection filters fade out: full on the first, none from this one on, so the converged film stays sharp. 0: filter every sample (biased). Off under `eldr:denoise`. | RT recipe, 960x540, RMSE vs 1024 raw at 4/16/64 samples: emissive.usda 0.027/0.023/0.012 raw, 0.009/0.008/0.008 denoised; Kitchen 0.033/0.027/0.012 raw, 0.018/0.016/0.010 |
+| Adaptive Sampling Skips Stopped Tiles<br>`eldr:adaptiveTiles` | on | [film] Blocks of pixels that have all stopped skip their work, so later samples are cheaper. The image is the same. Not used where refraction, subsurface or post depth of field is in view. | Kitchen 1080p, threshold 0.01: 17.4 to 12.8 s |
+| Effect Denoise Fade<br>`eldr:effectDenoiseSamples` | int 64 | [film] The final gather, traced shadow and reflection blurs fade out over this many samples, so the converged image stays sharp. 0: blur every sample (slightly soft). Off with `eldr:denoise`. | At 4/16/64 samples, RMSE raw vs blurred: emissive.usda 0.027/0.023/0.012 vs 0.009/0.008/0.008 |
 | Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
 | Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps bounce light (SSGI, SSR, traced hits, GI rays), the emission they see, and emissive-mesh lights (radiance x albedo, as Karma). Wins over `eldr:colorLimit` and Karma's. Not the dome. | |
 | Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR: 0, with `eldr:indirectClamp` 20. Karma's 0 is black (ignored): use 1e6. | |
@@ -132,40 +156,40 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Ray-Traced Light Sampling<br>`eldr:rtLightSampling` | on | [RT] Hits trace one shadow ray, to a light picked by its light (1/p weight). Pixel shadows skip lights giving nothing (range, cone, links); over 4 lights share the samples per 8x8 block, weighted. Same converged film. | finalrt 1080p, ms per sample: emissive 147 to 78, Kitchen dome 195 to 158, crowd 542 to 478; final: Kitchen dome 55 to 48. RMSE at 64 samples unchanged within noise |
-| Ray-Traced Skinned Instances<br>`eldr:rtSkinnedInstances` | int 16 | [RT] Largest skinned instances (0-256) that block rays for all ray-traced effects. | Kitchen 0.45 ms (16), 0.69 ms (90); crowd 0.68 (16), 2.7 ms (256) |
-| Ray Tracing Sees Displacement<br>`eldr:rtDisplacement` | on | [RT] BLASes (skinned too) use displaced vertices. | Rebuilds on scale change |
-| Ray Tracing Compacts Static BLASes<br>`eldr:rtCompaction` | on | [RT] Static meshes' BLASes are copied to their compacted size after building and the originals freed. Off: built size, about twice the memory. | Applies to BLASes built after the change; skinned and displaced BLASes refit and stay uncompacted |
-| Final Gather Distance<br>`eldr:finalGatherDistance` | float 0 | 0: final gather rays go until they hit (exact first bounce). Else their length in world units (at least a probe spacing), then the probes' light: biased beside GI-only emitters (emissive.usda's ceiling 1.6x at 0.5). | emissive.usda 960x540, 256 samples: 5.2 s at 0, 3.9 s at 0.5 |
-| Final Gather Rays per Pixel<br>`eldr:finalGatherRays` | int 1 | Gather rays per pixel and sample (1-16). Their directions stratify over the film's samples (scrambled Sobol, blue noise per pixel). With the denoise 2 or 4 gain little. | Linear in the gather: 1080p, 64 samples: emissive.usda 2.7 s at 1, 5.3 s at 2, 10.4 s at 4 |
-| Final Gather Denoise<br>`eldr:finalGatherDenoise` | float 1 | 0-1: share of an edge-aware filter (two a-trous passes, 13 px, stopped by plane, normal and luminance) on the gathered light before the albedo, fading over `eldr:effectDenoiseSamples`; textures stay sharp. 0: raw. | About 1 ms per sample at 1080p; skipped once faded out |
-| Final Gather Roulette<br>`eldr:finalGatherRoulette` | off | [RT] From the film's 2nd sample each 8x8 block gathers every other sample, weighted by 2. Same converged film; off by default: RMSE at 64 samples 1.4-1.5x for 13-19% less time. | finalrt 1080p, ms per sample: emissive 78 to 64, Kitchen dome 158 to 132, crowd 478 to 388 |
-| Caustic Photons per Light and Sample<br>`eldr:causticsPhotons` | int 65536 | Photons each caustic light sends per film sample, aimed at the casters (1024 to 4M). More: less noise per sample. | Linear: 7.4 ms per sample at 65536, 28 ms at 262144 (one sun) |
+| Ray-Traced Light Sampling<br>`eldr:rtLightSampling` | on | [RT] Traced rays sample one light at a time, chosen by brightness, and skip lights that can't reach a pixel. Same converged image with many lights, faster. | 1080p, ms per sample: emissive 147 to 78, Kitchen 195 to 158, crowd 542 to 478; noise unchanged |
+| Ray-Traced Skinned Instances<br>`eldr:rtSkinnedInstances` | int 16 | [RT] How many of the largest skinned characters (0-256) block rays in ray-traced effects. | Kitchen 0.45 ms (16), 0.69 ms (90); crowd 0.68 ms (16), 2.7 ms (256) |
+| Ray Tracing Sees Displacement<br>`eldr:rtDisplacement` | on | [RT] Ray-traced effects see displaced surfaces. | Rebuilds when the displacement changes |
+| Ray Tracing Compacts Static BLASes<br>`eldr:rtCompaction` | on | [RT] Shrinks the ray-tracing data of static meshes after it is built. Off: about twice the memory. | Applies to data built after the change |
+| Final Gather Distance<br>`eldr:finalGatherDistance` | float 0 | 0: final gather rays travel until they hit. Above 0: their length in scene units, after which the GI probes supply the light. Faster but less exact. | emissive.usda 960x540, 256 samples: 5.2 s at 0, 3.9 s at 0.5 |
+| Final Gather Rays per Pixel<br>`eldr:finalGatherRays` | int 1 | Gather rays per pixel and sample (1-16). With Final Gather Denoise, more than 1 gains little. | 1080p, 64 samples: emissive.usda 2.7 s at 1, 5.3 s at 2, 10.4 s at 4 |
+| Final Gather Denoise<br>`eldr:finalGatherDenoise` | float 1 | Strength (0-1) of an edge-aware blur on the gathered light during the first `eldr:effectDenoiseSamples` samples. Textures stay sharp. 0: raw. | About 1 ms per sample at 1080p while active |
+| Final Gather Roulette<br>`eldr:finalGatherRoulette` | off | [RT] From the second sample, each 8x8 block gathers on every other sample, weighted to match. Same converged image, but about 1.5x the noise at 64 samples. | 1080p, ms per sample: emissive 78 to 64, Kitchen 158 to 132, crowd 478 to 388 |
+| Caustic Photons per Light and Sample<br>`eldr:causticsPhotons` | int 65536 | Photons each light sends towards caustic casters per sample (1024 to 4M). More means less noise per sample. | 7.4 ms per sample at 65536, 28 ms at 262144 (one sun) |
 | Caustic Gather Radius<br>`eldr:causticsRadius` | float 0 (auto) | World units the first sample gathers photons over; later samples shrink it (progressive photon mapping, alpha 2/3). 0: 2% of the casters' bounding radius. Larger is smoother but blurrier at first. | |
 | Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
-| Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced triangles and height-map bump (with `eldr:rtDisplacement`). Off: flat glass look. | Displaced glass only |
-| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] The first ray of each pixel looks only for glass (translucent meshes) in front of the prepass depth; pixels without glass cost one cheap ray. Same image. Off: it traces every surface, as before. | glass.usda 1080p final: rayTracing 41.7 to 37.5 ms per sample; same image |
+| Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced shape (with `eldr:rtDisplacement`). Off: it refracts as flat glass. | Displaced glass only |
+| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] Traces refraction only from pixels that show glass. The image is the same; off is for comparison. | glass.usda 1080p: 41.7 to 37.5 ms per sample |
 
 ### Global Illumination
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| GI Probes along the Scene<br>`eldr:giProbes` | int 16 | Probes along the longest side (2-64, max 16384 total). | Linear in probes |
-| GI Rays per Probe per Frame<br>`eldr:giRaysPerProbe` | int 128 | 16-512. More is faster and cleaner. | Linear |
+| GI Probes along the Scene<br>`eldr:giProbes` | int 16 | Probes along the scene's longest side (2-64, at most 16384 in all). More catch smaller detail. | Linear in probes |
+| GI Rays per Probe per Frame<br>`eldr:giRaysPerProbe` | int 128 | Rays each probe traces per frame (16-512). More converges faster and cleaner. | Linear |
 | GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | History weight (0-0.99). Higher is smoother, slower to react. Little effect on stills. | |
-| GI Preconverge<br>`eldr:giPreconverge` | on | [film] Waits for fresh probes to settle before averaging. | Cornell: RMSE 0.0128 to 0.0047 |
-| GI Probe Relocation<br>`eldr:giRelocation` | on | Probes inside or just behind walls move out (up to 0.45 spacings) instead of only switching off; light near walls. Off: probes stay on the grid. | 32 more rays per probe and frame: emissive.usda 2.50 to 3.04 ms (4096 probes) |
+| GI Preconverge<br>`eldr:giPreconverge` | on | [film] Waits for fresh probes to settle before the film starts averaging. | Cornell: RMSE 0.0128 to 0.0047 |
+| GI Probe Relocation<br>`eldr:giRelocation` | on | Moves probes that sit inside or just behind walls out into open space, so light near walls stays right. | emissive.usda (4096 probes) 2.50 to 3.04 ms |
 | Ambient Occlusion Radius<br>`eldr:aoRadius` | float 0.5 | World-space scan radius. Match scene scale. | |
-| Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Slices per pixel (1-8). 3 is enough with the film. | Linear |
+| Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Directions per pixel (1-8). 3 is enough with the film. | Linear |
 | SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps per direction and side (1-32). | |
 | SSGI Radius<br>`eldr:ssgiRadius` | float 1 | World-space gather radius; use a fraction of the room size. | |
-| SSGI Resolution Divisor<br>`eldr:ssgiResolution` | int 2 | 1 = full, 2 = half (denoised, depth-aware upsample). | Full is about 2x |
-| SSGI Tile Order<br>`eldr:ssgiTileOrder` | on | At half res, each frame traces a different pixel of every 2x2 tile (Morton order). Off: top-left only. | Free |
-| SSGI Visibility Bitmask<br>`eldr:ssgiBitmask` | off | 32-sector bitmask instead of highest horizon: light passes behind thin objects. Use for poles, railings, foliage. | Cornell 0.20 vs 0.14 ms |
-| SSGI Bitmask Object Thickness<br>`eldr:ssgiBitmaskThickness` | float 0.25 | Occluder thickness as a fraction of `eldr:ssgiRadius`; thicker hides more light. | Free |
-| Screen-Space Thickness Estimator<br>`eldr:ssgiThickness` | on | SSGI and SSR rays respect thin features and grazing surfaces. Off steps evenly (5% of distance thick). | Noise |
-| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray hitting a surface from behind takes `eldr:screenBackfaceScale` of its light: less leaking through objects. An SSR ray lost behind a surface (e.g. floor hidden behind a ball) takes that share of it instead of missing. | SSR 0.27 ms on crowd; SSGI horizon 0.60 to 0.76 ms; bitmask free |
-| Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light share of a back-face hit (0-1): 0 one-sided, 1 double-sided. | Free |
+| SSGI Resolution Divisor<br>`eldr:ssgiResolution` | int 2 | 1 = full resolution, 2 = half (denoised and upsampled). | Full is about 2x |
+| SSGI Tile Order<br>`eldr:ssgiTileOrder` | on | At half resolution, traces a different pixel of each 2x2 block every frame. Off: always the same one. | Free |
+| SSGI Visibility Bitmask<br>`eldr:ssgiBitmask` | off | Lets light pass behind thin objects. Use it for poles, railings and foliage. | Cornell 0.20 vs 0.14 ms |
+| SSGI Bitmask Object Thickness<br>`eldr:ssgiBitmaskThickness` | float 0.25 | Assumed object thickness, as a fraction of `eldr:ssgiRadius`; thicker blocks more light. | Free |
+| Screen-Space Thickness Estimator<br>`eldr:ssgiThickness` | on | Lets SSGI and SSR rays pass behind thin objects and handle grazing surfaces. Off: every surface counts as a fixed thickness. | Noise |
+| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray that hits the back of a surface keeps only `eldr:screenBackfaceScale` of its light, so less light leaks through objects. | SSR 0.27 ms on crowd; SSGI 0.60 to 0.76 ms |
+| Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light kept from a back-face hit (0-1): 0 treats surfaces as one-sided, 1 as two-sided. | Free |
 
 ### Lights
 
@@ -174,57 +198,57 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Local Lights<br>`eldr:localLights` | on | Sphere, rect, disk, cylinder lights. | |
 | Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, up to 255 lights per cluster (more: that cluster shades all lights). Off loops all lights per pixel. | |
 | Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation), in the light they cast and on their visible shape. | |
-| Light Linking<br>`eldr:lightLinking` | on | UsdLux `collection:lightLink` and `collection:shadowLink` (Houdini's Light Linker LOP) in every light loop and shadow pass. Up to 32 linked collections; more light everything (warned). Domes and fog ignore links. Off: all lights light and shadow all. | A shadow-linked light's traced shadow rays run any-hit on every surface |
-| IES Profiles<br>`eldr:lightIes` | on | Local lights multiply radiance per direction by `inputs:shaping:ies:file` (LM-63 type C) with `angleScale` and `normalize`, in raster, traced hits, GI, fog and volumes. Theta from the light's -Z, phi 0 at its -X (Karma's). | One texture tap per light and pixel (32 where the light covers the profile's pole) |
-| Light Shapes Visible<br>`eldr:lightShapesVisible` | on | Master switch for light shapes seen by the camera. A light shows its shape only when Render Light Geometry (`inputs:karma:light:renderlightgeo` or `inputs:eldr:light:renderlightgeo`) is on, as in Karma. Needs `eldr:localLights`. | One pass, 0.12 ms |
+| Light Linking<br>`eldr:lightLinking` | on | Honours light and shadow links (`collection:lightLink`, `collection:shadowLink`, Houdini's Light Linker), up to 32 linked collections. Domes and fog ignore links. Off: every light lights and shadows everything. | Shadow-linked lights trace slower shadow rays |
+| IES Profiles<br>`eldr:lightIes` | on | Shapes local lights with an IES file (`inputs:shaping:ies:file`, with `angleScale` and `normalize`), oriented as in Karma. | One texture read per light and pixel |
+| Light Shapes Visible<br>`eldr:lightShapesVisible` | on | Shows light shapes to the camera. A light shows its shape only when its Render Light Geometry (`inputs:karma:light:renderlightgeo` or `inputs:eldr:light:renderlightgeo`) is on, as in Karma. Needs `eldr:localLights`. | 0.12 ms |
 | Dome in the Camera<br>`eldr:domeCameraVisible` | on | Draws the dome's texture behind the scene. Off: the clear colour (with its alpha) shows; lighting and reflections still use the dome. `bool inputs:karma:light:renderlightgeo = 0` hides one dome; Hydra's `domeLightCameraVisibility` also applies. | |
 | Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small bright constant emitters also become rect or sphere lights with shadows (max 32). Others light via GI only. | |
 | Emissive Light Threshold<br>`eldr:emissiveLightThreshold` | float 4 | Brightest-channel radiance above which an emitter becomes a light. | |
 | Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | Luminance counting as sun. Lower if the sun is missed. | |
-| Direct Light Intensity<br>`eldr:directIntensity` | float 1 | Multiplies direct light (lights and unblocked dome) in the final pixel only; GI still bounces unscaled light. Emission and AOVs untouched. | None at 1. Other values compile the light splits: lights scene 0.92 vs 0.62 ms; crowd shading 14.8-16.5 vs 12.2-12.5 ms with SSR or refraction. |
-| Indirect Light Intensity<br>`eldr:indirectIntensity` | float 1 | Same for GI, SSGI, probes, reflections. 0 leaves direct light only. | As above |
+| Direct Light Intensity<br>`eldr:directIntensity` | float 1 | Scales direct light in the final image only; bounced light and AOVs are unchanged. | None at 1. Other values add the light-split pass: crowd shading 14.8-16.5 vs 12.2-12.5 ms |
+| Indirect Light Intensity<br>`eldr:indirectIntensity` | float 1 | Scales bounced light and reflections in the final image only. 0 leaves direct light only. | As above |
 
 ### Shadows
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
 | Sun Shadows<br>`eldr:shadows` | on | Cascaded shadow maps for the first shadow-casting distant light. | |
-| Sun Shadow Resolution<br>`eldr:shadowResolution` | int 2048 | Texels per cascade side (256-8192). | Grows with the square |
-| Sun Shadow Cascades<br>`eldr:shadowCascades` | int 4 | 1-4. | 1 cascade saves about 12 ms on crowd, spreads resolution thin |
-| Local Light Shadows<br>`eldr:localShadows` | on | 4096x4096 atlas for sphere, rect, disk, spot lights (spot up to 80 degrees: one tile; others six cube faces). Nearest lights first; the rest unshadowed. | Cached while still |
+| Sun Shadow Resolution<br>`eldr:shadowResolution` | int 2048 | Pixels per side of each cascade's map (256-8192). | Grows with the square |
+| Sun Shadow Cascades<br>`eldr:shadowCascades` | int 4 | Number of cascades (1-4). Fewer is faster but blurrier. | 1 cascade saves about 12 ms on crowd |
+| Local Light Shadows<br>`eldr:localShadows` | on | Shadow maps for sphere, rect, disk and spot lights, nearest lights first; lights that don't fit stay unshadowed. | Cached while still |
 | Local Light Shadow Resolution<br>`eldr:localShadowResolution` | int 512 | Texels per tile (64-2048). Tiles halve (to 64) so every shadowed light fits. | |
 | Soft Shadows<br>`eldr:softShadows` | on | Contact-hardening penumbrae for local lights from their size. Off: 3x3 PCF. | |
-| Soft Sun Shadows<br>`eldr:softSunShadows` | on | Same for the sun from `inputs:angle`. No angle: PCF. | Crowd 1.27 ms |
-| Soft Shadow Samples<br>`eldr:softShadowSamples` | int 16 | Blocker search and filter taps (1-16). | Linear |
-| Jittered Light Shape per Sample<br>`eldr:shadowJitter` | on | [film] Each film sample renders maps from a point on the light: exact penumbra. Needs soft shadows. TAA frames keep PCSS. | Sun error 0.016 vs PCSS 0.065; no frame-time change |
-| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted meshes tint shadows, also in fog. Volumes cast into the same maps. Off: under caustics the caster objects still block (their light arrives as photons). | 0.04 ms; maps 32 MB each at default sun size |
+| Soft Sun Shadows<br>`eldr:softSunShadows` | on | The same for the sun, from its `inputs:angle`. | Crowd 1.27 ms |
+| Soft Shadow Samples<br>`eldr:softShadowSamples` | int 16 | Samples per soft shadow lookup (1-16). | Linear |
+| Jittered Light Shape per Sample<br>`eldr:shadowJitter` | on | [film] Each film sample renders shadow maps from a different point on the light, so soft shadows converge to the exact result. Needs soft shadows. | Sun error 0.016 vs 0.065 without; no frame-time change |
+| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted objects cast coloured shadows, also into fog. Volumes cast shadows the same way. | 0.04 ms; 32 MB per map at default sun size |
 | Translucent Shadow Resolution Divisor<br>`eldr:translucentShadowDivisor` | int 2 | Tint map size as 1/N of the shadow maps (1, 2, 4). Also sets volume shadow resolution. | |
-| Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Rays per light, pixel and sample (1-16). 1 suits a film, which averages them (what final quality did). | Linear |
-| Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | [RT] Lights `eldr:rtShadows` traces: the sun and the most important local lights, this many in all (1-16; final quality traced 16). The rest use maps. | Up to a ray per light and pixel |
-| Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | [RT] Averages each traced shadow over its penumbra (blocker distance times light size, PCSS-style; up to 3 pixels) in the receiver's plane, so hard and contact shadows stay hard, fading out over `eldr:effectDenoiseSamples`. Off: raw rays. | A blocker ray per light on shadowed pixels while it runs; bias-free on the Kitchen (unfaded 0.0122 vs 0.0120 raw at 64 samples) |
-| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced rays pass translucent meshes (taking their colour) and march volumes. Off: they cast no traced shadows, except caustic casters under caustics, which block. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
+| Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Shadow rays per light, pixel and sample (1-16). 1 is enough for the film, which averages them. | Linear |
+| Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | [RT] How many lights `eldr:rtShadows` traces: the sun and the most important local lights (1-16). The rest use shadow maps. | Up to a ray per light and pixel |
+| Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | [RT] Blurs traced shadows across their soft edge only, so hard contact shadows stay hard. Fades out over `eldr:effectDenoiseSamples`. Off: raw rays. | One extra ray per light on shadowed pixels while active; no bias on the Kitchen |
+| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced shadows pass through glass (taking its colour) and through volumes. Off: those objects cast no traced shadow. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
 
 ### Reflections
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Screen-Space Reflections<br>`eldr:ssr` | on | Rays against the depth buffer, shaded from last frame. [prepass] Needs post processing. | 6 ms on crowd |
-| SSR Ray Steps<br>`eldr:ssrSteps` | int 32 | 1-256. Raise if long reflections break up. | Crowd shading 10.8 ms at 8, 11.7 ms at 32 |
-| Denoised Glossy SSR<br>`eldr:ssrDenoise` | off | One GGX ray per pixel with spatial, temporal and bilateral filters; glossy up to roughness 0.8. Off: mirror ray fading out at roughness 0.3-0.6. Not with ray-traced reflections. | Denoiser 1.1 ms; crowd shading 11.7 to 20.4 ms |
-| SSR Hit Footprint Filter<br>`eldr:ssrHitFilter` | on | Reads hits at the mip matching the ray cone: rough reflections blur instead of sparkle; hits fade at image edges. | 0.05 ms |
-| Ray-Traced Reflection Rays per Pixel<br>`eldr:rtReflectionSamples` | int 1 | 1-16. The film makes 1 enough. | Linear |
-| Ray-Traced Reflection Denoise<br>`eldr:rtReflectionDenoise` | on | [RT] Averages rough traced reflections over up to 12 pixels in their plane, fading out over `eldr:effectDenoiseSamples`. Off: raw rays. | About free |
-| Ray-Traced Reflection Roulette<br>`eldr:rtReflectionRoulette` | on | [RT] Surfaces with specular weight 0 trace no reflection. From the film's 2nd sample dim ones (Fresnel under 1/3, roughness over 0.05) trace in that share of samples (at least 1/8) per 8x8 block, weighted; same converged film. | 1080p final: crowd 249 to 146 ms/sample, Kitchen 49 to 34 |
-| Reflection Probe<br>`eldr:reflectionProbe` | off | One captured cube (centre or `eldr:probePosition`), parallax corrected, replaces the dome's specular. Recaptured on light, material, dome or geometry change. Follows `eldr:imageBasedLighting`. | Capture once: Kitchen 6.5 ms, crowd 122 ms; lookup about 1 ms |
-| Reflection Probe Resolution<br>`eldr:probeResolution` | int 128 | Cube face size (16-512, power of two). | CPU prefilter about 10 ms at 128 |
+| Screen-Space Reflections<br>`eldr:ssr` | on | Reflections of what is visible on screen. [prepass] Needs post processing. | 6 ms on crowd |
+| SSR Ray Steps<br>`eldr:ssrSteps` | int 32 | Steps per reflection ray (1-256). Raise it if long reflections break up. | Crowd shading 10.8 ms at 8, 11.7 ms at 32 |
+| Denoised Glossy SSR<br>`eldr:ssrDenoise` | off | Blurry reflections on rough surfaces up to roughness 0.8, filtered to remove noise. Off: sharp reflections that fade out with roughness. Not used with ray-traced reflections. | Crowd shading 11.7 to 20.4 ms |
+| SSR Hit Footprint Filter<br>`eldr:ssrHitFilter` | on | Rough reflections blur instead of sparkle, and fade out at the image edges. | 0.05 ms |
+| Ray-Traced Reflection Rays per Pixel<br>`eldr:rtReflectionSamples` | int 1 | Reflection rays per pixel and sample (1-16). 1 is enough with the film. | Linear |
+| Ray-Traced Reflection Denoise<br>`eldr:rtReflectionDenoise` | on | [RT] Blurs rough traced reflections slightly, fading out over `eldr:effectDenoiseSamples`. Off: raw rays. | About free |
+| Ray-Traced Reflection Roulette<br>`eldr:rtReflectionRoulette` | on | [RT] Skips reflection rays where they add little: none on surfaces with no specular, fewer on dim reflections, weighted so the converged image is the same. | 1080p final: crowd 249 to 146 ms per sample, Kitchen 49 to 34 |
+| Reflection Probe<br>`eldr:reflectionProbe` | off | Captures the scene once into a cube map and uses it for reflections instead of the dome. Good for interiors. Recaptured when the scene changes. Needs `eldr:imageBasedLighting`. | Capture: Kitchen 6.5 ms, crowd 122 ms; then about 1 ms |
+| Reflection Probe Resolution<br>`eldr:probeResolution` | int 128 | Size of each cube face (16-512, power of two). | CPU about 10 ms at 128 |
 | Reflection Probe Position<br>`eldr:probePosition` | string empty | "x y z" capture point; empty = scene bounds centre. | |
 | Authored Reflection Probes<br>`eldr:authoredProbes` | on | Meshes with `primvars:eldr:reflectionProbe` are probes (max 8, smallest first). Needs `eldr:reflectionProbe`. | |
 | Normalize Reflection Probes<br>`eldr:probeNormalize` | on | Scales a probe by local ambient light over captured ambient (GI or SSGI on), clamped 4x. | |
-| Planar Reflections<br>`eldr:planarReflections` | off | Flat glossy mirrors (`primvars:eldr:planarReflection`, else the largest flat glossy opaque mesh) reflect a mirrored render. | Each mirror in view is one extra render; crowd scene 0.1 ms |
+| Planar Reflections<br>`eldr:planarReflections` | off | Flat glossy surfaces (`primvars:eldr:planarReflection`, else the largest flat glossy one) reflect a mirrored render of the scene. | One extra render per mirror in view |
 | Planar Reflection Scale<br>`eldr:planarScale` | float 0.5 | Mirror render size as a fraction of the frame (0.1-1). | |
-| Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | Mirrors per frame, largest first (max 4). | One render each |
-| Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | Scales how much a rough mirror blurs its reflection with roughness; 0 = sharp only. | 12 taps on mirror pixels |
-| Planar Reflections at Time Samples<br>`eldr:planarMotionBlur` | on | [film] Each time sample renders the mirrors with the scene at its shutter time: reflections blur like the direct view. Off: the frame's time (sharp). | None: mirrors render every sample anyway |
+| Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | Mirrors per frame, largest first (up to 4). | One render each |
+| Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | How much rough mirrors blur their reflection; 0 = always sharp. | 12 taps on mirror pixels |
+| Planar Reflections at Time Samples<br>`eldr:planarMotionBlur` | on | [film] Mirrors render at each motion blur time sample, so reflections blur like the scene. Off: sharp reflections. | None |
 
 ### Materials
 
@@ -232,53 +256,53 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 |---|---|---|---|
 | Normal Maps<br>`eldr:normalMaps` | on | Applies normal maps. | |
 | Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface `useSpecularWorkflow = 1` uses F0 = `specularColor`. Off: 0.04. | |
-| Clearcoat<br>`eldr:clearcoat` | on | Second GGX lobe: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials with lobes pay |
-| Sheen<br>`eldr:sheen` | on | standard_surface `sheen` (Imageworks microfiber), OpenPBR `fuzz_*` (Zeltner's LTC sheen). | Same |
-| Thin Film Iridescence<br>`eldr:thinFilm` | on | standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. | Same |
-| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretches highlights along u (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). No uvs: brushed around world up. | Same |
+| Clearcoat<br>`eldr:clearcoat` | on | A glossy coat layer: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials that use it pay |
+| Sheen<br>`eldr:sheen` | on | A soft velvet-like layer: standard_surface `sheen`, OpenPBR `fuzz_*`. | Same |
+| Thin Film Iridescence<br>`eldr:thinFilm` | on | Soap-bubble colours: standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. | Same |
+| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). | Same |
 | Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (MaterialX's) where the surface's spec has it: standard_surface and OpenPBR. UsdPreviewSurface is single scattering, as Storm and Karma. Off: single scattering everywhere. | |
 | Hair Shading<br>`eldr:hairShading` | on | BasisCurves shade as hair (Kajiya-Kay), no SSR. `primvars:eldr:hair = 0` opts a prim out. | |
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
-| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specular weight and colour, IOR inputs may be textures or graphs. Off reads constants. | Only such materials |
-| MaterialX Graphs<br>`eldr:materialGraphs` | on | Compiles MaterialX/UsdShade graphs behind inputs into per-pixel programs. Off: plain inputs and textures. | Full-screen graph about 2.5 ms at 1080p; Houdini's Ceramic 3.5 ms, CarPaintMetallic (205 ops, cell noise) 38 ms |
-| Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes in programs. Off: noise reads 0. | fractal3d 0.74 ms; worleynoise3d 0.5 ms (full screen) |
-| Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Screen-space per-channel Gaussian blur of diffuse light, plus sun through thin parts. | About 0.3 ms, only with subsurface materials |
+| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specular and IOR inputs can be textures or shading networks. Off: constant values only. | Only such materials |
+| MaterialX Graphs<br>`eldr:materialGraphs` | on | Runs MaterialX and UsdShade shading networks behind material inputs. Off: plain values and textures only. | Full screen about 2.5 ms at 1080p; Houdini's CarPaintMetallic 38 ms |
+| Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes. Off: noise reads 0. | fractal3d 0.74 ms, worleynoise3d 0.5 ms (full screen) |
+| Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Light spreading under the skin of skin, wax or marble, plus sun shining through thin parts. | About 0.3 ms, only with subsurface materials |
 | Subsurface Samples<br>`eldr:subsurfaceSamples` | int 15 | Taps per direction (1-64). | |
-| Texture Anisotropic Filtering<br>`eldr:anisotropy` | int 16 | Filter level (1 = off, 16 max). | Small |
-| Texture Compression<br>`eldr:textureCompression` | off | 8-bit material textures block-compressed with mips (colour BC7, gray BC4, gray + alpha BC5), cached on disk. Off: exact, as Karma. An old int is on at 1 or 2. 16-bit, float and light textures stay exact. | 4x less memory (BC4: 2x). crowd_9k: textures 172 to 112 MB (the float dome stays); texture load 0.8 s exact, 1.2 s first compressed, 0.7 s cached; render 52 dB PSNR vs exact |
+| Texture Anisotropic Filtering<br>`eldr:anisotropy` | int 16 | Texture sharpness at grazing angles (1 = off, 16 = most). | Small |
+| Texture Compression<br>`eldr:textureCompression` | off | Compresses 8-bit material textures on the GPU (cached on disk) to save memory, with a small loss. 16-bit, float and light textures stay exact. Off: exact, as Karma. | 4x less texture memory (gray: 2x); crowd_9k 172 to 112 MB; 52 dB PSNR vs exact |
 | Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | on | Transmission, colour, depth, thin walled, subsurface weight, colour, radius and scale may be textures or graphs. Off reads constants. | |
 | Translucent Objects<br>`eldr:translucency` | on | Draws materials with opacity below 1. Off: not drawn. | |
-| Order-Independent Transparency<br>`eldr:oit` | on | Weighted blended OIT. Off sorts meshes back to front (can misorder one mesh's triangles). | 18 bytes per pixel, one pass |
+| Order-Independent Transparency<br>`eldr:oit` | on | Blends overlapping transparent surfaces without sorting them. Off: sorts whole meshes back to front, which can misorder parts of one mesh. | 18 bytes per pixel, one pass |
 | OIT Depth Weight<br>`eldr:oitDepthWeight` | float 4 | Distance weight exponent (0 = plain average). Raise if far layers show through near ones. | |
-| Refraction<br>`eldr:refraction` | on | [prepass] Materials with transmission or `ior` bend and tint the opaque colour behind them. Screen space: off-screen content isn't refracted. | Glass scene 0.2 ms |
+| Refraction<br>`eldr:refraction` | on | [prepass] Glass and water bend and tint what is behind them. Only what is visible on screen refracts. | Glass scene 0.2 ms |
 | Refraction Blur Samples<br>`eldr:refractionSamples` | int 8 | Taps for rough glass (1-16), screen-space refraction only. Ray-traced refraction (`eldr:rtRefraction`) blurs over film samples instead. | |
 | Refraction Back Faces<br>`eldr:refractionBackFaces` | on | Draws back faces (water from below, Snell's window, total internal reflection). Off discards them. | |
-| Refraction through Layers<br>`eldr:multiRefraction` | on | Glass behind glass: background re-copied after each layer. | 0.1 ms per copy |
-| Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most copies per frame (1-16); more layers share the last. Also the translucent layers volumes see (at most 4). | Volumes under glass: 8 bytes per pixel per layer, a draw of the translucent meshes each |
-| Holdouts<br>`eldr:holdouts` | on | Matte objects draw black, zero alpha, keep depth, ids and shadows. | None |
-| Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A translucent holdout cuts colour and alpha by its opacity. | Small pass when present |
-| Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" scales the highlights with the opacity and never refracts; "transparent" keeps them. Off: presence shades as transparent. | Free |
+| Refraction through Layers<br>`eldr:multiRefraction` | on | Glass behind glass refracts correctly. | 0.1 ms per layer |
+| Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most glass layers handled per frame (1-16); further layers share the last. Volumes see up to 4. | Volumes under glass: 8 bytes per pixel per layer |
+| Holdouts<br>`eldr:holdouts` | on | Matte objects render black with zero alpha, but keep their depth, ids and shadows. | None |
+| Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A see-through holdout cuts colour and alpha by its opacity. | Small pass when present |
+| Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" fades the whole surface, highlights included, with no refraction; "transparent" keeps highlights. Off: both act as transparent. | Free |
 
 ### Geometry
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Levels of Detail<br>`eldr:lod` | on | Meshes of 1000+ triangles get up to 3 coarser levels, chosen per instance on the GPU (error under about 1 px). Built on worker threads; not converged until they exist. Translucent and displaced meshes keep full detail. Off for pixel-exact comparison. | Crowd 68 to 28-34 ms; Kitchen at Very High 30 to 10.5 ms |
-| Level of Detail Bias<br>`eldr:lodBias` | float 0 | +1 allows twice the error, -1 half. Use negative for finals. | -1: crowd 13.6M instead of 9.6M triangles |
-| Level of Detail Crossfade<br>`eldr:lodFade` | on | A level change dithers over 8 frames (TAA or film blends it). Off: levels pop. Without TAA the dither shows as stipple. | Crowd +0.05 ms |
-| Subdivision Surfaces<br>`eldr:subdivision` | on | Refines catmullClark, loop and bilinear meshes (OpenSubdiv) to Hydra's refine level (usdview Complexity, `usdrecord --complexity`, Houdini's Level of Detail) or a mesh's `primvars:eldr:refineLevel`. Off draws the cage. | 4x memory per level; Kitchen at Very High: 35M triangles, 5.5 s load |
+| Levels of Detail<br>`eldr:lod` | on | Meshes of 1000+ triangles get up to 3 simpler versions; each instance draws the simplest one that looks the same (under about 1 pixel of error). Translucent and displaced meshes keep full detail. Turn off for pixel-exact comparisons. | Crowd 68 to 28-34 ms; Kitchen at Very High 30 to 10.5 ms |
+| Level of Detail Bias<br>`eldr:lodBias` | float 0 | +1 allows twice the error, -1 half. Use negative values for finals. | -1: crowd 13.6M instead of 9.6M triangles |
+| Level of Detail Crossfade<br>`eldr:lodFade` | on | Blends a switch between detail levels over 8 frames instead of popping. Without TAA the blend shows as a dither pattern. | Crowd +0.05 ms |
+| Subdivision Surfaces<br>`eldr:subdivision` | on | Smooths subdivision meshes (catmullClark, loop, bilinear) to Hydra's refine level (usdview Complexity, Houdini's Level of Detail) or the mesh's `primvars:eldr:refineLevel`. Off draws the control cage. | 4x memory per level; Kitchen at Very High: 35M triangles, 5.5 s load |
 | Subdivision Max Level<br>`eldr:maxRefineLevel` | int 3 | Clamps the refine level (0-8). | |
-| Dicing by Screen Size<br>`eldr:screenDicing` | on | Each subdivision mesh's level comes from its size on screen, as Karma's dicing: `primvars:eldr:object:dicingquality` (else Karma's, 0.5). The viewport re-dices when the camera stops; husk waits for it. Off: the display style's level. | Saves: Kitchen in husk (960x540, level 3): 34.8M to 8.4M triangles, peak RAM 4.3 to 2.2 GB, GPU 3.4 to 1.0 GB, load 11.9 to 3.2 s |
-| Displacement<br>`eldr:displacement` | on | Honours material displacement (UsdPreviewSurface, MaterialX) in the vertex stage, so every pass sees it. Needs enough vertices: use subdivision. | Only displaced materials pay |
-| Displacement Scale<br>`eldr:displacementScale` | float 1 | Multiplies every displacement offset. | Rebuilds displaced BLASes |
-| Displacement Graphs<br>`eldr:displacementGraphs` | on | Runs shading graphs (math, noise, several textures, primvars) per vertex for displacement. Off: such materials don't displace. | Graph-displaced surfaces shade with facet normals. Ray tracing builds BLASes per mesh, or per instance (256 largest on screen) for graphs reading world position, normal or instance primvars. |
-| Curves as Camera-Facing Ribbons<br>`eldr:curveRibbons` | off | Curves without normals draw as flat ribbons facing the eye, not 6-sided tubes. `primvars:eldr:ribbons` (bool) overrides per curve. | 2 triangles per step instead of 12; 100k blades 14.9 to 9.6 ms. Ray tracing sees lines. |
-| Points as Camera-Facing Discs<br>`eldr:pointSprites` | off | Points draw as shaded discs instead of icosahedra. `primvars:eldr:sprites` (bool) overrides per prim. | 8 triangles per point instead of 20. Ray tracing sees points. |
+| Dicing by Screen Size<br>`eldr:screenDicing` | on | Picks each subdivision mesh's level from its size on screen, like Karma's dicing, set by `primvars:eldr:object:dicingquality` (else Karma's, 0.5). Off: the display level. | Kitchen in husk (960x540, level 3), off to on: 34.8M to 8.4M triangles, peak RAM 4.3 to 2.2 GB, load 11.9 to 3.2 s |
+| Displacement<br>`eldr:displacement` | on | Moves surface points by the material's displacement (UsdPreviewSurface, MaterialX). Needs enough vertices: use subdivision. | Only displaced materials pay |
+| Displacement Scale<br>`eldr:displacementScale` | float 1 | Multiplies every displacement. | Rebuilds displaced ray-tracing data |
+| Displacement Graphs<br>`eldr:displacementGraphs` | on | Allows displacement driven by shading networks (math, noise, several textures, primvars). Off: such materials don't displace. | Graph-displaced surfaces shade with flat facet normals; ray tracing builds extra data per mesh or instance |
+| Curves as Camera-Facing Ribbons<br>`eldr:curveRibbons` | off | Draws curves without normals as flat ribbons facing the camera instead of round tubes. `primvars:eldr:ribbons` (bool) overrides it per curve. | 2 triangles per step instead of 12; 100k blades 14.9 to 9.6 ms. Ray tracing sees lines. |
+| Points as Camera-Facing Discs<br>`eldr:pointSprites` | off | Draws points as shaded discs instead of small spheres. `primvars:eldr:sprites` (bool) overrides it per prim. | 8 triangles per point instead of 20. Ray tracing sees points. |
 
 ### Volumes and Fog
 
-Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volumes are OpenVDB `UsdVolVolume` prims (USD built with OpenVDB only).
+Fog is height fog set only here (USD has no fog schema). Volumes are OpenVDB `UsdVolVolume` prims and need a USD build with OpenVDB.
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
@@ -286,27 +310,27 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 | Fog Height<br>`eldr:fogHeight` | float 0 | Base height (Y, or Z with `eldr:fogZUp`). | |
 | Fog Height Falloff<br>`eldr:fogHeightFalloff` | float 0 | Density x exp(-falloff x (height - base)); 0 = uniform. | |
 | Fog Anisotropy<br>`eldr:fogAnisotropy` | float 0.6 | Henyey-Greenstein g (-1..1); towards 1: shafts toward lights. | |
-| Fog Ambient from GI Probes<br>`eldr:fogGiAmbient` | on | With GI, dome light in fog comes from probes (no outdoor haze in closed rooms). | 0.2 to 0.47 ms with GI |
+| Fog Ambient from GI Probes<br>`eldr:fogGiAmbient` | on | With GI on, fog takes its sky light from the GI probes, so closed rooms have no outdoor haze. | 0.2 to 0.47 ms with GI |
 | Fog Color<br>`eldr:fogColor` | string "1 1 1" | Scattering albedo "r g b". | |
 | Fog Max Distance<br>`eldr:fogMaxDistance` | float 0 | Froxel depth; 0 = scene far end. Shorten for detail near the camera. | |
-| Fog Grid Size<br>`eldr:fogGridSize` | int 160 | Froxels across (16-512), 64 depth slices. | 64: 0.06 ms; 256: 0.41 ms |
+| Fog Grid Size<br>`eldr:fogGridSize` | int 160 | Fog grid cells across the image (16-512), with 64 depth slices. | 64: 0.06 ms; 256: 0.41 ms |
 | Fog Height along Z<br>`eldr:fogZUp` | off | Height along Z for Z-up stages. | |
-| Fog Film Jitter<br>`eldr:fogFilmJitter` | on | [film] Random froxel point per sample, no history: the film average is the medium. | 64 samples: RMSE 0.0014 to 0.00022 |
+| Fog Film Jitter<br>`eldr:fogFilmJitter` | on | [film] Samples the fog at a random point in each cell per sample, so the converged fog is smooth. | 64 samples: RMSE 0.0014 to 0.00022 |
 | Volume Step Size<br>`eldr:volumeStepSize` | float 1 | March step in voxels; larger is faster, coarser. | |
 | Volume Max Steps<br>`eldr:volumeMaxSteps` | int 256 | Steps per pixel and volume box. | |
-| Volume Shadow Steps<br>`eldr:volumeShadowSteps` | int 8 | Steps of the light-direction march. | volume.usda 21 ms at 8, about 17 at 4, about 11 at 1 |
-| Volume Local Shadow Stride<br>`eldr:volumeLocalShadowStride` | int 2 | Local lights' shadows in volumes (atlas tap, other volumes) every this many march steps (1-16); the steps between scale the unshadowed light by the last tap's shadowed fraction. 1: every step. | volume + 3 sphere lights, final: 257.9 to 237.3 ms per sample at 2 (63 dB PSNR vs 1), 4: 57 dB |
+| Volume Shadow Steps<br>`eldr:volumeShadowSteps` | int 8 | Steps towards the light for each volume sample's shadow. | volume.usda 21 ms at 8, about 17 at 4, about 11 at 1 |
+| Volume Local Shadow Stride<br>`eldr:volumeLocalShadowStride` | int 2 | Looks up local lights' shadows inside volumes every this many steps (1-16) and reuses them in between. 1: every step. | volume + 3 sphere lights: 257.9 ms at 1, 237.3 at 2 (63 dB PSNR) |
 | Volume Density Multiplier<br>`eldr:volumeDensity` | float 1 | Scales density (extinction). | |
 | Volume Emission Multiplier<br>`eldr:volumeEmission` | float 1 | Scales emission. | |
 | Volume Phase Anisotropy<br>`eldr:volumeAnisotropy` | float 0 | Phase g for volumes without a MaterialX volume material (0: isotropic, as Karma). | |
-| Volume Resolution<br>`eldr:volumeResolution` | int 1 | 1 full, 2 half with depth-aware upsample. | volume.usda 22.0 to 7.3 ms |
-| Volumes under Transparency<br>`eldr:volumeUnderTransparency` | on | Rays split at every translucent layer (up to `eldr:refractionLayers`, 4): smoke behind glass is dimmed by each pane in front of it, and refracted behind the last. | 4.2 vs 5.8 ms off |
-| Volume Shadows<br>`eldr:volumeShadows` | on | Volumes darken surfaces and fog from the sun via the tint maps. | volume.usda sunShadows 1.0 vs 0.07 ms |
-| Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Same from local lights via the atlas tint map. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms; still frame 0 |
-| Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other from the sun, local lights and the dome (from its pole, at half optical depth). | Three volumes 35.2 to 39.2 ms; lone volume free |
-| Volume Shadow Grid<br>`eldr:volumeShadowGrid` | int 64 | Optical depth of each volume towards dome, suns and local lights (others' shadows) on this many points per axis (8-128), built on change, read instead of shadow marches. 0: march every ray. | volume + 3 sphere lights, final 1080p: 234 to 77 ms; volume.usda 151 to 39 ms; 57-60 dB PSNR vs 0; up to 64 MB (31 MB there) |
+| Volume Resolution<br>`eldr:volumeResolution` | int 1 | 1 = full resolution, 2 = half (upsampled). | volume.usda 22.0 ms at 1, 7.3 at 2 |
+| Volumes under Transparency<br>`eldr:volumeUnderTransparency` | on | Smoke behind glass is dimmed by each pane in front of it and refracted (up to `eldr:refractionLayers` layers). | 5.8 vs 4.2 ms off |
+| Volume Shadows<br>`eldr:volumeShadows` | on | Volumes cast shadows from the sun onto surfaces and fog. | volume.usda 1.0 vs 0.07 ms |
+| Local Volume Shadows<br>`eldr:localVolumeShadows` | on | Volumes cast shadows from local lights too. Needs `eldr:volumeShadows` and `eldr:localShadows`. | Spot 0.17 ms, two sphere lights 0.8 ms |
+| Volume Mutual Shadows<br>`eldr:volumeMutualShadows` | on | Volumes shadow each other, from the sun, local lights and the dome. | Three volumes 35.2 to 39.2 ms; a lone volume is free |
+| Volume Shadow Grid<br>`eldr:volumeShadowGrid` | int 64 | Precomputes each volume's shadowing on a grid of this many points per axis (8-128) instead of tracing it per ray. 0: march every ray (slow). | volume + 3 lights, 1080p: 234 ms at 0, 77 at 64; up to 64 MB |
 | Volume Default Fields<br>`eldr:volumeDefaultFields` | off | Volumes without a volume material also read Cd (tints scattering), temperature (blackbody glow) and emission. Off: density only, as Karma. | |
-| Volume Velocity Blur<br>`eldr:volumeVelocityBlur` | on | Volumes with Velocity Blur (`primvars:eldr:` or `karma:object:vblur` above 0) move along their `vel` field in motion blur time samples, as Karma's Lookup Offset. Off: sharp. | Steps through empty tiles instead of skipping them while blurring |
+| Volume Velocity Blur<br>`eldr:volumeVelocityBlur` | on | Volumes with Velocity Blur (`primvars:eldr:` or `karma:object:vblur` above 0) blur along their `vel` field, as Karma. Off: sharp. | Slower stepping while blurring |
 
 ### Camera and Film
 
@@ -314,41 +338,41 @@ Fog is height fog in a froxel grid, set only here (USD has no fog schema). Volum
 |---|---|---|---|
 | Temporal Anti-Aliasing<br>`eldr:taa` | on | Jitters the camera and resolves history. The film needs it too. Off: one aliased sample. | |
 | Film Pixel Filter Radius<br>`eldr:filmFilterRadius` | float 1.5 | [film] Gaussian radius in pixels (0-2). | |
-| Object Motion Vectors<br>`eldr:objectMotion` | on | Object motion for TAA and blur. Off: camera only. | About 4 ms on crowd |
+| Object Motion Vectors<br>`eldr:objectMotion` | on | Tracks moving objects for TAA and motion blur. Off: camera motion only. | About 4 ms on crowd |
 | Blend Shape Motion Vectors<br>`eldr:blendShapeMotion` | on | Blend shape weight changes count in skinned motion. | |
-| Sampled Motion<br>`eldr:sampledMotion` | on | Motion from the scene's transform samples across the shutter (instancers and camera too): a single frame blurs without a frame before. Off: change since last frame. Rigid motion only. | Two extra transform samplings per synced prim, open shutter only |
-| Deformation Blur<br>`eldr:deformationBlur` | on | Meshes, curves and points with moving points (point caches, simulations, `velocities` with Velocity Blur `primvars:eldr:object:vblur`; not skinned) get per-point velocity from the shutter. Ray tracing sees points at the frame's time. | Moving meshes: 16 bytes per vertex |
-| Residual Motion Blur<br>`eldr:motionBlurResidual` | on | [film] Each time sample spreads over its shutter stratum by a short gather along motion vectors: smooth blur, not discrete copies. | Gather per sample while something moves over 1 px per stratum |
-| Lens Jitter per Sample<br>`eldr:dofJitter` | on | [film] Each sample sees through a point of the aperture: true bokeh with occlusion. | None |
-| Residual DOF Blur<br>`eldr:dofResidualBlur` | on | [film] With lens jitter, post DOF still runs per sample at 1/sqrt(film samples) of the blur, filling gaps at low sample counts. Off: pure lens jitter. | About 1.9 ms per sample at 1080p, with DOF |
-| Lens Distortion<br>`eldr:lensDistortion` | on | Warps the finished frame (ids, depth too) with the camera's `lensDistortion:*` and OpenCV terms; scene renders wider (overscan). | 0.32 ms at 1080p; none without distortion |
+| Sampled Motion<br>`eldr:sampledMotion` | on | Takes motion from the scene's animation across the shutter, so a single frame blurs on its own. Off: motion since the last frame. Rigid motion only. | Two extra transform reads per moving prim |
+| Deformation Blur<br>`eldr:deformationBlur` | on | Deforming meshes, curves and points (caches, simulations, `velocities` with Velocity Blur) blur too. Skinned meshes have their own motion. | Moving meshes: 16 bytes per vertex |
+| Residual Motion Blur<br>`eldr:motionBlurResidual` | on | [film] Adds a short blur between motion blur time samples, so blur looks smooth, not like separate copies. | Only while something moves over 1 pixel per sample |
+| Lens Jitter per Sample<br>`eldr:dofJitter` | on | [film] Each sample looks through a different point of the lens, for accurate depth of field and bokeh. | None |
+| Residual DOF Blur<br>`eldr:dofResidualBlur` | on | [film] Adds a little post blur to lens jitter, which hides gaps at low sample counts and fades as samples grow. | About 1.9 ms per sample at 1080p, with DOF |
+| Lens Distortion<br>`eldr:lensDistortion` | on | Applies the camera's `lensDistortion:*` and OpenCV lens terms to the finished image, AOVs included. | 0.32 ms at 1080p; none without distortion |
 | Post Processing<br>`eldr:postProcess` | on | Exposure, bloom, tonemap; TAA, film, SSR, post DOF, motion blur and upscaling depend on it. Off: raw linear HDR, one aliased sample. For linear EXRs keep on with `eldr:tonemapper` `none`, `eldr:autoExposure` off, `eldr:bloomIntensity` 0. | |
 
 ## AOVs and Products
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Extra AOVs<br>`eldr:extraAovs` | on | Renders AOVs beyond colour, depth and ids when bound. | None unless bound. A bound AOV forces full size (no `eldr:renderScale`). |
-| Unread AOVs Once Converged<br>`eldr:lazyExtraAovs` | on | Extra AOVs bound but not read last frame (Houdini binds normal and st) render once the film converged, not every still frame. One mapped earlier is a frame old once. Off: every still frame. | macbeth still frame 1866x737: 4.9 ms GPU less |
-| Cryptomatte Soft Edges and Ranks<br>`eldr:cryptomatteSoft` | on | [film] Keeps the 6 heaviest ids per pixel with coverages, as layers `<var>00..02` (Karma layout); soft edges. Off or interactive: one id at coverage 1. | 14 floats per pixel, only with a Cryptomatte AOV |
-| Per-AOV Sample Filters<br>`eldr:aovFilters` | on | [film] Each render var's `driver:parameters:aov:eldr:filter` (else Karma's `...karma:filter`): beauty, nearest, gauss, box, min, max, closest, farthest. Off: colour like the beauty, data nearest. | None: a branch in the AOV pass |
-| Dome as Direct in Light Splits<br>`eldr:splitDomeDirect` | on | Dome light unblocked by AO/SSGI counts as direct, as in Karma. Off: all dome light is indirect. Beauty unchanged. | Only with light splits |
-| Write Render Products<br>`eldr:renderProducts` | on | Writes the active UsdRenderSettings' EXR products when the frame converged (`usdrecord --renderSettingsPrimPath`, husk). Off writes nothing. | One readback per converged frame |
-| Render Products at their Resolution<br>`eldr:productResolution` | on | Renders at the first raster product's `resolution`, `pixelAspectRatio` and `dataWindowNDC`. No authored `resolution` means 2048x1080 (as husk). The app's own buffers get a nearest resample; extra AOVs stay empty. Off: frame size. | One CPU resample per frame while sizes differ |
+| Extra AOVs<br>`eldr:extraAovs` | on | Renders AOVs beyond colour, depth and ids when they are requested. | None unless requested; a requested AOV disables `eldr:renderScale` |
+| Unread AOVs Once Converged<br>`eldr:lazyExtraAovs` | on | AOVs that are requested but not displayed (Houdini requests normal and st) render once when the image converges, not every frame. | macbeth 1866x737: 4.9 ms less per still frame |
+| Cryptomatte Soft Edges and Ranks<br>`eldr:cryptomatteSoft` | on | [film] Cryptomatte AOVs keep the 6 most-covering objects per pixel, with soft edges, in Karma's layout. Off or while moving: one object per pixel. | 14 floats per pixel, only with a Cryptomatte AOV |
+| Per-AOV Sample Filters<br>`eldr:aovFilters` | on | [film] Each render var's `driver:parameters:aov:eldr:filter` (else Karma's `...karma:filter`) picks how samples combine: beauty, nearest, gauss, box, min, max, closest, farthest. Off: colour like the beauty, data nearest. | None |
+| Dome as Direct in Light Splits<br>`eldr:splitDomeDirect` | on | In light AOVs, counts unblocked dome light as direct light, as Karma. Off: all dome light is indirect. The beauty doesn't change. | Only with light AOVs |
+| Write Render Products<br>`eldr:renderProducts` | on | Writes the render settings' EXR files when the frame has converged (husk, `usdrecord --renderSettingsPrimPath`). Off writes nothing. | One readback per converged frame |
+| Render Products at their Resolution<br>`eldr:productResolution` | on | Renders at the first image product's `resolution`, `pixelAspectRatio` and `dataWindowNDC` (no `resolution`: 2048x1080, as husk). Off: the window size. | One CPU resample per frame while sizes differ |
 
 ## Performance and Debug
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Depth Prepass<br>`eldr:depthPrepass` | on | Depth first: each pixel shades once; AO, SSR, SSGI, refraction, subsurface and ray tracing need it. Off only for A/B tests. | Off saves 14 ms on crowd but drops those effects |
+| Depth Prepass<br>`eldr:depthPrepass` | on | Draws depth first so each pixel shades once. AO, SSR, SSGI, refraction, subsurface and ray tracing need it. Turn off only for comparisons. | Off saves 14 ms on crowd but drops those effects |
 | Frustum Culling<br>`eldr:frustumCulling` | on | Culls instances outside the view. Off for A/B tests. | |
 | Small Object Culling<br>`eldr:cullPixels` | float 0.5 | Skips instances under this screen radius in pixels; 0 = off. Use 0 for finals with tiny props. | |
 | Shadow Small Object Culling<br>`eldr:shadowCullPixels` | float 0.5 | Sun shadows skip instances under this radius in shadow texels of their cascade (far cascades have big texels, so thousands of distant agents drop out). 0 = off. | |
-| Offline Samples per Execute<br>`eldr:offlineBatchSeconds` | float 1 | Offline (husk, usdrecord): film samples render back to back for up to this many seconds per execute, read back once, so the app's wait between executes (husk ~0.1 s) goes; progress updates per batch. 0: one sample per execute. | husk crowd 9k 480x270: 13.3 to 6.9 s a further frame; emissive RT 960x540 46 to 35 s |
-| Share Frames with OpenGL<br>`eldr:shareFrame` | on | usdview and usdrecord keep colour and depth on the GPU. Falls back to readback if unsupported. Off for debugging. | 1080p 17.4 to 3.2 ms; 4K 67 to 9.6 ms |
-| Overlap Readback while Moving<br>`eldr:overlapReadback` | on | Read back (Houdini): while the camera moves, a frame finishes on the GPU while the app draws and arrives with the next one, one frame behind. A still camera's frame is its own. Off: every frame waits for its own. | step4 1866x737, colour and depth, 11 ms app work: 20.3 to 14.0 ms a frame |
-| Read Back in Place<br>`eldr:inPlaceReadback` | on | Read back (Houdini): colour, depth and ids stay where the GPU copied them, two buffers in turn, and the app maps them there instead of a copy of its own. Off: copied into the app's buffers. | macbeth 1866x737, 4 AOVs: 14.6 to 8.2 ms a frame |
-| Keep Ids while Moving<br>`eldr:staleMovingIds` | on | Read back (Houdini): while the camera moves, primId and instanceId are not read back and keep the last still frame's (nobody picks mid-tumble). A still camera's frame reads them again. Off: read every frame. | macbeth 1866x737 in Houdini 22: 90 to 104 fps; GPU 6.6 to 4.8 ms |
-| Pipeline Cache on Disk<br>`eldr:pipelineCache` | on | Saves compiled pipelines to `%LOCALAPPDATA%\Eldr\pipelines-*.bin` (`HDVK_PIPELINE_CACHE_DIR` moves it). | Crowd first frame 33.5 to 2.0 s; GI toggle 35 s to 79 ms; file about 16 MB |
-| Prewarm Pipelines<br>`eldr:pipelinePrewarm` | on in Hydra, off for embedders | Compiles sets one toggle away (GI, SSGI, fog) on a worker thread so usdview doesn't freeze. Off in offline renders (husk, usdrecord). | Half the cores in the background |
-| Compile Pipelines on Demand<br>`eldr:lazyPipelines` | on | A shading set compiles only the pipeline variants the scene draws with, when first drawn, not its 120 at once. A new kind of material (skinned, MaterialX graph, layered) then compiles a few. Off: whole sets. | macbeth, cold caches: first frame 34.3 to 6.1 s |
+| Offline Samples per Execute<br>`eldr:offlineBatchSeconds` | float 1 | husk and usdrecord render film samples back to back for up to this many seconds before reporting progress. 0: one sample at a time. | husk crowd 9k 480x270: 13.3 s at 0, 6.9 s at 1 |
+| Share Frames with OpenGL<br>`eldr:shareFrame` | on | usdview and usdrecord show the image straight from the GPU, without a copy through the CPU. Falls back to a copy when unsupported. | 1080p 17.4 to 3.2 ms; 4K 67 to 9.6 ms |
+| Overlap Readback while Moving<br>`eldr:overlapReadback` | on | In Houdini, while the camera moves, shows each frame one frame late so the GPU and Houdini work at the same time. A still camera's frame is never late. | step4 1866x737: 20.3 to 14.0 ms a frame |
+| Read Back in Place<br>`eldr:inPlaceReadback` | on | In Houdini, hands over the image without an extra copy. | macbeth 1866x737, 4 AOVs: 14.6 to 8.2 ms a frame |
+| Keep Ids while Moving<br>`eldr:staleMovingIds` | on | In Houdini, skips the object ids used for picking while the camera moves; a still camera reads them. | macbeth in Houdini 22: 90 to 104 fps |
+| Pipeline Cache on Disk<br>`eldr:pipelineCache` | on | Saves compiled shaders to `%LOCALAPPDATA%\Eldr\pipelines-*.bin` (`HDVK_PIPELINE_CACHE_DIR` moves it), so later sessions start fast. | Crowd first frame 33.5 s cold, 2.0 s cached; file about 16 MB |
+| Prewarm Pipelines<br>`eldr:pipelinePrewarm` | on in Hydra, off for embedders | Compiles the shaders for likely toggles (GI, SSGI, fog) in the background, so turning them on doesn't freeze the viewport. Off in husk and usdrecord. | Half the CPU cores in the background |
+| Compile Pipelines on Demand<br>`eldr:lazyPipelines` | on | Compiles only the shaders the scene uses, when first needed. Off: compiles every variant up front. | macbeth, cold cache: first frame 34.3 s off, 6.1 s on |

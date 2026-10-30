@@ -1,6 +1,6 @@
 # Eldr showcase scenes
 
-One folder per feature, named `YYYY-MM-DD_NN_feature` (the date the feature was added). Each has a `scene.usda`, a `README.md` (what the feature is, which nodes to compare, what to look at) and a generated `scene.hip`.
+One folder per feature, named `YYYY-MM-DD_NN_feature`. Each has a `scene.usda`, a `README.md` (what the feature is, which nodes to compare, what to look at) and a generated `scene.hip`.
 
 Every scene has the same three render settings prims and nodes: `eldr_default` (Eldr, nothing set), `eldr_final` (the final-render settings ticked) and `karma` (Karma to match), plus the feature's own A/B prims. Open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then the A/B nodes.
 

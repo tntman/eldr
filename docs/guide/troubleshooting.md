@@ -37,7 +37,7 @@ Settings marked [RT] need a GPU with Vulkan ray tracing. Without it they are ski
 ## Materials render grey or wrong
 
 - Open the render stats: an orange **material fallback** line names nodes Eldr bypassed.
-- A surface built from pbrlib BSDF nodes renders grey (not supported yet).
+- A surface built from pbrlib BSDF nodes renders grey (not supported).
 - Karma's Pyro Shader isn't read: build a MaterialX volume material instead.
 
 ## Volumes are missing
@@ -62,4 +62,4 @@ usdrecord adds a camera headlight. Pass `--disableCameraLight`.
 
 - [Settings reference](../settings.md): every setting with its default and cost.
 - [How Eldr works](../features.md): how each feature works, and the **Known limitations** table.
-- [Houdini](../houdini.md): build, install, and what was and wasn't checked in Houdini.
+- [Houdini](../houdini.md): build, install, and what is tested in Houdini.

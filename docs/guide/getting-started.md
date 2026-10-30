@@ -46,7 +46,7 @@ husk -R Eldr -s /Render/eldr_default -o first.exr showcase\2026-10-30_07_light_s
 ```
 
 - `-R Eldr` picks Eldr, `-s` the render settings prim to use.
-- husk waits until the film converged, then writes the EXR (linear, untonemapped, as Karma's).
+- husk waits until the film has converged, then writes the EXR (linear, untonemapped, as Karma's).
 - Add `-f 1 -n 24` and `$F4` in the file name for a sequence.
 
 > **Note:** husk needs a Houdini licence above Apprentice.

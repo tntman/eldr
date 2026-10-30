@@ -7,7 +7,7 @@ The dome's light is darkened in corners and gaps by screen-space ambient occlusi
 - **Look at:** The white corner, the gaps between the boxes and under the ball.
 <!-- summary -->
 
-A white corner (floor and two walls), stacked boxes and a ball against the wall, lit only by a plain white dome (no texture, so no sun to extract). Ambient light is the dome's unoccluded light darkened by GTAO, screen-space ambient occlusion over `eldr:aoRadius` (0.5); with SSGI on, its traced visibility replaces it; under the final gather, traced rays do.
+A white corner (floor and two walls), stacked boxes and a ball against the wall, lit only by a plain white dome (no texture, so no sun to extract). Ambient light is the dome's unoccluded light darkened by GTAO, screen-space ambient occlusion over `eldr:aoRadius` (0.5); with screen-space GI (SSGI) on, its traced visibility replaces it; under the final gather, traced rays do.
 
 ## What to look at
 

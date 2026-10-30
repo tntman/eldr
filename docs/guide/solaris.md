@@ -4,7 +4,7 @@ In Solaris, everything about a render (camera, resolution, quality) lives on a *
 
 ## Draft and final: two render settings nodes
 
-Eldr has **no quality modes** and no "final quality" button. The viewport, husk and usdrecord all render with the same settings; offline renders are only faster to finish, never different. How good a render is depends on what you tick.
+Eldr has **no quality presets**. The viewport, husk and usdrecord render with the same settings; offline renders only finish faster, they never look different. How good a render is depends on what you tick.
 
 The usual setup is two Render Settings LOPs:
 
@@ -108,7 +108,7 @@ Settings for one object (subdivision, visibility, motion blur, curve style, volu
 1. Add a **USD Render ROP** (in a LOP network: **USD Render ROP** LOP; in /out: **USD Render**).
 2. Set **Render Settings** to your final node's prim, and **Renderer** to Eldr if it is asked for.
 3. For crowds, set **Render Command** to `$ELDR_HUSK` (see [Crowds and performance](performance.md)).
-4. Click **Render to Disk**. husk renders each frame until it converged and writes the EXR.
+4. Click **Render to Disk**. husk renders each frame until it has converged and writes the EXR.
 
 ![Houdini: USD Render ROP with Render Settings and Render Command set to $ELDR_HUSK](../images/houdini/usd_render_rop.png)
 

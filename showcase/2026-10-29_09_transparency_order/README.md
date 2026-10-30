@@ -10,8 +10,8 @@ Glass, translucent meshes and smoke are composited in one depth order, so what i
 tests/scenes/transparency_order.usda. Top row: a half-opaque red quad (UsdPreviewSurface opacity 0.5) in front of blue thin glass, and to its right the pair the other way round. Bottom right: dense smoke balls with green-tinted panes. The left ball is behind two overlapping panes, and the right ball is between a pane in front and a pane behind.
 
 What to look at:
-- Red behind blue glass (right pair) is seen through the glass, so it is purple-blue. Before this change the red was composited over every refracting mesh, so both pairs looked the same.
-- The left ball is dimmed once where one pane covers it and twice where both do. The right ball is dimmed by its front pane only. Before, the smoke was split only at the nearest pane, so smoke between panes was also dimmed and refracted by the pane behind it. With traced refraction (`eldr:rtRefraction`, as in `/Render/final`), smoke behind glass disappeared entirely.
+- Red behind blue glass (right pair) is seen through the glass, so it is purple-blue.
+- The left ball is dimmed once where one pane covers it and twice where both do. The right ball is dimmed by its front pane only.
 
 - Bottom left (this showcase only): a cyan quad over a yellow one, both opacity 0.7, nearer than all the glass. `/Render/sorted` blends them back to front; the default's weighted blended OIT averages them by depth weight, so the yellow behind shows more in the overlap. `eldr:oit` only matters where two translucent meshes overlap between the same pair of refracting ones: the red quads above each sit alone in their run, and one OIT layer resolves exactly like a sorted blend.
 

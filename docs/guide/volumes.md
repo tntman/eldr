@@ -14,7 +14,7 @@ A volume without a material renders like Karma's: the `density` field scatters w
 
 **Volume Default Fields** also reads `temperature` (as fire), `Cd` (colour) and `emission` without a material.
 
-> **Showcase:** open `showcase/2026-10-29_08_volume_default_material/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `newPhase` (the default) vs `oldPhase` (`eldr:volumeAnisotropy` 0.2).
+> **Showcase:** open `showcase/2026-10-29_08_volume_default_material/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `newPhase` (the default, isotropic) vs `oldPhase` (`eldr:volumeAnisotropy` 0.2, forward scattering).
 
 ## With a material
 

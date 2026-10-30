@@ -12,7 +12,7 @@ The Cornell box with a product `aovs` listing the render vars a Karma Render Set
 ## What to look at
 
 - `beauty_ceiling` and `beauty_lamp`: each light's direct light alone. Groups + `indirectdiffuse` + `indirectglossyreflection` + `glossytransmission` + `combinedemission` + `combinedvolume` rebuild the beauty (the subsurface ball aside: its indirect light is in `sss`).
-- `glossytransmission`: the glass ball's refraction, no longer in `indirectglossyreflection`.
+- `glossytransmission`: the glass ball's refraction (not part of `indirectglossyreflection`).
 - `sss`: the subsurface ball on the box; its light is out of the diffuse vars.
 - `coat`: the blue ball's clear coat, also counted in glossy (as Karma).
 - `combinedvolume`: the small cloud; what is behind it is dimmed in every split, so the splits still add up.

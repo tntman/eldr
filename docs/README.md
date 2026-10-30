@@ -28,5 +28,5 @@ Numbers are GPU milliseconds on a GTX 1080 Ti unless stated.
 
 ## Tests
 
-ctest labels: `slow` (over about a minute on a 1080 Ti: vkrtest, aov_sums, motion, lighting, traced_media, screenspace, displacement_graphs, exr, procedural, karma_golden) and `fast` (the rest, about 7 minutes). Lanes run `ctest -j1 -L fast` plus the slow tests of what they changed (`-R`); the integrator runs everything once after the merges. Always `-j1`: the tests share the GPU.
+ctest labels: `slow` (over about a minute on a 1080 Ti: vkrtest, aov_sums, motion, lighting, traced_media, screenspace, displacement_graphs, exr, procedural, karma_golden) and `fast` (the rest, about 7 minutes). Run `ctest -j1 -L fast` plus the slow tests of what you changed (`-R`), and everything once before a release. Always `-j1`: the tests share the GPU.
 

@@ -11,7 +11,7 @@ In the Solaris viewport Eldr has two states: **moving** (you tumble the camera o
 
 Once the camera has been still for **Still Delay** (0.3 s), quality steps up over **Ramp to Full Quality** (6 frames): size, shadow rays and GI updates rise a little each frame, so no single frame takes the whole cost. Then the film starts from the TAA image (**Film Warm Start**), so the first still frames are as clean as the last moving one. Short pauses mid-navigation stay in moving mode, so the view doesn't switch to full size and back (a start-stop feel); the moving image keeps refining meanwhile. Raise Still Delay if you pause longer between moves, or set 0 to switch on the first still frame. To keep TAA instead of the film (a steady image, no restart when the camera stops), turn off **Film when Still**; it, **TAA Samples**, **Still Delay** and the settings above are in the open **Viewport** group of the Eldr tab.
 
-| Kitchen, 1080p, camera moving | Full settings | Moving mode |
+| Kitchen test scene, 1080p, camera moving | Full settings | Moving mode |
 |---|---|---|
 | Frame time | 21.6 ms | 8.6 ms |
 
@@ -31,7 +31,7 @@ The viewport's **Render Outputs** menu lists the render vars of the chosen Rende
 
 ![Houdini: viewport Render Outputs menu listing render vars](../images/houdini/viewport_render_outputs.png)
 
-> **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view as far as we know. Use Render Outputs to view one AOV.
+> **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view. Use Render Outputs to view one AOV.
 
 > **Showcase:** open `showcase/2026-10-28_05_houdini_render_vars/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag).
 

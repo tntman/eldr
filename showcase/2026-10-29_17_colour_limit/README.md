@@ -14,7 +14,7 @@ The emissive Cornell box (`tests/scenes/emissive.usda`) with three settings prim
   sample (radiance x albedo). This matches Karma's render (karma_golden emissive: 1.01).
 - `/Render/fullHdr`: `eldr:colorLimit` 0 with `eldr:indirectClamp` 20. The emitters keep their HDR value
   for comp, and the bounce clamp stays, so the walls match `karma`.
-- `/Render/off`: `eldr:colorLimit` 0, which also turns off the bounce clamp. The walls are about 1.4x brighter. Rendered 2026-10-29: the brightest pixel is (20, 10, 2.7) in
+- `/Render/off`: `eldr:colorLimit` 0, which also turns off the bounce clamp. The walls are about 1.4x brighter. The brightest pixel is (20, 10, 2.7) in
   `karma` and (60, 30, 8) in `fullHdr`, and the walls match between those two within 1%.
 
 Look at the panel and the bulb in an EXR viewer or with usdview's pixel probe.

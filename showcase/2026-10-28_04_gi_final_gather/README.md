@@ -9,11 +9,11 @@ Bounced light from GI probes, a traced final gather or screen-space GI.
 
 `tests/scenes/emissive.usda` (the Cornell box lit by the glowing panel and bulb; `cornell.usda` is the rect-light version) with the bounced-light settings. The A/B prims here (except `probesOnly` and `ssgi`) also set the final-render settings, so the image converges over film samples: wait for it.
 
-- `/Render/probesOnly`: `eldr:gi` with `eldr:finalGather` 0, DDGI probes only (soft, some leaking at walls).
+- `/Render/probesOnly`: `eldr:gi` with `eldr:finalGather` 0, light probes (DDGI) only: soft, with some light leaking at walls.
 - `/Render/finalGather`: `eldr:finalGather` 1, a ray per pixel and sample shaded at its hit.
 - `/Render/finalGatherNoRelocation`: `eldr:giRelocation` off; probes near walls are only switched off. With final gather the first bounce is traced, so the difference is tiny; look at `/Render/probesOnly` with it toggled.
 - `/Render/finalGatherDistance0` vs `...05`: `eldr:finalGatherDistance` 0 (rays go until they hit) vs 0.5 (short rays, probes beyond).
-- `/Render/ssgi`: screen-space GI only; `/Render/giPlusSsgi`: both.
+- `/Render/ssgi`: screen-space GI (SSGI, bounce light from what is on screen) only; `/Render/giPlusSsgi`: both.
 
 - `/Render/denoise0` vs `/Render/denoise1`: `eldr:finalGatherDenoise` 0 to 1. It filters only the indirect light, so edges and textures stay sharp.
 - `/Render/rays1` vs `/Render/rays4`: `eldr:finalGatherRays` 1 or 4 per pixel and sample. 4 rays cost about 4x the gather for little gain once denoised.

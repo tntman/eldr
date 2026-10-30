@@ -11,9 +11,9 @@ Shadows from maps (sun cascades, light atlas) softened by PCSS and jitter, hard 
 
 ## What to look at
 
-- `/Render/maps` (the default): shadow maps (4 sun cascades, atlas tiles for the sphere light), soft from the light's size (PCSS), exact penumbrae from maps jittered over the light every film sample (`eldr:shadowJitter`).
+- `/Render/maps` (the default): shadow maps (4 sun cascades, atlas tiles for the sphere light), soft from the light's size (PCSS, percentage-closer soft shadows), exact penumbrae from maps jittered over the light every film sample (`eldr:shadowJitter`).
 - `/Render/pcss` (`eldr:shadowJitter` off): the same maps, PCSS only: penumbra widths estimated.
-- `/Render/hard` (`eldr:softShadows`, `eldr:softSunShadows` off): 3x3 PCF: hard edges everywhere.
+- `/Render/hard` (`eldr:softShadows`, `eldr:softSunShadows` off): 3x3 PCF (percentage-closer filtering): hard edges everywhere.
 - `/Render/traced` (`eldr:rtShadows`): ray-traced shadows, soft from the light's size, denoised over the film's first samples.
 
 ## Open
