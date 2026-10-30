@@ -73,5 +73,26 @@ goldens now do).
 The point is catching regressions and tracking the distance to Karma, not pixel equality: the grids are
 coarse enough that sample noise stays well under the tolerances.
 
+### usdrecord adds a camera light; pass `--disableCameraLight` to compare
+
+usdrecord (like usdview's default) always adds a headlight unless `--disableCameraLight` is passed, even
+when the scene has its own lights. For a renderer other than Storm, Hydra's task controller makes it a
+distantLight at the camera: intensity 15000 over a 0.53 degree disc (about 1 unit of irradiance), with no
+shadows. Eldr renders it, as Storm renders its simpleLight version (cornell and emissive, both lit by a
+RectLight: Storm's mean is 0.64 with it and 0.23 without). husk and karma_refs.py's exr_record.py add no
+such light. This difference is intended, not a bug in either path. Lane 51 (2026-10-30) compared the same
+Karma-golden wrapper rendered by exr_record and by usdrecord's RenderProduct EXR, Eldr / exr_record:
+
+| Scene | usdrecord | usdrecord `--disableCameraLight` |
+|---|---|---|
+| VDB smoke (lane 42) | 1.363 (region 0.50) | 1.000 (region 0.000) |
+| emissive | 1.208 | 1.000 (0.001) |
+| cornell | 1.372 | 1.000 (0.001) |
+| volume | 1.209 | 1.000 (0.000) |
+
+With the light off the two paths give the same image (same settings, camera, exposure and samples); the
+smoke then matches Karma at lum 0.9999. Always pass `--disableCameraLight` when comparing a usdrecord
+render with Karma or husk.
+
 Other Karma comparisons: `tests/macbeth_compare.py` (ColorChecker colours, CIEDE2000; ctest `macbeth`
 runs its Eldr-only analytic check) and `tests/houdini_dome.py` (hython, dome texture and linear beauty).
