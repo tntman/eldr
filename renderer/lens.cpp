@@ -97,12 +97,15 @@ void Lens::_Destroy()
     _dev.Destroy(_tiles);
 }
 
-void Lens::Resize(uint32_t width, uint32_t height, VkImage color, VkImageView colorView, VkImageView depth,
-                  VkImageView velocity, VkImage resolved, VkImageView resolvedView, VkImageView history)
+void Lens::Resize(uint32_t width, uint32_t height, uint32_t outWidth, uint32_t outHeight, VkImage color,
+                  VkImageView colorView, VkImageView depth, VkImageView velocity, VkImage resolved,
+                  VkImageView resolvedView, VkImageView history)
 {
     _Destroy();
     _width = width;
     _height = height;
+    _outWidth = outWidth;
+    _outHeight = outHeight;
     _color = color;
     _colorView = colorView;
     _resolved = resolved;
@@ -225,7 +228,7 @@ void Lens::RecordMotionBlur(VkCommandBuffer cmd, Params params)
                  VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    DrawFullscreen(cmd, _blur, _layout, _blurSet, _resolvedView, _width, _height, false, kStages, &params,
+    DrawFullscreen(cmd, _blur, _layout, _blurSet, _resolvedView, _outWidth, _outHeight, false, kStages, &params,
                    sizeof(params));
     ImageBarrier(cmd, _resolved, Color(),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

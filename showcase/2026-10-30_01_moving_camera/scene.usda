@@ -1,0 +1,36 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/emissive.usda@]
+)
+
+# Moving camera mode: tumble this scene in usdview or Houdini with GI,
+# SSGI, traced shadows and traced reflections on. /Render/moving (the
+# defaults) renders at half size while the camera moves, one traced shadow
+# ray per light, GI probes paused; /Render/full keeps everything while
+# moving. Still frames are the same in both.
+
+def Scope "Render"
+{
+    def RenderSettings "moving"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 720)
+        custom bool eldr:gi = 1
+        custom bool eldr:ssgi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 2
+    }
+
+    def RenderSettings "full"
+    {
+        rel camera = </cam>
+        int2 resolution = (1280, 720)
+        custom bool eldr:gi = 1
+        custom bool eldr:ssgi = 1
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtReflections = 2
+        custom float eldr:movingRenderScale = 1
+        custom int eldr:movingShadowRays = 0
+        custom bool eldr:movingGiPause = 0
+    }
+}

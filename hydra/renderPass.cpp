@@ -513,6 +513,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.staleMovingIds, &frame.staleMovingIds},
                                 {t2.lazyPipelines, &frame.lazyPipelines},
                                 {t2.lazyExtraAovs, &frame.lazyExtraAovs},
+                                {t2.movingGiPause, &frame.movingGiPause},
                                 {t2.screenBackface, &frame.screenBackface},
                                 {t2.ssrHitFilter, &frame.ssrHitFilter},
                                 {t2.ssgiTileOrder, &frame.ssgiTileOrder}, {t2.denoise, &frame.denoise},
@@ -619,6 +620,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.displacementScale, &frame.displacementScale}, {t.lodBias, &frame.lodBias},
                                 {t2.domeSunThreshold, &frame.domeSunThreshold},
                                 {t.filmFilterRadius, &frame.filmFilterRadius}, {t2.renderScale, &frame.renderScale},
+                                {t2.movingRenderScale, &frame.movingRenderScale},
                                 {t.adaptiveThreshold, &frame.adaptiveThreshold},
                                 {t2.adaptiveFinalThreshold, &frame.adaptiveFinalThreshold},
                                 {t2.adaptivePixelFraction, &frame.adaptivePixelFraction},
@@ -675,6 +677,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
+    frame.movingShadowRays = uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.movingShadowRays, 1), 0, 16));
     // Colour limit (Karma's per-sample brightness limit, default 20): the indirect clamp, from
     // eldr:indirectClamp, else (colour limit not shared) karma:global:colorlimitindirect, else the
     // shared limit eldr:colorLimit, else karma:global:colorlimit, else 20. 0 = off.

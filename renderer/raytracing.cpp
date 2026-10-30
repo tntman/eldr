@@ -1472,7 +1472,7 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
                       VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
         pass("caustics");
     }
-    if (_work.gi) {
+    if (_work.gi && !_work.giPause) {
         // Probe rays (reading last frame's probes for further bounces), then
         // blended into the probes, before shading and reflections read them.
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, _pipeline);

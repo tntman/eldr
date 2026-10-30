@@ -22,6 +22,9 @@
 //   --warmup N         frames before timing (default 10; 0 times a final
 //                      quality film from its first sample)
 //   --pass-csv path    per-frame GPU pass times: frame,pass,ms
+//   --stop N           after the timed (moving) frames, up to N still ones:
+//                      how long until full quality (the first frame at full
+//                      size without moving reductions), the film and converged
 //   --startup          instead of timing: a cold start (plugin, delegate,
 //                      scene, first frames) and frames to convergence
 //   --ids              check primId/instanceId against the render index
@@ -68,6 +71,7 @@ static double Ms(Clock::time_point a, Clock::time_point b)
 
 int main(int argc, char **argv)
 {
+    std::setvbuf(stdout, nullptr, _IONBF, 0);  // results survive a crash at teardown
     if (argc < 3) {
         std::puts("usage: viewportBench <scene> <camera prim> [--size WxH] [--frames N] [--aovs a,b] [--map a,b] "
                   "[--share 0|1] [--render-purpose] [--still] [--ids] [--check] [--nav] [--overlap] [--no-overlap] [--app-ms N]");
@@ -78,7 +82,7 @@ int main(int argc, char **argv)
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
     bool houdini = false, startup = false, renderPurpose = false;
     std::string csvPath, passCsvPath;
-    int warmupFrames = 10;
+    int warmupFrames = 10, stopFrames = 0;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
         const std::string a = argv[i];
@@ -106,6 +110,8 @@ int main(int argc, char **argv)
             csvPath = next, ++i;
         } else if (a == "--warmup") {
             warmupFrames = std::atoi(next), ++i;
+        } else if (a == "--stop") {
+            stopFrames = std::atoi(next), ++i;
         } else if (a == "--pass-csv") {
             passCsvPath = next, ++i;
         } else if (a == "--still") {
@@ -697,6 +703,64 @@ int main(int argc, char **argv)
                 }
             }
             std::puts("");
+            if (stopFrames > 0) {
+                // The camera stops where the orbit ended: frames and ms (from
+                // the first still frame's start) until full quality (full
+                // size, no moving reductions: stats interactiveReduced), the
+                // film's start and convergence.
+                const double angle = still ? 0.0 : 0.25 * (warmup + frames - 1);
+                const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
+                int full = -1, filmAt = -1, convergedAt = -1;
+                double fullMs = 0, filmMs = 0, convergedMs = 0, worst = 0;
+                std::vector<double> first;
+                if (houdini) {
+                    delegate->SetRenderSetting(TfToken("houdini:interactive"), VtValue(TfToken("normal")));
+                }
+                const auto s0 = Clock::now();
+                for (int f = 0; f < stopFrames && convergedAt < 0; ++f) {
+                    const auto t0 = Clock::now();
+                    if (houdini) {
+                        camOp.Set(camXform * orbit.GetInverse());
+                        scene.SetTime(UsdTimeCode::EarliestTime());
+                    } else {
+                        controller.SetFreeCameraMatrices(orbit * view, projection);
+                    }
+                    engine.Execute(index, &tasks);
+                    for (auto &[name, b] : buffers) {
+                        const auto *data = static_cast<const uint8_t *>(b->Map());
+                        (void)*static_cast<const volatile uint8_t *>(data);
+                        b->Unmap();
+                    }
+                    const double ms = Ms(t0, Clock::now()), since = Ms(s0, Clock::now());
+                    worst = std::max(worst, ms);
+                    if (first.size() < 4) {
+                        first.push_back(ms);
+                    }
+                    const VtDictionary stats = delegate->GetRenderStats();
+                    auto get = [&](const char *key) {
+                        auto it = stats.find(key);
+                        return it == stats.end() ? VtValue() : it->second;
+                    };
+                    const std::string stageNow = get("rendererStage").GetWithDefault<std::string>();
+                    const bool reduced = get("interactiveReduced").GetWithDefault<bool>(false) ||
+                                         get("renderWidth").GetWithDefault<size_t>(size_t(width)) != size_t(width);
+                    if (full < 0 && !reduced) {
+                        full = f + 1, fullMs = since;
+                    }
+                    if (filmAt < 0 && stageNow != "interactive") {
+                        filmAt = f + 1, filmMs = since;
+                    }
+                    if (stageNow == "converged") {
+                        convergedAt = f + 1, convergedMs = since;
+                    }
+                }
+                std::printf("  stop: full quality after %d frames (%.1f ms), film after %d (%.1f ms), converged after %d "
+                            "(%.0f ms); first still frames", full, fullMs, filmAt, filmMs, convergedAt, convergedMs);
+                for (double ms : first) {
+                    std::printf(" %.1f", ms);
+                }
+                std::printf(" ms, worst %.1f ms\n", worst);
+            }
         }
 
         if (ids) {
