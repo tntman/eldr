@@ -3498,6 +3498,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Surfaces that reflect nothing skip their rays always; the roulette not on the film's first
     // sample (it would show the blocks) nor without a film (TAA has none to converge).
     rt.reflectionRoulette = !frame.rtReflectionRoulette ? 0 : film && _filmSamples > 1 ? 2 : 1;
+    // The same for the light sampling's shared shadow rays and the gather roulette.
+    rt.lightSampling = !frame.rtLightSampling ? 0 : film && _filmSamples > 1 ? 2 : 1;
+    rt.gatherShare = frame.finalGatherRoulette && film && _filmSamples > 1 ? 0.5f : 1.0f;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics: in final quality (or always), with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):

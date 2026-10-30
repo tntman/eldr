@@ -97,6 +97,16 @@ float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
 // kFadeRoughness; rougher surfaces keep the dome's prefiltered light.
 const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
 
+// A film sample's turn per 8 x 8 block, in [0, 1): a hashed start (salt:
+// one per effect) stepped by a Weyl sequence over the samples, so a block
+// takes a share `keep` of the samples by turn < keep. Per block, not per
+// pixel: a warp waits for its slowest ray, so only whole blocks save.
+float BlockTurn(ivec2 pixel, uint salt)
+{
+    uint u = Pcg3d(uvec3(uvec2(pixel) >> 3u, salt)).x + rt.params.x * 2654435769u;
+    return float(u >> 8u) * (1.0 / 16777216.0);
+}
+
 // Reflection roulette (rt.denoise.w, eldr:rtReflectionRoulette). 1: only
 // a surface whose base reflects nothing (standard_surface or OpenPBR with
 // specular weight 0, not metallic, no coat, no graph) skips its rays,
@@ -137,8 +147,24 @@ float ReflectionKeep(ivec2 pixel, uint slot, vec3 baseColor, float metallic, flo
     float s = pow(1.0 - NoV, 5.0), b = max(max(baseColor.r, baseColor.g), baseColor.b);
     float f = dielectric + (1.0 - dielectric) * s * (1.0 - metallic) + metal * (b + (1.0 - b) * s);
     float keep = clamp(3.0 * f, mix(1.0, 0.125, smoothstep(0.05, 0.2, perceptual)), 1.0);
-    uint u = Pcg3d(uvec3(uvec2(pixel) >> 3u, 0x9e37u)).x + rt.params.x * 2654435769u;
-    return float(u >> 8u) * (1.0 / 16777216.0) < keep ? keep : 0.0;
+    return BlockTurn(pixel, 0x9e37u) < keep ? keep : 0.0;
+}
+
+// Whether `light` gives p nothing in mesh.frag (LocalLight: past its
+// range, outside its cone; light linking by the receiver's linkMask), so
+// its shadow ray can stay untraced (eldr:rtLightSampling).
+bool LightCulled(Light light, vec3 p, uint linkMask)
+{
+    if (!LightLinked(light, linkMask)) {
+        return true;
+    }
+    if (uint(light.position.w) == 0u) {
+        return false;
+    }
+    vec3 fromLight = p - light.position.xyz;
+    float d = length(fromLight);
+    return d >= LightRange(light) ||
+           acos(clamp(dot(fromLight / max(d, 1e-20), light.axis.xyz), -1.0, 1.0)) > light.shaping.y + 1e-3;
 }
 
 void main()
@@ -174,6 +200,7 @@ void main()
     float perceptual = hit.roughness, metallic = hit.metallic;
     vec3 baseColor = hit.baseColor;  // the shadow rays below overwrite hit
     uint slot = hit.slot;
+    uint linkMask = ~0u;  // the receiver's light links (LightCulled), unknown on the prepass's surface
     if (raster && (hit.t < 0.0 || abs(hit.t - rasterT) > 0.02 * rasterT)) {
         // Of the differences each way the smaller (less likely across an edge).
         vec3 dx = PrepassPoint(pixel + ivec2(1, 0)) - surface, dx2 = surface - PrepassPoint(pixel - ivec2(1, 0));
@@ -185,6 +212,8 @@ void main()
         p = surface;
         n = ng;
         perceptual = 1.0;  // no reflection
+    } else {
+        linkMask = RtLinkMask(hit.instance);
     }
     uvec3 seed = uvec3(pixel, rt.params.x);
 
@@ -193,7 +222,16 @@ void main()
     // takes a new point on every light's shape: the CPU's scrambled Sobol
     // point turned by blue noise (each light reading it elsewhere), so the
     // film converges to the exact penumbra.
+    // eldr:rtLightSampling: lights that give p nothing (LightCulled) trace
+    // no ray (visibility 1). From the film's second sample with over four
+    // lights, each 8 x 8 block traces each light in a share rt.shadowSample.z
+    // (4 / lights) of the samples, in turn, about four lights a sample;
+    // the others store 0 and every texel counts 1 / share (gi.glsl
+    // RtShadowTexel), so the film averages to the same.
     if ((frame.features.x & kFeatureRtShadows) != 0u && rt.params.y != 0u) {
+        float share = rt.shadowSample.z > 0.0 ? rt.shadowSample.z : 1.0;
+        float turn = share < 1.0 ? BlockTurn(pixel, 0x5bd1u) : 0.0;
+        bool cull = rt.gatherInfo.w != 0.0;
         uint perTexel = rt.shadowInfo.z;
         vec4 shadows = vec4(1.0);
         // The denoise's penumbra radii (gi.glsl RtTraced), on the prepass's pixels.
@@ -215,9 +253,11 @@ void main()
                 vec4 noise = texelFetch(blueNoise, (pixel + ivec2(k * 23u + 7u, k * 41u + 13u)) & 63, 0);
                 u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
             }
-            vec3 v = LightVisibility(light, p, ng, u, rt.params.y);
+            bool culled = cull && LightCulled(lights[light], p, linkMask);
+            bool traced = !culled && fract(turn + float(k) * share) < share;
+            vec3 v = culled ? vec3(share) : traced ? LightVisibility(light, p, ng, u, rt.params.y) : vec3(0.0);
             if (penumbra) {
-                blockers[k & 3u] = (perTexel == 1u ? max(max(v.r, v.g), v.b) : v.r) < 1.0
+                blockers[k & 3u] = traced && (perTexel == 1u ? max(max(v.r, v.g), v.b) : v.r) < 1.0
                                        ? PenumbraRadius(light, p, ng, u, footprint) : 0.0;
             }
             if (perTexel == 1u) {
@@ -266,7 +306,14 @@ void main()
         imageStore(rtReflectionImage, pixel, reflection);
     }
 
-    if (gather) {
+    // eldr:finalGatherRoulette: from the film's second sample each 8 x 8
+    // block gathers in a share rt.gatherInfo.z of the samples (in turn),
+    // weighted 1 / share; the others store 0 (gathered nothing: not the probes).
+    float gatherShare = rt.gatherInfo.z > 0.0 ? rt.gatherInfo.z : 1.0;
+    if (gather && gatherShare < 1.0 && BlockTurn(pixel, 0x6a09u) >= gatherShare) {
+        imageStore(rtGatherImage, pixel, vec4(0.0, 0.0, 0.0, 1.0));
+        imageStore(gatherGuide, pixel, vec4(OctEncode(ng), OctEncode(n)));
+    } else if (gather) {
         vec3 t, b;
         Basis(n, t, b);
         vec3 o = OffsetRay(p, ng);
@@ -302,7 +349,7 @@ void main()
                                      (rt.shadowInfo.w & 1u) != 0u);
             }
         }
-        imageStore(rtGatherImage, pixel, vec4(radiance / float(rays), 1.0));
+        imageStore(rtGatherImage, pixel, vec4(radiance / (float(rays) * gatherShare), 1.0));
         imageStore(gatherGuide, pixel, vec4(OctEncode(ng), OctEncode(n)));  // gather_denoise.comp's edges
     }
 }

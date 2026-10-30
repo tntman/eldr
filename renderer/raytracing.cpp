@@ -1257,6 +1257,10 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     }
     d.gatherInfo[0] = float(gatherRays);
     d.gatherInfo[1] = std::clamp(work.gatherDenoise, 0.0f, 1.0f);
+    d.gatherInfo[2] = work.gatherShare < 1.0f ? std::max(work.gatherShare, 0.0625f) : 0.0f;
+    d.gatherInfo[3] = work.lightSampling > 0 ? 1.0f : 0.0f;
+    // Over four traced lights each takes 4 / lights of the samples (rt_pixels.rgen).
+    d.shadowSample[2] = work.lightSampling >= 2 && lights > 4 ? 4.0f / float(lights) : 0.0f;
     d.denoise[0] = work.shadowDenoise;
     d.denoise[1] = work.reflectionDenoise;
     d.denoise[2] = float(_shadowLayers);
