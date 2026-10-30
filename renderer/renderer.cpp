@@ -163,6 +163,8 @@ constexpr uint32_t kFeatureTimeSample = 1u << 25;
 constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 // caustics.glsl: mesh.frag gathers caustic photons.
 constexpr uint32_t kFeatureCaustics = 1u << 27;
+// shadow_tint.frag: only caustic casters go into the tint maps (Frame::translucentShadows off).
+constexpr uint32_t kFeatureTintCastersOnly = 1u << 28;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -3716,8 +3718,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool refraction = draw && frame.translucency && frame.refraction && frame.depthPrepass && gpu.refraction;
     // Translucent shadows: tint maps at a fraction of the shadow maps'
     // size (1 x 1 while unused); new ones invalidate the cached atlas.
-    const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
+    // Under caustics the casters' glass blocks the light whatever
+    // Frame::translucentShadows says (its light arrives as photons): with it
+    // off the tint maps hold the casters alone.
+    const bool translucentShadows = draw && frame.translucency && (frame.translucentShadows || rt.caustics) &&
                                     !gpu.translucent.empty();
+    if (translucentShadows && !frame.translucentShadows) {
+        fd.features[0] |= kFeatureTintCastersOnly;
+    }
     // Volume shadows: the volumes' transmittance goes into the sun's tint
     // map as well (VolumePass::RecordShadow), read with the translucent
     // casters'.

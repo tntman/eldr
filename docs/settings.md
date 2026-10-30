@@ -152,7 +152,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Soft Shadows (PCSS)<br>`eldr:softShadows` | on | Contact-hardening penumbrae for local lights from their size. Off: 3x3 PCF. | |
 | Soft Sun Shadows<br>`eldr:softSunShadows` | on | Same for the sun from `inputs:angle`. No angle: PCF. | Crowd 1.27 ms |
 | Soft Shadow Samples<br>`eldr:softShadowSamples` | int 16 | Blocker search and filter taps (1-16). | Linear |
-| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted meshes tint shadows, also in fog. Volumes cast into the same maps. | 0.04 ms; maps 32 MB each at default sun size |
+| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted meshes tint shadows, also in fog. Volumes cast into the same maps. Off: under caustics the caster objects still block (their light arrives as photons). | 0.04 ms; maps 32 MB each at default sun size |
 | Translucent Shadow Resolution<br>`eldr:translucentShadowDivisor` | int 2 | Tint map size as 1/N of the shadow maps (1, 2, 4). Also sets volume shadow resolution. | |
 | Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Rays per light and pixel (1-16), interactive. Final quality: 1 per light and film sample. | Linear |
 | Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | [RT] Averages each traced shadow over its penumbra (blocker distance times light size, PCSS-style; up to 3 pixels) in the receiver's plane, so hard and contact shadows stay hard, fading out over `eldr:effectDenoiseSamples`. Off: raw rays. | A blocker ray per light on shadowed pixels while it runs; bias-free on the Kitchen (unfaded 0.0122 vs 0.0120 raw at 64 samples) |
@@ -160,7 +160,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Ray Tracing Sees Displacement<br>`eldr:rtDisplacement` | on | [RT] BLASes (skinned too) use displaced vertices. | Rebuilds on scale change |
 | Ray Tracing Compacts Static BLASes<br>`eldr:rtCompaction` | on | [RT] Static meshes' BLASes are copied to their compacted size after building and the originals freed. Off: built size, about twice the memory. | Applies to BLASes built after the change; skinned and displaced BLASes refit and stay uncompacted |
 | Jittered Light Shape per Sample<br>`eldr:shadowJitter` | on | [film, final quality] Each sample renders maps from a point on the light: exact penumbra. Needs soft shadows. Interactive films keep PCSS. | Sun error 0.016 vs PCSS 0.065; no frame-time change |
-| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced rays pass translucent meshes (taking their colour) and march volumes. Off: they cast no traced shadows. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
+| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced rays pass translucent meshes (taking their colour) and march volumes. Off: they cast no traced shadows, except caustic casters under caustics, which block. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
 
 ### Reflections
 

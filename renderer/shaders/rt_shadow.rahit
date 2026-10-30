@@ -52,6 +52,9 @@ void main()
     if (translucent && Feature(kFeatureCaustics) && (draws[slot].caustics & 1u) != 0u) {
         return;  // DrawInfo::caustics' caster bit
     }
+    if (translucent && (rt.shadowInfo.w & 2u) == 0u) {  // seen for the casters alone (rtTranslucentShadows off)
+        ignoreIntersectionEXT;
+    }
     if (translucent) {
         shadowRay.rgb *= clamp(ShadowTransmission(materials[material], uv), 0.0, 1.0);
         ignoreIntersectionEXT;
