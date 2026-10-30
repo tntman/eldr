@@ -11,6 +11,8 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/base/tf/token.h"
+#include "pxr/base/vt/array.h"
 
 #include <atomic>
 #include <memory>
@@ -45,7 +47,8 @@ extern TfStaticData<HdVkRenderSettingsTokensType> HdVkRenderSettingsTokens;
 
 // Karma's names for what Eldr's extra AOVs hold: the source names of the
 // render vars Houdini's Karma Standard Render Vars LOP makes, as UsdRender
-// hands them to Hydra (raw names, "lpe:" and "primvars:" ones).
+// hands them to Hydra (raw names and "primvars:" ones; light path
+// expressions: HdVkFindAov).
 #define HDVK_AOV_TOKENS                                     \
     ((hitN, "ray:hitN"))                                    \
     ((hitNFacing, "ray:hitN_facing"))                       \
@@ -54,17 +57,10 @@ extern TfStaticData<HdVkRenderSettingsTokensType> HdVkRenderSettingsTokens;
     ((hitPCamera, "ray:hitP_camera"))                       \
     ((hitPz, "ray:hitPz"))                                  \
     ((baseColor, "export_basecolor"))                       \
-    ((diffuseAlbedo, "lpe:CDA"))                            \
-    ((directEmission, "lpe:CO"))                            \
-    ((combinedEmission, "lpe:C.*O"))                        \
-    ((directDiffuse, "lpe:C<RD>L"))                         \
-    ((indirectDiffuse, "lpe:C<RD>.+L"))                     \
-    ((combinedDiffuse, "lpe:C<RD>.*L"))                     \
-    ((directGlossy, "lpe:C<RG>L"))                          \
-    ((indirectGlossy, "lpe:C<RG>.+L"))                      \
-    ((combinedGlossy, "lpe:C<RG>.*[LO]"))                   \
     ((cryptoObject, "primvars:__name"))                     \
-    ((cryptoMaterial, "primvars:__materialname"))
+    ((cryptoMaterial, "primvars:__materialname"))           \
+    ((beautyRaw, "eldr:beautyRaw"))                         \
+    ((caustics, "caustics"))
 
 TF_DECLARE_PUBLIC_TOKENS(HdVkAovTokens, HDVK_AOV_TOKENS);
 
@@ -78,6 +74,21 @@ struct HdVkExtraAov {
     HdFormat format;
 };
 const std::vector<HdVkExtraAov> &HdVkExtraAovs();
+// The extra AOV a name binds: one of HdVkExtraAovs, or a light path
+// expression ("lpe:...") of the forms Karma writes (renderDelegate.cpp's
+// LpeKind; format Float32Vec3). False for any other name.
+bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
+// Light groups: Karma's LPE tags (inputs:karma:light:lpetag) in the order
+// AOVs first asked for them, at most vkr::Aovs::kMaxLightGroups (another
+// gets -1 and a warning). Process-wide.
+int HdVkLightGroup(const std::string &tag);
+std::vector<std::string> HdVkLightGroups();
+// Light linking: Hydra's link categories (HdsiLightLinkingSceneIndex's ids
+// of UsdLux collection:lightLink / shadowLink) as vkr ids (Mesh::
+// linkCategories, Light::lightLink), the empty one 0. A light naming
+// (`light`) more than vkr::Scene::kMaxLinkCategories warns. Process-wide.
+uint32_t HdVkLinkCategory(TfToken const &category, bool light = false);
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories);
 
 // A render tag as a bit of vkr::Mesh::tag: geometry, render, proxy and guide
 // have their own, other tags share one, hidden has none (never drawn).
@@ -177,6 +188,10 @@ public:
     // their motion again (transforms, deformation velocities) even where
     // nothing moved since their last sync.
     bool MotionSettingsChanged() const { return _motionSettingsChanged; }
+    // The meshes re-sync for the same frame (re-dicing, a subdivision
+    // setting): the next commit keeps the last one's motion where it moves
+    // nothing itself (a re-diced mesh uploads geometry, not its motion).
+    void KeepMotion() { _keepMotion = true; }
     // What the film starts over on besides the camera and the settings:
     // every sync of geometry, instancers, materials, volumes and fields
     // (lights through the renderer's lighting hash). Not cameras: an app may
@@ -195,6 +210,8 @@ public:
     // last re-diced for (null before the first). SetDicingView re-syncs the
     // meshes; only the render pass calls it, between syncs.
     bool ScreenDicing() const;
+    // Whether materials load block-compressed textures now.
+    bool TextureCompression() const;
     const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
     void SetDicingView(std::optional<HdVkDicingView> const &view);
 
@@ -221,6 +238,7 @@ private:
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
     bool _motionSettingsChanged = false;  // since the last CommitResources
+    bool _keepMotion = false;             // KeepMotion since the last CommitResources
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.

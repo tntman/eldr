@@ -1,10 +1,14 @@
 #pragma once
 
 #include "pxr/pxr.h"
+#include "pxr/base/gf/matrix4d.h"
 #include "pxr/base/vt/types.h"
 #include "pxr/imaging/hd/instancer.h"
 
+#include <cstdint>
+#include <list>
 #include <map>
+#include <mutex>
 #include <vector>
 
 namespace vkr {
@@ -38,11 +42,35 @@ public:
     // each. False if no level has it.
     bool ComputeInstancePrimvar(SdfPath const &prototypeId, TfToken const &name, std::vector<float> *values,
                                 uint32_t *components);
+    // Light linking: each instance's link categories (HdVkLinkCategory ids,
+    // its parents' too), in ComputeInstanceTransforms' order; empty when
+    // no instance has any.
+    std::vector<std::vector<uint32_t>> ComputeInstanceCategories(SdfPath const &prototypeId);
 
 private:
     std::map<TfToken, VtValue> _primvars;
     bool _visible = true;
+    // Shutter samples of this instancer (its transform and primvars), shared
+    // by its prototypes within one sync pass (HdVkNewSyncPass).
+    struct Sampled {
+        uint64_t pass = 0;
+        float time = 0, open = 0, close = 0;
+        GfMatrix4d transform;
+        bool hasTransform = false;
+        std::map<TfToken, VtValue> primvars;
+    };
+    std::mutex _sampledMutex;
+    std::list<Sampled> _sampled;  // stable: prototypes read theirs unlocked
 };
+
+// A new sync pass (the render delegate's commit ends one): caches of samples
+// taken during the last pass (instancers' shutter samples, skinned shutter
+// poses) are stale from here.
+void HdVkNewSyncPass();
+uint64_t HdVkSyncPass();
+// HDVK_TIMING=2: shutter sample cache hits since the last call.
+int64_t HdVkTakeShutterHits();
+void HdVkNoteShutterHit();
 
 // A numeric primvar value (a scalar or vector, or an array of them) as
 // floats, `components` (1..4) per element. False for anything else.
@@ -58,5 +86,11 @@ std::vector<float> HdVkWorldTransforms(HdSceneDelegate *delegate, SdfPath const 
 // transforms one frame before as their samples at shutter open and close
 // continue linearly, else the transforms they replace.
 void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId, vkr::Mesh &mesh);
+
+// Light linking: gives `mesh` its link categories (Hydra's categories of
+// the rprim, and per instance its instancer's) and marks its transforms
+// dirty when they changed.
+void HdVkSetLinkCategories(HdSceneDelegate *delegate, SdfPath const &id, SdfPath const &instancerId,
+                           vkr::Mesh &mesh);
 
 PXR_NAMESPACE_CLOSE_SCOPE

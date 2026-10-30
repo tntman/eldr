@@ -4,8 +4,9 @@
 // Volume shadows: the sun's light through the volumes, one texel of a
 // cascade per invocation, into Transparency's sun tint map (multiplied with
 // the translucent casters', which follow). The colour is the transmittance
-// along the texel's light ray across the cascade's depth range, the depth
-// where the optical depth's mean lies (receivers behind it get all of it).
+// along the texel's light ray across the cascade's depth range, per channel
+// (coloured smoke casts coloured shadows), the depth where the optical
+// depth's mean (over s and the channels) lies (receivers behind it get all of it).
 // part 1: the same for a local light's atlas tile (cascade = its index in
 // ShadowTiles, originX/Y and mapSize = the tile's rectangle in the tint
 // atlas): perspective rays from the near to the far plane, the depth projected.
@@ -34,6 +35,9 @@ layout(push_constant) uniform Params {  // as volume.frag's (VolumeParams)
     uint mapSize;    // texels per side
     uint originX;    // part 1: the tile's first texel
     uint originY;
+    uint mutual, defaultFields, octaves;
+    float octaveLight, octaveDepth;
+    int shadowLink;  // the light's shadow link bit (-1: every volume casts)
 } params;
 
 struct ShadowTile {  // as mesh.frag's
@@ -56,8 +60,10 @@ void main()
     vec4 a = inv * vec4(ndc, -1.0, 1.0), b = inv * vec4(ndc, 1.0, 1.0);
     vec3 origin = a.xyz / a.w, dir = b.xyz / b.w - origin;
     float weighted, weighted2;  // the optical depth times s, s^2
-    float tau = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, weighted, weighted2);
-    if (tau < 1e-3) {
+    vec3 rgb = VolumeOpticalDepth(origin, dir, params.count, params.stepSize, params.density, params.shadowLink,
+                                  weighted, weighted2);
+    float tau = dot(rgb, vec3(1.0 / 3.0));
+    if (max(max(rgb.x, rgb.y), rgb.z) < 1e-3 || !(tau > 0.0)) {
         discard;
     }
     float mean = weighted / tau;
@@ -69,6 +75,6 @@ void main()
         spread = 0.25 * (f.z / f.w - n.z / n.w);  // window depth is half of NDC
         mean = m.z / m.w * 0.5 + 0.5;
     }
-    outTint = vec4(vec3(exp(-tau)), 1.0 - sqrt(sqrt(max(spread, 0.0))));
+    outTint = vec4(exp(-rgb), 1.0 - sqrt(sqrt(max(spread, 0.0))));
     gl_FragDepth = mean;
 }

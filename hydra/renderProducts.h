@@ -57,6 +57,12 @@ public:
     // `size`, if given, replaces the product's resolution (husk --res: the
     // buffers' size is the render's; the camera conforms to its aspect).
     static bool GetFraming(const HdRenderSettings *settings, Framing *framing, const GfVec2i *size = nullptr);
+    // Per extra AOV the sample filter its render var in `settings`' products
+    // asks for (driver:parameters:aov:eldr:filter, else Karma's
+    // driver:parameters:aov:karma:filter), and the var's path; kinds no var
+    // sets are left alone.
+    static void GetFilters(const HdRenderSettings *settings, std::string text[vkr::Aovs::kCount],
+                           std::string var[vkr::Aovs::kCount]);
     // Products render at `framing` (null: at the frame's size, as an image
     // of its own).
     void SetFraming(const Framing *framing) { _framing = framing ? *framing : Framing(); }

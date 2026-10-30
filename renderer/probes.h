@@ -36,10 +36,18 @@ public:
     Reflections(const Reflections &) = delete;
     Reflections &operator=(const Reflections &) = delete;
 
-    // Before the frame records: captures the probe when due, renders the
-    // planar reflection (if Frame::planarReflections and a mirror is in
-    // view). The GPU is idle on return.
+    // Before the frame records: captures the probes when due. The GPU is
+    // idle on return. Probes show the scene at the frame's time, also
+    // under motion blur time samples: a capture is six renders and a CPU
+    // prefilter (~10 ms at 128), too slow per film sample.
     void Update(const Scene &scene, const Renderer::Frame &frame);
+
+    // After Update, once the frame's camera is known (its time sample's,
+    // its lens point's): renders the planar reflections (if
+    // Frame::planarReflections and a mirror is in view). shutter >= 0: at
+    // that motion blur time sample (Frame::nestedShutter, nestedCapture).
+    // The GPU is idle on return.
+    void RenderPlanars(const Scene &scene, const Renderer::Frame &frame, float shutter, bool capture);
 
     // The probes, the smallest influence box first: each a cube (world
     // directions; level 0 alpha: distance, 0 for sky) prefiltered by
@@ -78,7 +86,7 @@ public:
 private:
     void _Capture(const Scene &scene, const Renderer::Frame &frame, Probe &probe);
     bool _RenderPlanar(const Scene &scene, const Renderer::Frame &frame, const Scene::Gpu::Mirror &mirror,
-                       Renderer &renderer, float plane[4]);
+                       Renderer &renderer, float plane[4], float shutter, bool capture);
 
     Device &_dev;
     std::unique_ptr<Renderer> _renderer;  // made on first use

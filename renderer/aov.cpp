@@ -38,11 +38,13 @@ struct Push {  // mirror of aov.comp's
     uint32_t sumsOffset;
     float filmOffset[2], filmRadius;
     uint32_t film;
+    uint32_t filter;  // aov.comp's kNearest..kFarthest
+    float radius;     // its radius (pixels)
 };
 
 bool IsColour(uint32_t k)
 {
-    return k == Aovs::kAlbedo || k == Aovs::kEmission || (k >= Aovs::kDiffuseAlbedo && k <= Aovs::kCombinedGlossy);
+    return k == Aovs::kAlbedo || k == Aovs::kEmission || k >= Aovs::kDiffuseAlbedo;
 }
 
 bool IsCrypto(uint32_t k)
@@ -53,6 +55,28 @@ bool IsCrypto(uint32_t k)
 // A Cryptomatte pixel's film state in the sums: 6 ids (float bits), their 6
 // weights, the pixel's total weight, the film's sample count (aov.comp).
 constexpr uint32_t kCryptoStride = 14;
+
+// Target k's filter in aov.comp (0 nearest, 1 Gauss, 2 box, 3 min, 4 max,
+// 5 closest, 6 farthest) and its radius, from Params::filters.
+// ponytail: aov.comp gathers 3x3 samples, so radii stop at 1.5 pixels.
+uint32_t ShaderFilter(uint32_t k, const Aovs::Params &p, float *radius)
+{
+    *radius = 0.0f;
+    if (!p.film || IsCrypto(k)) {
+        return 0;
+    }
+    uint8_t f = p.filters[k];
+    if (f == Aovs::kFilterDefault) {
+        f = IsColour(k) ? Aovs::kFilterBeauty : Aovs::kFilterNearest;
+    }
+    const float r = std::min(p.filterRadius[k], 1.5f);
+    switch (f) {
+    case Aovs::kFilterNearest: return 0;
+    case Aovs::kFilterBeauty: *radius = p.filmRadius; return 1;
+    case Aovs::kFilterGauss: *radius = r > 0.0f ? r : 1.5f; return 1;
+    default: *radius = r > 0.0f ? r : 0.5f; return uint32_t(f - Aovs::kFilterBox) + 2;
+    }
+}
 
 VkImageSubresourceRange Range(VkImageAspectFlags aspect)
 {
@@ -95,8 +119,8 @@ uint32_t CryptomatteHash(const std::string &name)
 
 uint32_t Aovs::Components(Kind kind)
 {
-    constexpr uint32_t components[kCount] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3, 3, 3, 3, 3, 3, 3};
-    return components[kind];
+    constexpr uint32_t components[kDirectDiffuse] = {3, 3, 3, 1, 2, 3, 3, 12, 12, 3, 1, 3};
+    return kind == kBeautyRaw ? 4 : kind < kDirectDiffuse ? components[kind] : 3;  // the splits: rgb
 }
 
 bool Aovs::Any(float *const targets[kCount])
@@ -106,7 +130,16 @@ bool Aovs::Any(float *const targets[kCount])
 
 bool Aovs::NeedsSplits(float *const targets[kCount])
 {
-    return std::any_of(targets + kDirectDiffuse, targets + kCombinedGlossy + 1, [](const float *t) { return t; });
+    return std::any_of(targets + kDirectDiffuse, targets + kBeautyRaw, [](const float *t) { return t; });
+}
+
+uint32_t Aovs::SplitLayers(float *const targets[kCount])
+{
+    uint32_t groups = 0;
+    for (uint32_t g = 0; g < kMaxLightGroups; ++g) {
+        groups = targets[kLightGroup0 + g] ? g + 1 : groups;
+    }
+    return NeedsSplits(targets) ? kSplitLayers + groups : 4;
 }
 
 bool Aovs::NeedsGeometry(float *const targets[kCount])
@@ -326,12 +359,15 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
         std::memcpy(params + kMatrixBytes, p.cryptomatte, cryptoBytes);
     }
     VkDeviceSize floats = 0, sumFloats = 0;
+    uint32_t filters[kCount];
+    float radii[kCount];
     for (uint32_t k = 0; k < kCount; ++k) {
         _offsets[k] = floats;
         _sumsOffsets[k] = sumFloats;
         _components[k] = p.components[k] ? std::min<uint32_t>(p.components[k], IsCrypto(k) ? 12 : 4) : Components(Kind(k));
+        filters[k] = ShaderFilter(k, p, &radii[k]);
         floats += targets[k] ? VkDeviceSize(_components[k]) * width * height : 0;
-        sumFloats += targets[k] && IsColour(k) ? VkDeviceSize(_components[k] + 2) * width * height : 0;
+        sumFloats += targets[k] && (IsColour(k) || filters[k] != 0) ? VkDeviceSize(_components[k] + 2) * width * height : 0;
         sumFloats += targets[k] && IsCrypto(k) && p.film && p.cryptoSoft ? VkDeviceSize(kCryptoStride) * width * height : 0;
     }
     // Shader writes to host memory crawl (~30 ms for a 480 x 270 AOV):
@@ -380,6 +416,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     // the running average turns into a moving one (1 / maxFrames).
     std::vector<uint32_t> layout(_offsets, _offsets + kCount);
     layout.insert(layout.end(), _components, _components + kCount);
+    layout.insert(layout.end(), filters, filters + kCount);  // another filter starts over
     const bool same = _frames > 0 && std::equal(p.viewProj, p.viewProj + 16, _viewProj) && p.version == _version &&
                       width == _accumWidth && height == _accumHeight && layout == _accumLayout && _output.buffer == _accumBuffer &&
                       _sums.buffer == _accumSums;
@@ -463,14 +500,14 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k]) {
-            const bool filtered = p.film && IsColour(k);
+            const bool filtered = filters[k] != 0;
             // Cryptomatte without the film's coverage keeps the nearest sample's id
             // (weight 0: this one isn't), else the latest frame's.
             const bool crypto = IsCrypto(k) && p.film && p.cryptoSoft;
             const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds,
                             filtered ? 1.0f : IsCrypto(k) ? (p.film ? weight : 1.0f) : weight,
                             uint32_t(_sumsOffsets[k]), {p.filmOffset[0], p.filmOffset[1]}, p.filmRadius,
-                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u};
+                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u, filters[k], radii[k]};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }
@@ -499,14 +536,14 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
                  VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 }
 
-bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
+bool Aovs::EnsureSplits(uint32_t width, uint32_t height, uint32_t layers)
 {
-    if (_splits.image && width == _splitsWidth && height == _splitsHeight) {
+    if (_splits.image && width == _splitsWidth && height == _splitsHeight && layers == _splitsLayers) {
         return false;
     }
     _dev.Destroy(_splits);
     _dev.Destroy(_prevSplits);
-    _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, 4, 1,
+    _splits = _dev.CreateImage(VK_FORMAT_R16G16B16A16_SFLOAT, width, height, layers, 1,
                                VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                                    VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
@@ -515,8 +552,9 @@ bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
                                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
     _splitsWidth = width;
     _splitsHeight = height;
+    _splitsLayers = layers;
     _dev.Submit([&](VkCommandBuffer cmd) {
-        ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
+        ImageBarrier(cmd, _splits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, layers}, VK_PIPELINE_STAGE_2_NONE, 0,
                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
         ImageBarrier(cmd, _prevSplits.image, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4}, VK_PIPELINE_STAGE_2_NONE, 0,
@@ -528,14 +566,16 @@ bool Aovs::EnsureSplits(uint32_t width, uint32_t height)
 
 void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
 {
-    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
+    // Last frame's are the first 4 layers (SSR's direct and indirect).
+    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, _splitsLayers},
+        first{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 4};
     if (keepPrevious) {
         // Last frame's writers (shading, SSR, subsurface, AOV reads) are
         // done; this frame's shading samples the copy.
         ImageBarrier(cmd, _splits.image, all, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_GENERAL,
                      VK_IMAGE_LAYOUT_GENERAL);
-        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
+        ImageBarrier(cmd, _prevSplits.image, first, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0,
                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkImageCopy copy{};
@@ -543,7 +583,7 @@ void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
         copy.extent = {_splitsWidth, _splitsHeight, 1};
         vkCmdCopyImage(cmd, _splits.image, VK_IMAGE_LAYOUT_GENERAL, _prevSplits.image,
                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-        ImageBarrier(cmd, _prevSplits.image, all, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        ImageBarrier(cmd, _prevSplits.image, first, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
@@ -561,7 +601,7 @@ void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
 void Aovs::Read(float *const targets[kCount]) const
 {
     for (uint32_t k = 0; k < kCount; ++k) {
-        if (targets[k]) {
+        if (targets[k] && k != kBeautyRaw) {  // the Renderer's own
             std::memcpy(targets[k], static_cast<const float *>(_readback.mapped) + _offsets[k],
                         sizeof(float) * _components[k] * _width * _height);
         }

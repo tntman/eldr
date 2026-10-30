@@ -49,8 +49,9 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
     // sampleInfo.x 1 with them on; y 1: froxels jittered per film sample.
     vec4 sampleDims[3];
     uvec4 sampleInfo;
-    uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them, y 1 = the dome's visible light is direct
-    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit (brightest channel; 0: off)
+    uvec4 aovs;          // light splits (aov.h): x 1 = mesh.frag stores them, y 1 = the dome's visible light is direct, z the dome's light group + 1
+    vec4 lightClamp;     // x: direct, y: indirect light's brightness limit, z: camera-seen emission's
+                         // (Karma's colour limit; brightest channel; 0: off)
     vec4 screenTrace;    // x: 1 = thickness estimator in SSR (Frame::ssgiThickness), y: back-face hits'
                          // share of light (Frame::screenBackface; 1: off), z: 1 = SSR hits
                          // footprint-filtered (Frame::ssrHitFilter, the history's mips)
@@ -63,6 +64,7 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // w: its capture holds joints (+1) and blend shape weights (+2)
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl), y 1: opacity presence on
     vec4 scene;          // x: the scene's frame, y: in seconds (program.glsl's kOpTime)
+    uvec4 tiles;         // tile-based adaptive sampling (tiles.glsl): x the stamp a tile needs, 0 off; y, z tiles
 } frame;
 
 // Unit direction from p towards the viewer: the camera's position, or for
@@ -110,6 +112,8 @@ const uint kFeatureSunRegion = 16777216u;
 const uint kFeatureTimeSample = 33554432u;
 // GGX multiple-scattering energy compensation (Frame::multiScatter).
 const uint kFeatureMultiScatter = 67108864u;
+// Caustic photons gathered (caustics.glsl, RayTracing::Work::caustics).
+const uint kFeatureCaustics = 134217728u;
 
 // The optional frame.features.x bits whose code a pipeline has: the
 // shading pipelines are specialized with the ones their frame uses

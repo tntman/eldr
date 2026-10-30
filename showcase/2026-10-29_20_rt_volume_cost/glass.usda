@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/glass.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Traced refraction, A/B of eldr:rtRefractionClip: /Render/clip (default)
+# looks for glass only, up to the opaque depth; /Render/noClip traces every
+# surface first, as before. Same image, the clip is cheaper.
+
+def Scope "Render"
+{
+    def RenderSettings "clip"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:rtRefraction = 2
+    }
+
+    def RenderSettings "noClip"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:rtRefraction = 2
+        custom bool eldr:rtRefractionClip = 0
+    }
+}

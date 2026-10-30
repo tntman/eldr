@@ -13,6 +13,7 @@ DOCS = [
     ("materialx.md", "MaterialX coverage"),
     ("comparison.md", "Eldr vs EEVEE and Unreal"),
     ("houdini.md", "Houdini"),
+    ("testing.md", "Testing"),
 ]
 
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])

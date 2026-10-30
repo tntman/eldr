@@ -101,6 +101,9 @@ SECTIONS = [
         ("primvars:eldr:object:volumelimit", "Volume Limit", "float", 0.0,
          "Above 0, the volume scatters more than once (Volume Multiple Scattering). Eldr's wins over Karma's "
          "primvars:karma:object:volumelimit and the render setting of that name.", None),
+        ("primvars:eldr:object:volumevblurscale", "Volume Velocity Blur Scale", "float", 1.0,
+         "Multiplies the blur along the vel field of a volume with Velocity Blur on. Eldr's wins over Karma's "
+         "primvars:karma:object:volumevblurscale.", None),
     ]),
 ]
 

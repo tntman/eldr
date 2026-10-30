@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
 
 int main(int argc, char **argv)
@@ -32,7 +33,30 @@ int main(int argc, char **argv)
             std::printf("meta %s=%s\n", p.name().c_str(), p.get_string().c_str());
         }
     }
-    if (argc >= 4) {
+    if (argc >= 5 && std::string(argv[2]) == "--grid") {
+        // exrinfo image --grid NX NY: "cell ix iy v0 v1 ..." (channel order), the mean of each of
+        // NX x NY cells (tests/karma_refs.py).
+        const int nx = std::max(1, std::atoi(argv[3])), ny = std::max(1, std::atoi(argv[4]));
+        std::vector<float> pixels(size_t(spec.width) * spec.height * spec.nchannels);
+        if (!in->read_image(0, 0, 0, spec.nchannels, OIIO::TypeDesc::FLOAT, pixels.data())) {
+            std::fprintf(stderr, "can't read %s: %s\n", argv[1], in->geterror().c_str());
+            return 1;
+        }
+        for (int iy = 0; iy < ny; ++iy)
+            for (int ix = 0; ix < nx; ++ix) {
+                const int x0 = ix * spec.width / nx, x1 = std::max(x0 + 1, (ix + 1) * spec.width / nx);
+                const int y0 = iy * spec.height / ny, y1 = std::max(y0 + 1, (iy + 1) * spec.height / ny);
+                std::printf("cell %d %d", ix, iy);
+                for (int c = 0; c < spec.nchannels; ++c) {
+                    double sum = 0;
+                    for (int y = y0; y < y1; ++y)
+                        for (int x = x0; x < x1; ++x)
+                            sum += pixels[(size_t(y) * spec.width + x) * spec.nchannels + c];
+                    std::printf(" %.9g", sum / (double(x1 - x0) * (y1 - y0)));
+                }
+                std::printf("\n");
+            }
+    } else if (argc >= 4) {
         std::vector<float> pixels(size_t(spec.width) * spec.height * spec.nchannels);
         const int x = std::atoi(argv[2]), y = std::atoi(argv[3]);
         if (x < 0 || y < 0 || x >= spec.width || y >= spec.height) {

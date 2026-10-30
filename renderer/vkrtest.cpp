@@ -703,6 +703,39 @@ int main()
                            std::abs(img.At(32, 32, 2) - r) < 0.01f,
                        "compact gray texture formats read as gray rgb");
             }
+
+            // eldr:textureCompression: gradients compressed (sRGB colour as
+            // BC7, gray as BC4, gray + alpha as BC5) with their mips render
+            // as the 8-bit originals within a few steps.
+            const std::pair<F, uint32_t> kinds[] = {{F::RGBA8_SRGB, 4}, {F::R8, 1}, {F::RG8, 2}};
+            for (const auto &[format, channels] : kinds) {
+                auto make = [&, format = format, channels = channels]() {
+                    auto t = std::make_shared<vkr::Texture>();
+                    t->width = t->height = 64;
+                    t->format = format;
+                    for (uint32_t y = 0; y < 64; ++y) {
+                        for (uint32_t x = 0; x < 64; ++x) {
+                            const uint8_t v[4] = {uint8_t(x * 4), uint8_t(y * 4), uint8_t((x + y) * 2), 255};
+                            t->pixels.insert(t->pixels.end(), v, v + channels);
+                        }
+                    }
+                    return t;
+                };
+                material->baseColorTex.texture = make();
+                scene.Commit();
+                const Image exact = Render(renderer, scene);
+                auto bc = make();
+                Expect(vkr::CompressTexture(*bc) && bc->levels == 7 && vkr::IsCompressed(bc->format),
+                       "CompressTexture makes a compressed mip chain");
+                material->baseColorTex.texture = bc;
+                scene.Commit();
+                const float diff = MaxDifference(Render(renderer, scene), exact);
+                std::printf("texture compression (format %d): max difference %.4f\n", int(format), diff);
+                // BC7 mode 6 fits one colour line per 4x4 block: this gradient
+                // runs red along x and green along y, so up to ~6/255 off
+                // (0.054 linear near white); gray formats are a few steps.
+                Expect(diff < (channels == 4 ? 0.07f : 0.01f), "compressed textures render as their originals");
+            }
         }
 
         {
@@ -791,7 +824,8 @@ int main()
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 1.0f);
             white->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->material = white;
 
             // Sphere: reflected radiance L R^2 / d^2 * cos.
             vkr::Light *sphere = AddSphereLight(scene, 0, 0, 0, 0.1f, 10.0f);
@@ -808,6 +842,21 @@ int main()
             img = Render(renderer, scene);
             Expect(img.At(38, 32, 0) > 0.2f, "spot: lit inside the cone (22 degrees)");
             Expect(img.At(48, 32, 0) == 0.0f, "spot: dark outside the cone (46 degrees)");
+
+            // Light linking: a light linked to a category the wall isn't in leaves it dark;
+            // the wall in it (Mesh::linkCategories) is lit as before.
+            sphere->coneAngle = 180;
+            sphere->lightLink = 7;
+            scene.Commit();
+            Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "light linking: outside the light's link: dark");
+            wall->linkCategories = {7};
+            wall->transformsDirty = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) - 0.4f) < 0.01f,
+                   "light linking: in the light's link: lit");
+            wall->linkCategories.clear();
+            wall->transformsDirty = true;
+            sphere->lightLink = 0;
             scene.RemoveLight(sphere);
 
             // Rect: 0.5 x 0.5 square facing the wall. Form factor of a square
@@ -2775,7 +2824,11 @@ int main()
             bool empty = true;
             for (uint32_t k = 0; k < A::kCount; ++k) {
                 for (uint32_t c = 0; c < A::Components(A::Kind(k)); ++c) {
-                    empty = empty && at(A::Kind(k), 2, 2, int(c)) == 0.0f;
+                    if (at(A::Kind(k), 2, 2, int(c)) != 0.0f) {
+                        std::printf("  AOV %u component %u is %g where nothing was drawn\n", k, c,
+                                    at(A::Kind(k), 2, 2, int(c)));
+                        empty = false;
+                    }
                 }
             }
             Expect(empty, "AOVs are 0 where nothing was drawn");
@@ -4347,7 +4400,7 @@ int main()
                 return x * x + y * y + z * z <= 144.0f;
             };
             const float px = (40.5f / 32.0f - 1.0f), py = (32.5f / 32.0f - 1.0f);  // the pixel's world x, y
-            double sumT = 0.0, sumHalf = 0.0;  // the dome's: half the optical depth (volume.frag)
+            double sumT = 0.0;
             int samples = 0;
             for (float z = -0.5f; z < 0.5f; z += 1.0f / 256.0f) {
                 if (!inBall(int(std::floor(px * 32 + 16)), int(std::floor(py * 32 + 16)), int(std::floor(z * 32 + 16)))) {
@@ -4359,7 +4412,6 @@ int main()
                     voxels += inBall(i, j, k) && (float(i) - 15.5f) * 3 / 32 + 2 > px ? 1 : 0;
                 }
                 sumT += std::exp(-0.5 * voxels * 3.0 / 32.0);
-                sumHalf += std::exp(-0.25 * voxels * 3.0 / 32.0);
                 ++samples;
             }
             const float expected = float(sumT / std::max(samples, 1));
@@ -4399,7 +4451,7 @@ int main()
             {
                 // The dome's light comes down from its pole (+y) through the
                 // big ball above at y 2: the small ball's top (y 0.27), as the
-                // sun's case turned by 90 degrees, at half the optical depth.
+                // sun's case turned by 90 degrees (the whole optical depth).
                 vkr::Scene above(&device);
                 above.AddVolume()->fields["density"] = ball->fields["density"];
                 vkr::Volume *upper = above.AddVolume();
@@ -4411,7 +4463,7 @@ int main()
                 frame.volume.mutualShadows = false;
                 const Image apart = Render(renderer, above, frame);
                 frame.volume.mutualShadows = true;
-                const float domeExpected = float(sumHalf / std::max(samples, 1));
+                const float domeExpected = expected;
                 const float ratio = both.At(32, 40, 0) / apart.At(32, 40, 0);
                 std::printf("mutual volume shadows (dome): top %.4f / %.4f = %.3f (expected %.3f)\n", both.At(32, 40, 0),
                             apart.At(32, 40, 0), ratio, domeExpected);
@@ -4476,6 +4528,31 @@ int main()
             Expect(img.At(28, 32, 0) == 0.5f && std::abs(img.At(36, 32, 0) - full.At(36, 32, 0)) < 0.05f,
                    "half resolution volumes stop at nearer surfaces");
             frame.volume.resolution = 1;
+            {
+                // Coloured absorption (0.2, 1, 1.8, no scattering) in front of
+                // the white emitter: half resolution keeps each channel's
+                // transmittance, not their mean.
+                auto smoky = std::make_shared<vkr::VolumeShading>();
+                std::fill(smoky->scattering, smoky->scattering + 3, 0.0f);
+                const float sooty[3] = {0.2f, 1.0f, 1.8f};
+                std::copy(sooty, sooty + 3, smoky->absorption);
+                ball->shading = smoky;
+                scene.Commit();
+                const Image fullColour = Render(renderer, scene, frame);
+                frame.volume.resolution = 2;
+                const Image halfColour = Render(renderer, scene, frame);
+                frame.volume.resolution = 1;
+                ball->shading = nullptr;
+                scene.Commit();
+                std::printf("half resolution coloured transmittance %.3f %.3f %.3f, full %.3f %.3f %.3f\n",
+                            halfColour.At(36, 32, 0), halfColour.At(36, 32, 1), halfColour.At(36, 32, 2),
+                            fullColour.At(36, 32, 0), fullColour.At(36, 32, 1), fullColour.At(36, 32, 2));
+                bool same = fullColour.At(36, 32, 0) > 3.0f * fullColour.At(36, 32, 2);
+                for (int c = 0; c < 3; ++c) {
+                    same = same && std::abs(halfColour.At(36, 32, c) - fullColour.At(36, 32, c)) < 0.05f;
+                }
+                Expect(same, "half resolution volumes keep coloured transmittance");
+            }
 
             // Under transparency: black glass (opacity 0.5) in front of the
             // glowing ball's left half dims it to half; glass behind its
@@ -4552,6 +4629,32 @@ int main()
                 frame.rtTranslucentShadows = true;
                 frame.rtShadows = false;
             }
+            // Coloured smoke: absorption (0.2, 1, 1.8) per unit of density
+            // (mean 1, no scattering) shadows each channel by its own
+            // transmittance, exp(-2 * 0.74 * a), in the maps and traced.
+            auto tinted = std::make_shared<vkr::VolumeShading>();
+            std::fill(tinted->scattering, tinted->scattering + 3, 0.0f);
+            const float soot[3] = {0.2f, 1.0f, 1.8f};
+            std::copy(soot, soot + 3, tinted->absorption);
+            smoke->shading = tinted;
+            shadowed.Commit();
+            for (int traced = 0; traced <= (device.rayTracing ? 1 : 0); ++traced) {
+                frame.rtShadows = traced != 0;
+                const Image coloured = Render(renderer, shadowed, frame);
+                frame.rtShadows = false;
+                bool match = true;
+                std::printf("coloured volume shadow (%s):", traced ? "traced" : "maps");
+                for (int c = 0; c < 3; ++c) {
+                    const float r = coloured.At(3, 32, c) / uncast.At(3, 32, c), e = std::exp(-1.48f * soot[c]);
+                    std::printf(" %.3f (expected %.3f)", r, e);
+                    match = match && std::abs(r - e) < 0.05f;
+                }
+                std::printf("\n");
+                Expect(match, traced ? "translucent shadows traced: coloured smoke casts coloured shadows"
+                                     : "coloured smoke casts coloured shadows");
+            }
+            smoke->shading = nullptr;
+            shadowed.Commit();
 
             // The same from a small sphere light on the sun's line, 8 away
             // from the ground point (the ray to pixel 3 crosses the ball
@@ -4584,6 +4687,16 @@ int main()
                 Expect(std::abs(tracedLamp - lampRatio) < 0.06f,
                        "translucent shadows traced: a volume shadows a local light's light as the maps do");
             }
+            puff->shading = tinted;  // coloured smoke in the atlas tiles' tint too
+            lamp.Commit();
+            const Image lampColoured = Render(renderer, lamp, frame);
+            const float lampRed = lampColoured.At(3, 32, 0) / lampUnlit.At(3, 32, 0),
+                        lampBlue = lampColoured.At(3, 32, 2) / lampUnlit.At(3, 32, 2);
+            std::printf("coloured local volume shadow %.3f %.3f (expected %.3f %.3f)\n", lampRed, lampBlue,
+                        std::exp(-1.48f * soot[0]), std::exp(-1.48f * soot[2]));
+            Expect(std::abs(lampRed - std::exp(-1.48f * soot[0])) < 0.06f &&
+                       std::abs(lampBlue - std::exp(-1.48f * soot[2])) < 0.06f,
+                   "coloured smoke casts coloured shadows from local lights");
         }
 
         {
@@ -4856,7 +4969,7 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
-            // Saving prunes the other shader builds' caches of this driver
+            // Saving keeps the newest 3 other builds' caches of this driver
             // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
             std::filesystem::path current;
@@ -4866,14 +4979,22 @@ int main()
                 }
             }
             const std::string name = current.filename().string();
-            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
-                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
-            std::filesystem::copy_file(current, stale, cacheError);
+            const std::string stem = name.substr(0, name.rfind('-') + 1);
+            const std::filesystem::path other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            for (int i = 1; i <= 4; ++i) {
+                std::filesystem::copy_file(current, cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin"),
+                                           cacheError);
+            }
             std::filesystem::copy_file(current, other, cacheError);
             device.SavePipelineCache();
-            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
-                       std::filesystem::exists(other),
-                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            int kept = 0;
+            for (int i = 1; i <= 4; ++i) {
+                const auto stale = cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin");
+                kept += std::filesystem::exists(stale);
+                std::filesystem::remove(stale, cacheError);
+            }
+            Expect(kept == 3 && std::filesystem::exists(current) && std::filesystem::exists(other),
+                   "pipeline cache: saving keeps this driver's newest 3 other caches, not older ones; other drivers' stay");
             std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {

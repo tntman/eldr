@@ -37,9 +37,10 @@ public:
     // history (the TAA image) at `seed` samples' weight. Adaptive with a
     // `threshold` > 0: pixels whose mean's standard error (of the luma,
     // times `exposure`, compressed) fell under it after `minSamples` take
-    // no more samples; ActivePixels() counts the others.
+    // no more samples; ActivePixels() counts the others. `tileStamp` > 0:
+    // the 16 x 16 tiles with a pixel that took this sample get it in Tiles().
     void RecordFilm(VkCommandBuffer cmd, const float offset[2], float radius, uint32_t mode, float seed,
-                    float threshold = 0.0f, uint32_t minSamples = 0, float exposure = 1.0f);
+                    float threshold = 0.0f, uint32_t minSamples = 0, float exposure = 1.0f, uint32_t tileStamp = 0);
     // After the frame's fence: pixels the last adaptive film still sampled.
     uint32_t ActivePixels() const { return *static_cast<const uint32_t *>(_active.mapped); }
 
@@ -55,6 +56,10 @@ public:
 
     // The film's per-pixel weight and sample count (GENERAL).
     VkImageView FilmWeights() const { return _weights.view; }
+    // Per 16 x 16 tile (rows of TilesAcross()) the last RecordFilm tileStamp
+    // a pixel of it took a sample with (tiles.glsl reads them).
+    VkBuffer Tiles() const { return _tiles.buffer; }
+    uint32_t TilesAcross() const { return (_width + 15) / 16; }
 
 private:
     void _Destroy();
@@ -79,6 +84,7 @@ private:
     VkDescriptorSet _filmSet = VK_NULL_HANDLE;
     Image _sums, _weights;
     Buffer _active;  // film.comp's count of pixels still sampling (host-visible)
+    Buffer _tiles;   // film.comp's tile stamps (device)
     uint32_t _width = 0, _height = 0;
     uint32_t _inWidth = 0, _inHeight = 0;  // SetInput's
 };

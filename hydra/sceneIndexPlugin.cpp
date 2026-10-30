@@ -33,6 +33,7 @@
 #include "pxr/imaging/hd/sceneIndexPluginRegistry.h"
 #include "pxr/imaging/hd/sceneIndexPrimView.h"
 #include "pxr/imaging/hd/tokens.h"
+#include "pxr/imaging/hdsi/lightLinkingSceneIndex.h"
 #include "pxr/imaging/hdsi/implicitSurfaceSceneIndex.h"
 #include "pxr/imaging/hdsi/renderSettingsFilteringSceneIndex.h"
 #include "pxr/imaging/hdsi/velocityMotionResolvingSceneIndex.h"
@@ -536,8 +537,10 @@ protected:
         // active, so the render products are written (renderProducts.h).
         // Velocities resolve into the points and instance samples that
         // sampled motion and deformation blur read (after the implicit
-        // surfaces, as Storm's).
-        return _SettingsSceneIndex::New(HdsiVelocityMotionResolvingSceneIndex::New(_VelocityModeSceneIndex::New(
+        // surfaces, as Storm's). Light linking: UsdLux collection:lightLink
+        // and shadowLink as Hydra categories (lights' lightLink/shadowLink,
+        // rprims' categories), as hdPrman.
+        return HdsiLightLinkingSceneIndex::New(_SettingsSceneIndex::New(HdsiVelocityMotionResolvingSceneIndex::New(_VelocityModeSceneIndex::New(
             HdsiImplicitSurfaceSceneIndex::New(
                 _SkinningSceneIndex::New(HdsiRenderSettingsFilteringSceneIndex::New(inputScene, nullptr)),
                 HdRetainedContainerDataSource::New(
@@ -546,7 +549,7 @@ protected:
                     HdPrimTypeTokens->cone, toMesh,
                     HdPrimTypeTokens->cylinder, toMesh,
                     HdPrimTypeTokens->capsule, toMesh,
-                    HdPrimTypeTokens->plane, toMesh)))));
+                    HdPrimTypeTokens->plane, toMesh))))), nullptr);
     }
 };
 

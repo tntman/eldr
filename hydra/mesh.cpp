@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -210,7 +211,8 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
            HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags;
+           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags |
+           HdChangeTracker::DirtyCategories;
 }
 
 void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -245,6 +247,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         asSubdivision = HdVkPrimvar<bool>(sceneDelegate, id, renderAsSubdivision, false);
     }
     if (topologyDirty || (*dirtyBits & HdChangeTracker::DirtySubdivTags) || asSubdivision != _asSubdivision) {
+        HdVkTimedCall part(HdVkCallTimes::kSyncTopology);
         HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
         if (asSubdivision && topology.GetScheme() == PxOsdOpenSubdivTokens->none) {
             topology = HdMeshTopology(PxOsdOpenSubdivTokens->catmullClark, topology.GetOrientation(),
@@ -261,6 +264,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     }
     const bool pointsDirty = HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->points);
     if (pointsDirty) {
+        HdVkTimedCall part(HdVkCallTimes::kSyncPoints);
         const VtValue value = GetPoints(sceneDelegate);
         VtVec3fArray points = value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>()
                                                               : VtVec3fArray();
@@ -273,8 +277,11 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // Instancers are synced by the rprims that use them (as in hdEmbree);
     // the helper locks, so parallel rprim syncs are fine. Before the refine
     // level: dicing by screen size measures every instance.
-    _UpdateInstancer(sceneDelegate, dirtyBits);
-    HdInstancer::_SyncInstancerAndParents(sceneDelegate->GetRenderIndex(), GetInstancerId());
+    {
+        HdVkTimedCall part(HdVkCallTimes::kSyncInstancer);
+        _UpdateInstancer(sceneDelegate, dirtyBits);
+        HdInstancer::_SyncInstancerAndParents(sceneDelegate->GetRenderIndex(), GetInstancerId());
+    }
     // Subdivision surfaces: refined to the display style's level (usdview's
     // Complexity), the mesh's own primvar, or for its size on screen
     // (eldr:screenDicing) when flattened. The render delegate re-dirties the
@@ -306,6 +313,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (uvName != _uvName ||
         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->normals) ||
         HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, uvName)) {
+        std::optional<HdVkTimedCall> part(HdVkCallTimes::kSyncPrimvars);
         _uvName = uvName;
         HdInterpolation normalsInterp = _normalsInterp, uvsInterp = _uvsInterp;
         const VtValue normals = FindPrimvar(sceneDelegate, id, HdTokens->normals, &normalsInterp)
@@ -335,6 +343,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             std::copy(c.data(), c.data() + 3, m.color);
         }
 
+        part.emplace(HdVkCallTimes::kSyncSkin);
         auto get = [&](TfToken const &name) { return sceneDelegate->Get(id, name); };
         const VtVec2fArray influences = get(HdSkinningInputTokens->influences).GetWithDefault(VtVec2fArray());
         const int perPoint = get(HdSkinningInputTokens->numInfluencesPerComponent).GetWithDefault(0);
@@ -364,6 +373,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         _skelToPrim = get(HdSkinningInputTokens->skelLocalToCommonSpace).GetWithDefault(GfMatrix4d(1.0)) *
                       get(HdSkinningInputTokens->commonSpaceToPrimLocal).GetWithDefault(GfMatrix4d(1.0));
         jointsDirty = true;
+        part.emplace(HdVkCallTimes::kSyncShutter);
         _SampleShutterPose(sceneDelegate);
         // The joint count is baked into the flattened influences (index range).
         const size_t joints = _numJoints > 0 ? size_t(_numJoints) : _skinningXforms.size();
@@ -387,6 +397,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     // with any primvar change; flattened with the geometry).
     // ponytail: like the uv set, a material rewired to other primvars takes
     // effect with the mesh's next primvar, topology or binding change.
+    std::optional<HdVkTimedCall> programPart(HdVkCallTimes::kSyncProgram);
     const std::vector<TfToken> programNames = _ProgramPrimvarNames(sceneDelegate);
     const bool programNamesChanged = programNames != _programPrimvarNames;
     if (programNamesChanged || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id) ||
@@ -421,8 +432,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                           : flag.IsHolding<int>()  ? flag.UncheckedGet<int>() != 0
                                                    : false;
     }
+    programPart.reset();
     // Subdivision surfaces flatten their refined mesh (subdivision.cpp).
     if (geometryDirty && !_FlattenRefined()) {
+        HdVkTimedCall part(HdVkCallTimes::kSyncFlatten);
         _Flatten();
         _SplitSubsets();
     }
@@ -430,7 +443,12 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsTransformDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        HdVkTimedCall part(HdVkCallTimes::kSyncTransforms);
         HdVkSetTransforms(sceneDelegate, id, GetInstancerId(), m);
+    }
+    if ((*dirtyBits & HdChangeTracker::DirtyCategories) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        HdVkSetLinkCategories(sceneDelegate, id, GetInstancerId(), m);
     }
     // Per-instance primvars (the instancer's), in the transforms' order.
     if (programNamesChanged || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
@@ -450,6 +468,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     }
     _ApplyInstancePrimvars(m);
     if (jointsDirty || geometryDirty) {
+        HdVkTimedCall part(HdVkCallTimes::kSyncJoints);
         _UpdateJoints();
     }
 
@@ -460,6 +479,14 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         m.holdout = HdVkHoldout(sceneDelegate, id);
         m.rays = HdVkRays(sceneDelegate, id);
+        // Caustics: Karma's caster switch and roughness clamp (eldr: twins
+        // first); receiving is Eldr's own (unset: all but refracting glass).
+        m.causticsCast = HdVkObjectPrimvar<bool>(sceneDelegate, id, "object:causticsenable", false);
+        m.causticsRoughness =
+            std::clamp(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:causticsroughnessclamp", 0.2f), 0.0f, 1.0f);
+        const std::optional<bool> receive =
+            HdVkPrimvarIfSet<bool>(sceneDelegate, id, TfToken("eldr:object:causticsreceive"));
+        m.causticsReceive = receive ? int8_t(*receive) : int8_t(-1);
     }
 
     // Sprims sync before rprims, so the material already exists here.
@@ -471,6 +498,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         m.material = material ? material->Get() : nullptr;
     }
     _SyncSubsets(sceneDelegate);
+    HdVkTimedCall part(HdVkCallTimes::kSyncShare);
     // A crowd's agents: one copy of their arrays rather than one each.
     _scene->ShareEarly(m);
     for (vkr::Mesh *subset : _subsetMeshes) {
@@ -600,6 +628,11 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.transforms = m.transforms;
             d.transformsDirty = true;
         }
+        if (d.linkCategories != m.linkCategories || d.instanceLinkCategories != m.instanceLinkCategories) {
+            d.linkCategories = m.linkCategories;
+            d.instanceLinkCategories = m.instanceLinkCategories;
+            d.transformsDirty = true;
+        }
         if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights ||
             d.prevSkinningTransforms != m.prevSkinningTransforms || d.prevBlendWeights != m.prevBlendWeights) {
             d.skinningTransforms = m.skinningTransforms;
@@ -614,6 +647,9 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         d.visible = m.visible;
         d.holdout = m.holdout;
         d.rays = m.rays;
+        d.causticsCast = m.causticsCast;
+        d.causticsReceive = m.causticsReceive;
+        d.causticsRoughness = m.causticsRoughness;
         d.tag = m.tag;
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
@@ -702,6 +738,7 @@ bool SampleShutter(HdSceneDelegate *delegate, SdfPath const &id, TfToken const &
     *atClose = samples.Resample(close);
     return true;
 }
+
 
 } // namespace
 

@@ -37,8 +37,10 @@
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 #ifdef _WIN32
 #include <corecrt_startup.h>  // _crt_atexit
 #endif
@@ -70,23 +72,136 @@ const std::vector<HdVkExtraAov> &HdVkExtraAovs()
         {k.hitPCamera, A::kPositionEye, HdFormatFloat32Vec3},
         {k.hitPz, A::kDepth, HdFormatFloat32},
         {k.baseColor, A::kAlbedo, HdFormatFloat32Vec3},
-        {k.diffuseAlbedo, A::kDiffuseAlbedo, HdFormatFloat32Vec3},
-        {k.directEmission, A::kEmission, HdFormatFloat32Vec3},
-        // Light splits as Karma's light path expressions name them. Eldr's
-        // "direct" is its lights' (distant, sphere, rect, disk); the dome,
-        // probes, reflections and GI count as indirect (Karma counts the
-        // dome as a light). Emission seen in reflections isn't tracked.
-        {k.combinedEmission, A::kEmission, HdFormatFloat32Vec3},
-        {k.directDiffuse, A::kDirectDiffuse, HdFormatFloat32Vec3},
-        {k.indirectDiffuse, A::kIndirectDiffuse, HdFormatFloat32Vec3},
-        {k.combinedDiffuse, A::kCombinedDiffuse, HdFormatFloat32Vec3},
-        {k.directGlossy, A::kDirectGlossy, HdFormatFloat32Vec3},
-        {k.indirectGlossy, A::kIndirectGlossy, HdFormatFloat32Vec3},
-        {k.combinedGlossy, A::kCombinedGlossy, HdFormatFloat32Vec3},
+        // Light path expressions: HdVkFindAov.
         {k.cryptoObject, A::kCryptoObject, HdFormatFloat32Vec3},
         {k.cryptoMaterial, A::kCryptoMaterial, HdFormatFloat32Vec3},
+        // The beauty before eldr:denoise (once the film converged).
+        {k.beautyRaw, A::kBeautyRaw, HdFormatFloat32Vec4},
+        // Caustic photons' light (eldr:caustics), part of indirect diffuse;
+        // Karma has no AOV of its own for it (its LPEs below).
+        {k.caustics, A::kCaustics, HdFormatFloat32Vec3},
     };
     return aovs;
+}
+
+namespace {
+
+std::mutex lightGroupsMutex;
+std::vector<std::string> lightGroups;
+
+// The Aovs::Kind of a light path expression as Karma writes them (its
+// Render Settings LOP's AOVs, husd/karmautils.py), -1 for any other. Not a
+// general LPE engine: the forms Karma writes, spaces ignored. A per-light
+// variant (Karma replaces L, or [LO], with <L.'tag'>) of the beauty is that
+// tag's light group.
+// ponytail: per-light variants of the other splits (C<RD><L.'tag'>) aren't
+// split by group; ask for them and the var warns.
+int LpeKind(std::string e)
+{
+    using A = vkr::Aovs;
+    e.erase(std::remove(e.begin(), e.end(), ' '), e.end());
+    std::string tag;
+    if (const size_t at = e.find("<L.'"); at != std::string::npos) {
+        const size_t end = e.find("'>", at + 4);
+        if (end == std::string::npos) {
+            return -1;
+        }
+        tag = e.substr(at + 4, end - at - 4);
+        e = e.substr(0, at) + "L" + e.substr(end + 2);
+    }
+    if (!tag.empty()) {
+        const int group = e == "C.*L" ? HdVkLightGroup(tag) : -1;
+        return group < 0 ? -1 : int(A::kLightGroup0) + group;
+    }
+    // Eldr's "direct" is its lights' and (eldr:splitDomeDirect, Karma's
+    // convention) the dome's unblocked light; GI, probes and reflections
+    // are indirect. Emission seen in reflections isn't tracked.
+    static const std::map<std::string, A::Kind> kinds = {
+        {"CDA", A::kDiffuseAlbedo}, {"C[DV]A", A::kDiffuseAlbedo},
+        {"CO", A::kEmission}, {"C.*O", A::kEmission},
+        {"C<RD>L", A::kDirectDiffuse}, {"C<RD>.+L", A::kIndirectDiffuse}, {"C<RD>.*L", A::kCombinedDiffuse},
+        {"C<RG>L", A::kDirectGlossy}, {"C<RG>.+L", A::kIndirectGlossy},
+        {"C<RG>.*L", A::kCombinedGlossy}, {"C<RG>.*[LO]", A::kCombinedGlossy},
+        {"C<TG>.*L", A::kTransmission}, {"C<TG>.*[LO]", A::kTransmission},
+        {"C<TD>.*L", A::kSubsurface}, {"C<TD>.*[LO]", A::kSubsurface},
+        {"C<...'coat'>.*L", A::kCoat}, {"C<RG'coat'>.*L", A::kCoat},
+        {"CV.*L", A::kVolume}, {"CVL", A::kVolume}, {"CV.*[LO]", A::kVolume},
+        // Caustics: diffuse seen, then glass or metal on the way to a light.
+        {"C<RD>.+<TS>L", A::kCaustics}, {"C<RD><TS>.*L", A::kCaustics}, {"C<RD>[<TS><RS>].*L", A::kCaustics},
+        {"C<RD>[<TS><RS>]+L", A::kCaustics},
+        {"shadow;C.*[LO]", A::kShadow}, {"shadow;C.*L", A::kShadow},
+        {"holdouts;shadow;CDL", A::kHoldoutShadow}, {"holdouts;shadow;C.*[LO]", A::kHoldoutShadow},
+    };
+    const auto it = kinds.find(e);
+    return it == kinds.end() ? -1 : int(it->second);
+}
+
+} // namespace
+
+int HdVkLightGroup(const std::string &tag)
+{
+    std::lock_guard<std::mutex> lock(lightGroupsMutex);
+    const auto it = std::find(lightGroups.begin(), lightGroups.end(), tag);
+    if (it != lightGroups.end()) {
+        return int(it - lightGroups.begin());
+    }
+    if (lightGroups.size() >= vkr::Aovs::kMaxLightGroups) {
+        TF_WARN("Eldr: light group '%s' left out: at most %u light groups", tag.c_str(), vkr::Aovs::kMaxLightGroups);
+        return -1;
+    }
+    lightGroups.push_back(tag);
+    return int(lightGroups.size()) - 1;
+}
+
+std::vector<std::string> HdVkLightGroups()
+{
+    std::lock_guard<std::mutex> lock(lightGroupsMutex);
+    return lightGroups;
+}
+
+uint32_t HdVkLinkCategory(TfToken const &category, bool light)
+{
+    static std::mutex mutex;
+    static std::unordered_map<TfToken, uint32_t, TfToken::HashFunctor> ids;
+    static std::unordered_set<uint32_t> lightIds;
+    if (category.IsEmpty()) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(mutex);
+    const uint32_t id = ids.emplace(category, uint32_t(ids.size()) + 1).first->second;
+    if (light && lightIds.insert(id).second && lightIds.size() == vkr::Scene::kMaxLinkCategories + 1) {
+        TF_WARN("Eldr: more than %zu light link collections; lights past them light and shadow everything",
+                vkr::Scene::kMaxLinkCategories);
+    }
+    return id;
+}
+
+std::vector<uint32_t> HdVkLinkCategories(VtArray<TfToken> const &categories)
+{
+    std::vector<uint32_t> ids;
+    for (TfToken const &c : categories) {
+        if (const uint32_t id = HdVkLinkCategory(c)) {
+            ids.push_back(id);
+        }
+    }
+    return ids;
+}
+
+bool HdVkFindAov(TfToken const &name, HdVkExtraAov *found)
+{
+    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
+        if (aov.name == name) {
+            *found = aov;
+            return true;
+        }
+    }
+    const std::string &text = name.GetString();
+    const int kind = TfStringStartsWith(text, "lpe:") ? LpeKind(text.substr(4)) : -1;
+    if (kind < 0) {
+        return false;
+    }
+    *found = {name, uint32_t(kind), HdFormatFloat32Vec3};
+    return true;
 }
 
 bool HdVkRenderVarSource(const HdRenderSettings *settings, TfToken const &var, std::string *name, std::string *type)
@@ -193,6 +308,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     _materialFallbacks = std::make_unique<HdVkMaterialFallbacks>();
     // Apps (usdview's settings menu) read these back before ever setting them.
     _PopulateDefaultSettings(GetRenderSettingDescriptors());
+    _textures->compress = TextureCompression();  // husk hands its settings to the constructor
 }
 
 HdVkRenderDelegate::~HdVkRenderDelegate()
@@ -327,13 +443,11 @@ HdAovDescriptor HdVkRenderDelegate::KnownAovDescriptor(TfToken const &name)
     if (name == HdAovTokens->primId || name == HdAovTokens->instanceId) {
         return HdAovDescriptor(HdFormatInt32, false, VtValue(-1));
     }
-    for (const HdVkExtraAov &aov : HdVkExtraAovs()) {
-        if (name == aov.name) {
-            const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
-                               : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
-                                                                   : VtValue(GfVec3f(0.0f));
-            return HdAovDescriptor(aov.format, false, zero);
-        }
+    if (HdVkExtraAov aov; HdVkFindAov(name, &aov)) {
+        const VtValue zero = aov.format == HdFormatFloat32       ? VtValue(0.0f)
+                           : aov.format == HdFormatFloat32Vec2 ? VtValue(GfVec2f(0.0f))
+                                                               : VtValue(GfVec3f(0.0f));
+        return HdAovDescriptor(aov.format, false, zero);
     }
     return HdAovDescriptor();
 }
@@ -368,6 +482,15 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const auto &t2 = *HdVkRenderSettingsTokens;
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
+    // Any setting may change whether materials want compressed textures
+    // (the mode, final quality, who renders): they fetch them again.
+    if (_textures) {
+        const bool compress = TextureCompression();
+        if (_textures->compress.exchange(compress) != compress && _terminalSceneIndex) {
+            HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->material},
+                           {HdDataSourceLocator(TfToken("material"))});  // HdMaterialSchema's (its header breaks here)
+        }
+    }
     // What the host sets (Houdini's viewport: houdini:*, renderCameraPath; husk: husk:*).
     if (static const bool debug = TfGetenvBool("HDVK_DEBUG_AOVS", false);
         debug && changed && !TfStringStartsWith(key.GetString(), "eldr:")) {
@@ -388,7 +511,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
         } else if (key == t2.pointSprites) {
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->points}, {HdPrimvarsSchema::GetDefaultLocator()});
         } else if (key == t.motionBlur || key == t2.motionBlurTimeSamples || key == t2.deformationBlur ||
-                   key == t2.sampledMotion || key == t.postProcess) {
+                   key == t2.sampledMotion || key == t.postProcess || key == t2.volumeVelocityBlur) {
             // The motion a commit hands the renderer is gone after it (the
             // renderer keeps it while the blur is on): the prims and the
             // camera sample their motion again, moved or not
@@ -677,6 +800,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
         passes[name] = ms;
     }
     stats["gpuPassMs"] = passes;
+    stats["denoiseMs"] = frame.denoiseMs;  // eldr:denoise's last run (CPU)
     stats["trianglesDrawn"] = size_t(frame.triangles);
     stats["trianglesTotal"] = size_t(gpu.triangleCount);
     stats["instancesDrawn"] = size_t(frame.instances);
@@ -808,6 +932,16 @@ bool HdVkRenderDelegate::Offline() const
                                   !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
 }
 
+// eldr:textureCompression: 0 off, 1 interactive only (exact in final
+// quality and offline, as Karma's), 2 always; a bool is 0 or 2.
+bool HdVkRenderDelegate::TextureCompression() const
+{
+    const VtValue v = GetRenderSetting(HdVkRenderSettingsTokens->textureCompression);
+    const int mode = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2 : 0)
+                                         : std::clamp(GetRenderSetting<int>(HdVkRenderSettingsTokens->textureCompression, 1), 0, 2);
+    return mode == 2 || (mode == 1 && !GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) && !Offline());
+}
+
 bool HdVkRenderDelegate::ScreenDicing() const
 {
     return GetRenderSetting<bool>(HdVkRenderSettingsTokens->screenDicing, kHdVkScreenDicing) &&
@@ -817,6 +951,7 @@ bool HdVkRenderDelegate::ScreenDicing() const
 void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
 {
     _dicingView = view;
+    _keepMotion = true;
     if (_terminalSceneIndex) {
         HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
                        {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
@@ -866,9 +1001,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB, RAM %.1f GB (peak %.1f)",
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
                   total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
-                  double(_device ? _device->Memory().deviceLocal : 0) / gb, double(ram.resident) / gb,
+                  double(_device ? _device->Memory().deviceLocal : 0) / gb,
+                  double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);
     _loadLine = text;
     std::printf("Eldr: %s\n", text);  // husk's log
@@ -886,8 +1022,13 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     _committedEdits = edits;
     _committedSettings = settings;
     _motionSettingsChanged = false;  // the prims synced for it
+    HdVkNewSyncPass();  // the prims' shutter samples were for this time
+#ifdef HDVK_VOLUMES
+    HdVkReleaseFiles();  // the fields that synced read their files
+#endif
     try {
-        _scene->Commit(false, unchanged);
+        _scene->Commit(_keepMotion, unchanged);
+        _keepMotion = false;
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::lock_guard<std::mutex> lock(_loadMutex);
         _loadSyncMs += _commitMs;

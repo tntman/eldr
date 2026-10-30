@@ -29,8 +29,17 @@ struct RayTracingData {
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
     float gatherSamples[8][4];  // this film sample's gather directions (Work::gatherSamples), two per row
     float gatherInfo[4];        // x: gather rays per pixel, y: denoise strength (0: off)
+    float denoise[4];           // x: traced shadows' largest filter radius (pixels), y: traced reflections'
+                                // filter scale, z: the shadow image's first layer of penumbra radii
+    // Caustics (Work::caustics): x this sample's gather radius, y the hash
+    // grid's cell size, z how far before the casters' sphere photons start
+    float caustics[4];
+    float causticSphere[4];      // the casters' bounding sphere: centre, radius
+    uint32_t causticInfo[4];     // photons per light, lights, hash cells (power of 2), photon capacity
+    uint32_t causticLights[8];   // the lights sending them
 };
 constexpr uint32_t kMaxGatherRays = 16;
+constexpr uint32_t kMaxCausticLights = 8;
 // TLAS instance masks (shaders/gi.glsl).
 constexpr uint32_t kRtMaskSurfaces = 1, kRtMaskTranslucent = 2, kRtMaskShadow = 4, kRtMaskCamera = 8;
 
@@ -59,6 +68,9 @@ public:
         bool refraction = false;
         uint32_t refractionBounces = 4;
         bool refractionDisplacement = false;  // displaced glass bends them (needs displacement)
+        // The first ray looks for glass only, in front of the prepass depth
+        // (eldr:rtRefractionClip); off: through every surface, as before.
+        bool refractionClip = true;
         uint32_t shadowLights[kMaxRtShadowLights] = {};  // per channel of the shadow image, kNone after the last
         float shadowSample[2] = {};  // the sample dimensions' point on the light shapes (frame.sampleInfo.x)
         // Translucent casters tint the traced shadows (Frame::rtTranslucentShadows):
@@ -90,6 +102,9 @@ public:
         uint32_t gatherRays = 1;
         float gatherSamples[kMaxGatherRays][2] = {};
         float gatherDenoise = 1.0f;
+        // mesh.frag's filters of the traced shadows (radius in pixels) and
+        // reflections (scale of their roughness radius); 0: off.
+        float shadowDenoise = 0.0f, reflectionDenoise = 1.0f;
         // Skinned instances that block rays (Scene::LargestSkinned), in TLAS
         // room for skinnedCapacity of them.
         std::vector<Scene::SkinnedInstance> skinned;
@@ -107,12 +122,27 @@ public:
         // with displacementGraphs (Frame::displacementGraphs).
         float displacement = 0.0f;
         bool displacementGraphs = true;
+        // Caustics (rt_refraction.rgen's PHOTONS, caustics.glsl): every
+        // sample, causticPhotons photons from each light in causticLights
+        // aimed at the casters' bounding sphere (centre, radius) pass their
+        // glass and metal (Scene's DrawInfo::caustics) and land on a
+        // receiver, into a hash grid that mesh.frag gathers from within
+        // causticRadius (this sample's). sceneExtent: how far before the
+        // sphere a sun's photons start.
+        bool caustics = false;
+        uint32_t causticPhotons = 65536;
+        std::vector<uint32_t> causticLights;
+        float causticSphere[4] = {};
+        float causticRadius = 0.0f;
+        float sceneExtent = 0.0f;
+        // Static BLASes are compacted after building (Frame::rtCompaction).
+        bool compaction = true;
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
     // images for `width` x `height`, and writes this frame's uniforms.
     void Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height);
-    // Writes bindings 52..59 and 86 of the scene set (see shaders/rt.glsl, gi.glsl).
+    // Writes bindings 52..59, 86, 87 and 92 of the scene set (see shaders/rt.glsl, gi.glsl, caustics.glsl).
     void UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu);
     // Records the TLAS build (when the scene changed) and the traces;
     // `pass` closes a GPU timestamp after each part.
@@ -149,6 +179,7 @@ private:
     struct Block {
         Buffer buffer;
         RangeAllocator ranges;
+        uint32_t used = 0;  // BLASes in it; a block compaction emptied is freed (no buffer)
     };
     // Skinned instances (rt_skin.comp poses their vertices): a BLAS each,
     // built once and refit every frame.
@@ -159,10 +190,11 @@ private:
         VkDeviceSize buildScratch = 0, updateScratch = 0;
         bool built = false;
     };
-    Blas _CreateBlas(VkDeviceSize bytes);
+    Blas _CreateBlas(VkDeviceSize bytes, int onlyBlock = -1);
     VkAccelerationStructureGeometryKHR _Triangles(VkDeviceAddress vertices, VkDeviceSize stride, uint32_t vertexCount,
                                                   VkDeviceAddress indices) const;
     void _BuildBlases(const Scene::Gpu &gpu);
+    void _Compact(const std::vector<uint64_t> &versions, const std::vector<VkDeviceSize> &sizes);
     void _DestroyBlas(Blas &blas);
     VkDeviceSize _PrepareSkinned(const Scene::Gpu &gpu);
     // A displaced BLAS to make: of mesh slot `slot`, for one instance slot
@@ -185,6 +217,7 @@ private:
     void _CreatePipelines(VkDescriptorSetLayout sceneLayout);  // layouts and the set
     void _EnsurePipelines();
     void _FitProbes(const Scene::Gpu &gpu);
+    void _PrepareCaustics(RayTracingData &d);
 
     Device &_dev;
     std::unique_ptr<Functions> _fn;
@@ -198,7 +231,8 @@ private:
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
     VkPipeline _displacePipeline = VK_NULL_HANDLE;  // rt_displace.comp
     Buffer _sbt;  // shader binding table: raygen, miss and hit regions
-    VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _raygenRefraction{}, _miss{}, _hit{}, _callable{};
+    VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _raygenRefraction{}, _raygenPhotons{}, _miss{}, _hit{},
+        _callable{};
 
     // BLASes by Scene::Gpu::SlotGeometry::version, sub-allocated from blocks.
     std::unordered_map<uint64_t, Blas> _blas;
@@ -244,6 +278,10 @@ private:
     Buffer _uniforms;  // RayTracingData
     Image _shadowImage, _reflectionImage;
     Image _refractionImage;  // with Work::refraction: rt_refraction.rgen's
+    // With Work::caustics: the photons' count, hash grid heads and photons
+    // (caustics.glsl), binding 92 of the scene set.
+    Buffer _photons;
+    uint32_t _photonCells = 0, _photonCapacity = 0;
     Image _gatherImage;      // with Work::gather: rt_pixels.rgen's
     // With Work::gather: gather_denoise.comp's first pass, and the normals
     // it weighs by (octahedral geometric, shading; rt_pixels.rgen's).

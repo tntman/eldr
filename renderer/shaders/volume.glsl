@@ -26,6 +26,9 @@ struct Volume {
     uvec4 lutSlots;        // the grid each factor reads (as grids; 4: none, it reads 0)
     vec4 lutLow;           // table index = (value - low) * scale
     vec4 lutScale;
+    uvec4 velocity;        // velocity grids (Vec3f: x; float components: xyz); w: 0 none, 1 Vec3f, 3 floats
+    vec4 toVelocity[3];    // density index -> velocity index
+    vec4 advect[3];        // velocity -> density index offset per frame
 };
 layout(std430, set = 0, binding = 65) readonly buffer Volumes { Volume volumes[]; };
 
@@ -44,13 +47,22 @@ vec3 Lut(uint offset, float low, float scale, float v)
     return mix(x, y, f - float(i));
 }
 
-// A volume's extinction table (lutOffsets.w: kVolumeLut floats) at density
-// rho, the nearest entry: the mean extinction there (before the settings'
-// multiplier). Without a table that is rho times medium.x.
+// A volume's extinction table (lutOffsets.w: kVolumeLut entries of 4
+// floats) at density rho, the nearest entry: rgb the extinction per channel
+// there, w their mean (before the settings' multiplier). Without a table
+// that is rho times scattering + absorption, and medium.x.
+uint ExtinctionEntry(uint table, float low, float scale, float rho)
+{
+    return table + 4u * uint(clamp((rho - low) * scale + 0.5, 0.0, float(kVolumeLut - 1u)));
+}
 float ExtinctionTable(uint table, float low, float scale, float rho)
 {
-    return uintBitsToFloat(pnanovdb_buf_data[table + uint(clamp((rho - low) * scale + 0.5, 0.0,
-                                                                 float(kVolumeLut - 1u)))]);
+    return uintBitsToFloat(pnanovdb_buf_data[ExtinctionEntry(table, low, scale, rho) + 3u]);
+}
+vec3 ExtinctionTableRgb(uint table, float low, float scale, float rho)
+{
+    uint a = ExtinctionEntry(table, low, scale, rho);
+    return uintBitsToFloat(uvec3(pnanovdb_buf_data[a], pnanovdb_buf_data[a + 1u], pnanovdb_buf_data[a + 2u]));
 }
 
 vec3 Row3(vec4 r0, vec4 r1, vec4 r2, vec3 p, float w)
@@ -88,42 +100,80 @@ pnanovdb_readaccessor_t Accessor(uint offset)
     return acc;
 }
 
+// Velocity blur (Karma's Lookup Offset): in a motion blur time sample
+// (frame.deform.z, its offset from this frame frame.deform.x in frames)
+// volume i's fields at density index p are read at p - vel(p) * t, the
+// velocity the nearest voxel's.
+bool Moving(uint i)
+{
+    return volumes[i].velocity.w != 0u && frame.deform.z > 0.0 && frame.deform.x != 0.0;
+}
+vec3 Advect(uint i, vec3 p)
+{
+    if (!Moving(i)) {
+        return p;
+    }
+    ivec3 q = ivec3(floor(Row3(volumes[i].toVelocity[0], volumes[i].toVelocity[1], volumes[i].toVelocity[2], p, 1.0)
+                          + 0.5));
+    uvec4 grids = volumes[i].velocity;
+    vec3 v;
+    if (grids.w == 1u) {
+        pnanovdb_readaccessor_t acc = Accessor(grids.x);
+        pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address(PNANOVDB_GRID_TYPE_VEC3F, buf, acc, q);
+        v = vec3(pnanovdb_read_float(buf, a), pnanovdb_read_float(buf, pnanovdb_address_offset(a, 4u)),
+                 pnanovdb_read_float(buf, pnanovdb_address_offset(a, 8u)));
+    } else {
+        pnanovdb_readaccessor_t x = Accessor(grids.x), y = Accessor(grids.y), z = Accessor(grids.z);
+        v = vec3(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, x, q), ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, y, q),
+                 ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, z, q));
+    }
+    return p - Row3(volumes[i].advect[0], volumes[i].advect[1], volumes[i].advect[2], v, 0.0) * frame.deform.x;
+}
+
 const uint kShadowSteps = 64u;     // per volume and shadow ray, at most
 const float kShadowOpaque = 6.9;  // optical depth of 1e-3 transmittance: nothing is left to dim
 
-// Optical depth of the first `count` volumes along origin + dir * s, s in
-// [0, 1] (volume_shadow.frag's texels, traced shadow rays), stepping
-// 2 x stepSize density voxels (VolumeParams); `weighted`, `weighted2`: its
-// integral times s and times s^2. Segments outside a volume's box are skipped and the march stops
-// at kShadowOpaque, but empty tiles inside it are still stepped.
-float VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, out float weighted,
-                         out float weighted2)
+// Optical depth per channel of the first `count` volumes along
+// origin + dir * s, s in [0, 1] (volume_shadow.frag's texels, traced shadow
+// rays), stepping 2 x stepSize density voxels (VolumeParams): coloured
+// smoke casts coloured shadows. `weighted`, `weighted2`: the integral of the
+// channels' mean times s and times s^2. Segments outside a volume's box are
+// skipped and the march stops once every channel reaches kShadowOpaque, but
+// empty tiles inside it are still stepped. shadowLink: the light's shadow
+// link bit (-1: every volume casts), as the volumes' link masks hold it.
+// ponytail: per channel from the material's coefficients (or the extinction
+// table of the density); a colour field (Cd) tinting the scattering isn't read.
+vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float density, int shadowLink,
+                        out float weighted, out float weighted2)
 {
     float len = length(dir);
-    float tau = 0.0;
+    vec3 tau = vec3(0.0);
     weighted = 0.0;
     weighted2 = 0.0;
-    for (uint i = 0u; i < count && tau < kShadowOpaque; ++i) {
+    for (uint i = 0u; i < count && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++i) {
         vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
         vec3 oi = Row3(w0, w1, w2, origin, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
         vec2 span = Slabs(oi, di, volumes[i].indexMin.xyz, volumes[i].indexMax.xyz);
         span = vec2(max(span.x, 0.0), min(span.y, 1.0));
-        if (!(span.x < span.y)) {
+        bool linked = shadowLink < 0 || (floatBitsToUint(volumes[i].indexMin.w) & (1u << uint(shadowLink))) != 0u;
+        if (!(span.x < span.y) || !linked) {
             continue;
         }
         uint steps = uint(clamp(ceil((span.y - span.x) * length(di) / (2.0 * stepSize)), 1.0, float(kShadowSteps)));
         float ds = (span.y - span.x) / float(steps);
         uint table = volumes[i].lutOffsets.w;
         float low = volumes[i].lutLow.w, scale = volumes[i].lutScale.w;
-        float sigma = density * ds * len * (table == 0xFFFFFFFFu ? volumes[i].medium.x : 1.0);
+        vec3 sigma = density * ds * len *
+                     (table == 0xFFFFFFFFu ? volumes[i].scattering.rgb + volumes[i].absorption.rgb : vec3(1.0));
         pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
-        for (uint k = 0u; k < steps && tau < kShadowOpaque; ++k) {
+        for (uint k = 0u; k < steps && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++k) {
             float s = span.x + (float(k) + 0.5) * ds;
-            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(oi + di * s + 0.5))), 0.0);
-            d = (table == 0xFFFFFFFFu ? d : ExtinctionTable(table, low, scale, d)) * sigma;
-            tau += d;
-            weighted += d * s;
-            weighted2 += d * s * s;
+            float d = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ivec3(floor(Advect(i, oi + di * s) + 0.5))), 0.0);
+            vec3 e = (table == 0xFFFFFFFFu ? vec3(d) : ExtinctionTableRgb(table, low, scale, d)) * sigma;
+            float m = dot(e, vec3(1.0 / 3.0));
+            tau += e;
+            weighted += m * s;
+            weighted2 += m * s * s;
         }
     }
     return tau;

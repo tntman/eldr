@@ -1,0 +1,122 @@
+#usda 1.0
+(
+    upAxis = "Y"
+    metersPerUnit = 1
+    timeCodesPerSecond = 24
+    startTimeCode = 1
+    endTimeCode = 1
+)
+
+# Volume velocity blur: two balls of smoke moving 24 units a second (a unit
+# a frame) along x, their velocity a vector VDB grid "vel" (left) and
+# Houdini's three float volumes vel.x/.y/.z (right). Velocity Blur is on
+# (karma:object:vblur 1); the camera's shutter is open half a frame, so
+# both smear half a unit. The right one blurs twice as far (Volume
+# Velocity Blur Scale 2). /Render/blur is the default; /Render/sharp turns
+# eldr:volumeVelocityBlur off.
+
+def Volume "vector"
+{
+    double3 xformOp:translate = (-1.2, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel field:density = </vector/density>
+    rel field:vel = </vector/vel>
+    int primvars:karma:object:vblur = 1
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "density"
+    }
+
+    def OpenVDBAsset "vel"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "vel"
+    }
+}
+
+def Volume "components"
+{
+    double3 xformOp:translate = (1.2, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel field:density = </components/density>
+    rel field:vel_x = </components/vel_x>
+    rel field:vel_y = </components/vel_y>
+    rel field:vel_z = </components/vel_z>
+    int primvars:karma:object:vblur = 1
+    float primvars:karma:object:volumevblurscale = 2
+
+    def OpenVDBAsset "density"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "density"
+    }
+
+    def OpenVDBAsset "vel_x"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "vel.x"
+    }
+
+    def OpenVDBAsset "vel_y"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "vel.y"
+    }
+
+    def OpenVDBAsset "vel_z"
+    {
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+        token fieldName = "vel.z"
+    }
+}
+
+def Mesh "ground"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0, -6), (-6, 0, 6), (6, 0, 6), (6, 0, -6)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.3
+}
+
+def Camera "cam"
+{
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 24
+    double shutter:open = -0.25
+    double shutter:close = 0.25
+    float3 xformOp:rotateXYZ = (-8, 0, 0)
+    double3 xformOp:translate = (0, 1.5, 7)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+}
+
+def Scope "Render"
+{
+    def RenderSettings "blur"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 640)
+    }
+
+    def RenderSettings "sharp"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 640)
+        custom bool eldr:volumeVelocityBlur = 0
+    }
+}

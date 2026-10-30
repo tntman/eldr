@@ -3,6 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 
 #include "frame.glsl"
+#include "tiles.glsl"
 #include "fog.glsl"
 #include "lights.glsl"
 #include "probes.glsl"
@@ -51,6 +52,7 @@ const vec2 kPoisson[16] = vec2[](
 
 #define RT_RESULTS
 #include "gi.glsl"  // ray-traced shadows and reflections, GI probes
+#include "caustics.glsl"  // caustic photons
 
 // mesh.vert's packed outputs.
 layout(location = 0) in vec4 inWorldPosPrevX;
@@ -69,6 +71,7 @@ layout(location = 4) flat in uint inEntry;
 #define inMaterial (draws[instances[inSlot].draw].material)
 #define inPrimId (draws[instances[inSlot].draw].primId)
 #define inInstanceId (instances[inSlot].index)
+#define inLinkMask (instances[inSlot].linkMask)  // light linking (lights.glsl's LightLinked)
 #ifdef GRAPH
 // Material programs: vertex-rate primvars (mesh.vert) and the interpreter.
 layout(location = 5) in vec4 inPrimvars;
@@ -101,6 +104,34 @@ bool LightSplits()
     return (kCompiledFeatures & kCompiledLightSplits) != 0u && (frame.aovs.x != 0u || frame.lightPath.z != 0.0);
 }
 vec3 splitDirectDiffuse = vec3(0.0);  // LocalLight's diffuse share
+// The splits' layers past the 4 (Aovs::EnsureSplits): what the shadows
+// took (all of it, the diffuse), the coat's light, each light group's
+// direct light (Light::color.w / 4 - 1 its group).
+vec3 splitShadow = vec3(0.0), splitShadowDiffuse = vec3(0.0), splitCoat = vec3(0.0);
+const uint kMaxLightGroups = 8u;  // Aovs::kMaxLightGroups
+const int kCausticsLayer = 10;
+const int kGroupLayer = 11;       // Aovs::kSplitLayers
+vec3 splitGroups[kMaxLightGroups] = vec3[](vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0), vec3(0.0),
+                                           vec3(0.0), vec3(0.0));
+int LightGroup(Light light)
+{
+    return int(uint(light.color.w) >> 2u) - 1;
+}
+void SplitGroup(int group, vec3 light)
+{
+    if (group >= 0 && group < int(kMaxLightGroups)) {
+        splitGroups[group] += light;
+    }
+}
+// A light's share of them: `lit` its direct light, `unlit` the same
+// without its shadow, the diffuse of both, the coat's (lit).
+void SplitLight(Light light, vec3 lit, vec3 unlit, vec3 diffuseLit, vec3 diffuseUnlit, vec3 coat)
+{
+    splitShadow += unlit - lit;
+    splitShadowDiffuse += diffuseUnlit - diffuseLit;
+    splitCoat += coat;
+    SplitGroup(LightGroup(light), lit);
+}
 float fogTransmittance = 1.0;  // of the fog in front of the surface (main, below)
 
 #include "brdf.glsl"
@@ -202,7 +233,7 @@ float ShadowDistance(float depth, float n, float f)
 float LocalShadow(uint index, Light light, vec3 p, vec3 ng)
 {
     float traced;
-    if (RtShadow(index, traced)) {
+    if (RtShadow(index, p, ng, traced)) {
         return traced;
     }
     uint tile = lightShadow[index];
@@ -545,10 +576,10 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     vec3 toLight = light.position.xyz - p;
     float d = length(toLight);
     float window = clamp(1.0 - pow(d / LightRange(light), 4.0), 0.0, 1.0);
-    if (window <= 0.0 || d <= 0.0) {
+    if (window <= 0.0 || d <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
-    vec3 radiance = light.color.rgb * window * window;
+    vec3 radiance = light.color.rgb * (window * window * EmitterClamp(light, diffuseColor)) * LightIes(light, p);
     float cosOff = dot(-toLight / d, light.axis.xyz);
     if (light.shaping.z > 0.0) {
         radiance *= mix(light.focusTint.rgb, vec3(1.0), pow(abs(cosOff), light.shaping.z));
@@ -638,10 +669,14 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                     light.shaping.w;
     specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
     specular *= specularTint;
+    vec3 shadow = LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
     if (LightSplits()) {
-        splitDirectDiffuse += radiance * diffuse * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+        splitDirectDiffuse += radiance * diffuse * shadow;
+        SplitLight(light, radiance * (diffuse + specular) * shadow, radiance * (diffuse + specular),
+                   radiance * diffuse * shadow, radiance * diffuse,
+                   radiance * gCoatLight * specularE * light.shaping.w * specularTint * shadow);
     }
-    return radiance * (diffuse + specular) * LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
+    return radiance * (diffuse + specular) * shadow;
 }
 
 // Soft sun shadows: PCSS in the cascade's light space, as LocalShadow()
@@ -720,7 +755,7 @@ float SoftSunShadow(int c, vec2 uv, float ref, vec3 ng, vec3 l, float tanHalf)
 float Shadow(vec3 p, vec3 ng, vec3 l, float tanHalf)
 {
     float traced;
-    if (RtShadow(frame.counts.y, traced)) {
+    if (RtShadow(frame.counts.y, p, ng, traced)) {
         return traced;
     }
     float depth = dot(p - frame.cameraPos.xyz, frame.cameraForward.xyz);
@@ -1049,6 +1084,17 @@ vec3 Irradiance(vec3 d)
 
 void main()
 {
+    // Tile-based adaptive sampling: a stopped tile keeps its ids and motion
+    // but isn't shaded (whole 2 x 2 quads: tiles are 16 pixels).
+    if (kShadingPass == 0u && TileSkipped(ivec2(gl_FragCoord.xy))) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        outPrimId = inPrimId;
+        outInstanceId = inInstanceId;
+        vec4 now = frame.prevViewProj * vec4(inWorldPos, 1.0);
+        vec4 before = frame.prevViewProj * vec4(inPrevWorldPos, 1.0);
+        outVelocity = before.w > 0.0 && now.w > 0.0 ? (before.xy / before.w - now.xy / now.w) * 0.5 : vec2(0.0);
+        return;
+    }
     vec3 baseColor = inColor;
     vec3 emissive = vec3(0.0);
     float metallic = 0.0, roughness = 0.5, occlusion = 1.0;
@@ -1122,12 +1168,13 @@ void main()
     vec3 f0 = base.metalW * base.metalF0 + base.dielW * base.dielF0;  // hair, multi-bounce, toon
     vec3 FssEss = BaseAlbedo(NoV, dfg);
 
+    emissive = BrightnessClamp(emissive, frame.lightClamp.z);  // Karma's colour limit (40 shows as 20)
     vec3 color = emissive;  // premultiplied by alpha
     for (uint i = 0; i < frame.counts.x; ++i) {
         Light light = lights[i];
         vec3 l = light.position.xyz;
         float NoL = dot(n, l);
-        if (NoL <= 0.0) {
+        if (NoL <= 0.0 || !LightLinked(light, inLinkMask)) {
             continue;
         }
         // The sun's disc (angular radius axis.w) as a sphere at distance 1,
@@ -1144,14 +1191,16 @@ void main()
                          (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * sunNorm +
                           LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
                         light.color.rgb;
+        vec3 shadow = vec3(1.0);
         if (i == frame.counts.y) {
-            radiance *= Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
+            shadow = Shadow(inWorldPos, ng, l, tanHalf) * ShadowTint(inWorldPos, ng, l);
         }
-        color += radiance;
+        color += radiance * shadow;
         if (LightSplits()) {
             vec3 d = sunDiffuse / PI * NoL * light.halfHeight.w * light.color.rgb;
-            splitDirectDiffuse += i == frame.counts.y
-                ? d * Shadow(inWorldPos, ng, l, tan(light.axis.w)) * ShadowTint(inWorldPos, ng, l) : d;
+            splitDirectDiffuse += d * shadow;
+            SplitLight(light, radiance * shadow, radiance, d * shadow, d,
+                       gCoatLight * light.shaping.w * light.color.rgb * shadow);
         }
     }
 
@@ -1173,7 +1222,12 @@ void main()
 
     if (frame.lightClamp.x > 0.0) {
         const vec3 lit = color - emissive, clamped = BrightnessClamp(lit, frame.lightClamp.x);
-        splitDirectDiffuse *= dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the split follows
+        float kept = dot(clamped, vec3(1.0)) / max(dot(lit, vec3(1.0)), 1e-6);  // the splits follow
+        splitDirectDiffuse *= kept;
+        splitCoat *= kept;
+        for (uint g = 0u; g < kMaxLightGroups; ++g) {
+            splitGroups[g] *= kept;
+        }
         color = emissive + clamped;
     }
     vec3 splitDirect = color - emissive;  // the lights' diffuse and glossy light
@@ -1282,6 +1336,14 @@ void main()
     color += FssEss * specular + kd * indirectDiffuse;
     vec3 splitIndirectGlossy = FssEss * specular;
     vec3 splitIndirectDiffuse = color - splitAmbient - splitIndirectGlossy;
+    // Caustics (caustics.glsl): the photons that came through or off the
+    // casters, on a receiver's diffuse surface; indirect diffuse light.
+    vec3 splitCaustics = vec3(0.0);
+    if (Feature(kFeatureCaustics) && (draws[instances[inSlot].draw].caustics & kCausticsReceive) != 0u) {
+        splitCaustics = kd * CausticDiffuse(inWorldPos, n);
+        color += splitCaustics;
+        splitIndirectDiffuse += splitCaustics;
+    }
     // Karma's convention (frame.aovs.y): the dome's light that reaches the
     // surface unblocked is direct. Diffuse: its irradiance under the
     // visibility (AO, or SSGI's); what GI's probes, the multi-bounce
@@ -1289,9 +1351,13 @@ void main()
     // reflection under the specular occlusion where no probe, mirror, SSR
     // or traced reflection replaced it. At most the whole (where the probes
     // see less of the dome than the AO does), so the splits still add up.
-    vec3 splitDomeGlossy = vec3(0.0);
+    vec3 splitDomeGlossy = vec3(0.0), domeDirect = vec3(0.0);
     if (LightSplits() && frame.aovs.y != 0u) {
-        vec3 domeDirect = min(kd * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        domeDirect = min(kd * domeDiffuse * diffuseAO, splitIndirectDiffuse);
+        // What its occlusion took is its shadow (Karma's shadow;, the
+        // dome's light unoccluded minus occluded).
+        splitShadow += kd * domeDiffuse - domeDirect;
+        splitShadowDiffuse += kd * domeDiffuse - domeDirect;
         splitDirectDiffuse += domeDirect;
         splitDirect += domeDirect;  // layer 2 is splitDirect - splitDirectDiffuse
         splitIndirectDiffuse -= domeDirect;
@@ -1305,6 +1371,7 @@ void main()
     if (kShadingPass != 2u) {  // the subsurface pass: the diffuse light alone
         splitAmbient = color;
         color += LayerAmbient(n, v, Lavg, diffuseAO, specularAO);
+        splitCoat += gCoatAmbient;
         // ponytail: the lobes' dome light (coat, sheen, hair) all one way;
         // a sheen under GI's probes counts their light as the dome's too.
         if (frame.aovs.y != 0u) {
@@ -1350,10 +1417,34 @@ void main()
         ivec2 pixel = ivec2(gl_FragCoord.xy);
         // a: the fog's transmittance in front of it (the splits are
         // unfogged; what is copied or reflected of the colour is fogged).
-        imageStore(lightSplits, ivec3(pixel, 0), vec4(splitDirectDiffuse + splitThrough, fogTransmittance));
-        imageStore(lightSplits, ivec3(pixel, 1), vec4(splitIndirectDiffuse, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 2), vec4(splitDirect - splitDirectDiffuse + splitDomeGlossy, 1.0));
-        imageStore(lightSplits, ivec3(pixel, 3), vec4(splitIndirectGlossy + gRefractedLight, 1.0));
+        // Holdouts are black: none of their light, but their shadow
+        // (Karma's holdouts;shadow;CDL, a shadow matte).
+        bool holdout = Feature(kFeatureHoldouts) && draws[instances[inSlot].draw].holdout != 0u;
+        float keep = holdout ? 0.0 : 1.0;
+        imageStore(lightSplits, ivec3(pixel, 0), vec4(keep * (splitDirectDiffuse + splitThrough), fogTransmittance));
+        imageStore(lightSplits, ivec3(pixel, 1), vec4(keep * splitIndirectDiffuse, 1.0));
+        imageStore(lightSplits, ivec3(pixel, 2), vec4(keep * (splitDirect - splitDirectDiffuse + splitDomeGlossy), 1.0));
+        imageStore(lightSplits, ivec3(pixel, 3), vec4(keep * (splitIndirectGlossy + gRefractedLight), 1.0));
+        int splitLayers = imageSize(lightSplits).z;
+        if (splitLayers > 4) {  // the split AOVs (aov.comp takes 4..6 out of diffuse and glossy)
+            // The groups: the dome's direct light (Karma's convention) and
+            // the sun's through thin subsurface parts too.
+            if (frame.aovs.y != 0u) {
+                SplitGroup(int(frame.aovs.z) - 1, domeDirect + splitDomeGlossy);
+            }
+            if (frame.counts.y != kNone) {
+                SplitGroup(LightGroup(lights[frame.counts.y]), splitThrough);
+            }
+            imageStore(lightSplits, ivec3(pixel, 4), vec4(keep * gRefractedLight, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 5), vec4(keep * (gSubsurfaceShare * splitDirectDiffuse + splitThrough), 1.0));
+            imageStore(lightSplits, ivec3(pixel, 6), vec4(keep * gSubsurfaceShare * splitIndirectDiffuse, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 7), vec4(keep * splitCoat, 1.0));
+            imageStore(lightSplits, ivec3(pixel, 8), holdout ? vec4(splitShadowDiffuse, 1.0) : vec4(splitShadow, 0.0));
+            imageStore(lightSplits, ivec3(pixel, kCausticsLayer), vec4(keep * splitCaustics, 1.0));
+            for (int g = 0; g < min(splitLayers - kGroupLayer, int(kMaxLightGroups)); ++g) {
+                imageStore(lightSplits, ivec3(pixel, kGroupLayer + g), vec4(keep * splitGroups[g], 1.0));
+            }
+        }
     }
     outPrimId = inPrimId;
     outInstanceId = inInstanceId;
