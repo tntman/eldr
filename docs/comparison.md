@@ -102,5 +102,5 @@
 | Cryptomatte with soft edges (3 layers, 6 ranks) | Yes | Partial | No | Eldr: coverage from the film's samples, Karma's `<var>00..02` layout. EEVEE: hard edges. |
 | Cryptomatte | Yes | Yes | Yes | |
 | UsdRenderSettings and render products | Yes | No | No | Eldr honours resolution, pixel aspect and data window. |
-| Houdini Solaris | Partial | No | No | Eldr: Houdini 22 build renders in hython and husk (husk needs Indie or above); the viewport is untested. |
+| Houdini Solaris | Yes | No | No | Eldr: Houdini 22 build renders in the Solaris viewport, hython and husk (husk needs Indie or above), with its own Render Settings and Render Geometry Settings tabs. |
 | usdview integration | Yes | No | No | |
