@@ -13,8 +13,8 @@ last tap's shadowed fraction. The lanes of a subgroup tap together, so the skipp
 
 `glass.usda` is `tests/scenes/glass.usda` with traced refraction always on. With
 `eldr:rtRefractionClip`, a pixel's first ray looks for glass only, up to the opaque depth.
-- `/Render/clip`: the default. rayTracing takes 37.5 ms per sample.
-- `/Render/noClip`: 41.7 ms per sample. The image is identical.
+- `/Render/clip` (in `glass.usda`, not `scene.usda`): the default. rayTracing takes 37.5 ms per sample.
+- `/Render/noClip` (also in `glass.usda`): 41.7 ms per sample. The image is identical.
 
 Open it:
 - usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_20_rt_volume_cost\scene.usda`
