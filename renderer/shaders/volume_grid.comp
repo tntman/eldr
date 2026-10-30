@@ -1,0 +1,75 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+// Volume shadow grids (VolumePass::Settings::shadowGrid): each volume's
+// optical depth towards each light at gridSize^3 points spanning its
+// index box (corners included), which volume.frag reads trilinearly
+// instead of marching a shadow ray per step and light. Slot 0: up to the
+// dome's pole, slot 1 + k: towards lights[k] (a distant light's direction,
+// a local light's position). rgb: the other volumes' depth (OthersDepth,
+// a step per voxel), a: the volume's own density integral (ShadowMarch,
+// a step per voxel; distant lights and the dome only). The fields as at
+// this frame (VOLUME_STATIC): time samples of moving volumes march.
+// ponytail: a cube of cells per volume whatever its shape; flat volumes
+// waste most of theirs.
+
+#include "frame.glsl"
+#include "lights.glsl"
+#define VOLUME_STATIC
+#include "volume.glsl"
+
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+
+layout(set = 0, binding = 94, rgba16f) uniform writeonly image3D gridOut;
+
+layout(push_constant) uniform Params {
+    uint count;    // volumes
+    uint size;     // cells per axis
+    uint lights;   // slots per volume
+    uint mutual;   // 1: the other volumes' depth too (Settings::mutualShadows)
+    float density; // extinction multiplier
+    uint tables;   // 1: extinction tables (volume.frag's kFactors)
+} params;
+
+void main()
+{
+    uvec3 c = gl_GlobalInvocationID;
+    uint slot = c.z / params.size;
+    if (c.x >= params.size || c.y >= params.size || slot >= params.count * params.lights) {
+        return;
+    }
+    uint i = slot / params.lights, light = slot % params.lights;
+    vec3 lo = volumes[i].indexMin.xyz, hi = volumes[i].indexMax.xyz;
+    vec3 p = mix(lo, hi, vec3(c.x, c.y, c.z % params.size) / float(params.size - 1u));
+    vec4 w0 = volumes[i].worldToIndex[0], w1 = volumes[i].worldToIndex[1], w2 = volumes[i].worldToIndex[2];
+    vec3 x = (inverse(transpose(mat4(w0, w1, w2, vec4(0.0, 0.0, 0.0, 1.0)))) * vec4(p, 1.0)).xyz;
+
+    // Towards the light: a direction (the dome's pole, a distant light)
+    // marched 1e4 units for the others, or a local light's position.
+    vec3 dir;
+    bool distant = true;
+    if (light == 0u) {
+        mat3 toDome = mat3(frame.envWorldToLocal);
+        dir = normalize(vec3(toDome[0][1], toDome[1][1], toDome[2][1]));
+    } else if (light - 1u < frame.counts.x) {
+        dir = lights[light - 1u].position.xyz;
+    } else {
+        dir = lights[light - 1u].position.xyz - x;
+        distant = false;
+    }
+    float self = 0.0;
+    if (distant) {
+        vec3 dl = Row3(w0, w1, w2, dir, 0.0);
+        float far = Slabs(p, dl, lo, hi).y;
+        uint steps = uint(clamp(ceil(far * length(dl)), 1.0, 512.0));
+        pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
+        uint table = params.tables != 0u ? volumes[i].lutOffsets.w : kNone;
+        self = ShadowMarch(table, volumes[i].lutLow.w, volumes[i].lutScale.w, acc, p, dl, lo, hi, 0.5, steps);
+    }
+    vec3 others = params.mutual != 0u
+                      ? OthersDepth(i, x, distant ? dir * 1e4 : dir, 0.5, params.count, 0u, params.density,
+                                    params.tables != 0u)
+                      : vec3(0.0);
+    imageStore(gridOut, ivec3(c), vec4(min(others, vec3(6e4)), min(self, 6e4)));
+}

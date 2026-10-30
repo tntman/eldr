@@ -1,0 +1,64 @@
+#usda 1.0
+(
+    subLayers = [@../../tests/scenes/volume.usda@]
+    upAxis = "Y"
+    metersPerUnit = 1
+)
+
+# Volume shadow grids: tests/scenes/volume.usda's three volumes (sun, dome)
+# with three sphere lights, as showcase 2026-10-29_20. /Render/grid is the
+# default (eldr:volumeShadowGrid 64: each volume's optical depth towards
+# each light from a grid built once); /Render/exact marches every shadow
+# ray, as before; /Render/grid32 is a coarser grid. They should look the same.
+
+def SphereLight "warm"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    color3f inputs:color = (1, 0.6, 0.3)
+    double3 xformOp:translate = (-1.2, 1.6, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "cool"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    color3f inputs:color = (0.3, 0.6, 1)
+    double3 xformOp:translate = (1.4, 0.6, 1.0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def SphereLight "low"
+{
+    float inputs:radius = 0.1
+    float inputs:intensity = 250
+    double3 xformOp:translate = (0.2, -0.8, 0.6)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Scope "Render"
+{
+    def RenderSettings "grid"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
+    }
+
+    def RenderSettings "exact"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:volumeShadowGrid = 0
+    }
+
+    def RenderSettings "grid32"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 704)
+        custom bool eldr:finalQuality = 1
+        custom int eldr:volumeShadowGrid = 32
+    }
+}

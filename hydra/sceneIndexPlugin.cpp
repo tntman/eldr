@@ -37,8 +37,13 @@
 #include "pxr/imaging/hdsi/implicitSurfaceSceneIndex.h"
 #include "pxr/imaging/hdsi/renderSettingsFilteringSceneIndex.h"
 #include "pxr/imaging/hdsi/velocityMotionResolvingSceneIndex.h"
+#include "pxr/base/tf/getenv.h"
+#include "pxr/base/work/withScopedParallelism.h"
 
 #include <algorithm>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -73,10 +78,131 @@ TF_DEFINE_PRIVATE_TOKENS(
     (joints)
     (resolvedSkeleton)
     (skinningTransforms)
+    (skelLocalToCommonSpace)
     ((eldrVblur, "eldr:object:vblur"))
     ((karmaVblur, "karma:object:vblur"))
     ((eldrInstanceVblur, "eldr:object:instance_vblur"))
     ((karmaInstanceVblur, "karma:object:instance_vblur")));
+
+// A skeleton's resolved data (resolvedSkeleton/<name>) at a shutter
+// offset, computed once for all the meshes it skins: UsdSkelImaging builds
+// a new data source per request, which poses every instance at offset 0
+// when made and again at each other offset asked, so a crowd's meshes
+// posed their skeleton up to four times each per frame. Kept until the
+// scene's next notice (a new time dirties the skeleton), so it is exact.
+// HDVK_NO_POSE_SHARE=1 (A/B): each mesh poses its own, as before.
+// ponytail: the last frame's poses stay in RAM until the next notice
+// (crowd_9k: ~50 MB); clear at the end of a sync if that ever matters.
+class _SkelPoses
+{
+public:
+    VtValue Value(SdfPath const &skeleton, TfToken const &name, HdContainerDataSourceHandle const &resolved,
+                  HdSampledDataSource::Time t)
+    {
+        const std::shared_ptr<_Entry> e = _Find(skeleton, name, resolved);
+        if (!e->source) {
+            return VtValue();
+        }
+        std::shared_ptr<_Value> v;
+        {
+            std::lock_guard<std::mutex> lock(e->mutex);
+            std::shared_ptr<_Value> &slot = e->values[t];
+            if (!slot) {
+                slot = std::make_shared<_Value>();
+            }
+            v = slot;
+        }
+        _Once(v->once, [&] { v->value = e->source->GetValue(t); });
+        return v->value;
+    }
+
+    HdSampledDataSourceHandle Source(SdfPath const &skeleton, TfToken const &name,
+                                     HdContainerDataSourceHandle const &resolved)
+    {
+        return _Find(skeleton, name, resolved)->source;
+    }
+
+    void Clear()
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _entries.clear();
+    }
+
+private:
+    struct _Value
+    {
+        std::once_flag once;
+        VtValue value;
+    };
+    struct _Entry
+    {
+        std::once_flag once;
+        HdSampledDataSourceHandle source;
+        std::mutex mutex;
+        std::map<HdSampledDataSource::Time, std::shared_ptr<_Value>> values;
+    };
+
+    // Another mesh of the skeleton waits for the first one's pose. Isolated,
+    // so the thread posing (UsdSkelImaging poses instances in parallel)
+    // doesn't pick up another mesh's sync that would wait on itself.
+    template <typename Fn>
+    static void _Once(std::once_flag &once, Fn &&fn)
+    {
+        std::call_once(once, [&] { WorkWithScopedParallelism(fn, false); });
+    }
+
+    std::shared_ptr<_Entry> _Find(SdfPath const &skeleton, TfToken const &name,
+                                  HdContainerDataSourceHandle const &resolved)
+    {
+        std::shared_ptr<_Entry> e;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            std::shared_ptr<_Entry> &slot = _entries[{skeleton, name}];
+            if (!slot) {
+                slot = std::make_shared<_Entry>();
+            }
+            e = slot;
+        }
+        _Once(e->once, [&] { e->source = HdSampledDataSource::Cast(resolved->Get(name)); });
+        return e;
+    }
+
+    std::mutex _mutex;
+    std::map<std::pair<SdfPath, TfToken>, std::shared_ptr<_Entry>> _entries;
+};
+
+// A skeleton's resolved value as one of its meshes' primvars, from the
+// shared poses.
+template <typename T>
+class _SharedSkelDataSource final : public HdTypedSampledDataSource<T>
+{
+public:
+    HD_DECLARE_DATASOURCE(_SharedSkelDataSource<T>);
+    using Time = HdSampledDataSource::Time;
+
+    VtValue GetValue(Time t) override { return _poses->Value(_skeleton, _name, _resolved, t); }
+
+    T GetTypedValue(Time t) override { return GetValue(t).template GetWithDefault<T>(T()); }
+
+    bool GetContributingSampleTimesForInterval(Time start, Time end, std::vector<Time> *times) override
+    {
+        const HdSampledDataSourceHandle source = _poses->Source(_skeleton, _name, _resolved);
+        return source && source->GetContributingSampleTimesForInterval(start, end, times);
+    }
+
+private:
+    _SharedSkelDataSource(std::shared_ptr<_SkelPoses> poses, SdfPath skeleton, TfToken name,
+                          HdContainerDataSourceHandle resolved)
+        : _poses(std::move(poses)), _skeleton(std::move(skeleton)), _name(std::move(name)),
+          _resolved(std::move(resolved))
+    {
+    }
+
+    const std::shared_ptr<_SkelPoses> _poses;
+    const SdfPath _skeleton;
+    const TfToken _name;
+    const HdContainerDataSourceHandle _resolved;
+};
 
 // The skinning transforms of every instance of a skeleton (skeleton joint
 // order, instance after instance) in a mesh's skel:joints order: what
@@ -235,6 +361,7 @@ protected:
     void _PrimsAdded(HdSceneIndexBase const &, HdSceneIndexObserver::AddedPrimEntries const &entries) override
     {
         // A mesh that gains its computations becomes skinned.
+        _poses->Clear();
         HdSceneIndexObserver::DirtiedPrimEntries dirtied;
         for (const auto &e : entries) {
             if (_IsComputation(e.primPath)) {
@@ -251,6 +378,7 @@ protected:
 
     void _PrimsRemoved(HdSceneIndexBase const &, HdSceneIndexObserver::RemovedPrimEntries const &entries) override
     {
+        _poses->Clear();
         _SendPrimsRemoved(entries);
     }
 
@@ -259,6 +387,7 @@ protected:
     // skinning transforms (DirtyPrimvar), not the points.
     void _PrimsDirtied(HdSceneIndexBase const &, HdSceneIndexObserver::DirtiedPrimEntries const &entries) override
     {
+        _poses->Clear();
         HdSceneIndexObserver::DirtiedPrimEntries dirtied = entries;
         for (const auto &e : entries) {
             if (!_IsComputation(e.primPath)) {
@@ -292,9 +421,13 @@ private:
     // skinning transforms of all instances, numJoints each) whose mesh names
     // its own skel:joints: UsdSkelImaging remaps only the first instance's
     // (its XXX TODO in _SkinningXformsDataSource), the rest would be lost.
-    // Remap every instance's from the resolved skeleton instead.
+    // Remap every instance's from the resolved skeleton instead. The pose
+    // (and the skeleton's place) comes from _SkelPoses, shared by the
+    // skeleton's meshes; without a remap it is the skeleton's as it stands,
+    // as UsdSkelImaging hands it over then.
     HdSceneIndexPrim _RemapInstanceJoints(HdSceneIndexPrim prim) const
     {
+        static const bool share = !TfGetenvBool("HDVK_NO_POSE_SHARE", false);
         const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
         const HdSampledDataSourceHandle numJoints =
             primvars.GetPrimvar(HdSkinningInputTokens->numJoints).GetPrimvarValue();
@@ -306,24 +439,53 @@ private:
             binding ? HdTypedSampledDataSource<VtTokenArray>::Cast(binding->Get(_tokens->joints)) : nullptr;
         const auto skeletonDs =
             binding ? HdTypedSampledDataSource<SdfPath>::Cast(binding->Get(_tokens->skeleton)) : nullptr;
-        if (!meshJointsDs || !skeletonDs) {
+        if ((!meshJointsDs && !share) || !skeletonDs) {
             return prim;
         }
-        const HdContainerDataSourceHandle skeleton =
-            _GetInputSceneIndex()->GetPrim(skeletonDs->GetTypedValue(0.0f)).dataSource;
+        const SdfPath skeletonPath = skeletonDs->GetTypedValue(0.0f);
+        const HdContainerDataSourceHandle skeleton = _GetInputSceneIndex()->GetPrim(skeletonPath).dataSource;
         const HdContainerDataSourceHandle skelSchema =
             skeleton ? HdContainerDataSource::Cast(skeleton->Get(_tokens->skeleton)) : nullptr;
         const HdContainerDataSourceHandle resolved =
             skeleton ? HdContainerDataSource::Cast(skeleton->Get(_tokens->resolvedSkeleton)) : nullptr;
         const auto skelJointsDs =
             skelSchema ? HdTypedSampledDataSource<VtTokenArray>::Cast(skelSchema->Get(_tokens->joints)) : nullptr;
-        const auto transforms = resolved ? HdTypedSampledDataSource<VtMatrix4fArray>::Cast(
-                                               resolved->Get(_tokens->skinningTransforms))
-                                         : nullptr;
-        const VtTokenArray meshJoints = meshJointsDs->GetTypedValue(0.0f);
+        if (!resolved) {
+            return prim;
+        }
+        // Made on demand when shared: UsdSkelImaging poses every instance
+        // when it makes one.
+        const HdTypedSampledDataSource<VtMatrix4fArray>::Handle transforms =
+            share ? _SharedSkelDataSource<VtMatrix4fArray>::New(_poses, skeletonPath, _tokens->skinningTransforms,
+                                                                resolved)
+                  : HdTypedSampledDataSource<VtMatrix4fArray>::Cast(resolved->Get(_tokens->skinningTransforms));
+        const VtTokenArray meshJoints = meshJointsDs ? meshJointsDs->GetTypedValue(0.0f) : VtTokenArray();
         const VtTokenArray skelJoints = skelJointsDs ? skelJointsDs->GetTypedValue(0.0f) : VtTokenArray();
-        if (!transforms || meshJoints.empty() || skelJoints.empty() || meshJoints == skelJoints) {
-            return prim;  // no mapping: UsdSkelImaging's are right
+        if (!transforms) {
+            return prim;
+        }
+        // No mapping: UsdSkelImaging hands over the skeleton's own; so do we.
+        const bool identity = meshJoints.empty() || meshJoints == skelJoints;
+        if (!identity && skelJoints.empty()) {
+            return prim;  // UsdSkelImaging's null mapping (the skeleton's own too), left as it is
+        }
+        auto value = [](HdDataSourceBaseHandle const &ds) {
+            return HdRetainedContainerDataSource::New(HdPrimvarSchemaTokens->primvarValue, ds);
+        };
+        if (identity) {
+            if (!share) {
+                return prim;
+            }
+            const TfToken names[] = {HdSkinningInputTokens->skinningXforms,
+                                     HdSkinningInputTokens->skelLocalToCommonSpace};
+            const HdDataSourceBaseHandle values[] = {
+                value(transforms), value(_SharedSkelDataSource<GfMatrix4d>::New(
+                                       _poses, skeletonPath, _tokens->skelLocalToCommonSpace, resolved))};
+            prim.dataSource = HdOverlayContainerDataSource::New(
+                HdRetainedContainerDataSource::New(HdPrimvarsSchema::GetSchemaToken(),
+                                                   HdRetainedContainerDataSource::New(2, names, values)),
+                prim.dataSource);
+            return prim;
         }
         std::vector<int> map(meshJoints.size(), -1);
         for (size_t j = 0; j < meshJoints.size(); ++j) {
@@ -336,13 +498,19 @@ private:
                 .SetInterpolation(HdPrimvarSchema::BuildInterpolationDataSource(HdPrimvarSchemaTokens->constant))
                 .Build();
         };
-        const TfToken names[] = {HdSkinningInputTokens->skinningXforms, HdSkinningInputTokens->numJoints};
-        const HdDataSourceBaseHandle values[] = {
+        TfTokenVector names = {HdSkinningInputTokens->skinningXforms, HdSkinningInputTokens->numJoints};
+        std::vector<HdDataSourceBaseHandle> values = {
             constant(_InstanceJointsDataSource::New(transforms, skelJoints.size(), std::move(map))),
             constant(HdRetainedTypedSampledDataSource<int>::New(int(meshJoints.size())))};
+        if (share) {
+            names.push_back(HdSkinningInputTokens->skelLocalToCommonSpace);
+            values.push_back(value(_SharedSkelDataSource<GfMatrix4d>::New(
+                _poses, skeletonPath, _tokens->skelLocalToCommonSpace, resolved)));
+        }
         prim.dataSource = HdOverlayContainerDataSource::New(
-            HdRetainedContainerDataSource::New(HdPrimvarsSchema::GetSchemaToken(),
-                                               HdRetainedContainerDataSource::New(2, names, values)),
+            HdRetainedContainerDataSource::New(
+                HdPrimvarsSchema::GetSchemaToken(),
+                HdRetainedContainerDataSource::New(names.size(), names.data(), values.data())),
             prim.dataSource);
         return prim;
     }
@@ -353,6 +521,8 @@ private:
                                      path.GetNameToken() == _tokens->computation ||
                                      path.GetNameToken() == _tokens->normalsAggregator);
     }
+
+    const std::shared_ptr<_SkelPoses> _poses = std::make_shared<_SkelPoses>();
 };
 
 TF_DECLARE_REF_PTRS(_VelocityModeSceneIndex);

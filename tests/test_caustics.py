@@ -1,6 +1,8 @@
 """Caustics (eldr:caustics): tests/scenes/caustics.usda's glass ball focuses the sun onto the floor.
 With caustics the `caustics` AOV holds a patch several times brighter than the sunlit floor, it is part
-of indirect diffuse, and the splits still add up to the beauty there; off, the AOV is black.
+of indirect diffuse, and the splits still add up to the beauty there; off, the AOV is black. The ball
+blocks the sun's direct light under the patch (its light arrives as photons), also with
+eldr:translucentShadows and eldr:rtTranslucentShadows off (no double counting).
 Run: usdenv.cmd python tests\\test_caustics.py <exrinfo>"""
 import os
 import subprocess
@@ -38,12 +40,12 @@ def RenderSettings "Render" {{
 """ for n, s, t, d in VARS) + "}\n")
 
 
-def render(caustics):
+def render(caustics, *extra):
     if os.path.exists(exr):
         os.remove(exr)
     subprocess.run([sys.executable, os.path.join(HERE, "exr_record.py"), scene, "/Render", "/cam",
                     "eldr:finalQuality=true", "eldr:filmSamples=16", "eldr:autoExposure=false",
-                    "eldr:caustics=%d" % caustics], check=True, timeout=600, env=dict(os.environ, EXR_SIZE=str(SIZE)))
+                    "eldr:caustics=%d" % caustics, *extra], check=True, timeout=600, env=dict(os.environ, EXR_SIZE=str(SIZE)))
     out = subprocess.run([exrinfo, exr, "--grid", str(CELLS), str(CELLS)], capture_output=True, text=True,
                          check=True, timeout=120).stdout.splitlines()
     chans = [l.split()[1] for l in out if l.startswith("channel ")]
@@ -72,5 +74,9 @@ expect(abs(g(on[best], "C") - splits) <= 0.03 * g(on[best], "C"),
 expect(g(on[best], "C") > g(off[best], "C") + 0.5 * g(on[best], "caustics"),
        "the beauty brightens there with caustics (%.3f, off %.3f)" % (g(on[best], "C"), g(off[best], "C")))
 expect(max(g(c, "caustics") for c in off) == 0.0, "off: no caustics")
+untinted = render(2, "eldr:translucentShadows=false", "eldr:rtTranslucentShadows=false")
+for name, r in (("on", on), ("tint settings off", untinted)):
+    expect(g(r[best], "directdiffuse") <= 0.1 * lit,
+           "%s: the ball blocks the sun under the patch (direct %.3f, sunlit %.3f)" % (name, g(r[best], "directdiffuse"), lit))
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

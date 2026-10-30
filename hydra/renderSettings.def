@@ -208,6 +208,7 @@ HDVK_VDB_SETTING(volumeUnderTransparency, "Volumes under Transparency (glass dim
 HDVK_VDB_SETTING(volumeShadows, "Volume Shadows (volumes shadow surfaces from the sun)", volume.shadows)
 HDVK_SETTING(localVolumeShadows, "Local Volume Shadows (volumes shadow surfaces from local lights)", frame.localVolumeShadows)
 HDVK_SETTING(volumeMutualShadows, "Volume Mutual Shadows (volumes shadow each other)", frame.volume.mutualShadows)
+HDVK_SETTING(volumeShadowGrid, "Volume Shadow Grid (cells per axis, 0 = march every shadow ray)", int(frame.volume.shadowGrid))
 HDVK_SETTING(volumeDefaultFields, "Volume Default Fields (Cd, temperature without a volume material)", frame.volume.defaultFields)
 HDVK_SETTING(volumeMultipleScattering, "Volume Multiple Scattering (octaves; off: single, as Karma's volume limit 0)", frame.volume.multipleScattering)
 HDVK_SETTING(volumeVelocityBlur, "Volume Velocity Blur (vel field, volumes with velocity blur on)", true)

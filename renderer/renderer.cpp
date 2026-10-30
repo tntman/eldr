@@ -163,6 +163,8 @@ constexpr uint32_t kFeatureTimeSample = 1u << 25;
 constexpr uint32_t kFeatureMultiScatter = 1u << 26;
 // caustics.glsl: mesh.frag gathers caustic photons.
 constexpr uint32_t kFeatureCaustics = 1u << 27;
+// shadow_tint.frag: only caustic casters go into the tint maps (Frame::translucentShadows off).
+constexpr uint32_t kFeatureTintCastersOnly = 1u << 28;
 // The ones only the shading pipelines with their code have (frame.glsl's
 // kCompiledFeatures, Renderer::_ShadingSet).
 constexpr uint32_t kOptionalFeatures = kFeatureRtShadows | kFeatureRtReflections | kFeatureGi | kFeatureSsgi |
@@ -636,6 +638,10 @@ Renderer::~Renderer()
         _prewarmThread.join();
     }
     lap("prewarm join");
+    if (_rt) {
+        _rt->WaitCompiles();  // before the merge into the cache they use
+    }
+    lap("rt pipelines join");
     _MergePrewarmCache();
     lap("merge+save");
     for (const Prewarmed &p : _prewarmed) {
@@ -847,11 +853,15 @@ void Renderer::_CreateDescriptors()
         {50, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Reflections::kMaxProbes, kFragment},
         {51, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, Scene::Gpu::kMaxMirrors, kFragment},
         {63, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
-        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},  // traced shadows march the volumes too
-        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt},
+        // Traced shadows march the volumes too, and volume_grid.comp.
+        {64, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
+        {65, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {66, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {68, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         {77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},  // VolumePass::TranslucentLayers
+        // The volumes' shadow grid (VolumePass::ShadowGrid): read by volume.frag, written by volume_grid.comp.
+        {93, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        {94, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT},
         // Displacement per material, levels of detail per mesh slot and the
         // camera's level per instance slot (cull.comp).
         {39, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kVertex | kFragment | VK_SHADER_STAGE_COMPUTE_BIT | kRt},
@@ -1561,6 +1571,9 @@ void Renderer::_PrewarmWorker()
 // pipelines (and saves) with that cache, so the worker merging into it raced.
 void Renderer::_MergePrewarmCache()
 {
+    if (_rt && _rt->Compiling()) {
+        return;  // its threads create pipelines with the destination; a later call merges
+    }
     bool save;
     {
         std::lock_guard<std::mutex> lock(_prewarmMutex);
@@ -1971,6 +1984,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
         _volumePass->TranslucentLayers() ? _volumePass->TranslucentLayers() : _transparency.SunTint().color.view,
         VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(77, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &translucentLayers);
+    const VkDescriptorImageInfo shadowGrid{_clampSampler, _volumePass->ShadowGrid(), VK_IMAGE_LAYOUT_GENERAL};
+    const VkDescriptorImageInfo shadowGridStorage{VK_NULL_HANDLE, _volumePass->ShadowGrid(), VK_IMAGE_LAYOUT_GENERAL};
+    write(93, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &shadowGrid);
+    write(94, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, nullptr, &shadowGridStorage);
     const VkDescriptorImageInfo blueNoise{_clampSampler, _blueNoise.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     write(90, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &blueNoise);
     const VkDescriptorBufferInfo filmTiles{_taa.Tiles(), 0, VK_WHOLE_SIZE};
@@ -3682,7 +3699,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         rt.skinnedCapacity = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
         rt.skinned = scene.LargestSkinned(frame.cameraPos, rt.skinnedCapacity);
         rt.displacedInstances = scene.LargestDisplacedInstances(frame.cameraPos, kMaxRtDisplacedInstances);
+        const auto rtStart = std::chrono::steady_clock::now();
+        _rt->WaitPipelines(rt);
         const auto bvhStart = std::chrono::steady_clock::now();
+        _load.rtPipelinesMs += std::chrono::duration<double, std::milli>(bvhStart - rtStart).count();
         _rt->Prepare(gpu, rt, _width, _height);
         _load.bvhMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - bvhStart).count();
     } else if (_rt) {
@@ -3719,8 +3739,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool refraction = draw && frame.translucency && frame.refraction && frame.depthPrepass && gpu.refraction;
     // Translucent shadows: tint maps at a fraction of the shadow maps'
     // size (1 x 1 while unused); new ones invalidate the cached atlas.
-    const bool translucentShadows = draw && frame.translucency && frame.translucentShadows &&
+    // Under caustics the casters' glass blocks the light whatever
+    // Frame::translucentShadows says (its light arrives as photons): with it
+    // off the tint maps hold the casters alone.
+    const bool translucentShadows = draw && frame.translucency && (frame.translucentShadows || rt.caustics) &&
                                     !gpu.translucent.empty();
+    if (translucentShadows && !frame.translucentShadows) {
+        fd.features[0] |= kFeatureTintCastersOnly;
+    }
     // Volume shadows: the volumes' transmittance goes into the sun's tint
     // map as well (VolumePass::RecordShadow), read with the translucent
     // casters'.
@@ -3747,6 +3773,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     if (frame.volumes && frame.volume.resolution >= 2 && gpu.volumeCount > 0) {
         _volumePass->EnsureHalf(_width, _height);
+    }
+    if (frame.volumes && gpu.volumeCount > 0) {
+        // The shadow grid holds the volumes and what lights them.
+        _volumePass->EnsureShadowGrid(gpu.volumeCount, gpu.lightCount, localLights, ibl, frame.volume,
+                                      gpu.volumeFactors, gpu.volumeVersion * 1099511628211ull ^ gpu.lightingHash);
     }
     // Volumes under transparency: split around the translucent layers,
     // peeled up to the refraction layer budget (and the prepass's depth,

@@ -32,6 +32,9 @@ const uint32_t kUpsampleFrag[] =
 const uint32_t kShadowFrag[] =
 #include "volume_shadow.frag.inc"
 ;
+const uint32_t kGridComp[] =
+#include "volume_grid.comp.inc"
+;
 
 constexpr VkFormat kHalfFormat = VK_FORMAT_R32G32B32A32_UINT;  // half floats: radiance, coloured transmittance
 
@@ -50,7 +53,70 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
     int32_t shadowLink;      // volume_shadow.frag: the light's shadow link bit (-1: every volume casts)
     uint32_t localShadowStride;      // Settings::localShadowStride
+    uint32_t gridSize, gridLights;   // the shadow grid's (VolumePass::EnsureShadowGrid), 0: none
 };
+
+struct GridParams {  // mirror of the push block in volume_grid.comp
+    uint32_t count, size, lights, mutual;
+    float density;
+    uint32_t tables;
+};
+
+// Shadow grids: at most this many cells (8 bytes each) and lights.
+constexpr uint64_t kGridCells = uint64_t(8) << 20;
+constexpr uint32_t kGridMaxLights = 16;
+
+void Barrier(VkCommandBuffer cmd, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+             VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+{
+    VkMemoryBarrier2 b{VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = srcStage;
+    b.srcAccessMask = srcAccess;
+    b.dstStageMask = dstStage;
+    b.dstAccessMask = dstAccess;
+    VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+// A shadow grid image (3D, RGBA16F), in GENERAL from here on (storage and sampled alike), cleared.
+Image CreateGrid(Device &dev, const uint32_t extent[3])
+{
+    constexpr VkFormat kFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+    Image img;
+    VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    ci.imageType = VK_IMAGE_TYPE_3D;
+    ci.format = kFormat;
+    ci.extent = {extent[0], extent[1], extent[2]};
+    ci.mipLevels = 1;
+    ci.arrayLayers = 1;
+    ci.samples = VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ci.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    Check(vkCreateImage(dev.device, &ci, nullptr, &img.image), "vkCreateImage");
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(dev.device, img.image, &req);
+    img.memory = dev.Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    Check(vkBindImageMemory(dev.device, img.image, img.memory, 0), "vkBindImageMemory");
+    VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vci.image = img.image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    vci.format = kFormat;
+    vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    Check(vkCreateImageView(dev.device, &vci, nullptr, &img.view), "vkCreateImageView");
+    dev.Submit([&](VkCommandBuffer cmd) {
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        ImageBarrier(cmd, img.image, range, VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT,
+                     VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        const VkClearColorValue clear{};
+        vkCmdClearColorImage(cmd, img.image, VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+        Barrier(cmd, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    });
+    return img;
+}
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
 {
@@ -178,6 +244,11 @@ VolumePass::VolumePass(Device &device, VkDescriptorSetLayout sceneLayout)
     VkSamplerCreateInfo sci{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};  // filters nothing: integer texels
     sci.addressModeU = sci.addressModeV = sci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     Check(vkCreateSampler(_dev.device, &sci, nullptr, &_halfSampler), "vkCreateSampler");
+    const VkPushConstantRange gridRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(GridParams)};
+    lci.pPushConstantRanges = &gridRange;
+    Check(vkCreatePipelineLayout(_dev.device, &lci, nullptr, &_gridLayout), "vkCreatePipelineLayout");
+    _gridExtent[0] = _gridExtent[1] = _gridExtent[2] = 1;  // bound before any volume
+    _grid = CreateGrid(_dev, _gridExtent);
 }
 
 // When a volume or light shape first draws: a scene without them doesn't
@@ -203,16 +274,26 @@ void VolumePass::_EnsurePipelines()
     _shadowPipeline = CreateFullscreenPipeline(_dev, _layout, kShadowFrag, sizeof(kShadowFrag),
                                                Transparency::kTintFormat, false, false, true,
                                                Transparency::kTintDepthFormat);
+    VkShaderModule module = CreateShaderModule(_dev.device, kGridComp, sizeof(kGridComp));
+    VkComputePipelineCreateInfo cci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    cci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module,
+                 "main"};
+    cci.layout = _gridLayout;
+    const VkResult r = vkCreateComputePipelines(_dev.device, _dev.pipelineCache, 1, &cci, nullptr, &_gridPipeline);
+    vkDestroyShaderModule(_dev.device, module, nullptr);
+    Check(r, "vkCreateComputePipelines");
 }
 
 VolumePass::~VolumePass()
 {
     vkDeviceWaitIdle(_dev.device);
     for (VkPipeline p : {_pipeline[0], _pipeline[1], _halfPipeline[0], _halfPipeline[1], _upsamplePipeline,
-                         _shadowPipeline, _shapePipeline}) {
+                         _shadowPipeline, _shapePipeline, _gridPipeline}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
+    vkDestroyPipelineLayout(_dev.device, _gridLayout, nullptr);
+    _dev.Destroy(_grid);
     vkDestroySampler(_dev.device, _halfSampler, nullptr);
     _dev.Destroy(_half);
     _DestroyLayers();
@@ -291,9 +372,15 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     vkCmdPipelineBarrier2(cmd, &dep);
     StorageBarrier(cmd);  // the light splits volume.frag attenuates (aov.h)
 
+    const bool grid = _gridSize > 0 && _gridCount == volumeCount;
+    if (grid && _gridBuilt != _gridWanted) {
+        _BuildShadowGrid(cmd, set);
+    }
     VolumeParams p = Params(s, volumeCount);
     p.part = part;
     p.scale = s.resolution >= 2 && _half.image ? 2 : 1;
+    p.gridSize = grid ? _gridSize : 0;
+    p.gridLights = grid ? _gridLights : 0;
     if (p.scale == 1) {
         DrawFullscreen(cmd, _pipeline[factors], _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                        &p, sizeof(p));
@@ -314,6 +401,61 @@ bool VolumePass::Record(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volum
     DrawFullscreen(cmd, _upsamplePipeline, _layout, set, color, width, height, true, VK_SHADER_STAGE_FRAGMENT_BIT,
                    &p, sizeof(p));
     return true;
+}
+
+void VolumePass::EnsureShadowGrid(uint32_t count, uint32_t distant, uint32_t local, bool dome, const Settings &s,
+                                  bool tables, uint64_t version)
+{
+    const bool mutual = s.mutualShadows && count > 1;
+    const uint32_t lights = 1 + std::min(distant + (mutual ? local : 0), kGridMaxLights);
+    const uint64_t slots = uint64_t(count) * lights;
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(_dev.physical, &props);
+    uint32_t size = s.shadowSteps > 0 && count > 0 ? std::min(s.shadowGrid, 128u) : 0;
+    while (size > 0 && (uint64_t(size) * size * size * slots > kGridCells ||
+                        uint64_t(size) * slots > props.limits.maxImageDimension3D)) {
+        --size;
+    }
+    size = size >= 8 ? size : 0;  // coarser than that: march
+    const uint32_t extent[3] = {std::max(size, 1u), std::max(size, 1u), std::max(uint32_t(size * slots), 1u)};
+    if (!std::equal(extent, extent + 3, _gridExtent)) {
+        _dev.Destroy(_grid);
+        _grid = CreateGrid(_dev, extent);
+        std::copy(extent, extent + 3, _gridExtent);
+        _gridBuilt = 0;
+    }
+    _gridSize = size;
+    _gridLights = lights;
+    _gridCount = count;
+    _gridMutual = mutual ? 1 : 0;
+    _gridTables = tables ? 1 : 0;
+    _gridDensity = std::max(s.density, 0.0f);
+    // What the grid holds (FNV-1a); never 0 (_gridBuilt's "nothing").
+    uint64_t hash = 1469598103934665603ull;
+    float density = _gridDensity;
+    uint32_t bits;
+    std::memcpy(&bits, &density, 4);
+    for (uint64_t v : {version, uint64_t(size), uint64_t(lights), uint64_t(count), uint64_t(_gridMutual),
+                       uint64_t(_gridTables), uint64_t(bits), uint64_t(dome), uint64_t(distant), uint64_t(local)}) {
+        hash = (hash ^ v) * 1099511628211ull;
+    }
+    _gridWanted = hash | 1;
+}
+
+void VolumePass::_BuildShadowGrid(VkCommandBuffer cmd, VkDescriptorSet set)
+{
+    _EnsurePipelines();
+    // After last frame's march read it.
+    Barrier(cmd, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+            VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+    const GridParams p{_gridCount, _gridSize, _gridLights, _gridMutual, _gridDensity, _gridTables};
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gridPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gridLayout, 0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cmd, _gridLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(p), &p);
+    vkCmdDispatch(cmd, (_gridExtent[0] + 3) / 4, (_gridExtent[1] + 3) / 4, (_gridExtent[2] + 3) / 4);
+    Barrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    _gridBuilt = _gridWanted;
 }
 
 void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t first, uint32_t count,

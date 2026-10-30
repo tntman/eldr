@@ -49,7 +49,9 @@ engine.SetRendererSetting("eldr:filmSamples", 256)
 | Environment variable | Effect |
 |---|---|
 | `HDVK_NO_RAY_TRACING=1` | Pretend the GPU has no ray tracing |
+| `HDVK_NO_POSE_SHARE=1` | A/B: with deferred skinning each mesh poses its skeleton itself (default: once per skeleton and shutter time, shared by its meshes) |
 | `HDVK_PIPELINE_CACHE_DIR` | Move the pipeline cache (default `%LOCALAPPDATA%\Eldr`) |
+| `HDVK_RT_EARLY_COMPILE=0` | Compile the ray tracing pipelines on their first trace instead of on threads from the delegate's start (A/B) |
 | `USD_ROOT`, `USD_VENV`, `HDVK_BUILD` | Read by `usdenv.cmd` (sets plugin paths) |
 
 ## Frame pipeline
@@ -167,7 +169,7 @@ Light focused by glass or metal onto diffuse surfaces (a glass's bright spot, a 
 - **Lights:** distant, sphere (spot cones included), rect and disk lights send `eldr:causticsPhotons` (65536) photons each per film sample, aimed at the casters' bounding sphere; `inputs:karma:light:contributescaustics` (or `inputs:eldr:light:contributescaustics`) off leaves a light out. Not cylinders, emissive meshes, domes (their extracted sun does send) or light textures.
 - **Receivers:** every mesh but refracting glass gathers them on its diffuse surface; `primvars:eldr:object:causticsreceive` overrides. Photons are kept in a hashed grid on the GPU (2^20 cells, a cell twice the gather radius).
 - **Progressive:** film sample i gathers within r_i, r_(i+1)^2 = r_i^2 (i + 2/3) / (i + 1) (Knaus and Zwicker 2011), from `eldr:causticsRadius` (0: 2% of the casters' bounding radius); the film's average converges, sharper with every sample. Adaptive tiles don't skip tiles while caustics run.
-- **Shadows:** under caustics a caster's glass blocks its traced shadows and tint maps (its light arrives as caustics instead, no double counting).
+- **Shadows:** under caustics a caster's glass blocks its traced shadows and tint maps (its light arrives as caustics instead, no double counting), with `eldr:translucentShadows` and `eldr:rtTranslucentShadows` off too.
 - **AOV:** `caustics` (raw), or Karma-style LPEs `C<RD>.+<TS>L`, `C<RD><TS>.*L`, `C<RD>[<TS><RS>].*L`; it is part of indirect diffuse, so the splits still sum to the beauty. Traced hits (reflections, refraction, GI probes, final gather) see caustics too.
 
 Against Karma (tests/scenes/caustics.usda, karma_golden at 320x180: Karma CPU 1024 samples with the ball's Enable Caustics and its colour limit raised, Eldr 64 film samples; 2026-10-29): the focused patch is 0.90-0.97 of Karma's per 10 x 10 pixel cell (13.7 vs 14.2 at the peak), the sunlit floor 0.547 vs 0.540, image mean luminance 0.99. With Karma's default colour limit its caustics are much dimmer: the limit clamps every sample that sees the sun through the glass. Cost (GTX 1080 Ti, compute fallback, 960x540, the same scene): 5.9 ms per film sample off, 13.3 ms with 65536 photons, 34.4 ms with 262144 (the photon trace dominates; 65536 and 262144 give the same patch within 1% at 64 samples). A photon pass gathered on a cap of 4096 photons per pixel lost half the focus; the cap is now 65536 (a hang guard).
@@ -234,6 +236,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 | Glass tints fog; volumes behind glass are dimmed by every translucent layer in front of them (up to `eldr:refractionLayers`, at most 4, peeled per pixel) and refracted | `eldr:volumeUnderTransparency` |
 | Half-resolution march, about 3x cheaper | `eldr:volumeResolution` 2 |
 | Local lights' shadows (atlas tap, other volumes) every second march step, the steps between reuse the last tap's shadowed fraction | `eldr:volumeLocalShadowStride` |
+| Shadow grids: each volume's optical depth towards the dome, the suns and the local lights (other volumes) built once per change on a 64^3 grid and read trilinearly instead of shadow marches (3-4x cheaper volumes; time samples of velocity-blurred volumes march) | `eldr:volumeShadowGrid` |
 
 ## Materials
 
@@ -296,7 +299,7 @@ UsdPreviewSurface `opacityMode` "presence" (without a threshold) scales the whol
 | Displacement (`eldr:displacement`) | UsdPreviewSurface and MaterialX displacement move vertices along normals, so depth, shadows, motion and ray tracing agree; shading normal bumped by the height slope. Best on subdivided meshes. Culling bounds grow by the largest offset; a graph's is taken as |scale|, or the shader's `inputs:eldr:displacementBound` (object units) when the graph outputs more than -1..1. Height maps read at the mip matching vertex spacing. |
 | Displacement graphs (`eldr:displacementGraphs`) | A shading graph runs per vertex, also for ray-tracing BLASes (`eldr:rtDisplacement`). Graphs reading world position, normal or instance primvars give the 256 largest instances a BLAS each (rebuilt when they or their primvars change); others share the first instance's. |
 | LOD (`eldr:lod`, `eldr:lodBias`) | Meshes of 1000+ triangles get up to 3 coarser levels (quadric simplification weighing normals, uvs, colours, joint weights); culling picks the coarsest level under about 1 px of error, with hysteresis. Crowd 54.5M to 13.6M triangles, 68 to 28-34 ms; Kitchen at Very High 34.8M to 6.4M, 30 to 10.5 ms. `eldr:lodFade` crossfades over 8 frames. |
-| Skinning (UsdSkel) | GPU linear blend or dual quaternion (`primvars:skel:skinningMethod = "dualQuaternion"`), 4 or 8 influences, blend shapes, per-instance poses (one draw per prototype); authored normals kept. With `HD_ENABLE_DEFERRED_SKINNING=1` (USD's, set before the app starts) instanced agents with their own animations stay one instanced mesh per prototype; a mesh with its own `skel:joints` gets every instance's joints remapped (USD remaps only the first) |
+| Skinning (UsdSkel) | GPU linear blend or dual quaternion (`primvars:skel:skinningMethod = "dualQuaternion"`), 4 or 8 influences, blend shapes, per-instance poses (one draw per prototype); authored normals kept. With `HD_ENABLE_DEFERRED_SKINNING=1` (USD's, set before the app starts) instanced agents with their own animations stay one instanced mesh per prototype; a mesh with its own `skel:joints` gets every instance's joints remapped (USD remaps only the first); a skeleton is posed once per shutter time for all its meshes |
 | Curves (BasisCurves) | linear, bezier, bspline, catmullRom; 6-sided tubes or flat ribbons (with normals); `widths`, `displayColor`, materials, instancing; u runs along the curve. 100k hair curves in about 2 s. `eldr:curveRibbons` / `primvars:eldr:ribbons`: camera-facing ribbons (2 triangles per step instead of 12). |
 | Points | Icosahedra `widths` across, or camera-facing discs with `eldr:pointSprites` / `primvars:eldr:sprites` |
 | Volumes | See Volumes and fog |

@@ -680,6 +680,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         *value = uint32_t(std::max(delegate->GetRenderSetting<int>(token, int(*value)), 1));
     }
     frame.movingShadowRays = uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.movingShadowRays, 1), 0, 16));
+    frame.volume.shadowGrid =
+        uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.volumeShadowGrid, int(frame.volume.shadowGrid)), 0, 128));
     // Colour limit (Karma's per-sample brightness limit, default 20): the indirect clamp, from
     // eldr:indirectClamp, else (colour limit not shared) karma:global:colorlimitindirect, else the
     // shared limit eldr:colorLimit, else karma:global:colorlimit, else 20. 0 = off.

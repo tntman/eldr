@@ -4,6 +4,7 @@
 #include "scene.h"
 
 #include <functional>
+#include <future>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -24,7 +25,7 @@ struct RayTracingData {
     uint32_t skinned[4];  // the TLAS's first skinned instance, how many
     float shadowSample[4];  // xy: this sample's point on the light shapes (sample dimensions), z: share of the
                             // samples each light is traced in (0: all), w: layer stride
-    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel, 1: lights shadowed at hits
+    uint32_t shadowInfo[4];  // shadow rays' cull mask, volumes they march, lights per texel, w bit 1: lights shadowed at hits, bit 2: translucent casters tint
     float shadowVolume[4];   // the volumes' step size and density (VolumeParams)
     uint32_t refraction[4];  // traced refraction: interfaces per ray (Work::refractionBounces), displaced glass bends
     float gather[4];         // final gather: ray length, 1 while on (Work::gather)
@@ -151,6 +152,16 @@ public:
     // (in submits of their own), frees unused ones, sizes the TLAS and the
     // images for `width` x `height`, and writes this frame's uniforms.
     void Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width, uint32_t height);
+    // Waits for the pipelines `work` traces with (Prepare does it too). The
+    // constructor starts compiling them on threads, one per ray generation
+    // shader (a cold driver cache took 22 s for all of them in one pipeline
+    // on Pascal's compute fallback), so they overlap the scene's load;
+    // HDVK_RT_EARLY_COMPILE=0 compiles each here on its first use instead.
+    void WaitPipelines(const Work &work);
+    // True while a constructor-started compile still runs: the device's
+    // pipeline cache can't be a merge destination meanwhile.
+    bool Compiling() const;
+    void WaitCompiles();  // for the running ones; deferred ones stay uncompiled
     // Writes bindings 52..59, 86, 87 and 92 of the scene set (see shaders/rt.glsl, gi.glsl, caustics.glsl).
     void UpdateDescriptors(VkDescriptorSet set, const Scene::Gpu &gpu);
     // Records the TLAS build (when the scene changed) and the traces;
@@ -224,7 +235,12 @@ private:
     Image _CreateAtlas(VkFormat format, uint32_t width, uint32_t height);  // storage + sampled, GENERAL, zero
     void _CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers);
     void _CreatePipelines(VkDescriptorSetLayout sceneLayout);  // layouts and the set
-    void _EnsurePipelines();
+    // The ray tracing pipelines, one per ray generation shader (each with the
+    // misses and hit groups), and their shader binding tables.
+    enum Raygen { kPixels, kProbes, kRefraction, kPhotons, kRaygens };
+    void _CompileCompute();
+    void _CompileRaygen(Raygen k);
+    void _Wait(int job);  // kRaygens: the compute pipelines
     void _FitProbes(const Scene::Gpu &gpu);
     void _PrepareCaustics(RayTracingData &d);
 
@@ -235,13 +251,18 @@ private:
     VkDescriptorPool _pool = VK_NULL_HANDLE;
     VkDescriptorSet _set = VK_NULL_HANDLE;
     VkPipelineLayout _layout = VK_NULL_HANDLE;
-    VkPipeline _pipeline = VK_NULL_HANDLE;  // ray tracing: shaders/rt*
+    VkPipeline _pipelines[kRaygens] = {};  // ray tracing: shaders/rt*, per Raygen
+    std::future<void> _compiles[kRaygens + 1];  // per Raygen, then the compute pipelines
+    bool _ready[kRaygens + 1] = {};             // waited for (and its table written)
     VkPipeline _tlasPipeline = VK_NULL_HANDLE;
     VkPipeline _skinPipeline = VK_NULL_HANDLE;  // rt_skin.comp
     VkPipeline _displacePipeline = VK_NULL_HANDLE;  // rt_displace.comp
-    Buffer _sbt;  // shader binding table: raygen, miss and hit regions
-    VkStridedDeviceAddressRegionKHR _raygen{}, _raygenProbes{}, _raygenRefraction{}, _raygenPhotons{}, _miss{}, _hit{},
-        _callable{};
+    Buffer _sbt;  // shader binding tables, per Raygen: raygen, miss and hit regions
+    struct Table {
+        VkStridedDeviceAddressRegionKHR raygen{}, miss{}, hit{};
+    };
+    Table _tables[kRaygens];
+    VkStridedDeviceAddressRegionKHR _callable{};
 
     // BLASes by Scene::Gpu::SlotGeometry::version, sub-allocated from blocks.
     std::unordered_map<uint64_t, Blas> _blas;

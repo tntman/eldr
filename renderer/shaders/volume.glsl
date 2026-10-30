@@ -104,9 +104,14 @@ pnanovdb_readaccessor_t Accessor(uint offset)
 // (frame.deform.z, its offset from this frame frame.deform.x in frames)
 // volume i's fields at density index p are read at p - vel(p) * t, the
 // velocity the nearest voxel's.
+// VOLUME_STATIC (volume_grid.comp): every volume as at this frame.
 bool Moving(uint i)
 {
+#ifdef VOLUME_STATIC
+    return false;
+#else
     return volumes[i].velocity.w != 0u && frame.deform.z > 0.0 && frame.deform.x != 0.0;
+#endif
 }
 vec3 Advect(uint i, vec3 p)
 {
@@ -174,6 +179,82 @@ vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float
             tau += e;
             weighted += m * s;
             weighted2 += m * s * s;
+        }
+    }
+    return tau;
+}
+
+// The density (without a table) or the extinction table's value
+// (ExtinctionTable) integrated from density index p towards a distant
+// light (index-space direction dl per world unit) to the edge of the box,
+// in `steps` steps (volume.frag's march, volume_grid.comp's cells).
+float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo,
+                  vec3 hi, float noise, uint steps)
+{
+    float far = Slabs(p, dl, lo, hi).y;
+    if (!(far > 0.0) || steps == 0u) {
+        return 0.0;
+    }
+    float dt = far / float(steps), tau = 0.0;
+    for (uint k = 0u; k < steps; ++k) {
+        ivec3 ijk = ivec3(floor(p + dl * ((float(k) + noise) * dt) + 0.5));
+        float rho = max(ReadFloat(PNANOVDB_GRID_TYPE_FLOAT, acc, ijk), 0.0);
+        tau += table == kNone ? rho : ExtinctionTable(table, low, scale, rho);
+    }
+    return tau * dt;
+}
+
+// Optical depth per channel of the first `count` volumes but `self` along
+// x + dir * s, s in [0, 1] (as VolumeOpticalDepth): `steps` steps across
+// each box crossed (0: one per voxel, at most 256), offset by noise;
+// `density`: the extinction multiplier; `tables`: read extinction tables
+// (volume.frag's kFactors). The self march (ShadowMarch) covers the
+// volume's own density, so it is left out here. No tint maps: they hold
+// all volumes' transmittance together, the lit volume's own included, with
+// one depth per texel, so they can't tell another volume in front from
+// this one.
+// Steps landing in an empty tile go on to the first step past it; the
+// march stops once nothing is left to dim (kShadowOpaque).
+// ponytail: fixed steps per box; cost grows with the volumes crossed.
+vec3 OthersDepth(uint self, vec3 x, vec3 dir, float noise, uint count, uint steps, float density, bool tables)
+{
+    vec3 tau = vec3(0.0);
+    for (uint j = 0u; j < count && min(min(tau.x, tau.y), tau.z) < kShadowOpaque; ++j) {
+        if (j == self) {
+            continue;
+        }
+        vec4 w0 = volumes[j].worldToIndex[0], w1 = volumes[j].worldToIndex[1], w2 = volumes[j].worldToIndex[2];
+        vec3 oi = Row3(w0, w1, w2, x, 1.0), di = Row3(w0, w1, w2, dir, 0.0);
+        vec2 span = Slabs(oi, di, volumes[j].indexMin.xyz, volumes[j].indexMax.xyz);
+        span = vec2(max(span.x, 0.0), min(span.y, 1.0));
+        if (!(span.x < span.y)) {
+            continue;
+        }
+        float n = steps > 0u ? float(steps) : clamp(ceil((span.y - span.x) * length(di)), 1.0, 256.0);
+        float ds = (span.y - span.x) / n;
+        uint table = tables ? volumes[j].lutOffsets.w : kNone;
+        float low = volumes[j].lutLow.w, tableScale = volumes[j].lutScale.w;
+        vec3 scale = ds * length(dir) * density *
+                     (table == kNone ? volumes[j].scattering.rgb + volumes[j].absorption.rgb : vec3(1.0));
+        vec3 safe = SafeDir(di);
+        pnanovdb_readaccessor_t acc = Accessor(volumes[j].grids.x);
+        const bool moving = Moving(j);  // velocity blur: no tile skips (the fields move)
+        float k = 0.0;
+        while (k < n && min(min(tau.x, tau.y), tau.z) < kShadowOpaque) {
+            vec3 q = Advect(j, oi + di * (span.x + (k + noise) * ds)) + 0.5;  // nearest voxel: floor(q)
+            uint level;
+            pnanovdb_address_t a = pnanovdb_readaccessor_get_value_address_and_level(PNANOVDB_GRID_TYPE_FLOAT, buf, acc,
+                                                                                     ivec3(floor(q)), level);
+            float v = pnanovdb_read_float(buf, a);
+            if (level > 0u && v <= 0.0 && !moving) {
+                // An empty tile (or the background): on to the first step past its far side.
+                float dim = level == 1u ? 8.0 : level == 2u ? 128.0 : 4096.0;
+                vec3 exits = (floor(q / dim) * dim + step(0.0, di) * dim - 0.5 - oi) / safe;
+                k = max(k + 1.0, ceil((min(min(exits.x, exits.y), exits.z) - span.x) / ds - noise));
+                continue;
+            }
+            tau += (table == kNone ? vec3(max(v, 0.0)) : ExtinctionTableRgb(table, low, tableScale, max(v, 0.0))) * scale;
+            k += 1.0;
         }
     }
     return tau;
