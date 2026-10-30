@@ -162,13 +162,25 @@ RayTracing::RayTracing(Device &device, VkDescriptorSetLayout sceneLayout)
     const VkDeviceSize tableBytes = AlignUp(AlignUp(stride, base) + AlignUp(2 * stride, base) + 2 * stride, base);
     _dev.Reserve(_sbt, kRaygens * tableBytes + base,
                  VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
-    // The pipelines compile from here, in parallel with the scene's load
-    // (WaitPipelines); HDVK_RT_EARLY_COMPILE=0: on first use, as before.
+    // What nearly every traced frame uses compiles from here, in parallel
+    // with the scene's load (WaitPipelines). Refraction and photons (12.5 and
+    // 2 s cold) start with the first frame tracing them: a scene without
+    // glass or casters doesn't wait for them at exit.
+    // HDVK_RT_EARLY_COMPILE=0: all on first use.
     const char *early = std::getenv("HDVK_RT_EARLY_COMPILE");
-    const std::launch when = early && early[0] == '0' ? std::launch::deferred : std::launch::async;
-    _compiles[kRaygens] = std::async(when, [this] { _CompileCompute(); });
-    for (int k = 0; k < kRaygens; ++k) {
-        _compiles[k] = std::async(when, [this, k] { _CompileRaygen(Raygen(k)); });
+    if (!(early && early[0] == '0')) {
+        for (int job : {int(kRaygens), int(kPixels), int(kProbes)}) {
+            _Start(job);
+        }
+    }
+}
+
+void RayTracing::_Start(int job)
+{
+    if (!_compiles[job].valid() && !_ready[job]) {
+        _compiles[job] = std::async(std::launch::async, [this, job] {
+            job == kRaygens ? _CompileCompute() : _CompileRaygen(Raygen(job));
+        });
     }
 }
 
@@ -463,25 +475,25 @@ void RayTracing::_Wait(int job)
 
 void RayTracing::WaitPipelines(const Work &work)
 {
-    _Wait(kRaygens);
-    if (work.shadows || work.reflections || work.gather) {
-        _Wait(kPixels);
+    // All needed ones started before waiting for any: they compile together.
+    const bool needed[kRaygens + 1] = {work.shadows || work.reflections || work.gather, work.gi, work.refraction,
+                                       work.caustics, true};
+    for (int job = 0; job <= kRaygens; ++job) {
+        if (needed[job]) {
+            _Start(job);
+        }
     }
-    if (work.gi) {
-        _Wait(kProbes);
-    }
-    if (work.refraction) {
-        _Wait(kRefraction);
-    }
-    if (work.caustics) {
-        _Wait(kPhotons);
+    for (int job = 0; job <= kRaygens; ++job) {
+        if (needed[job]) {
+            _Wait(job);
+        }
     }
 }
 
 void RayTracing::WaitCompiles()
 {
     for (std::future<void> &f : _compiles) {
-        if (f.valid() && f.wait_for(std::chrono::seconds(0)) != std::future_status::deferred) {
+        if (f.valid()) {
             f.wait();  // a failed one's error stays for _Wait; its pipeline is null
         }
     }
