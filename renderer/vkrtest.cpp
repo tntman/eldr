@@ -65,8 +65,6 @@ static vkr::Renderer::Frame IdentityFrame()
     std::copy(toDistance, toDistance + 4, frame.depthToDistance);
     frame.clearColor[2] = frame.clearColor[3] = 1;  // opaque blue
     frame.postProcess = false;  // exact linear values; post has its own tests
-    frame.rtReflections = 0;    // tests turn traced reflections on themselves (the default is final quality)
-    frame.adaptiveFinalThreshold = 0.0f;  // tests count a film's samples; the adaptive tests set it
     frame.lodFade = false;      // levels switch at once (the crossfade test turns it on)
     return frame;
 }
@@ -199,6 +197,7 @@ static Image RenderPost(vkr::Device &device, const vkr::Scene &scene, float bloo
     frame.taa = taa;
     frame.ssr = ssr;
     frame.post.bloomIntensity = bloom;
+    frame.post.autoExposure = true;  // the post tests' exposure (off by default since lane 65)
     Image img;
     int frames = 0;
     do {
@@ -1334,11 +1333,11 @@ int main()
                    "a change hands the image back to TAA");
             converge(renderer, &frames);
             Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1, "the film takes over after still frames");
-            frame.finalQuality = true;
+            frame.filmRestart = true;
             frame.sceneVersion = 2;
             Render(renderer, scene, frame);
-            Expect(renderer.GetStats().taaSamples == 1, "final quality starts the film over at once");
-            frame.finalQuality = false;
+            Expect(renderer.GetStats().taaSamples == 1, "filmRestart starts the film over at once");
+            frame.filmRestart = false;
             frame.filmFilterRadius = 0.0f;
             vkr::Renderer box(device);
             Expect(std::abs(converge(box, &frames).At(32, 32, 1) - 0.3f) < 0.02f, "radius 0: a box filter");
@@ -1386,24 +1385,9 @@ int main()
             Expect(frames == 9 && coarse.GetStats().filmActivePixels == 0,
                    "adaptive sampling: done once every pixel's noise is under the threshold");
 
-            // Final quality samples adaptively by default: with only
-            // adaptiveFinalThreshold set, a fresh film (final) stops at the
-            // minimum; the film that took over from TAA after a change
-            // (interactive) still runs to filmSamples. The converged pixel
-            // fraction ends the noisy-edge film early (6% of the pixels
-            // are its edge).
-            frame.adaptiveThreshold = 0.0f;
-            frame.adaptiveFinalThreshold = 0.5f;
-            vkr::Renderer finalRun(device);
-            converge(finalRun, &frames);
-            Expect(frames == 9 && finalRun.GetStats().filmActivePixels == 0,
-                   "adaptive sampling: on in a final-quality film by eldr:adaptiveFinalThreshold");
-            frame.sceneVersion = 100;
-            Render(finalRun, scene, frame);
-            converge(finalRun, &frames);
-            Expect(frames == 32 + int(vkr::Renderer::kFilmStillFrames) - 1,
-                   "adaptive sampling: not in a film that took over from TAA");
-            frame.adaptiveFinalThreshold = 0.002f;
+            // The converged pixel fraction ends the noisy-edge film early
+            // (6% of the pixels are its edge).
+            frame.adaptiveThreshold = 0.002f;
             frame.adaptivePixelFraction = 0.9f;
             vkr::Renderer fraction(device);
             converge(fraction, &frames);
@@ -1412,8 +1396,6 @@ int main()
             vkr::Renderer edge(device);
             converge(edge, &frames);
             Expect(frames == 32, "adaptive sampling: 6% noisy pixels keep the film running at 99%");
-            frame.adaptiveFinalThreshold = 0.0f;
-            frame.adaptiveThreshold = 0.002f;
         }
 
         {
@@ -1641,7 +1623,7 @@ int main()
                 frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
                 frame.shutterOpen = -1.0f;
                 frame.shutter = 1.0f;
-                frame.finalQuality = true;
+                frame.filmRestart = true;
                 frame.filmSamples = 64;
                 frame.filmFilterRadius = 0.0f;
                 frame.motionBlurTimeSamples = timeSamples;
@@ -1768,9 +1750,8 @@ int main()
                 frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
                 frame.shutterOpen = -1.0f;
                 frame.shutter = 1.0f;
-                frame.finalQuality = true;
+                frame.filmRestart = true;
                 frame.filmSamples = samples;
-                frame.adaptiveFinalThreshold = vkr::Renderer::Frame().adaptiveFinalThreshold;
                 if (sampled) {  // the pose at -0.75 comes with the first commit, as new geometry
                     frame.sampledMotion = true;
                     std::copy(frame.viewProj, frame.viewProj + 16, frame.prevViewProj);
@@ -1855,7 +1836,7 @@ int main()
                 frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
                 frame.filmAccumulation = false;
                 frame.renderScale = scale;
-                frame.finalQuality = final;
+                frame.filmRestart = final;
                 Image img;
                 for (int i = 0; i < 48; ++i) {
                     img = Render(renderer, scene, frame);
@@ -1878,7 +1859,7 @@ int main()
             std::printf("upscaling: mean error vs full size %.4f (half size, nearest: %.4f)\n",
                         upscaledError / 4096.0, smallError / 4096.0);
             Expect(fullWidth == 64 && halfWidth == 32 && smallWidth == 32 && finalWidth == 64,
-                   "render scale 0.5: the scene renders at half size, final quality at full size");
+                   "render scale 0.5: the scene renders at half size, filmRestart at full size");
             Expect(upscaledError < 0.5 * smallError && std::abs(upscaled.At(10, 10, 0) - 1.0f) < 0.02f &&
                        upscaled.At(60, 60, 0) < 0.02f,
                    "upscaling reconstructs the full size's edges better than a half-size image");
@@ -2126,8 +2107,8 @@ int main()
             const Image img = Render(renderer, scene, frame);
             Expect(img.At(32, 32, 0) < 0.2f * img.At(41, 32, 0), "ray-traced local light shadow");
 
-            // Interactive frames trace three local lights, final quality up
-            // to 15: with six the atlas is drawn, then not.
+            // rtShadowLights 4 (the default) traces three local lights, 16
+            // up to 15: with six the atlas is drawn, then not.
             for (int i = 0; i < 5; ++i) {
                 AddSphereLight(scene, 0.6f, -0.6f + 0.3f * float(i), 0, 0.02f, 50.0f)->castShadows = true;
             }
@@ -2139,17 +2120,17 @@ int main()
             Render(renderer, scene, frame);
             Expect(atlasDrawn(renderer.GetStats()), "rtShadows: interactive frames trace three local lights");
             vkr::Renderer::Frame finalFrame = frame;
-            finalFrame.rtShadows = false;
-            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
-            finalFrame.finalQuality = true;
+            finalFrame.rtShadowLights = 16;
+            finalFrame.filmRestart = true;
             finalFrame.postProcess = true;
             finalFrame.post.autoExposure = false;
             vkr::Renderer fresh(device);
             Render(fresh, scene, finalFrame);
-            Expect(!atlasDrawn(fresh.GetStats()), "final shadows raytraced: six local lights all traced");
-            finalFrame.finalShadows = vkr::Renderer::Frame::FinalShadows::Auto;
+            Expect(!atlasDrawn(fresh.GetStats()), "rtShadowLights 16: six local lights all traced");
+            finalFrame.rtShadows = false;
+            finalFrame.rtShadowsAuto = true;
             Render(fresh, scene, finalFrame);
-            Expect(atlasDrawn(fresh.GetStats()), "final shadows auto: maps with shadowed local lights");
+            Expect(atlasDrawn(fresh.GetStats()), "rtShadowsAuto: maps with shadowed local lights");
         }
 
         if (device.rayTracing) {
@@ -2170,7 +2151,7 @@ int main()
             scene.Commit();
             vkr::Renderer::Frame frame = IdentityFrame();
             const float off = Render(renderer, scene, frame).At(32, 41, 1);
-            frame.rtReflections = 2;
+            frame.rtReflections = true;
             const float on = Render(renderer, scene, frame).At(32, 41, 1);
             Expect(off < 0.01f && on > 0.8f, "ray-traced reflections show the emitter in the mirror");
 
@@ -2194,9 +2175,9 @@ int main()
                             -0.3f, -0.412f, -0.495f, 0.3f, -0.298f, -0.381f, -0.3f, -0.298f, -0.381f};
             AddSphereLight(shadowed, 0, -0.214f, -0.58f, 0.02f, 400.0f)->castShadows = true;
             shadowed.Commit();
-            frame.rtHitShadows = 0;
+            frame.rtHitShadows = false;
             const float lit = Render(renderer, shadowed, frame).At(32, 41, 1);
-            frame.rtHitShadows = 2;
+            frame.rtHitShadows = true;
             const float dark = Render(renderer, shadowed, frame).At(32, 41, 1);
             Expect(lit > 0.5f && dark < 0.1f * lit, "ray-traced reflection hits are shadowed from local lights");
         }
@@ -2286,7 +2267,7 @@ int main()
                 f.giPreconverge = preconverge;
                 // The probes' light, not the final gather's (which sees
                 // them only past its first bounce, under its own noise).
-                f.finalGather = 0;
+                f.finalGather = false;
                 int n = 0;
                 do {
                     *out = Render(r, scene, f);
@@ -2651,6 +2632,7 @@ int main()
                 vkr::Renderer::Frame frame = IdentityFrame();
                 frame.postProcess = true;
                 frame.taa = false;
+                frame.post.autoExposure = true;
                 frame.post.bloomIntensity = 0.0f;
                 frame.post.tonemapper = tonemapper;
                 Expect(std::abs(Render(post, scene, frame).At(32, 32, 1) - expected) < 0.01f, what);
@@ -3625,7 +3607,7 @@ int main()
             frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
             frame.filmFilterRadius = 0.0f;
             frame.filmSamples = 128;
-            frame.finalQuality = true;
+            frame.filmRestart = true;
             auto film = [&](vkr::Scene &s, const vkr::Renderer::Frame &f) {
                 vkr::Renderer r(device);
                 Image img;
@@ -3665,63 +3647,26 @@ int main()
                         jitteredPartial, pcss, pcssPartial);
             Expect(jittered < 0.03f && jitteredPartial >= 8, "shadow jitter: the film converges to the sun's penumbra");
             if (device.rayTracing) {
-                // Traced instead (Frame::finalShadows, without rtShadows):
+                // Traced instead (Frame::rtShadows, rtShadowSamples 1):
                 // one ray per film sample, a new point of the disc each
                 // (the sample dimensions), converges to the same penumbra.
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                frame.rtShadows = true;  // one ray per film sample
+                frame.rtShadowSamples = 1;
                 float tracedPartial = 0;
                 const float traced = error(film(scene, frame), &tracedPartial);
-                std::printf("final shadows: traced sun penumbra error %.3f over %.0f pixels\n", traced, tracedPartial);
+                std::printf("traced shadows: sun penumbra error %.3f over %.0f pixels\n", traced, tracedPartial);
                 Expect(traced < 0.03f && tracedPartial >= 8,
-                       "final shadows raytraced: the film converges to the sun's penumbra");
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+                       "traced shadows: the film converges to the sun's penumbra");
+                frame.rtShadows = false;
+                frame.rtShadowSamples = 4;
             }
             // Off the film (TAA frames, film off) and for a point sun nothing changes.
             frame.filmAccumulation = false;
             const Image taaOff = film(scene, frame);
             frame.shadowJitter = true;
             Expect(MaxDifference(film(scene, frame), taaOff) == 0.0f, "shadow jitter: TAA frames keep PCSS");
-            // The film a change handed back to TAA (usdview's still camera) is
-            // interactive too: PCSS, jitter on or off.
             frame.filmAccumulation = true;
-            frame.finalQuality = false;
-            auto interactive = [&](const vkr::Renderer::Frame &f) {
-                vkr::Renderer r(device);
-                Render(r, scene, f);
-                vkr::Renderer::Frame changed = f;
-                changed.sceneVersion = 7;
-                Image img;
-                for (int i = 0; i < 400; ++i) {
-                    img = Render(r, scene, changed);
-                    if (r.IsConverged()) {
-                        break;
-                    }
-                }
-                return img;
-            };
-            const Image interactiveJitter = interactive(frame);
-            frame.shadowJitter = false;
-            const Image interactivePcss = interactive(frame);
-            // (Measured 0.004 apart, not bit for bit; a jittered film's
-            // penumbra is up to about 0.1 away from PCSS.)
-            Expect(MaxDifference(interactiveJitter, interactivePcss) < 0.01f,
-                   "shadow jitter: only in final quality (an interactive film keeps PCSS)");
-            if (device.rayTracing) {
-                // (Its first frame is a fresh, final one, which traces.)
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
-                vkr::Renderer r(device);
-                Render(r, scene, frame);
-                vkr::Renderer::Frame changed = frame;
-                changed.sceneVersion = 7;
-                for (int i = 0; i < 400 && !r.IsConverged(); ++i) {
-                    Render(r, scene, changed);
-                }
-                Expect(r.GetStats().accelerationStructureBytes == 0,
-                       "final shadows raytraced: an interactive film keeps the maps");
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
-            }
             frame.shadowJitter = true;
-            frame.finalQuality = true;
             sun->angle = 0.0f;
             scene.Commit();
             const Image pointOn = film(scene, frame);
@@ -3746,7 +3691,7 @@ int main()
             frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
             frame.filmFilterRadius = 0.0f;
             frame.filmSamples = 256;
-            frame.finalQuality = true;
+            frame.filmRestart = true;
             const Image localOpen = film(local, frame);
             sphere->castShadows = true;
             local.Commit();
@@ -3772,14 +3717,16 @@ int main()
             Expect(localJittered < 0.03f && jitteredPartial >= 4,
                    "shadow jitter: the film converges to a sphere light's penumbra");
             if (device.rayTracing) {
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Raytraced;
+                frame.rtShadows = true;  // one ray per film sample
+                frame.rtShadowSamples = 1;
                 float tracedPartial = 0;
                 const float traced = localError(film(local, frame), &tracedPartial);
-                std::printf("final shadows: traced sphere light penumbra error %.3f over %.0f pixels\n", traced,
+                std::printf("traced shadows: sphere light penumbra error %.3f over %.0f pixels\n", traced,
                             tracedPartial);
                 Expect(traced < 0.03f && tracedPartial >= 4,
-                       "final shadows raytraced: the film converges to a sphere light's penumbra");
-                frame.finalShadows = vkr::Renderer::Frame::FinalShadows::Maps;
+                       "traced shadows: the film converges to a sphere light's penumbra");
+                frame.rtShadows = false;
+                frame.rtShadowSamples = 4;
             }
             frame.filmAccumulation = false;
             const Image localTaa = film(local, frame);
@@ -3886,7 +3833,7 @@ int main()
             frame.post.tonemapper = vkr::PostProcess::Settings::Tonemapper::None;
             frame.filmFilterRadius = 0.0f;
             frame.filmSamples = 256;
-            frame.finalQuality = true;
+            frame.filmRestart = true;
             frame.focalLength = 1.0f;
             frame.sensorWidth = 2.0f;
             frame.fStop = 1.0f;
@@ -3988,7 +3935,7 @@ int main()
             vkr::Renderer::Frame frame = IdentityFrame();
             frame.postProcess = true;
             frame.post.autoExposure = false;
-            frame.finalQuality = true;
+            frame.filmRestart = true;
             frame.filmSamples = 64;
             vkr::Renderer r(device);
             Image img;

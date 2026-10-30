@@ -70,7 +70,7 @@ names = [hou.text.decodeParm(t.name()) for t in parms]
 assert len(names) == len(set(names)), "a setting appears twice"
 assert all(t.help().strip() for t in parms), [t.name() for t in parms if not t.help().strip()]
 folders = tab(rs).parmTemplates()  # the Render Settings LOP tab (the viewport's are plain tabs)
-assert [f.label() for f in folders if f.tags().get("group_default") == "1"] == ["Final render", "Lighting and GI", "Image"], \
+assert [f.label() for f in folders if f.tags().get("group_default") == "1"] == ["Film and sampling", "Lighting and GI", "Image"], \
     [(f.label(), f.tags()) for f in folders]
 assert folders[-1].label() == "Performance and debug"
 for t in tab(rs).parmTemplates():  # the Render Settings LOP tab

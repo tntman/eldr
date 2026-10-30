@@ -491,7 +491,7 @@ int HdVkScreenRefineLevel(HdVkDicingView const &view, HdMeshTopology const &topo
 }
 
 // The display style's refine level (usdview's Complexity, Houdini's Level of
-// Detail) or, with eldr:screenDicing in final quality, the level for the
+// Detail) or, with eldr:screenDicing, the level for the
 // mesh's size on screen (primvars:eldr:object:dicingquality, else Karma's,
 // 0.5); the mesh's own primvars:eldr:refineLevel wins over both. At least
 // eldr:object:dicingdepthmin, at most eldr:object:dicingdepthmax (else

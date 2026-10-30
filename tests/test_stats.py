@@ -33,6 +33,7 @@ frustum = camera.GetCamera(Usd.TimeCode.Default()).frustum
 
 engine = UsdImagingGL.Engine()
 assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+engine.SetRendererSetting("eldr:screenDicing", False)  # the display style's levels (on by default)
 engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
 engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
 params = UsdImagingGL.RenderParams()
@@ -40,7 +41,7 @@ params = UsdImagingGL.RenderParams()
 engine.SetRendererSetting("houdini:viewport", True)
 early = engine.GetRenderStats()
 engine.SetRendererSetting("houdini:viewport", False)
-# A fresh film runs in final quality: "final", until it converges.
+# A fresh film accumulates at once: "accumulating", until it converges.
 engine.Render(stage.GetPseudoRoot(), params)
 first = engine.GetRenderStats()
 expect_first = (first.get("rendererStage"), first.get("renderProgressAnnotation", ""))
@@ -62,7 +63,7 @@ def expect(ok, what):
 expect(stats.get("rendererName") == "Eldr", "rendererName")
 expect(early.get("rendererName") == "Eldr" and early.get("trianglesDrawn", 0) == 0
        and early.get("rendererStage") in ("interactive", "converged"), "stats before the first frame: %s" % (dict(early),))
-expect(expect_first[0] == "final" and expect_first[1].startswith("final 1/"), "a fresh film is final: %s" % (expect_first,))
+expect(expect_first[0] == "accumulating" and expect_first[1].startswith("film 1/"), "a fresh film: %s" % (expect_first,))
 expect(stats.get("trianglesTotal") == 24 and stats.get("trianglesDrawn") == 12, "triangles drawn after culling")
 expect(stats.get("instancesTotal") == 2 and stats.get("instancesDrawn") == 1, "instances drawn after culling")
 expect(stats.get("gpuTimeMs", 0) > 0 and "shading" in stats.get("gpuPassMs", {}), "GPU time per pass")
@@ -73,7 +74,7 @@ expect(stats.get("numCompletedSamples") == stats.get("taaTarget") == 64, "film s
 expect(stats.get("percentDone") == 100.0 and stats.get("rendererStage") == "converged", "converged")
 expect(stats.get("gpuMemoryUsed", 0) > stats.get("primvar", 0) > 0, "graphics memory")
 # Houdini's viewport text (houdini/UsdRenderers.json maps these).
-expect(stats.get("renderProgressAnnotation", "").startswith("final 64/64") and "triangles" in stats.get("renderStatsAnnotation", ""),
+expect(stats.get("renderProgressAnnotation", "").startswith("film 64/64") and "triangles" in stats.get("renderStatsAnnotation", ""),
        "annotations")
 expect(stats.get("totalClockTime", 0) > 0 and stats.get("pixelsConvergedPercent") == 100.0, "time to converge")
 # Interactive TAA is not counted up: it reads "interactive 100%".
@@ -84,7 +85,7 @@ engine.Render(stage.GetPseudoRoot(), params)
 tmp = engine.GetRenderStats()
 expect(tmp.get("rendererStage") == "interactive" and tmp.get("percentDone") == 100.0, "interactive TAA stage")
 engine.SetRendererSetting("eldr:filmAccumulation", True)
-# The film that follows a camera move starts from the interactive image: "accumulating", not "final".
+# The film that follows a camera move starts from the interactive image: "accumulating".
 stages = set()
 for _ in range(100):
     engine.Render(stage.GetPseudoRoot(), params)
@@ -94,7 +95,7 @@ for _ in range(100):
 print("stages after a move:", sorted(stages))
 expect("accumulating" in stages, "a film after a camera move is accumulating")
 # A camera jump that also resizes (a fresh history, as a Solaris camera switch)
-# stays interactive: only the renderer's first frame starts a final film.
+# accumulates again (no "final" stage since lane 65).
 for viewport in (SIZE, SIZE // 2):
     engine.SetRenderViewport(Gf.Vec4d(0, 0, viewport, viewport))
     jump = frustum.ComputeViewMatrix() * Gf.Matrix4d().SetTranslate(Gf.Vec3d(-1.0, 0.5, 0))

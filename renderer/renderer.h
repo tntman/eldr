@@ -222,26 +222,24 @@ public:
         // skinned ones, the rtSkinnedInstances largest on screen do (posed
         // and refit every frame).
         bool rtShadows = false;
-        uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16); final quality: 1 per film sample
+        uint32_t rtShadowSamples = 4;      // rays per light and pixel (1..16)
+        // Lights traced (rtShadows, rtShadowsAuto): the sun and up to this
+        // many minus one local lights, the most important (1..kMaxRtShadowLights).
+        uint32_t rtShadowLights = 4;
         // Traced shadows' denoise (gi.glsl's RtTraced): the visibility
         // averaged over a few pixels in the receiver's plane, the radius
         // fading out over the film (effectDenoiseSamples).
         bool rtShadowDenoise = true;
-        // Shadows of final quality's film runs (_filmFinal) without
-        // rtShadows: shadow maps, traced (then the sun and up to 15 local
-        // lights, not 3), or traced when likely cheaper (Renderer::Render's
-        // rule: triangles per pixel and shadowed light). Interactive frames
-        // follow rtShadows alone.
-        enum class FinalShadows { Maps, Raytraced, Auto };
-        FinalShadows finalShadows = FinalShadows::Maps;
+        // Without rtShadows: traced shadows when likely cheaper than the
+        // maps (Renderer::Render's rule: triangles per pixel and shadowed light).
+        bool rtShadowsAuto = false;
         // Traced shadows go on through translucent casters (their colour,
         // as the tint maps') and through the volumes (with volume.shadows;
         // their transmittance, marched as volume_shadow.frag does); off:
         // translucent meshes cast none, volumes neither.
         bool rtTranslucentShadows = true;
-        // Traced reflections (needs Device::rayTracing): 0 off, 1 in final
-        // quality (film runs started fresh), 2 always.
-        uint32_t rtReflections = 1;
+        // Traced reflections (needs Device::rayTracing).
+        bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
         // Traced reflections' denoise (gi.glsl's RtAround): rough ones
         // averaged over up to 12 pixels in their plane, the radius fading
@@ -273,9 +271,8 @@ public:
         // finalGatherDistance > 0 at most that, in world units, and a probe
         // spacing long, else from the probes at its end): the diffuse
         // indirect light (contact shadows, corners, colour bleeding) instead
-        // of the probes', AO and SSGI. 0 off, 1 in final quality (film runs
-        // started fresh), 2 always.
-        uint32_t finalGather = 1;
+        // of the probes', AO and SSGI.
+        bool finalGather = false;
         float finalGatherDistance = 0.0f;
         // Gather rays per pixel and sample (1..16): each film sample's
         // directions are the next points of a scrambled Sobol sequence,
@@ -388,7 +385,7 @@ public:
         bool lodFade = true;
         // Film accumulation (with taa; TemporalAA::RecordFilm): once the
         // camera and the scene have been still for kFilmStillFrames, and
-        // from the first sample of a final frame, the samples are averaged
+        // at once with filmRestart, the samples are averaged
         // without TAA's reprojection and clipping, each through a Gaussian
         // pixel filter of filmFilterRadius pixels, until filmSamples
         // (IsConverged). Frames with motion blur stay TAA's.
@@ -398,7 +395,7 @@ public:
         // (the camera or the scene moving; still too without the film) the
         // scene renders at this fraction of the width and height (at least
         // 0.25) and TAA reconstructs the full image into its full-size
-        // history. The film and final quality always render at full size,
+        // history. The film and filmRestart always render at full size,
         // as do frames with depth of field, a motion-blur shutter, lens
         // distortion or extra AOVs (their passes are full size).
         float renderScale = 1.0f;
@@ -412,14 +409,9 @@ public:
         // (they don't depend on the camera; eldr:movingGiPause).
         bool movingGiPause = true;
         float filmFilterRadius = 1.5f;
-        // Final quality (offline renders): the film starts over at the
-        // first sample after any change instead of from the TAA image.
-        bool finalQuality = false;
-        // The renderer's first frame starts a final film (usdrecord sets
-        // neither finalQuality nor enableInteractive); false in an interactive
-        // app that says so (Houdini's viewport). Later fresh histories (resize,
-        // camera switch) start an interactive film either way.
-        bool firstFrameFinal = true;
+        // The film starts over at its first sample after any change, at
+        // once, instead of from the TAA image after kFilmStillFrames.
+        bool filmRestart = false;
         // Changes whenever the app's scene or settings changed (the Hydra
         // layer: change tracker and settings versions): the film starts over.
         uint64_t sceneVersion = 0;
@@ -441,12 +433,8 @@ public:
         // flat areas (try 0.002).
         float adaptiveThreshold = 0.0f;
         uint32_t adaptiveMinSamples = 16;
-        // Final quality (finalQuality, or a film that started fresh, as
-        // usdrecord's): adaptive sampling at this threshold when
-        // adaptiveThreshold is 0 (0: off). And the film is converged once
-        // this fraction of the pixels has stopped (the rest of the noisy
-        // ones would only run it to filmSamples).
-        float adaptiveFinalThreshold = 0.0f;  // off: final frames take every film sample (opt in, e.g. 0.01)
+        // The adaptive film is converged once this fraction of the pixels
+        // has stopped (the rest of the noisy ones would only run it to filmSamples).
         float adaptivePixelFraction = 0.999f;
         // Tile-based adaptive sampling: once pixels stop, 16 x 16 tiles whose
         // pixels and neighbours all stopped skip shading and per-pixel rays
@@ -487,24 +475,21 @@ public:
         // the glass (back faces, total internal reflection, glass behind
         // glass) up to rtRefractionBounces interfaces and shaded at its hit
         // as traced reflections are, so what is off screen or hidden shows.
-        // 0 off, 1 in final quality (film runs started fresh), 2 always.
-        uint32_t rtRefraction = 1;
+        bool rtRefraction = false;
         uint32_t rtRefractionBounces = 4;  // 1..16
         // Caustics (needs Device::rayTracing; RayTracing::Work::caustics):
         // photons from the lights that send them (Light::caustics) through
         // the caster meshes (Mesh::causticsCast), gathered on the receivers'
         // diffuse surfaces, the radius shrinking over film samples
         // (progressive photon mapping). Nothing without casters.
-        // 0 off, 1 in final quality (film runs started fresh), 2 always.
-        uint32_t caustics = 1;
+        bool caustics = false;
         uint32_t causticsPhotons = 65536;  // per light and sample
         // The first sample's gather radius (world units); 0: 2% of the
         // casters' bounding sphere.
         float causticsRadius = 0.0f;
         // Traced reflection and refraction hits shadow every light (one ray
         // each, up to 16 local lights a hit), not only the sun.
-        // 0 off, 1 in final quality (film runs started fresh), 2 always.
-        uint32_t rtHitShadows = 1;
+        bool rtHitShadows = false;
         // Displaced glass (with rtDisplacement) bends the traced refraction
         // rays by its displaced surface: its facets and the height map's
         // bump, as the shading pass bumps its fragments.
@@ -573,8 +558,7 @@ public:
         // light (the sun's disc, a rect's or disk's area, inside a
         // sphere) and looks them up hard (3x3 PCF), so the film's average
         // is the true penumbra; with softShadows (and softSunShadows for
-        // the sun). Only in final quality (the film run started fresh or
-        // with finalQuality); TAA frames and interactive films keep PCSS.
+        // the sun). Film samples only; TAA frames keep PCSS.
         bool shadowJitter = true;
         // Lens jitter under the film (EEVEE's DOF jitter): with depth of
         // field, each sample sees through a point of the lens aperture
@@ -671,7 +655,6 @@ public:
         // The camera moved this frame: TAA's taaSamples is then its history
         // weight (1 / 10 of the new frame), not samples towards taaTarget.
         bool moving = false;
-        bool filmFinal = false;   // ... in final quality (_filmFinal: finalQuality, or a fresh film)
         double accumSeconds = 0;  // wall time since the image last changed; stops once converged
         double denoiseMs = 0;     // the last denoise (Frame::denoise): readback and OIDN, on the CPU
         double exposure = 1;      // the tonemap's multiplier of scene radiance
@@ -791,8 +774,6 @@ private:
     bool _accumDone = false;
     bool _filmAdaptive = false;
     uint32_t _filmStamp = 0;  // film frames so far (tiles.glsl's stamps)
-    bool _filmFinal = false;  // the film run started in final mode (fresh, or finalQuality)
-    bool _freshRun = false;
     bool _filmFroxels = false;  // this frame's fog: jittered per froxel, no history (Frame::fogFilmJitter)  // nothing changed since a fresh history: a film then starts unseeded  // the last frame's film counted its pixels still sampling
     uint64_t _filmKey = 0, _filmRuns = 0;  // _filmRuns: films started (the AOVs' accumulation follows)
     std::chrono::steady_clock::time_point _lastFrame;

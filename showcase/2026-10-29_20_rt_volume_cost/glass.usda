@@ -15,14 +15,14 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom int eldr:rtRefraction = 2
+        custom bool eldr:rtRefraction = 1
     }
 
     def RenderSettings "noClip"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom int eldr:rtRefraction = 2
+        custom bool eldr:rtRefraction = 1
         custom bool eldr:rtRefractionClip = 0
     }
 }

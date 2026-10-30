@@ -23,7 +23,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 270)
         custom bool eldr:rtReflections = 1
-        custom int eldr:rtHitShadows = 2
+        custom bool eldr:rtHitShadows = 1
     }
 
     def RenderSettings "rtReflectionsHitShadows0"
@@ -31,7 +31,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 270)
         custom bool eldr:rtReflections = 1
-        custom int eldr:rtHitShadows = 0
+        custom bool eldr:rtHitShadows = 0
     }
 
     def RenderSettings "shadowMapsOnly"
@@ -39,7 +39,6 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 270)
         custom bool eldr:rtShadows = 0
-        custom string eldr:finalShadows = "maps"
     }
 
     def RenderSettings "emissiveLightsOff"

@@ -36,7 +36,7 @@ def render(stage, settings={}, frames=4):
     """The stage through /cam with HdVk, as a QImage; no TAA (unless set), fixed exposure."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, **settings}.items():
+    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, "eldr:screenDicing": False, **settings}.items():
         engine.SetRendererSetting(key, value)
     frustum = UsdGeom.Camera(stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
@@ -199,7 +199,7 @@ cam.AddTranslateOp().Set(Gf.Vec3d(1.8, 1.6, 3.2))
 cam.AddRotateXYZOp().Set(Gf.Vec3f(-8, 25, 0))
 cam.CreateFocalLengthAttr(24)
 linear = {"eldr:taa": True, "eldr:tonemapper": "none", "eldr:exposureCompensation": -1.0, "eldr:ssr": False,
-          "eldr:bloomIntensity": 0.0, "eldr:adaptiveThreshold": 0.0, "eldr:adaptiveFinalThreshold": 0.0}
+          "eldr:bloomIntensity": 0.0, "eldr:adaptiveThreshold": 0.0}
 sky = render(stage, {**linear, "eldr:ambientOcclusion": False}, frames=70)
 for bitmask in (False, True):
     gi = render(stage, {**linear, "eldr:ssgi": True, "eldr:ssgiBitmask": bitmask}, frames=70)

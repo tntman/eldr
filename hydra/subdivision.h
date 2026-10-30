@@ -23,8 +23,8 @@ PXR_NAMESPACE_OPEN_SCOPE
 // display style's refine level (usdview's Complexity) up to this.
 constexpr bool kHdVkSubdivision = true;
 constexpr int kHdVkMaxRefineLevel = 3;
-// eldr:screenDicing: in final quality (husk) a subdivision surface's level
-// comes from its size on screen (Karma's dicing quality).
+// eldr:screenDicing: a subdivision surface's level comes from its size
+// on screen (Karma's dicing quality).
 constexpr bool kHdVkScreenDicing = true;
 
 // The view subdivision surfaces dice for (eldr:screenDicing): world to clip,

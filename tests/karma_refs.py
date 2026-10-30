@@ -7,7 +7,7 @@ OUTSIDE the repo, and Eldr compared against them by a few coarse metrics (docs/t
 
 References go to %ELDR_REFS% (default E:\\eldr-refs): <scene>.exr plus manifest.json (scene, camera,
 settings, husk, date, the scene file's sha1). Both renderers get the same wrapper layer: 320x180, a 16:9
-aperture, linear colour (Karma: Path Traced, 256 samples; Eldr: final quality, no tonemap, bloom or
+aperture, linear colour (Karma: Path Traced, 256 samples; Eldr: tests/scenes/final_settings.usda, no tonemap, bloom or
 auto exposure). Metrics per scene, Eldr / Karma:
   lum     mean luminance ratio
   region  worst |ln ratio| of the luminance of a 4x4 grid of regions
@@ -28,6 +28,8 @@ import time
 
 from pxr import Usd, UsdGeom
 
+from final_settings import FINAL, FINAL_ARGS
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 REFS = os.environ.get("ELDR_REFS", r"E:\eldr-refs")
 HFS = os.environ.get("ELDR_HFS", r"C:\Program Files\Side Effects Software\Houdini 22.0.466")
@@ -42,10 +44,13 @@ CELLS, REGIONS = (32, 18), (4, 4)
 SCENES = ["cornell", "emissive", "lights", "step4", "sunangle", "mtlx", "glass", "volume", "displacement",
           "subsurface", "caustics", "transparency_order", "lightlink", "ies"]
 CAMERA = "/cam"
-ELDR = ["eldr:finalQuality=true", "eldr:tonemapper=none", "eldr:autoExposure=false",
+ELDR = [*FINAL_ARGS, "eldr:tonemapper=none", "eldr:autoExposure=false",
         "eldr:exposureCompensation=0", "eldr:bloomIntensity=0", "eldr:productLinear=true",
         "eldr:domeCameraVisible=false",  # Karma hides domes from the camera (renderlightgeo 0)
         "eldr:gi=true"]  # Karma path traces: Eldr's final recipe with its bounce light
+# The same final settings on the wrapper's settings prim.
+FINAL_ATTRS = "\n        ".join("custom %s %s = %d" % ("bool" if isinstance(v, bool) else "int", k, int(v))
+                               for k, v in FINAL.items())
 # Karma's default diffuse limit is 1 bounce; Eldr's GI is every bounce. With 10, Karma's Cornell box matches
 # Eldr's within 3% (it is 1.27x Karma's default there). Part of every reference's hash.
 KARMA_ALL = "custom int karma:object:diffuselimit = 10"
@@ -134,7 +139,7 @@ def Scope "Render" {{
         int2 resolution = ({W}, {H})
         custom token karma:global:convergence_mode = "Path Traced"
         custom int karma:global:pathtracedsamples = {SPP_SCENE.get(name, SPP)}
-        custom bool eldr:finalQuality = 1
+        {FINAL_ATTRS}
         custom string eldr:tonemapper = "none"
         custom bool eldr:autoExposure = 0
         custom float eldr:bloomIntensity = 0

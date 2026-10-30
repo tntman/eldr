@@ -15,8 +15,14 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (960, 540)
         rel products = </Render/Products/causticsExr>
-        custom bool eldr:finalQuality = 1
-        custom int eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:caustics = 1
         custom int eldr:filmSamples = 256
         custom bool eldr:autoExposure = 0
     }
@@ -25,8 +31,14 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:finalQuality = 1
-        custom int eldr:caustics = 0
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:caustics = 0
         custom int eldr:filmSamples = 256
         custom bool eldr:autoExposure = 0
     }
@@ -35,8 +47,14 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:finalQuality = 1
-        custom int eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:caustics = 1
         custom int eldr:filmSamples = 8
         custom bool eldr:autoExposure = 0
     }
@@ -45,8 +63,14 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom bool eldr:finalQuality = 1
-        custom int eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:finalGather = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:caustics = 1
         custom int eldr:causticsPhotons = 16384
         custom int eldr:filmSamples = 256
         custom bool eldr:autoExposure = 0

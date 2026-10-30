@@ -510,7 +510,7 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     const bool changed = GetRenderSetting(key) != value;
     HdRenderDelegate::SetRenderSetting(key, value);
     // Any setting may change whether materials want compressed textures
-    // (the mode, final quality, who renders): they fetch them again.
+    // (the setting, or a former int of it): they fetch them again.
     if (_textures) {
         const bool compress = TextureCompression();
         if (_textures->compress.exchange(compress) != compress && _terminalSceneIndex) {
@@ -528,8 +528,8 @@ void HdVkRenderDelegate::SetRenderSetting(TfToken const &key, VtValue const &val
     // dirty prims, and nothing may during a sync (this runs between frames).
     if (changed && _terminalSceneIndex) {
         const HdSceneIndexBaseRefPtr terminal(_terminalSceneIndex);
-        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing || key == t.finalQuality) {
-            if (key == t2.screenDicing || key == t.finalQuality) {
+        if (key == t.subdivision || key == t.maxRefineLevel || key == t2.screenDicing) {
+            if (key == t2.screenDicing) {
                 _dicingView.reset();  // the pass dices again for its camera
             }
             HdVkDirtyPrims(terminal, {HdPrimTypeTokens->mesh}, {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
@@ -858,7 +858,6 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
     const double pixelsDone = frame.filmActivePixels ? 100.0 * (1.0 - frame.filmActivePixels / total) : 0.0;
     stats["percentDone"] = converged || !frame.film ? 100.0 : std::min(100.0, std::max(samplesDone, pixelsDone));
     stats["rendererStage"] = std::string(converged                ? "converged"
-                                        : frame.film && frame.filmFinal ? "final"
                                         : frame.film                    ? "accumulating"
                                                                         : "interactive");
     stats["totalClockTime"] = frame.accumSeconds;  // time to converge once converged
@@ -869,7 +868,7 @@ VtDictionary HdVkRenderDelegate::GetRenderStats() const
         if (!frame.film && frame.moving) {
             std::snprintf(text, sizeof text, "TAA interactive (moving)");
         } else {
-            std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? (frame.filmFinal ? "final" : "film") : "TAA",
+            std::snprintf(text, sizeof text, "%s %u/%u samples%s", frame.film ? "film" : "TAA",
                           frame.taaSamples, frame.taaTarget,
                           frame.filmActivePixels ? (", " + std::to_string(int(pixelsDone)) + "% of pixels done").c_str()
                                                  : "");
@@ -961,20 +960,32 @@ bool HdVkRenderDelegate::Offline() const
                                   !GetRenderSetting<bool>(HdRenderSettingsTokens->enableInteractive, true));
 }
 
-// eldr:textureCompression: 0 off, 1 interactive only (exact in final
-// quality and offline, as Karma's), 2 always; a bool is 0 or 2.
+// eldr:textureCompression: a bool; the former int (0 off, 1 interactive
+// only, 2 always) is on at 1 and 2, as an interactive render had it.
 bool HdVkRenderDelegate::TextureCompression() const
 {
-    const VtValue v = GetRenderSetting(HdVkRenderSettingsTokens->textureCompression);
-    const int mode = v.IsHolding<bool>() ? (v.UncheckedGet<bool>() ? 2 : 0)
-                                         : std::clamp(GetRenderSetting<int>(HdVkRenderSettingsTokens->textureCompression, 1), 0, 2);
-    return mode == 2 || (mode == 1 && !GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) && !Offline());
+    return GetRenderSetting<bool>(HdVkRenderSettingsTokens->textureCompression, false);
 }
 
 bool HdVkRenderDelegate::ScreenDicing() const
 {
-    return GetRenderSetting<bool>(HdVkRenderSettingsTokens->screenDicing, kHdVkScreenDicing) &&
-           (GetRenderSetting<bool>(HdVkRenderSettingsTokens->finalQuality, false) || Offline());
+    return GetRenderSetting<bool>(HdVkRenderSettingsTokens->screenDicing, kHdVkScreenDicing);
+}
+
+bool HdVkLegacyMode(TfToken const &key)
+{
+    const auto &t = *HdVkRenderSettingsTokens;
+    return key == t.rtReflections || key == t.rtRefraction || key == t.rtHitShadows || key == t.finalGather ||
+           key == t.caustics;
+}
+
+bool HdVkOnOff(VtValue const &value, bool fallback)
+{
+    if (value.IsHolding<bool>()) {
+        return value.UncheckedGet<bool>();
+    }
+    const VtValue i = VtValue::Cast<int>(value);
+    return i.IsEmpty() ? fallback : i.UncheckedGet<int>() >= 2;
 }
 
 void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)

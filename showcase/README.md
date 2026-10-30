@@ -2,6 +2,8 @@
 
 Small scenes to try Eldr features yourself. Each folder has a `scene.usda` with several `/Render/*` Render Settings prims (A/B toggles) and a `README.md`.
 
+Since lane 65 Eldr has no final-quality mode: prims that said `eldr:finalQuality` (or relied on husk and usdrecord switching to final by themselves) now set the individual settings of `tests/scenes/final_settings.usda`, and the former 0/1/2 mode ints are bools. Older READMEs still say "final quality": read it as those settings.
+
 Every new feature adds a folder here, named `date_NN_name`, so they sort old to new.
 
 | Date | Folder | Feature | Settings |

@@ -18,7 +18,7 @@ def Scope "Render"
         custom bool eldr:gi = 1
         custom bool eldr:ssgi = 1
         custom bool eldr:rtShadows = 1
-        custom int eldr:rtReflections = 2
+        custom bool eldr:rtReflections = 1
     }
 
     def RenderSettings "full"
@@ -28,7 +28,7 @@ def Scope "Render"
         custom bool eldr:gi = 1
         custom bool eldr:ssgi = 1
         custom bool eldr:rtShadows = 1
-        custom int eldr:rtReflections = 2
+        custom bool eldr:rtReflections = 1
         custom float eldr:movingRenderScale = 1
         custom int eldr:movingShadowRays = 0
         custom bool eldr:movingGiPause = 0

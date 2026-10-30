@@ -14,6 +14,8 @@ Run: usdenv.cmd python tests\\test_volume_motion.py <make_volume> <exrinfo>"""
 import os
 import subprocess
 import sys
+
+from final_settings import FINAL
 import tempfile
 
 import exr_info
@@ -115,7 +117,7 @@ def width(primvarValues={}, settings={}):
     engine.SetActiveRenderSettingsPrimPath(Sdf.Path("/Render/settings"))
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraPath(Sdf.Path("/cam"))
-    for key, value in {"eldr:autoExposure": False, "eldr:finalQuality": True, **settings}.items():
+    for key, value in {**FINAL, "eldr:autoExposure": False, **settings}.items():
         engine.SetRendererSetting(key, value)
     params = UsdImagingGL.RenderParams()
     params.frame = Usd.TimeCode(1)
