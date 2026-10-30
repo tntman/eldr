@@ -48,6 +48,8 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t defaultFields;  // Settings::defaultFields
     uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
     float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    int32_t shadowLink;      // volume_shadow.frag: the light's shadow link bit (-1: every volume casts)
+    uint32_t localShadowStride;      // Settings::localShadowStride
 };
 
 VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
@@ -62,6 +64,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.count = count;
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
+    p.localShadowStride = std::clamp(s.localShadowStride, 1u, 16u);
     // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
     // gain over single scattering at limits 1, 4 and 16 (within 9% on
     // volume.usda's and fog.usda's clouds, front and back lit, sun and dome;
@@ -212,20 +215,48 @@ VolumePass::~VolumePass()
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
     vkDestroySampler(_dev.device, _halfSampler, nullptr);
     _dev.Destroy(_half);
-    _dev.Destroy(_translucentDepth);
+    _DestroyLayers();
 }
 
-const Image &VolumePass::EnsureTranslucentDepth(uint32_t width, uint32_t height)
+void VolumePass::_DestroyLayers()
 {
-    if (width != _depthWidth || height != _depthHeight) {
-        _dev.Destroy(_translucentDepth);
-        _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
-                                             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                                             VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
-        _depthWidth = width;
-        _depthHeight = height;
+    for (VkImageView &v : _layerViews) {
+        vkDestroyImageView(_dev.device, v, nullptr);
+        v = VK_NULL_HANDLE;
     }
-    return _translucentDepth;
+    _dev.Destroy(_translucentDepth);
+    _dev.Destroy(_peelDepth);
+    _dev.Destroy(_layers);
+    _layerCount = 0;
+}
+
+void VolumePass::EnsureTranslucentLayers(uint32_t width, uint32_t height, uint32_t layers)
+{
+    layers = std::clamp(layers, 1u, kMaxLayers);
+    if (width == _depthWidth && height == _depthHeight && layers == _layerCount) {
+        return;
+    }
+    _DestroyLayers();
+    _translucentDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                         VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                         VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _peelDepth = _dev.CreateImage(VK_FORMAT_D32_SFLOAT, width, height, 1, 1,
+                                  VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                                  VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _layers = _dev.CreateImage(kLayerFormat, width, height, layers, 1,
+                               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    for (uint32_t layer = 0; layer < layers; ++layer) {
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.image = _layers.image;
+        vci.format = kLayerFormat;
+        vci.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, layer, 1};
+        Check(vkCreateImageView(_dev.device, &vci, nullptr, &_layerViews[layer]), "vkCreateImageView");
+    }
+    _depthWidth = width;
+    _depthHeight = height;
+    _layerCount = layers;
 }
 
 VkImageView VolumePass::EnsureHalf(uint32_t width, uint32_t height)
@@ -303,12 +334,13 @@ void VolumePass::RecordLightShapes(VkCommandBuffer cmd, VkDescriptorSet set, uin
 }
 
 void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t cascade,
-                              uint32_t mapSize, const Settings &s)
+                              uint32_t mapSize, const Settings &s, int32_t shadowLink)
 {
     _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
     p.cascade = cascade;
     p.mapSize = mapSize;
+    p.shadowLink = shadowLink;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -316,7 +348,7 @@ void VolumePass::RecordShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t
 }
 
 void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint32_t volumeCount, uint32_t tile,
-                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s)
+                                  uint32_t x, uint32_t y, uint32_t size, const Settings &s, int32_t shadowLink)
 {
     _EnsurePipelines();
     VolumeParams p = Params(s, volumeCount);
@@ -325,6 +357,7 @@ void VolumePass::RecordTileShadow(VkCommandBuffer cmd, VkDescriptorSet set, uint
     p.mapSize = size;
     p.originX = x;
     p.originY = y;
+    p.shadowLink = shadowLink;
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _shadowPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _layout, 0, 1, &set, 0, nullptr);
     vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(p), &p);
@@ -348,6 +381,8 @@ void Scene::_CommitVolumes()
         uint32_t slots[3] = {4, 4, 4};  // each factor's grid; 4: none
         uint32_t lutOffsets[4];         // GpuVolume's, from the first table (the extinction's: floats)
         float lutLow[4] = {}, lutScale[4] = {};
+        std::shared_ptr<VolumeGrid> velocity[3];  // a Vec3f grid, or three float grids
+        uint32_t velocityMode = 0;                // GpuVolume::velocity[3]
     };
     std::vector<Drawn> drawn;
     std::vector<std::pair<std::shared_ptr<VolumeGrid>, uint64_t>> used;
@@ -360,9 +395,43 @@ void Scene::_CommitVolumes()
             const auto it = name.empty() ? v->fields.end() : v->fields.find(name);
             return it == v->fields.end() ? nullptr : it->second;
         };
+        // Velocity blur: vel, else v; a Vec3f grid or three float grids
+        // (Houdini's vector volumes: vel.x, vel.y, vel.z; USD names _x ...).
+        for (const std::string name : {"vel", "v"}) {
+            if (v->velocityScale == 0.0f || d.velocityMode != 0) {
+                break;
+            }
+            if (const auto g = field(name); Nano(g.get()).type == PNANOVDB_GRID_TYPE_VEC3F) {
+                d.velocity[0] = g;
+                d.velocityMode = 1;
+            }
+            for (const char *dot : {".", "_"}) {
+                std::shared_ptr<VolumeGrid> c[3];
+                int found = 0;
+                for (int k = 0; k < 3 && d.velocityMode == 0; ++k) {
+                    c[k] = field(name + dot + "xyz"[k]);
+                    found += Nano(c[k].get()).type == PNANOVDB_GRID_TYPE_FLOAT;
+                }
+                if (found == 3) {
+                    std::copy(c, c + 3, d.velocity);
+                    d.velocityMode = 3;
+                }
+            }
+        }
         d.grids[0] = field(d.shading.densityField);
-        if (!d.grids[0] && !v->fields.empty()) {
-            d.grids[0] = v->fields.begin()->second;
+        // Without it: a nameless field (field_N: what SOP Import names an
+        // unnamed volume), else the first float field that plays no other
+        // role (nor is a velocity).
+        for (int pass = 0; pass < 2 && !d.grids[0]; ++pass) {
+            for (const auto &[name, g] : v->fields) {
+                const bool nameless = name.rfind("field_", 0) == 0;
+                const bool role = name == d.shading.temperatureField || name == d.shading.colorField ||
+                                  name == d.shading.emissionField || name.rfind("vel", 0) == 0 || name == "v";
+                if ((pass == 0 ? nameless : !role) && Nano(g.get()).type == PNANOVDB_GRID_TYPE_FLOAT) {
+                    d.grids[0] = g;
+                    break;
+                }
+            }
         }
         d.grids[1] = field(d.shading.temperatureField);
         d.grids[2] = field(d.shading.colorField);
@@ -393,7 +462,8 @@ void Scene::_CommitVolumes()
             }
             d.slots[k] = g ? slot : 4;
         }
-        for (const auto &g : d.grids) {
+        for (const auto &g : {d.grids[0], d.grids[1], d.grids[2], d.grids[3], d.velocity[0], d.velocity[1],
+                              d.velocity[2]}) {
             if (Nano(g.get()).type != 0 &&
                 std::none_of(used.begin(), used.end(), [&](const auto &u) { return u.first == g; })) {
                 used.push_back({g, g->version});
@@ -510,6 +580,8 @@ void Scene::_CommitVolumes()
             g.indexMin[k] = float(lower[k] - 1);
             g.indexMax[k] = float(upper[k] + 1);
         }
+        const uint32_t linkMask = _LinkMask(d.volume->linkCategories);
+        std::memcpy(&g.indexMin[3], &linkMask, sizeof(linkMask));  // as bits (volume.frag's floatBitsToUint)
         const Affine indexToObject = density.IndexToObject();
         g.grids[0] = offsetOf(d.grids[0]);
         g.types[0] = PNANOVDB_GRID_TYPE_FLOAT;
@@ -566,6 +638,50 @@ void Scene::_CommitVolumes()
         }
         g.params[1] = s.blackbodyIntensity;
         g.params[2] = s.physical ? 1.0f : 0.0f;
+        // Velocity blur: the velocity at a density index point, through
+        // advect, is how far the fields moved there per frame (index units).
+        // The box grows by a frame of the fastest motion.
+        // ponytail: three float grids are read through the first's map (Houdini's
+        // staggered components are off by half a voxel); shutters longer than a
+        // frame can clip at the box.
+        Affine toVelocity, objectToIndex;
+        if (d.velocityMode != 0 && Invert(Nano(d.velocity[0].get()).IndexToObject(), &toVelocity) &&
+            Invert(indexToObject, &objectToIndex) &&
+            std::all_of(d.velocity, d.velocity + (d.velocityMode == 1 ? 1 : 3),
+                        [&](const auto &c) { return offsetOf(c) != kNone; })) {
+            // The speed's bound (field units): per component the larger
+            // magnitude of the grid's minimum and maximum.
+            float fastest = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                const bool vec = d.velocityMode == 1;
+                g.velocity[k] = vec && k > 0 ? kNone : offsetOf(d.velocity[k]);
+                const Nano c(d.velocity[vec ? 0 : k].get());
+                const uint32_t at = vec ? 4 * k : 0;  // the component's bytes in a value
+                const float lo = pnanovdb_read_float(
+                    c.buf, pnanovdb_address_offset(pnanovdb_root_get_min_address(c.type, c.buf, c.root), at));
+                const float hi = pnanovdb_read_float(
+                    c.buf, pnanovdb_address_offset(pnanovdb_root_get_max_address(c.type, c.buf, c.root), at));
+                const float m = std::max(std::abs(lo), std::abs(hi));
+                fastest += m * m;
+            }
+            fastest = std::sqrt(fastest);
+            g.velocity[3] = d.velocityMode;
+            Store(toVelocity * indexToObject, g.toVelocity);
+            for (int r = 0; r < 3; ++r) {
+                double reach = 0.0;
+                for (int c = 0; c < 3; ++c) {
+                    objectToIndex.m[r][c] *= d.volume->velocityScale;
+                    reach += objectToIndex.m[r][c] * objectToIndex.m[r][c];
+                }
+                objectToIndex.m[r][3] = 0.0;
+                reach = std::sqrt(reach) * fastest;
+                g.indexMin[r] -= float(reach);
+                g.indexMax[r] += float(reach);
+            }
+            Store(objectToIndex, g.advect);
+        } else {
+            std::fill(g.velocity, g.velocity + 3, kNone);
+        }
         const std::vector<float> &transforms = d.volume->transforms;
         for (size_t i = 0; i + 16 <= transforms.size(); i += 16) {
             const float *x = &transforms[i];  // row-vector: world = (p, 1) X
@@ -608,6 +724,9 @@ void Scene::_CommitVolumes()
     _gpu.volumes = _volumeTable.buffer;
     _gpu.volumeGrids = _volumeGrids.buffer;
     _gpu.volumeCount = uint32_t(table.size());
+    // Volumes moving along their velocity: the time samples need a capture
+    // of the shutter (Renderer), as moved meshes do.
+    _gpu.volumeVelocity = std::any_of(table.begin(), table.end(), [](const GpuVolume &g) { return g.velocity[3] != 0; });
     _gpu.volumeFactors = std::any_of(table.begin(), table.end(), [](const GpuVolume &g) {
         return ((g.factorMasks[0] | g.factorMasks[1] | g.factorMasks[2]) & 7u) != 0 ||
                g.factorMasks[0] != VolumeShading::kDensity || g.factorMasks[1] != VolumeShading::kDensity ||

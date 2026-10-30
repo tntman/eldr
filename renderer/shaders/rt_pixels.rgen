@@ -12,6 +12,7 @@
 #include "gi.glsl"
 #include "volume.glsl"
 #include "rt_shade.glsl"
+#include "rt_evaluate.glsl"
 
 // Per pixel, for mesh.frag: a ray through the pixel finds the surface the
 // rasterizer shades there (same jittered camera), then shadow rays towards
@@ -44,6 +45,54 @@ vec3 PrepassPoint(ivec2 pixel)
     return p.xyz / p.w;
 }
 
+// For the traced shadows' denoise (gi.glsl RtTraced): the penumbra's
+// half width at p in pixels (`footprint`: a pixel's size there) over 3,
+// PCSS-style from the blocker's distance (a closest-hit ray towards the
+// light sample u, else its center): the sun's angle, or the light's size
+// over its distance from the blocker, times the blocker's from p. 0: no
+// blocker found. A hard sun or a contact shadow gets ~0 (no blur).
+// The nearest blocker of `light` along dir (hit.t from origin; < 0: none):
+// light linking skips surfaces outside its shadow link (up to 4).
+void TraceBlocker(Light light, vec3 origin, vec3 dir)
+{
+    TraceMask(origin, dir, 0.0, kRtMaskShadow);
+    float skipped = 0.0;
+    for (uint k = 0u; k < 4u && hit.t >= 0.0 && !ShadowLinked(light, RtLinkMask(hit.instance)); ++k) {
+        skipped += hit.t;
+        vec3 o = OffsetRay(hit.position, dot(dir, hit.geometric) > 0.0 ? hit.geometric : -hit.geometric);
+        TraceMask(o, dir, 0.0, kRtMaskShadow);
+        hit.t = hit.t < 0.0 ? hit.t : hit.t + skipped;
+    }
+    if (hit.t >= 0.0 && !ShadowLinked(light, RtLinkMask(hit.instance))) {
+        hit.t = -1.0;
+    }
+}
+
+float PenumbraRadius(uint index, vec3 p, vec3 ng, vec2 u, float footprint)
+{
+    Light light = lights[index];
+    uint type = uint(light.position.w);
+    vec3 origin = OffsetRay(p, ng);
+    float dist;
+    vec3 dir = SampleLight(light, p, u, dist);
+    TraceBlocker(light, origin, dir);
+    if (hit.t < 0.0 || hit.t >= dist) {
+        dir = type == 0u ? light.position.xyz : normalize(light.position.xyz - p);
+        dist = type == 0u ? 1e30 : distance(light.position.xyz, p) - (type == kLightSphere ? light.halfWidth.w : 0.0);
+        TraceBlocker(light, origin, dir);
+        if (hit.t < 0.0 || hit.t >= dist) {
+            return 0.0;
+        }
+    }
+    float size = type == 0u              ? 2.0 * tan(light.axis.w)
+               : type == kLightSphere    ? 2.0 * light.halfWidth.w / max(dist - hit.t, 1e-6)
+               : type == kLightCylinder  ? 2.0 * length(light.halfWidth.xyz) / max(dist - hit.t, 1e-6)
+                                         : 2.0 * max(length(light.halfWidth.xyz), length(light.halfHeight.xyz)) /
+                                               max(dist - hit.t, 1e-6);
+    // At least a step of the encoding: found, but too small to blur.
+    return clamp(0.5 * size * hit.t / footprint / 3.0, 1.0 / 255.0, 1.0);
+}
+
 // Reflections are traced up to this perceptual roughness, fading out from
 // kFadeRoughness; rougher surfaces keep the dome's prefiltered light.
 const float kFadeRoughness = 0.5, kMaxRoughness = 0.7;
@@ -62,10 +111,17 @@ void main()
     bool raster = texelFetch(sceneDepth, pixel, 0).r < 1.0;
     vec3 surface = PrepassPoint(pixel);
     float rasterT = distance(origin, surface);
+    // 0 rays for an effect (rt.params.yz, rt.gatherInfo.x; quality below 1
+    // under the film): its image stays as the last sample wrote it.
+    bool gather = rt.gather.y != 0.0 && rt.gatherInfo.x > 0.0;
     if (hit.t < 0.0 && !raster) {
-        imageStore(rtShadowImage, pixel, vec4(1.0));
-        imageStore(rtReflectionImage, pixel, vec4(0.0));
-        if (rt.gather.y != 0.0) {
+        if (rt.params.y != 0u) {
+            imageStore(rtShadowImage, pixel, vec4(1.0));
+        }
+        if (rt.params.z != 0u) {
+            imageStore(rtReflectionImage, pixel, vec4(0.0));
+        }
+        if (gather) {
             imageStore(rtGatherImage, pixel, vec4(0.0));
         }
         return;
@@ -91,9 +147,18 @@ void main()
     // takes a new point on every light's shape: the CPU's scrambled Sobol
     // point turned by blue noise (each light reading it elsewhere), so the
     // film converges to the exact penumbra.
-    if ((frame.features.x & kFeatureRtShadows) != 0u) {
+    if ((frame.features.x & kFeatureRtShadows) != 0u && rt.params.y != 0u) {
         uint perTexel = rt.shadowInfo.z;
         vec4 shadows = vec4(1.0);
+        // The denoise's penumbra radii (gi.glsl RtTraced), on the prepass's pixels.
+        bool penumbra = rt.denoise.x >= 1.0 && raster;
+        vec4 blockers = vec4(0.0);
+        float footprint = 0.0;
+        if (penumbra) {
+            vec4 q = frame.invViewProj * vec4(ndc + vec2(2.0 / float(gl_LaunchSizeEXT.x), 0.0),
+                                              texelFetch(sceneDepth, pixel, 0).r * 2.0 - 1.0, 1.0);
+            footprint = max(distance(q.xyz / q.w, surface), 1e-20);
+        }
         for (uint k = 0u; k < 16u; ++k) {
             uint light = rt.shadowLights[k >> 2u][k & 3u];
             if (light == kNone) {
@@ -105,6 +170,10 @@ void main()
                 u = fract(((k & 1u) != 0u ? noise.zw : noise.xy) + rt.shadowSample.xy);
             }
             vec3 v = LightVisibility(light, p, ng, u, rt.params.y);
+            if (penumbra) {
+                blockers[k & 3u] = (perTexel == 1u ? max(max(v.r, v.g), v.b) : v.r) < 1.0
+                                       ? PenumbraRadius(light, p, ng, u, footprint) : 0.0;
+            }
             if (perTexel == 1u) {
                 shadows.rgb = v;
             } else {
@@ -115,10 +184,15 @@ void main()
                 imageStore(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)), shadows);
                 shadows = vec4(1.0);
             }
+            if (penumbra && ((k & 3u) == 3u || next == kNone)) {
+                imageStore(rtShadowImage, pixel + ivec2(0, int(rt.denoise.z + float(k >> 2u)) * int(rt.shadowSample.w)),
+                           blockers);
+                blockers = vec4(0.0);
+            }
         }
     }
 
-    if ((frame.features.x & kFeatureRtReflections) != 0u) {
+    if ((frame.features.x & kFeatureRtReflections) != 0u && rt.params.z != 0u) {
         vec4 reflection = vec4(0.0);
         if (perceptual < kMaxRoughness) {
             float a = perceptual * perceptual;
@@ -135,6 +209,7 @@ void main()
                     l = reflect(-v, n);  // below the surface: the mirror direction
                 }
                 Trace(reflectOrigin, l, a);
+                EvaluateHit(l, a);
                 reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
                                               : ShadeHit(l, seed, true, rt.shadowInfo.w != 0u);
             }
@@ -144,7 +219,7 @@ void main()
         imageStore(rtReflectionImage, pixel, reflection);
     }
 
-    if (rt.gather.y != 0.0) {
+    if (gather) {
         vec3 t, b;
         Basis(n, t, b);
         vec3 o = OffsetRay(p, ng);
@@ -175,6 +250,7 @@ void main()
                 vec4 gi = GiIrradiance(o + l * reach, l, -l);
                 radiance += mix(DomeDiffuse(l), gi.rgb, gi.a);
             } else if ((hit.flags & kHitBackface) == 0u) {
+                EvaluateHit(l, 0.5);
                 radiance += ShadeHit(l, seed + uvec3(0u, 0u, i * 7919u), (hit.flags & kHitEmitter) == 0u,
                                      rt.shadowInfo.w != 0u);
             }

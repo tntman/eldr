@@ -6,10 +6,12 @@
 #include "pxr/usd/sdf/path.h"
 #include "pxr/imaging/hd/material.h"
 
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace vkr {
@@ -25,10 +27,17 @@ PXR_NAMESPACE_OPEN_SCOPE
 class HdVkTextureCache
 {
 public:
-    std::shared_ptr<vkr::Texture> Get(std::string const &path, TfToken const &sourceColorSpace);
+    // `compress`: 8-bit textures block-compressed (vkr::CompressTexture),
+    // cached on disk; materials pass `compress` below, lights false (the
+    // dome is read on the CPU).
+    std::shared_ptr<vkr::Texture> Get(std::string const &path, TfToken const &sourceColorSpace,
+                                      bool compress = false);
     // A path with <UDIM>: vkr::kUdimTiles tiles, null where none exists.
     std::vector<std::shared_ptr<vkr::Texture>> GetUdim(std::string const &path,
-                                                       TfToken const &sourceColorSpace);
+                                                       TfToken const &sourceColorSpace, bool compress = false);
+
+    // HdVkRenderDelegate::TextureCompression, set by the render delegate.
+    std::atomic<bool> compress{true};
 
     // Milliseconds spent decoding since the last call (the load summary).
     double TakeLoadMs()
@@ -42,12 +51,32 @@ public:
 private:
     std::mutex _mutex;
     double _loadMs = 0;
-    std::map<std::pair<std::string, TfToken>, std::weak_ptr<vkr::Texture>> _textures;
+    std::map<std::tuple<std::string, TfToken, bool>, std::weak_ptr<vkr::Texture>> _textures;
 };
 
 // An unconnected input of `node`: authored (colours converted to linear
 // Rec.709), else its node definition's default, else 0; scalars splat.
 GfVec4f HdVkParameter(HdMaterialNode2 const &node, TfToken const &input);
+
+// A Houdini ramp parameter as Karma's kma_rampconst holds it: keys, values
+// (colours with alpha 1, floats splat) and a basis per key (the segment
+// after it), sorted by key. Evaluated on the CPU (material programs and
+// volumes bake tables of it).
+struct HdVkRamp {
+    std::vector<float> keys;
+    std::vector<GfVec4f> values;
+    std::vector<TfToken> basis;
+
+    // kma_rampconst's fkeys/fvalues/fbasis (vkeys/... with `color`), the
+    // first framp/vramp keys where that count is authored.
+    static HdVkRamp Read(HdMaterialNode2 const &node, bool color);
+    // At t, as Houdini's ramps (hou.Ramp.lookup, checked to 1e-6): the end
+    // values outside the keys; constant, linear, uniform Catmull-Rom (end
+    // keys repeated) and monotone cubic (flat at the end keys) between two
+    // keys; bezier and bspline (uniform, end keys tripled) over each run of
+    // keys with that basis as a curve through (key, value) control points.
+    GfVec4f operator()(float t) const;
+};
 
 // What materials' shading graphs fell back from, by material: inputs with a
 // node bypassed or dropped (or an unknown surface: 1), and those nodes as
@@ -65,7 +94,8 @@ private:
     std::map<SdfPath, std::pair<int, std::vector<std::string>>> _byMaterial;
 };
 
-// Reads a UsdPreviewSurface, MaterialX standard_surface or OpenPBR network
+// Reads a UsdPreviewSurface, MaterialX standard_surface, OpenPBR, glTF PBR,
+// Disney principled or surface_unlit network
 // into a vkr::Material. The vkr::Material
 // object stays the same for the sprim's lifetime (meshes hold it), so
 // re-syncs update it in place.

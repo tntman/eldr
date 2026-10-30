@@ -59,7 +59,7 @@ vec3 SubsurfaceTransmission(vec3 p, vec3 n)
     Light light = lights[frame.counts.y];
     vec3 l = light.position.xyz;
     float back = dot(-n, l);
-    if (m.subsurface.w <= 0.0 || back <= 0.0) {
+    if (m.subsurface.w <= 0.0 || back <= 0.0 || !LightLinked(light, inLinkMask)) {
         return vec3(0.0);
     }
     vec3 radius = max(m.subsurfaceRadius.xyz, vec3(1e-6));

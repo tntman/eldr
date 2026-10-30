@@ -6,6 +6,20 @@ Run: `usdenv.cmd python tests\mtlx_corpus.py --out <dir> [--storm] [--only stdli
 
 TestSuite files mostly hold bare nodegraphs. The harness wraps each unused output as standard_surface emission (unlit, so pixels are the graph's value) and BSDF/EDF outputs through `surface`. Matrix, string and displacement-only outputs are skipped. Storm referees the unlit graphs only; under the harness's lights it renders lit surfaces black.
 
+## Lane 38 (2026-10-29): compositing, glTF / Disney / unlit, Karma's VEX nodes
+
+Against Karma CPU (husk, fresh renders for Houdini; the 10-27 Karma renders for the rest):
+
+| Group | Materials | dE median before | dE median now | Notes |
+|---|---|---|---|---|
+| Houdini basic + quick | 121 | 4.9 (10-27) | 1.7 | 80 under 2, 104 under 5; no node Eldr warns about. The 38 with `kma_rampconst`, `kma_color_hextiling` or `kma_voronoinoise3d`: 6.9 -> 1.9 (other lanes' fixes count too). 103 compile whole by the audit's static rule, which doesn't follow `kma_camerafalloff`'s graph (Eldr expands it) |
+| Examples glTF PBR | 6 | 26.9 | 0.6 | worst `Default` 1.2 |
+| Examples Disney principled | 5 | 21.3 | 2.4 | car paint 2.9 (coat), plastic 2.4 (Burley vs Lambert) |
+| TestSuite stdlib compositing | 45 | 22.1 | 0.0 | |
+| TestSuite stdlib shader (unlit) | 4 | 47.6 | 0.4 | `unlit_mtrl2` 15: Karma ignores unlit `opacity`; Eldr follows genglsl (Storm differs from both) |
+
+Houdini's ramps follow `hou.Ramp.lookup` within 1e-6 for every basis but hermite (read as Catmull-Rom).
+
 ## Result (2026-10-27)
 
 957 materials with a surface. **747 compile whole** (558 on 2026-10-26, before the plan below); the rest bypass at least one node (its pass-through input or default stands in; the render stats count them) or have a surface Eldr doesn't read (a warning). With the coverage plan and the ten wrong-result fixes below (10-27 run), against Karma: 324 materials better by more than 1 dE, 63 worse; median dE of the TestSuite stdlib graphs 0.26 -> 0.0, of the lit Houdini materials 7.0 -> 2.7 (Ceramic, Leather, Wood, Concrete, Asphalt get their textures back; QuickSurfaceMaterial 0.07), of the Examples unchanged (2.1).
@@ -19,9 +33,9 @@ TestSuite files mostly hold bare nodegraphs. The harness wraps each unused outpu
 | TestSuite pbrlib (BSDF graphs, lama) | 110 | 20 | 20 |
 | TestSuite nprlib, locale, libraries | 8 | 2 | 4 |
 
-Houdini's remaining 39 only lack Karma's own VEX nodes (`kma_rampconst`, `kma_color_hextiling`, `kma_voronoinoise3d`: no MaterialX nodedef), which are bypassed or keep the input's constant. What still blocks most of the rest: pbrlib BSDF graphs and other surfaces (glTF PBR, Disney, `surface_unlit`), compositing nodes, `hextiledimage`, `flake2d/3d`, matrix-valued graphs (`transformmatrix` with a connected matrix, `determinant`).
+Houdini's remaining 39 only lacked Karma's own VEX nodes (`kma_rampconst`, `kma_color_hextiling`, `kma_voronoinoise3d`; read since lane 38). What still blocks most of the rest: pbrlib BSDF graphs, `hextiledimage`, `flake2d/3d`, matrix-valued graphs (`transformmatrix` with a connected matrix, `determinant`).
 
-Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `transformmatrix` with a connected matrix (bypassed). Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) render the default grey, as before the fixes (black was further from Karma). Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials moved by 1-3 against Karma from their neighbours' changed bounce light, not their own graphs (alone they render the same).
+Changes where Karma and Storm agree Eldr got worse: compositing nodes (now bypassed: their pass-through, not the old constant), `transformmatrix` with a connected matrix (bypassed). Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) render the default grey, as before the fixes (black was further from Karma). Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there). Silk, metal and soap materials got worse by 0.7-2.4 against the 10-27 audit (lane 48, fixed): traced reflections (on by default in final quality since lane 20) shaded graph-coloured neighbours at their constant base colour (metals reflected them grey; now 0.6-0.9), and the soap bubble's thin-film thickness graph, now compiled, added the film's reflection on top of all the transmitted light (5.4 -> 1.7). Basic materials' median 1.74 -> 1.56. Silk stays 7-10 too bright, as on 10-27 (not investigated).
 
 The 10-26 results:
 

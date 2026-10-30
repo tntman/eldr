@@ -703,6 +703,39 @@ int main()
                            std::abs(img.At(32, 32, 2) - r) < 0.01f,
                        "compact gray texture formats read as gray rgb");
             }
+
+            // eldr:textureCompression: gradients compressed (sRGB colour as
+            // BC7, gray as BC4, gray + alpha as BC5) with their mips render
+            // as the 8-bit originals within a few steps.
+            const std::pair<F, uint32_t> kinds[] = {{F::RGBA8_SRGB, 4}, {F::R8, 1}, {F::RG8, 2}};
+            for (const auto &[format, channels] : kinds) {
+                auto make = [&, format = format, channels = channels]() {
+                    auto t = std::make_shared<vkr::Texture>();
+                    t->width = t->height = 64;
+                    t->format = format;
+                    for (uint32_t y = 0; y < 64; ++y) {
+                        for (uint32_t x = 0; x < 64; ++x) {
+                            const uint8_t v[4] = {uint8_t(x * 4), uint8_t(y * 4), uint8_t((x + y) * 2), 255};
+                            t->pixels.insert(t->pixels.end(), v, v + channels);
+                        }
+                    }
+                    return t;
+                };
+                material->baseColorTex.texture = make();
+                scene.Commit();
+                const Image exact = Render(renderer, scene);
+                auto bc = make();
+                Expect(vkr::CompressTexture(*bc) && bc->levels == 7 && vkr::IsCompressed(bc->format),
+                       "CompressTexture makes a compressed mip chain");
+                material->baseColorTex.texture = bc;
+                scene.Commit();
+                const float diff = MaxDifference(Render(renderer, scene), exact);
+                std::printf("texture compression (format %d): max difference %.4f\n", int(format), diff);
+                // BC7 mode 6 fits one colour line per 4x4 block: this gradient
+                // runs red along x and green along y, so up to ~6/255 off
+                // (0.054 linear near white); gray formats are a few steps.
+                Expect(diff < (channels == 4 ? 0.07f : 0.01f), "compressed textures render as their originals");
+            }
         }
 
         {
@@ -791,7 +824,8 @@ int main()
             auto white = std::make_shared<vkr::Material>();
             std::fill(white->baseColor, white->baseColor + 3, 1.0f);
             white->roughness = 1;
-            AddQuad(scene, -1, -1, 1, 1, 0.5f)->material = white;
+            vkr::Mesh *wall = AddQuad(scene, -1, -1, 1, 1, 0.5f);
+            wall->material = white;
 
             // Sphere: reflected radiance L R^2 / d^2 * cos.
             vkr::Light *sphere = AddSphereLight(scene, 0, 0, 0, 0.1f, 10.0f);
@@ -808,6 +842,21 @@ int main()
             img = Render(renderer, scene);
             Expect(img.At(38, 32, 0) > 0.2f, "spot: lit inside the cone (22 degrees)");
             Expect(img.At(48, 32, 0) == 0.0f, "spot: dark outside the cone (46 degrees)");
+
+            // Light linking: a light linked to a category the wall isn't in leaves it dark;
+            // the wall in it (Mesh::linkCategories) is lit as before.
+            sphere->coneAngle = 180;
+            sphere->lightLink = 7;
+            scene.Commit();
+            Expect(Render(renderer, scene).At(32, 32, 0) == 0.0f, "light linking: outside the light's link: dark");
+            wall->linkCategories = {7};
+            wall->transformsDirty = true;
+            scene.Commit();
+            Expect(std::abs(Render(renderer, scene).At(32, 32, 0) - 0.4f) < 0.01f,
+                   "light linking: in the light's link: lit");
+            wall->linkCategories.clear();
+            wall->transformsDirty = true;
+            sphere->lightLink = 0;
             scene.RemoveLight(sphere);
 
             // Rect: 0.5 x 0.5 square facing the wall. Form factor of a square
@@ -4920,7 +4969,7 @@ int main()
         {
             // Pipeline cache: what this run compiled is on disk, and a new
             // device starts with it.
-            // Saving prunes the other shader builds' caches of this driver
+            // Saving keeps the newest 3 other builds' caches of this driver
             // (same UUID prefix) and leaves other drivers' alone.
             device.SavePipelineCache();
             std::filesystem::path current;
@@ -4930,14 +4979,22 @@ int main()
                 }
             }
             const std::string name = current.filename().string();
-            const std::filesystem::path stale = cacheDir / (name.substr(0, name.rfind('-') + 1) + "0000000000000000.bin"),
-                                        other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
-            std::filesystem::copy_file(current, stale, cacheError);
+            const std::string stem = name.substr(0, name.rfind('-') + 1);
+            const std::filesystem::path other = cacheDir / "pipelines-ffffffff-0000000000000000.bin";
+            for (int i = 1; i <= 4; ++i) {
+                std::filesystem::copy_file(current, cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin"),
+                                           cacheError);
+            }
             std::filesystem::copy_file(current, other, cacheError);
             device.SavePipelineCache();
-            Expect(!std::filesystem::exists(stale) && std::filesystem::exists(current) &&
-                       std::filesystem::exists(other),
-                   "pipeline cache: saving removes this driver's older caches, not other drivers'");
+            int kept = 0;
+            for (int i = 1; i <= 4; ++i) {
+                const auto stale = cacheDir / (stem + "000000000000000" + std::to_string(i) + ".bin");
+                kept += std::filesystem::exists(stale);
+                std::filesystem::remove(stale, cacheError);
+            }
+            Expect(kept == 3 && std::filesystem::exists(current) && std::filesystem::exists(other),
+                   "pipeline cache: saving keeps this driver's newest 3 other caches, not older ones; other drivers' stay");
             std::filesystem::remove(other, cacheError);
             uintmax_t bytes = 0;
             for (const auto &entry : std::filesystem::directory_iterator(cacheDir, cacheError)) {

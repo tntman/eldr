@@ -19,6 +19,8 @@ layout(std430, set = 0, binding = 57) readonly buffer RtSlots { RtSlot rtSlots[]
 
 // Every instance of the mesh is also a light (Scene::SetEmissiveLights).
 const uint kRtSlotEmitter = 1u;
+// Alpha-tested: any-hit shaders run, else forced opaque (tlas.comp).
+const uint kRtSlotCutout = 2u;
 // A translucent mesh: only shadow rays that tint see it (rt_shadow.rahit).
 const uint kRtSlotTranslucent = 4u;
 
@@ -56,6 +58,11 @@ struct RtHit {
 const uint kHitBackface = 1u;  // the shading normal faces away from the ray
 const uint kHitEmitter = 2u;   // a light stands in for its emission (kRtSlotEmitter)
 const uint kHitTranslucent = 4u;  // a translucent mesh (kRtSlotTranslucent)
+
+// A TLAS instance's light link mask (Instance::linkMask): its instance
+// slot's, a skinned one's through rtSkinned. A macro: gi.glsl's rt comes
+// after this file.
+#define RtLinkMask(i)     (instances[(i) < rt.skinned.x ? (i) : rtSkinned[(i) - rt.skinned.x].instance].linkMask)
 
 // Corner k (0..2) of a mesh slot's triangle in the vertex pool; then its
 // position, normal, uv (object space) and displayColor.

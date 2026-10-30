@@ -29,7 +29,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag motion_residual.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
                tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp gather_denoise.comp oit_resolve.frag
-               shadow_tint.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
+               shadow_tint.frag translucent_peel.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
                volume_upsample.frag volume_shadow.frag shadow_min.comp rt_skin.comp rt_displace.comp film.comp
                shutter.comp light_shapes.frag background_unscale.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
@@ -39,7 +39,7 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
-                renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/transparency.glsl
+                renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/transparency.glsl
                 renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl third_party/nanovdb/PNanoVDB.h
                 renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/volume.glsl)
@@ -54,11 +54,23 @@ foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shad
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
-                renderer/shaders/rt_shade.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+                renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/volume.glsl
                 renderer/shaders/program.glsl renderer/shaders/noise.glsl
                 third_party/nanovdb/PNanoVDB.h)
     list(APPEND shader_incs ${spv})
 endforeach()
+# Caustic photons: rt_refraction.rgen with PHOTONS (rt_photons.glsl).
+set(spv ${CMAKE_CURRENT_BINARY_DIR}/rt_photons.rgen.inc)
+add_custom_command(OUTPUT ${spv}
+    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DPHOTONS
+            -fshader-stage=rgen -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/rt_refraction.rgen
+    DEPENDS renderer/shaders/rt_refraction.rgen renderer/shaders/rt_photons.glsl renderer/shaders/caustics.glsl
+            renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
+            renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
+            renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/volume.glsl
+            renderer/shaders/program.glsl renderer/shaders/noise.glsl renderer/shaders/displace.glsl
+            third_party/nanovdb/PNanoVDB.h)
+list(APPEND shader_incs ${spv})
 # Material programs' shading pass (GRAPH): mesh.vert exporting vertex-rate
 # primvars, mesh.frag with the interpreter; other materials never run it.
 # Extra AOVs' G-buffer pass likewise (aov.frag).
@@ -94,7 +106,7 @@ foreach(shader mesh.vert mesh.frag aov.frag matte.frag)
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl
                 renderer/shaders/skinning.glsl)
@@ -113,7 +125,7 @@ foreach(variant layers graph_layers)
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
         DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
-                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl
+                renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl
                 renderer/shaders/transparency.glsl renderer/shaders/subsurface.glsl
                 renderer/shaders/fog.glsl renderer/shaders/probes.glsl renderer/shaders/displace.glsl)
     list(APPEND shader_incs ${spv})
@@ -145,7 +157,7 @@ add_custom_command(OUTPUT ${spv}
 list(APPEND shader_incs ${spv})
 
 add_library(vkrenderer STATIC
-    renderer/device.cpp renderer/scene.cpp renderer/renderer.cpp renderer/ibl.cpp
+    renderer/device.cpp renderer/scene.cpp renderer/bc.cpp renderer/renderer.cpp renderer/ibl.cpp
     renderer/gtao.cpp renderer/post.cpp renderer/taa.cpp renderer/lens.cpp renderer/fullscreen.cpp
     renderer/distortion.cpp renderer/aov.cpp renderer/interop.cpp renderer/raytracing.cpp
     renderer/transparency.cpp renderer/subsurface.cpp renderer/ssr.cpp
@@ -341,6 +353,9 @@ if(WIN32)
         set_tests_properties(exr PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         add_test(NAME aov_sums COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aov_sums.py $<TARGET_FILE:exrinfo>)
         set_tests_properties(aov_sums PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+        # eldr:caustics: tests/scenes/caustics.usda's focused patch, its AOV inside indirect diffuse.
+        add_test(NAME caustics COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_caustics.py $<TARGET_FILE:exrinfo>)
+        set_tests_properties(caustics PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
         # ColorChecker under a white dome: linear radiance = albedo (tests/macbeth_compare.py is the Karma comparison).
         add_test(NAME macbeth COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/macbeth_compare.py
                  --exrinfo $<TARGET_FILE:exrinfo> --variants white --no-karma --check)
@@ -380,6 +395,11 @@ if(WIN32)
                      ${CMAKE_SOURCE_DIR}/tests/test_volume_sequence.py $<TARGET_FILE:make_volume>)
             set_tests_properties(volume_sequence_legacy PROPERTIES ENVIRONMENT
                 "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX=0;USDIMAGINGGL_ENGINE_ENABLE_SCENE_INDEX_DEPRECATION_WARNING=0")
+            if(TARGET exrinfo)  # Velocity blur (vel, vel.x/.y/.z) and a nameless density field.
+                add_test(NAME volume_motion COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_volume_motion.py
+                         $<TARGET_FILE:make_volume> $<TARGET_FILE:exrinfo>)
+                set_tests_properties(volume_motion PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+            endif()
         endif()
         add_test(NAME traced_media COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_traced_media.py)
         set_tests_properties(traced_media PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")

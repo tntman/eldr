@@ -211,7 +211,8 @@ HdDirtyBits HdVkMesh::GetInitialDirtyBitsMask() const
            HdChangeTracker::DirtyVisibility | HdChangeTracker::DirtyPrimvar |
            HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyMaterialId |
            HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyInstanceIndex |
-           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags;
+           HdChangeTracker::DirtyDisplayStyle | HdChangeTracker::DirtySubdivTags |
+           HdChangeTracker::DirtyCategories;
 }
 
 void HdVkMesh::UpdateRenderTag(HdSceneDelegate *delegate, HdRenderParam *renderParam)
@@ -445,6 +446,10 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         HdVkTimedCall part(HdVkCallTimes::kSyncTransforms);
         HdVkSetTransforms(sceneDelegate, id, GetInstancerId(), m);
     }
+    if ((*dirtyBits & HdChangeTracker::DirtyCategories) || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
+        HdVkSetLinkCategories(sceneDelegate, id, GetInstancerId(), m);
+    }
     // Per-instance primvars (the instancer's), in the transforms' order.
     if (programNamesChanged || HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
         HdChangeTracker::IsInstanceIndexDirty(*dirtyBits, id)) {
@@ -474,6 +479,14 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
         m.holdout = HdVkHoldout(sceneDelegate, id);
         m.rays = HdVkRays(sceneDelegate, id);
+        // Caustics: Karma's caster switch and roughness clamp (eldr: twins
+        // first); receiving is Eldr's own (unset: all but refracting glass).
+        m.causticsCast = HdVkObjectPrimvar<bool>(sceneDelegate, id, "object:causticsenable", false);
+        m.causticsRoughness =
+            std::clamp(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:causticsroughnessclamp", 0.2f), 0.0f, 1.0f);
+        const std::optional<bool> receive =
+            HdVkPrimvarIfSet<bool>(sceneDelegate, id, TfToken("eldr:object:causticsreceive"));
+        m.causticsReceive = receive ? int8_t(*receive) : int8_t(-1);
     }
 
     // Sprims sync before rprims, so the material already exists here.
@@ -615,6 +628,11 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.transforms = m.transforms;
             d.transformsDirty = true;
         }
+        if (d.linkCategories != m.linkCategories || d.instanceLinkCategories != m.instanceLinkCategories) {
+            d.linkCategories = m.linkCategories;
+            d.instanceLinkCategories = m.instanceLinkCategories;
+            d.transformsDirty = true;
+        }
         if (d.skinningTransforms != m.skinningTransforms || d.blendWeights != m.blendWeights ||
             d.prevSkinningTransforms != m.prevSkinningTransforms || d.prevBlendWeights != m.prevBlendWeights) {
             d.skinningTransforms = m.skinningTransforms;
@@ -629,6 +647,9 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         d.visible = m.visible;
         d.holdout = m.holdout;
         d.rays = m.rays;
+        d.causticsCast = m.causticsCast;
+        d.causticsReceive = m.causticsReceive;
+        d.causticsRoughness = m.causticsRoughness;
         d.tag = m.tag;
         const auto *material = static_cast<const HdVkMaterial *>(
             sceneDelegate->GetRenderIndex().GetSprim(HdPrimTypeTokens->material, _subsetMaterials[i]));
