@@ -949,6 +949,7 @@ private:
     void _FillRawBeauty(const Targets &out) const;
     Denoiser _denoiser;
     bool _denoiseRun = false, _denoiseUpload = false, _denoiseWarned = false;
+    bool _clusterWarned = false;  // more local lights than one cluster lists (shaders/lights.glsl)
     uint32_t _denoiseState = 0;
     Buffer _denoiseBuffer;             // the film's image, half RGBA, then denoised
     std::vector<uint16_t> _rawBeauty;  // the film's image before denoising (Aovs::kBeautyRaw)

@@ -1211,7 +1211,7 @@ void main()
         uint base = ClusterIndex(gl_FragCoord.xy, viewDepth) * (kMaxClusterLights + 1u);
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
-            color += LocalLight(clusterLights[base + 1u + k], inWorldPos, n, ng, v, diffuseColor, f0,
+            color += LocalLight(ClusterLight(base, k), inWorldPos, n, ng, v, diffuseColor, f0,
                                 a, NoV);
         }
     } else {

@@ -195,9 +195,10 @@ VkSampler CreateMaterialSampler(VkDevice device, float anisotropy, uint32_t wrap
     return sampler;
 }
 
-// Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and 63
-// indices each.
-constexpr VkDeviceSize kClusterBytes = 16 * 9 * 24 * 64 * sizeof(uint32_t);
+// Light clusters (shaders/lights.glsl): 16 x 9 x 24, a count and up to
+// kMaxClusterLights indices each.
+constexpr uint32_t kMaxClusterLights = 255;
+constexpr VkDeviceSize kClusterBytes = 16 * 9 * 24 * (kMaxClusterLights + 1) * sizeof(uint32_t);
 
 // Push constants of cull.comp; the vertex stages read only the first 64 bytes
 // (mat4 viewProj) of the same range.
@@ -4099,6 +4100,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     }
     if (localLights > 0 && frame.clusteredLights) {
         // Light clusters, read by the shading pass.
+        if (localLights > kMaxClusterLights && !_clusterWarned) {
+            _clusterWarned = true;
+            std::fprintf(stderr, "Eldr: %u local lights; clusters reaching more than %u shade all of them (slower)\n",
+                         unsigned(localLights), kMaxClusterLights);
+        }
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _lightsPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
         vkCmdDispatch(_cmd, (16 * 9 * 24 + 63) / 64, 1, 1);
