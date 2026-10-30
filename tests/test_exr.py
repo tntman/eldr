@@ -137,6 +137,31 @@ def record(name):
     return path
 
 
+# The camera's exposure (eldr:cameraExposure, as Karma): exposure 1 at ISO 200
+# is 4x the beauty and the light AOVs; depth and normals stay. Off: ignored.
+def means(path):
+    out = run([exrinfo, path, "--grid", "1", "1"], capture_output=True, text=True, check=True).stdout.splitlines()
+    chans = [l.split()[1] for l in out if l.startswith("channel ")]
+    cell = next(l.split()[3:] for l in out if l.startswith("cell "))
+    return dict(zip(chans, map(float, cell)))
+
+
+plain = means(exrPath)
+camera.CreateExposureAttr(1.0)
+camera.CreateExposureIsoAttr(200.0)
+exposed = means(record("exposed"))
+for c in ("R", "G", "combineddiffuse.G", "directglossy.G"):
+    expect(abs(exposed[c] / max(plain[c], 1e-9) - 4.0) < 0.08, "camera exposure: %s 4x (%g)" % (c, exposed[c] / max(plain[c], 1e-9)))
+for c in ("A", "depth.Z", "N.B"):
+    expect(abs(exposed[c] - plain[c]) < 1e-3 * max(1.0, abs(plain[c])), "camera exposure: %s unscaled" % c)
+settings.GetPrim().CreateAttribute("eldr:cameraExposure", Sdf.ValueTypeNames.Bool).Set(False)
+ignored = means(record("exposure_off"))
+expect(abs(ignored["G"] / max(plain["G"], 1e-9) - 1.0) < 0.02, "eldr:cameraExposure off: the camera's ignored")
+settings.GetPrim().RemoveProperty("eldr:cameraExposure")
+camera.GetExposureAttr().Clear()
+camera.GetExposureIsoAttr().Clear()
+
+
 def probe(path, x, y):
     """(size, window line, pixel) of `path` at (x, y) of its data window."""
     out = exr_info.lines(exrinfo, path, str(x), str(y))

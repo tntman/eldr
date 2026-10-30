@@ -4737,6 +4737,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _guideComponents[g] = !aovTargets[k] ? 0 : aovComponents[k] ? aovComponents[k] : Aovs::Components(k);
     }
     _aovsRecorded = Aovs::Any(aovTargets);
+    _aovLightScale = frame.lightAovScale;
     if (_aovsRecorded) {
         Aovs::Params params;
         std::memcpy(params.view, frame.view, sizeof(params.view));
@@ -4945,7 +4946,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         if (out.readback) {
             _Deliver(slot, _deferred.offsets, _outWidth, _outHeight, out);
             if (_aovsRecorded) {
-                _aovs.Read(aovTargets);
+                _aovs.Read(aovTargets, _aovLightScale);
             }
             _FillRawBeauty(out);
         }
@@ -5180,7 +5181,7 @@ void Renderer::Read(const Targets &out)
         }
     }
     if (_aovsRecorded) {  // their copy is in the last Render's commands
-        _aovs.Read(out.aovs);
+        _aovs.Read(out.aovs, _aovLightScale);
     }
     _FillRawBeauty(out);
 }

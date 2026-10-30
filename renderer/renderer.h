@@ -133,6 +133,10 @@ public:
         // camera distance = -(x * z + y) / (z * z + w), z = window depth * 2 - 1.
         float depthToDistance[4] = {0, 0, 0, 0};
         PostProcess::Settings post;
+        // Multiplies the light AOVs (Aovs::IsLight: emission, the light
+        // splits, light groups) as the beauty's exposure does: the Hydra
+        // layer's camera exposure (HdCamera::GetLinearExposureScale).
+        float lightAovScale = 1.0f;
         // Procedural textures: MaterialX noise in material programs (off: it reads 0).
         bool proceduralTextures = true;
         // Lens distortion: the camera's lensDistortion:* warp the finished
@@ -965,6 +969,7 @@ private:
     Buffer _frameReadback[2];
     uint32_t _deliveredSlot = 0;
     bool _aovsRecorded = false;  // the last Render's extra AOVs, for Read
+    float _aovLightScale = 1.0f;  // that Render's Frame::lightAovScale
     void *_delivered[5] = {};
     void _Deliver(uint32_t slot, const VkDeviceSize offsets[5], uint32_t width, uint32_t height, const Targets &out);
     static constexpr VkDeviceSize kNoOutput = ~VkDeviceSize(0);

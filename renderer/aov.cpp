@@ -598,12 +598,17 @@ void Aovs::ClearSplits(VkCommandBuffer cmd, bool keepPrevious)
                  VK_IMAGE_LAYOUT_GENERAL);
 }
 
-void Aovs::Read(float *const targets[kCount]) const
+void Aovs::Read(float *const targets[kCount], float lightScale) const
 {
     for (uint32_t k = 0; k < kCount; ++k) {
         if (targets[k] && k != kBeautyRaw) {  // the Renderer's own
-            std::memcpy(targets[k], static_cast<const float *>(_readback.mapped) + _offsets[k],
-                        sizeof(float) * _components[k] * _width * _height);
+            const size_t n = size_t(_components[k]) * _width * _height;
+            std::memcpy(targets[k], static_cast<const float *>(_readback.mapped) + _offsets[k], sizeof(float) * n);
+            if (IsLight(k) && lightScale != 1.0f) {
+                for (size_t i = 0; i < n; ++i) {
+                    targets[k][i] *= lightScale;
+                }
+            }
         }
     }
 }

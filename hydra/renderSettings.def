@@ -44,6 +44,7 @@ HDVK_VDB_SETTING(volumes, "Volumes (OpenVDB)", frame.volumes)
 
 HDVK_GROUP("Image", true)
 HDVK_SETTING(exposureCompensation, "Exposure Compensation (EV)", defaults.exposureCompensation)
+HDVK_SETTING(cameraExposure, "Camera Exposure (USD camera exposure, ISO, time, f-stop, responsivity)", true)
 HDVK_SETTING(productLinear, "Linear Beauty (Houdini viewport, husk products: no tonemapper, bloom or auto exposure)", frame.linearBeauty)
 HDVK_SETTING(autoExposure, "Auto Exposure (Linear Beauty off)", defaults.autoExposure)
 HDVK_SETTING(tonemapper, "Tonemapper (Linear Beauty off) (aces, agx, agxPunchy, none)", std::string("aces"))
