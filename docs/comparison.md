@@ -11,7 +11,7 @@
 | Per-effect low-discrepancy sampling | Yes | Yes | Yes | Eldr: Sobol and blue-noise sample dimensions. |
 | Per-component sample quality (Karma's diffuse/reflect/light quality) | Yes | Partial | Yes | Eldr: `eldr:*Quality` or Karma's names, global (from the render settings), not per object. EEVEE: shadow rays and steps. Unreal: Lumen final gather and reflection quality. |
 | Adaptive sampling | Yes | No | No | Eldr stops when 99.9% of pixels converged; 16x16 tiles that stopped skip shading and per-pixel rays (not under refraction, subsurface or post depth of field). Not with motion blur time samples. |
-| Denoiser for the final image | Yes | Yes (OIDN, OptiX) | Partial | Eldr: Intel Open Image Denoise on the CPU (`eldr:denoise`), albedo and normal guides, once per converged film. Unreal: its path tracer only. |
+| Denoiser for the final image | Yes | Yes (OIDN, OptiX) | Partial | Eldr: Intel Open Image Denoise (OIDN) on the CPU (`eldr:denoise`), albedo and normal guides, once per converged film. Unreal: its path tracer only. |
 | Path-traced reference mode | No | Yes (Cycles) | Yes | Eldr: use Karma in Houdini for ground truth. |
 | Background shader compile and pipeline cache | Yes | Yes | Yes | |
 
@@ -38,14 +38,14 @@
 
 | Feature | Eldr | EEVEE | Unreal 5 | Notes |
 |---|---|---|---|---|
-| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced DDGI probes with relocation, plus a per-pixel final gather (`eldr:finalGather`). EEVEE: baked irradiance volumes. Unreal: Lumen. |
-| Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask SSGI. |
+| Dynamic probe GI | Yes | Partial | Yes | Eldr: ray-traced light probes (DDGI) that move off walls, plus a per-pixel final gather (`eldr:finalGather`). EEVEE: baked irradiance volumes. Unreal: Lumen. |
+| Screen-space GI | Yes | Yes | Yes | Eldr: horizon or visibility-bitmask screen-space GI (SSGI). |
 | GI at Lumen quality (surface cache, many bounces) | No | No | Yes | |
 | Every diffuse bounce by default | Yes | Partial | Partial | Eldr's GI has no bounce limit. Karma's default `karma:object:diffuselimit` is 1, so a closed room renders darker in Karma (Cornell box: Eldr 1.27x Karma's default, within 3% of Karma at 10; docs/testing.md). |
 | Screen-space reflections with a denoiser | Yes | Yes | Yes | |
 | Ray-traced reflections | Yes | No | Yes | |
 | Authored reflection probes | Yes | Yes | Yes | Eldr: up to 8, from flagged meshes. |
-| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, blurred by roughness (`eldr:planarBlur`), no contact hardening. EEVEE 5.1 added glossy planars. |
+| Planar mirrors | Partial | Yes | Yes | Eldr: up to 4, blurred by roughness (`eldr:planarBlur`), no contact hardening. EEVEE's planars are glossy too. |
 
 ## Transparency, volumes and atmosphere
 
@@ -58,7 +58,7 @@
 | Holdouts and mattes | Yes | Yes | Yes | |
 | OpenVDB / NanoVDB volumes | Yes | Yes | Yes | Eldr: `UsdVolVolume` with MaterialX or `kma_volume` materials, coloured extinction. Not Karma's Pyro Shader graph. |
 | Houdini SOP volumes (no files) | Yes | No | No | Eldr: VDB and Houdini volumes from a SOP Import LOP, in the Houdini build. |
-| Froxel fog | Yes | Yes | Yes | |
+| Froxel fog (grid aligned to the camera view) | Yes | Yes | Yes | |
 | Physical sky and atmosphere | No | Partial | Yes | EEVEE has a sky texture. |
 | Volumetric clouds | No | No | Yes | |
 
@@ -72,7 +72,7 @@
 | Subsurface scattering | Yes | Yes | Yes | |
 | Hair rendered as strands | Partial | Yes | Yes | Eldr: tubes or camera-facing ribbons with a hair BSDF. |
 | Displacement, including from graphs | Yes | Yes | Yes | Unreal: Nanite tessellation. |
-| Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: BLASes built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
+| Displacement seen by ray tracing, incl. per-instance graphs | Yes | No | Partial | Eldr: acceleration structures built from displaced vertices; graphs that differ per instance get one per instance (the 256 largest on screen). |
 | Subdivision surfaces | Yes | Yes | Partial | Eldr: uniform levels per mesh, from the host, the mesh, or its size on screen (`eldr:screenDicing`) (Karma's dicing quality); no per-face adaptive dicing. |
 | Per-object ray visibility (camera, shadow, reflections) | Partial | Yes | Yes | Eldr: Karma's render visibility; reflections and GI only when ray traced, screen-space effects see what the camera sees. |
 | LOD with crossfade | Yes | No | Yes | Unreal: Nanite. |
@@ -90,7 +90,7 @@
 | Motion blur on a single frame | Yes | Yes | Yes | Eldr: Hydra transform and point samples. |
 | OpenCV lens distortion | Yes | No | Partial | |
 | Physical camera exposure (EV, ISO, shutter, f-stop) | Yes | Partial | Yes | Eldr: UsdGeomCamera's exposure attributes, as Karma (beauty and light AOVs, colour limit after exposure; Karma's ratios within 0.1% without the limit). EEVEE: one exposure value in colour management. |
-| Upscaling while interactive | Partial | No | Yes | Eldr has its own TAA upscaler; Unreal has TSR and DLSS. *(interactive)* |
+| Upscaling while interactive | Partial | No | Yes | Eldr has its own temporal anti-aliasing (TAA) upscaler; Unreal has TSR and DLSS. *(interactive)* |
 
 ## Output and pipeline
 

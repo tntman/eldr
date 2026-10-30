@@ -12,7 +12,7 @@ Zoom in to pixels at the silhouettes of the ball and the tall box against the ba
 - `N_box` (`box 1`): normals averaged over 3 x 3 pixels; soft against `N` in `aovFiltersMax.exr` (nearest).
 - `albedo_nearest`: base colour of one sample per pixel: aliased edges, against the filtered `albedo` in `aovFiltersMax.exr`.
 - `directdiffuse` (Karma's `["ubox",{}]`, what Houdini authors on every var): the beauty's filter, so the splits still add up to the beauty.
-- `indirectdiffuse_gauss` (`gauss 0.6`): sharper than the beauty's 1.5-pixel Gaussian. The render prints a warning: this split no longer sums to the beauty.
+- `indirectdiffuse_gauss` (`gauss 0.6`): sharper than the beauty's 1.5-pixel Gaussian. The render prints a warning: this split does not sum to the beauty.
 - `primid`: ids are always the nearest sample, whatever the var asks.
 
 ## Settings prims

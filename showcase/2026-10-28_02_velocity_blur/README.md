@@ -10,7 +10,7 @@
 
 ## What to look at
 
-- `/Render/blurOn` vs `/Render/blurOff`: `eldr:motionBlur` now toggles without changing the frame. Time-sampled objects blur from their samples; velocity-only ones from vblur.
+- `/Render/blurOn` vs `/Render/blurOff`: `eldr:motionBlur` toggles blur without changing the frame. Time-sampled objects blur from their samples; velocity-only ones from vblur.
 - `/Render/blurFinal`: the final-render settings (traced reflections and refraction, final gather, caustics), with `eldr:motionBlurTimeSamples` on: each film sample renders at its own shutter time, so the blur converges over film samples.
 - `/Render/cameraBlur`: the panning camera.
 

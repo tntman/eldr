@@ -42,7 +42,7 @@ Ray-traced shadows, reflections and the final gather are noisy for the first sam
 
 ## Adaptive sampling
 
-With **Adaptive Sampling Noise Threshold** above 0 (0.01 is a good start), pixels that are clean stop sampling, and the film converges when 99.9% of pixels stopped (**Adaptive Sampling Converged Pixel Fraction**). 16x16 tiles whose pixels all stopped skip shading and rays (**Adaptive Sampling Skips Stopped Tiles**): Kitchen at 1080p went from 17.4 to 12.8 s with the same image.
+With **Adaptive Sampling Noise Threshold** above 0 (0.01 is a good start), pixels that are clean stop sampling, and the film converges when 99.9% of pixels stopped (**Adaptive Sampling Converged Pixel Fraction**). 16x16 tiles whose pixels all stopped skip shading and rays (**Adaptive Sampling Skips Stopped Tiles**): this cuts the Kitchen test scene at 1080p from 17.4 s to 12.8 s with the same image.
 
 Adaptive sampling doesn't run with motion blur time samples: those frames take all their samples.
 

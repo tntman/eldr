@@ -1,11 +1,11 @@
-# Volume shadow grids (2026-10-30)
+# Volume shadow grids
 
 tests/scenes/volume.usda's three volumes (sun, dome) with three sphere lights. Each volume's optical
 depth towards the dome, the sun and (for mutual shadows) the sphere lights is built once on a 64^3 grid
 per light and read trilinearly in the march, instead of a shadow march per step and light.
 
 - `/Render/grid`: the default, `eldr:volumeShadowGrid` 64.
-- `/Render/exact`: `eldr:volumeShadowGrid` 0 marches every shadow ray, as before.
+- `/Render/exact`: `eldr:volumeShadowGrid` 0 marches every shadow ray.
 - `/Render/grid32`: a coarser grid.
 
 All three should look the same (57-60 dB PSNR). At 1920x1080 with the final-render settings (`eldr_final`) the volume pass drops from

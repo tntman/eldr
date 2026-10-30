@@ -1,6 +1,6 @@
 # AOVs and output
 
-Besides the beauty, Eldr writes the extra layers comp needs: light splits (diffuse, glossy, transmission, ...), light groups, data (depth, normals, positions), Cryptomatte and shadow mattes. It uses Karma's names and LPEs, so **one comp template serves both renderers**.
+Besides the beauty, Eldr writes AOVs (arbitrary output variables: the extra image layers comp needs): light splits (diffuse, glossy, transmission, ...), light groups, data (depth, normals, positions), Cryptomatte and shadow mattes. It uses Karma's names and light path expressions (LPEs, patterns that pick which light paths go into a layer), so **one comp template serves both renderers**.
 
 ## Set up AOVs in Solaris
 
@@ -67,7 +67,7 @@ A Render Var's **Sample Blending** (Karma tab: Minimum, Maximum, Closest, Farthe
 
 ## EXR files from usdrecord
 
-husk writes EXRs itself. With usdview or usdrecord, Eldr writes each render product as an EXR once the frame converged (**Write Render Products**): float, zip compressed, same layer names.
+husk writes EXRs itself. With usdview or usdrecord, Eldr writes each render product as an EXR once the frame has converged (**Write Render Products**): float, zip compressed, same layer names.
 
 ## Limitations
 

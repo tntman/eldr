@@ -4,7 +4,7 @@ Small scenes to try Eldr features yourself. Each folder has a `scene.usda` with 
 
 Every folder also has a `scene.hip` with the standard `eldr_default` (Eldr, nothing set), `eldr_final` (the final-render settings ticked) and `karma` (for Karma) render settings nodes, each with a USD Render ROP, and the same three prims in `scene.usda`.
 
-Every new feature adds a folder here, named `date_NN_name`, so they sort old to new.
+Each feature has a folder here, named `date_NN_name`; the date and number only order the list.
 
 | Date | Folder | Feature | Settings |
 |---|---|---|---|

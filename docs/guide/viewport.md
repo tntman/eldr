@@ -11,7 +11,7 @@ In the Solaris viewport Eldr has two states: **moving** (you tumble the camera o
 
 The first still frame is full quality again, and the film starts.
 
-| Kitchen, 1080p, camera moving | Full settings | Moving mode |
+| Kitchen test scene, 1080p, camera moving | Full settings | Moving mode |
 |---|---|---|
 | Frame time | 21.6 ms | 8.6 ms |
 
@@ -29,7 +29,7 @@ The viewport's **Render Outputs** menu lists the render vars of the chosen Rende
 
 ![Houdini: viewport Render Outputs menu listing render vars](../images/houdini/viewport_render_outputs.png)
 
-> **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view as far as we know. Use Render Outputs to view one AOV.
+> **Note:** The viewport's channel buttons (RGB, R, G, B, A, L) don't affect Eldr's view. Use Render Outputs to view one AOV.
 
 ## Render statistics
 

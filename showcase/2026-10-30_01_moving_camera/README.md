@@ -2,7 +2,7 @@
 
 While the camera moves Eldr cuts the per-frame work and brings full quality back on the first still frame:
 
-- `eldr:movingRenderScale` (0.5): renders at half size and TAA upscales. It now also works with depth of field and an open shutter, so it applies in Houdini, whose free camera has an open shutter.
+- `eldr:movingRenderScale` (0.5): renders at half size and TAA upscales. It also works with depth of field and an open shutter, so it applies in Houdini, whose free camera has an open shutter.
 - `eldr:movingShadowRays` (1): one traced shadow ray per light.
 - `eldr:movingGiPause` (on): settled GI probes skip their update while only the camera moves.
 

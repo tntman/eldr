@@ -1,6 +1,6 @@
 # Screen-space reflections and the reflection probe
 
-`tests/scenes/reflections.usda` (columns, an arch and a chrome ball on a polished floor of roughness 0.08, a red wall behind the camera) plus a rougher strip (roughness 0.35) over the right half of the floor. SSR is a 32-step ray march of last frame's image; it fades out with roughness (0.3 to 0.6) and at the screen's edges, where the dome (or a probe) takes over.
+`tests/scenes/reflections.usda` (columns, an arch and a chrome ball on a polished floor of roughness 0.08, a red wall behind the camera) plus a rougher strip (roughness 0.35) over the right half of the floor. Screen-space reflections (SSR) are a 32-step ray march of the previous frame's image; it fades out with roughness (0.3 to 0.6) and at the screen's edges, where the dome (or a probe) takes over.
 
 ## What to look at
 

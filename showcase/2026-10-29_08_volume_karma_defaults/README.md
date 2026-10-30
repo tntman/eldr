@@ -1,13 +1,13 @@
 # Volumes without a material, as Karma
 
-`tests/scenes/volume.usda`'s clouds have no material. Eldr now gives them Karma's medium: scattering 1
+`tests/scenes/volume.usda`'s clouds have no material. Eldr gives them Karma's medium: scattering 1
 per unit of density, no absorption, isotropic phase. The dome lights them from its upper half only,
 because Karma's single scattering doesn't see the dome below the ground. Measured against Karma CPU at
-volume limit 0, the sun-lit clouds come out within 1% (they were 0.56x before).
+volume limit 0, the sun-lit clouds come out within 1%.
 
 Render settings prims:
-- `/Render/newPhase`: the new default.
-- `/Render/oldPhase`: `eldr:volumeAnisotropy` 0.2, the old forward phase.
+- `/Render/newPhase`: the default (isotropic).
+- `/Render/oldPhase`: `eldr:volumeAnisotropy` 0.2, a forward-scattering phase.
 - `/Render/volumeLimit16`: `karma:object:volumelimit` 16, multiple scattering.
 
 Open it:

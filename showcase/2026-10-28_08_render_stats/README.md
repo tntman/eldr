@@ -12,8 +12,6 @@ The image's tile in the Render Gallery shows the same panel.
 
 **See the data.** `iinfo -J out.exr` (in `$HFS/bin`) prints the image's metadata; the stats are `aovs[0].metadata."husk:render_stats"`, a JSON object with `__delegate` (`HdVkRendererPlugin`), `rendererName`, `rendererStage`, `percentDone`, `totalClockTime`, `totalMemory`, `peakMemory`, `trianglesDrawn`, `gpuTimeMs`, `gpuPassMs` and the rest of `GetRenderStats()`. Compare with `-R BRAY_HdKarma`.
 
-Verified headlessly (husk, `iinfo -J`, the panel's own `normalize_stats` and `findStats` in hython); the panel's look in the Houdini GUI was not checked.
-
 ## Houdini scene
 
 Open `scene.hip`. Its LOP network sublayers `scene.usda` and has one render settings node per settings prim:

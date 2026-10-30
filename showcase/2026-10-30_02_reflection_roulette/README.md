@@ -12,7 +12,7 @@ GTX 1080 Ti, 1920x1080, traced reflections on, ms per sample (on / off):
 - Kitchen with dome: 57 / 73
 - Kitchen: 34 / 49
 
-RMSE at 64 samples against 1024 samples with the old code:
+RMSE at 64 samples against a 1024-sample render (roulette on against off):
 - crowd and emissive: unchanged
 - Kitchen with dome: 0.00219 against 0.00195
 - this scene: 0.00080 against 0.00023 (its floor's sharp reflection converges very fast without the roulette)

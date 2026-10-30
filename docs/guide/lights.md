@@ -42,7 +42,7 @@ Eldr picks a shadow method per light. You can mix them.
 
 | Method | Setting | Looks like | Cost |
 |---|---|---|---|
-| Shadow maps, soft (PCSS) | **Soft Shadows** (on) | Soft from the light's size, hardening near contact | Cheap |
+| Shadow maps, soft (PCSS: percentage-closer soft shadows) | **Soft Shadows** (on) | Soft from the light's size, hardening near contact | Cheap |
 | Shadow maps, hard | **Soft Shadows** off | Hard edges | Cheapest |
 | Jittered maps (default) | **Jittered Light Shape per Sample** (on) | The film moves the map over the light's shape: exact penumbrae once converged | A map per sample |
 | Ray-traced | **Ray-Traced Shadows** [RT] | Exact soft shadows, also from off-screen objects | Kitchen about 10 ms per sample |
