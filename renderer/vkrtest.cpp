@@ -3560,6 +3560,7 @@ int main()
             // A textured rect light's shape shows its texture times its radiance: black over its +X
             // half (s = 0 at +X, as LightTint), white over its -X half; Frame::lightTextures off: plain.
             vkr::Scene scene(&device);
+            AddQuad(scene, -1, -1, 1, 1, 0.9f);  // behind the light, unlit by it
             vkr::Light *rect = scene.AddLight();
             rect->type = vkr::Light::Type::Rect;
             rect->position[2] = -0.5f;
@@ -3582,8 +3583,7 @@ int main()
             const Image textured = Render(renderer, scene, frame);
             frame.lightTextures = false;
             const Image plain = Render(renderer, scene, frame);
-            std::printf("textured light shape -X/+X: %.3f, %.3f
-", textured.At(24, 32, 0), textured.At(40, 32, 0));
+            std::printf("textured light shape -X/+X: %.3f, %.3f\n", textured.At(24, 32, 0), textured.At(40, 32, 0));
             Expect(std::abs(textured.At(24, 32, 0) - 50.0f) < 0.5f && textured.At(40, 32, 0) < 0.5f,
                    "a textured rect light's shape shows its texture");
             Expect(std::abs(plain.At(40, 32, 0) - 50.0f) < 0.5f, "Frame::lightTextures off: a plain light shape");
