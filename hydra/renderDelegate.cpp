@@ -539,6 +539,7 @@ HdRenderSettingDescriptorList HdVkRenderDelegate::GetRenderSettingDescriptors() 
         {"Planar Reflection Scale (0.1-1)", t.planarScale, VtValue(frame.planarScale)},
         {"Planar Reflection Mirrors (most)", t2.planarCount, VtValue(int(frame.planarCount))},
         {"Planar Reflection Blur (0 = sharp)", t2.planarBlur, VtValue(frame.planarBlur)},
+        {"Planar Reflections at Time Samples (motion blur)", t2.planarMotionBlur, VtValue(frame.planarMotionBlur)},
         {"Sun Shadows (cascades)", t.shadows, VtValue(frame.shadows)},
         {"Sun Shadow Resolution (256-8192)", t.shadowResolution, VtValue(int(frame.shadowResolution))},
         {"Sun Shadow Cascades (1-4)", t.shadowCascades, VtValue(int(frame.shadowCascades))},

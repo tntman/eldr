@@ -35,7 +35,7 @@ GROUPS = [
      "rtSkinnedInstances rtDisplacement rtCompaction shadowJitter rtTranslucentShadows"),
     ("Advanced: Reflections", False,
      "ssr ssrSteps ssrDenoise ssrHitFilter rtReflectionSamples rtReflectionDenoise rtHitShadows reflectionProbe probeResolution "
-     "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur"),
+     "probePosition authoredProbes probeNormalize planarReflections planarScale planarCount planarBlur planarMotionBlur"),
     ("Advanced: Materials", False,
      "normalMaps specularWorkflow clearcoat sheen thinFilm anisotropicSpecular multiScatter hairShading toon toonBands "
      "texturedLobes materialGraphs proceduralTextures subsurface subsurfaceSamples"),

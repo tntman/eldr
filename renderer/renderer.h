@@ -117,6 +117,16 @@ public:
         // a moving object between time samples blend into a smooth blur
         // (EEVEE's vector blur between steps).
         bool motionBlurResidual = true;
+        // Planar mirrors at the time samples' times (eldr:planarMotionBlur):
+        // each time sample renders the mirrors' reflections with the scene
+        // and camera at its shutter time, so reflections blur as the direct
+        // view does. Off: they show the frame's time (sharp).
+        bool planarMotionBlur = true;
+        // A nested render's time sample (Reflections' mirrors): the scene
+        // moved to this shutter time (shutter.comp's t) as the frame that
+        // asked; < 0: none. nestedCapture: that frame captured the motion.
+        float nestedShutter = -1.0f;
+        bool nestedCapture = false;
         float prevViewProj[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         float prevCameraPos[3] = {0, 0, 0};
         // Inverse projection's z and w columns over NDC z (row-vector order):

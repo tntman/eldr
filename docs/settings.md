@@ -181,6 +181,7 @@ Quality knobs (steps, radii, resolutions, thresholds) and the other feature togg
 | Planar Reflection Scale<br>`eldr:planarScale` | float 0.5 | Mirror render size as a fraction of the frame (0.1-1). | |
 | Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | Mirrors per frame, largest first (max 4). | One render each |
 | Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | Scales how much a rough mirror blurs its reflection with roughness; 0 = sharp only. | 12 taps on mirror pixels |
+| Planar Reflections at Time Samples<br>`eldr:planarMotionBlur` | on | [film] Each time sample renders the mirrors with the scene at its shutter time: reflections blur like the direct view. Off: the frame's time (sharp). | None: mirrors render every sample anyway |
 
 ### Materials
 

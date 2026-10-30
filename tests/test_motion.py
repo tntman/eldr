@@ -11,6 +11,7 @@
 - A motion blur setting off and on again without a time change blurs again.
 - Velocity blur: velocities blur meshes, points and instances only with
   Velocity Blur (karma:object:vblur, instance_vblur; eldr:object:* win).
+- Planar and traced reflections of the moving cube blur as the cube does.
 Run: usdenv.cmd python tests\\test_motion.py <exrinfo>"""
 import os
 import subprocess
@@ -23,7 +24,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
 from PySide6.QtOpenGL import QOpenGLFramebufferObject
 from PySide6.QtWidgets import QApplication
-from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdRender
+from pxr import Gf, Sdf, Usd, UsdGeom, UsdImagingGL, UsdLux, UsdRender, UsdShade
 
 
 def run(*args, **kwargs):
@@ -291,6 +292,53 @@ edges = velocityBlur(instance=True)
 expect(edges <= 4, "instance velocities without Instance Velocity Blur: sharp (%d edge pixels)" % edges)
 edges = velocityBlur(karma=1, instance=True)
 expect(edges >= 12, "karma:object:instance_vblur 1: instances blur by velocities (%d edge pixels)" % edges)
+
+# Reflections under time samples: the moving cube over a mirror floor, seen
+# from above. The planar mirror renders each sample at its shutter time
+# (eldr:planarMotionBlur), so the reflection blurs as the cube does; off,
+# it stays at the frame's time (sharp). Traced reflections blur by the
+# sample's TLAS.
+instancer.GetPrim().SetActive(False)
+cube.GetPrim().SetActive(True)
+UsdGeom.PrimvarsAPI(cube).RemovePrimvar("karma:object:mblur")
+camera.GetPrim().GetAttribute("xformOp:translate").Set(Gf.Vec3d(0, 3, 8))
+camera.AddRotateXOp().Set(-20.0)
+floor = UsdGeom.Mesh.Define(stage, "/floor")
+floor.CreateFaceVertexCountsAttr([4])
+floor.CreateFaceVertexIndicesAttr([0, 1, 2, 3])
+floor.CreatePointsAttr([Gf.Vec3f(-10, -0.7, -4), Gf.Vec3f(-10, -0.7, 10), Gf.Vec3f(10, -0.7, 10),
+                        Gf.Vec3f(10, -0.7, -4)])
+UsdGeom.PrimvarsAPI(floor).CreatePrimvar("eldr:planarReflection", Sdf.ValueTypeNames.Bool,
+                                         UsdGeom.Tokens.constant).Set(True)
+chrome = UsdShade.Material.Define(stage, "/chrome")
+pbr = UsdShade.Shader.Define(stage, "/chrome/pbr")
+pbr.CreateIdAttr("UsdPreviewSurface")
+pbr.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(1, 1, 1))
+pbr.CreateInput("metallic", Sdf.ValueTypeNames.Float).Set(1.0)
+pbr.CreateInput("roughness", Sdf.ValueTypeNames.Float).Set(0.0)
+chrome.CreateSurfaceOutput().ConnectToSource(pbr.ConnectableAPI(), "surface")
+UsdShade.MaterialBindingAPI.Apply(floor.GetPrim()).Bind(chrome)
+stage.GetRootLayer().Save()
+REFLECTIONS = {"eldr:finalQuality": True, "eldr:ssr": False, "eldr:rtReflections": 0,
+               "eldr:planarReflections": True, "eldr:planarScale": 1.0}
+# The cube's reflection covers rows 53-63, the cube itself 27-46.
+# ponytail: planarScale 1, a 32-pixel mirror render shows nothing (a bug of its own).
+row = SIZE - 6
+
+
+render([2], REFLECTIONS)
+mirrored = ramp(row)
+direct = ramp(SIZE // 2 - 2)
+render([2], {**REFLECTIONS, "eldr:planarMotionBlur": False})
+frozen = ramp(row)
+print("reflections: row %d, %d edge pixels at time samples, %d at the frame's time; the cube %d" %
+      (row, mirrored, frozen, direct))
+expect(mirrored >= 8 and mirrored >= 0.6 * direct,
+       "the planar reflection blurs as the cube does (%d edge pixels, the cube %d)" % (mirrored, direct))
+expect(frozen <= 5, "eldr:planarMotionBlur off: the reflection is sharp (%d edge pixels)" % frozen)
+render([2], {**REFLECTIONS, "eldr:planarReflections": False, "eldr:rtReflections": 2})
+traced = ramp(row)
+expect(traced >= 8, "traced reflections blur by the sample's TLAS (%d edge pixels)" % traced)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

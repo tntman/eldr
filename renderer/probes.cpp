@@ -168,6 +168,15 @@ void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)
         stale = false;
     }
     _pending = stale;
+    if (_probes.empty()) {
+        _renderer.reset();  // its targets and shadow maps are the bulk of the memory
+    }
+}
+
+void Reflections::RenderPlanars(const Scene &scene, const Renderer::Frame &frame, float shutter, bool capture)
+{
+    const Scene::Gpu &gpu = scene.GetGpu();
+    planarMs = 0;
     // Renderers for the mirrors, theirs to keep while the mirror stays.
     const size_t mirrors =
         frame.planarReflections ? std::min<size_t>(gpu.mirrors.size(), std::max(frame.planarCount, 1u)) : 0;
@@ -178,15 +187,12 @@ void Reflections::Update(const Scene &scene, const Renderer::Frame &frame)
             _planarRenderers[i] = std::make_unique<Renderer>(_dev);
         }
         Planar planar;
-        if (_RenderPlanar(scene, frame, gpu.mirrors[i], *_planarRenderers[i], planar.plane)) {
+        if (_RenderPlanar(scene, frame, gpu.mirrors[i], *_planarRenderers[i], planar.plane, shutter, capture)) {
             planar.image = _planarRenderers[i]->HdrColorImage();
             planar.view = _planarRenderers[i]->HdrColorView();
             planar.slot = gpu.mirrors[i].slot;
             _planars.push_back(planar);
         }
-    }
-    if (_probes.empty()) {
-        _renderer.reset();  // its targets and shadow maps are the bulk of the memory
     }
 }
 
@@ -276,7 +282,7 @@ void Reflections::_Capture(const Scene &scene, const Renderer::Frame &frame, Pro
 }
 
 bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame, const Scene::Gpu::Mirror &m,
-                                Renderer &renderer, float plane[4])
+                                Renderer &renderer, float plane[4], float shutter, bool capture)
 {
     const Scene::Gpu &gpu = scene.GetGpu();
     const Mat4 viewProj = ToMat4(frame.viewProj);
@@ -351,6 +357,10 @@ bool Reflections::_RenderPlanar(const Scene &scene, const Renderer::Frame &frame
     pf.clusteredLights = false;
     pf.shadowCascades = 1;
     pf.skinning = _updates == 1;  // the first frame: no joints were skinned yet
+    // ponytail: the mirror's plane is the frame's; a moving mirror's
+    // reflection doesn't blur by its own motion.
+    pf.nestedShutter = shutter;
+    pf.nestedCapture = capture;
     renderer.Render(scene, pf, Renderer::Targets{});
     planarMs += renderer.GetStats().gpuMs;
     return true;
