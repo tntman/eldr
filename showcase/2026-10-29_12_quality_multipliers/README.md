@@ -1,6 +1,6 @@
 # Per-component quality multipliers
 
-emissive.usda (a Cornell box lit by a glowing panel and a bulb, plus a mirror sphere) in final quality with GI, final gather, traced shadows and reflections, at 32 film samples. Each settings prim spends rays on one component, the way Karma's quality controls do, instead of raising the film samples for everything.
+emissive.usda (a Cornell box lit by a glowing panel and a bulb, plus a mirror sphere) with GI, final gather, traced shadows and traced reflections on, at 32 film samples (`eldr_final` has the same on at 256). Each settings prim spends rays on one component, the way Karma's quality controls do, instead of raising the film samples for everything.
 
 - `/Render/default`: every quality at 1.
 - `/Render/diffuse2`: `eldr:diffuseQuality` 2. Gather and GI probes trace twice the rays, so the walls and the floor are cleaner.
@@ -24,3 +24,16 @@ On this scene the final gather is the noise. Diffuse 2 matches 64 samples at qua
 - Houdini: Sublayer LOP on the file with Eldr as the renderer. Karma Render Settings' Diffuse, Reflection, SSS and Volume Quality and Light Sampling Quality are read.
 - husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_12_quality_multipliers/scene.usda`
 - usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -w 960 -rs /Render/<name> <scene.usda> out.png`
+
+## Houdini scene
+
+Open `scene.hip`. Its LOP network sublayers `scene.usda` and has one render settings node per settings prim:
+
+- `eldr_default`: Eldr with nothing set (its default settings).
+- `eldr_final`: Eldr with each setting a final render needs ticked one by one: traced reflections, refraction and hit shadows, final gather, caustics, GI, traced shadows (16 lights, 1 ray each), denoise, film restart, 256 film samples.
+- `karma`: a Karma Render Settings node to match (same camera, resolution and samples).
+- The other nodes are this scene's A/B settings above.
+
+Pick a node and render its USD Render ROP (`render_<node>`; images go to `render/`). Eldr's ROPs run `$ELDR_HUSK`, Karma's plain husk. Nothing switches automatically. For the viewport, choose Eldr in the viewport's renderer menu (a script can't set it). The same prims are in `scene.usda` for usdview and husk: `husk -R Eldr -s /Render/eldr_final scene.usda`.
+
+The file is built by `hython houdini/make_showcase_hip.py`; rerun it after changing `scene.usda`.
