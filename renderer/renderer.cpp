@@ -3033,7 +3033,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             const float last = float(_width) / float(_outWidth);
             const float target =
                 std::clamp(last * std::sqrt(0.9f * frame.movingFrameBudget / float(_stats.gpuMs)), 0.25f, 1.0f);
-            const float next = target < 0.95f * last ? target : target > 1.1f * last ? 0.5f * (last + target) : last;
+            const float next = target < 0.95f * last                                 ? target
+                               : target > last && target >= std::min(1.1f * last, 1.0f) ? 0.5f * (last + target)
+                                                                                        : last;
             _dynamicScale = std::clamp(std::round(next * 32.0f) / 32.0f, 0.25f, 1.0f);
         }
     }
@@ -3047,7 +3049,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const bool ramp = !moving && _rampLeft > 0 && frame.rampFrames > 1 && _taaValid && !frame.filmRestart;
     const uint32_t rampLeft = ramp ? std::min(_rampLeft, frame.rampFrames - 1) : 0;
     const float rampT = 1.0f - float(rampLeft) / float(std::max(frame.rampFrames, 1u));
-    _rampLeft = ramp ? rampLeft - 1 : 0;
+    _rampLeft = moving ? _rampLeft : ramp ? rampLeft - 1 : 0;
     const float renderScale = moving ? std::min(frame.renderScale, movingScale)
                             : ramp   ? std::min(frame.renderScale, _movingScale + (1.0f - _movingScale) * rampT)
                                      : frame.renderScale;
@@ -3063,6 +3065,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     const uint32_t sceneWidth = std::max(uint32_t(float(frame.width) * scale + 0.5f), 1u);
     const uint32_t sceneHeight = std::max(uint32_t(float(frame.height) * scale + 0.5f), 1u);
     if (sceneWidth != _width || sceneHeight != _height) {
+        // Blocks for the frame's size: the scale's next steps fit them.
+        _dev.recycleGrowth = double(_outWidth) * _outHeight / (double(sceneWidth) * sceneHeight);
         _ResizeScene(sceneWidth, sceneHeight);
     }
     _upscaled = _width != _outWidth || _height != _outHeight;

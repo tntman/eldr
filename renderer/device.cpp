@@ -473,6 +473,10 @@ Image Device::CreateImage(VkFormat format, uint32_t width, uint32_t height, uint
         }
     }
     if (!img.memory) {
+        if (_recycler == std::this_thread::get_id() && recycleGrowth > 1.0) {
+            const VkDeviceSize a = std::max<VkDeviceSize>(req.alignment, 1);
+            req.size = (VkDeviceSize(double(req.size) * recycleGrowth) + a - 1) / a * a;
+        }
         img.memory = Allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     }
     Check(vkBindImageMemory(device, img.image, img.memory, 0), "vkBindImageMemory");
@@ -561,6 +565,7 @@ void Device::EndRecycle()
     {
         std::lock_guard<std::mutex> lock(_memoryMutex);
         _recycler = std::thread::id();
+        recycleGrowth = 1.0;
         left.swap(_recycled);
     }
     for (VkDeviceMemory m : left) {

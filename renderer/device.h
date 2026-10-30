@@ -97,7 +97,10 @@ public:
     // smallest kept block that fits: render targets resized smaller and
     // back (eldr:rampFrames, eldr:movingFrameBudget) allocate nothing new.
     // EndRecycle frees the blocks left over.
+    // recycleGrowth: a new block is that many times the image's size, so the
+    // same image larger (up to growth times the pixels) fits it later.
     void BeginRecycle();
+    double recycleGrowth = 1.0;  // reset by EndRecycle
     void EndRecycle();
 
     // Records one command buffer with `record`, submits it and waits.
