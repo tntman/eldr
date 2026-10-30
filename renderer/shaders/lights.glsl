@@ -27,11 +27,11 @@ const uint kLightTextures = 4u;  // frame.reflections.z: lights' textures on
 layout(std430, set = 0, binding = 2) readonly buffer Lights { Light lights[]; };
 
 // 16 x 9 screen tiles x 24 slices, logarithmic in depth. Each cluster is a
-// count followed by up to kMaxClusterLights indices into lights[].
-// ponytail: lights past 63 in one cluster are dropped; raise the cap (or
-// sort by contribution) if dense light rigs need it.
+// count followed by up to kMaxClusterLights indices into lights[]. A cluster
+// that reaches more lights holds count = frame.localLights.x and no list: it
+// shades every local light (ClusterLight), slower but never drops one.
 const uint kClustersX = 16u, kClustersY = 9u, kClustersZ = 24u;
-const uint kMaxClusterLights = 63u;
+const uint kMaxClusterLights = 255u;
 layout(std430, set = 0, binding = 14) CLUSTER_ACCESS buffer Clusters { uint clusterLights[]; };
 
 // An emissive mesh as a light (Scene::SetEmissiveLights): Karma reaches
@@ -174,4 +174,10 @@ uint ClusterIndex(vec2 fragCoord, float viewDepth)
     float s = log2(max(viewDepth, frame.clusters.x) / frame.clusters.x) / frame.clusters.z;
     uint slice = min(uint(s * float(kClustersZ)), kClustersZ - 1u);
     return (slice * kClustersY + tile.y) * kClustersX + tile.x;
+}
+
+// Light k of the cluster whose list starts at `base`, for k < clusterLights[base].
+uint ClusterLight(uint base, uint k)
+{
+    return clusterLights[base] > kMaxClusterLights ? frame.counts.x + k : clusterLights[base + 1u + k];
 }

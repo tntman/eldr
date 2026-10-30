@@ -222,7 +222,7 @@ void main()
         uint base = ClusterIndex((vec2(id.xy) + 0.5) / grid.xy * frame.viewport.xy, depth) * (kMaxClusterLights + 1u);
         uint count = clusterLights[base];
         for (uint k = 0u; k < count; ++k) {
-            light += LocalLight(clusterLights[base + 1u + k], p, toCamera);
+            light += LocalLight(ClusterLight(base, k), p, toCamera);
         }
     } else {
         for (uint i = frame.counts.x; i < frame.counts.x + frame.localLights.x; ++i) {

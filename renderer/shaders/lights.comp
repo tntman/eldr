@@ -46,12 +46,16 @@ void main()
 
     uint base = c * (kMaxClusterLights + 1u);
     uint count = 0u;
-    for (uint i = 0u; i < frame.localLights.x && count < kMaxClusterLights; ++i) {
+    for (uint i = 0u; i < frame.localLights.x; ++i) {
         uint index = frame.counts.x + i;
         Light light = lights[index];
         vec3 q = clamp(light.position.xyz, lo, hi) - light.position.xyz;
         float range = LightRange(light);
         if (dot(q, q) <= range * range) {
+            if (count == kMaxClusterLights) {
+                count = frame.localLights.x;  // overflow: ClusterLight walks them all
+                break;
+            }
             clusterLights[base + 1u + count] = index;
             ++count;
         }

@@ -1,11 +1,11 @@
 # Many lights (clustered)
 
-200 small coloured sphere lights hang just above a glossy floor around a ball, a box and a post, under a faint night dome. Clustered shading (63 lights per cluster, cut off at 1% of mid-gray on a white surface) lights each pixel with only the lights near it; every light still gets a shadow (atlas tiles halve before any light goes unshadowed).
+200 small coloured sphere lights hang just above a glossy floor around a ball, a box and a post, under a faint night dome. Clustered shading (up to 255 lights per cluster, cut off at 1% of mid-gray on a white surface) lights each pixel with only the lights that reach it (here each reaches about 7 units, most of the floor, so clustering saves little: compare a dimmer rig); every light still gets a shadow (atlas tiles halve before any light goes unshadowed).
 
 ## What to look at
 
 - `/Render/lights` (the default): 200 coloured pools of light and 200 small highlights on the floor.
-- `/Render/clustersOff` (`eldr:clusteredLights` off): every light for every pixel: the same picture, slower (compare the frame time in Eldr > Render Statistics).
+- `/Render/clustersOff` (`eldr:clusteredLights` off): every light for every pixel: the same picture; here about as fast, slower once lights reach less of the screen (compare the frame time in Eldr > Render Statistics).
 - `/Render/localLightsOff` (`eldr:localLights` off): no local lights, only the blue night dome: nearly black.
 
 ## Open

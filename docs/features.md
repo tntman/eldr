@@ -130,7 +130,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 | Shaping | Cone angle, softness, focus, focus tint; IES profiles (`shaping:ies:file`, `angleScale`, `normalize`) |
 
 - **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Diffuse is unchanged. Textured lights are read at the lobe's mip.
-- **Clustered lights:** 63 per cluster, cut off at 1% of mid-gray on a white surface.
+- **Clustered lights:** up to 255 per cluster (a fuller cluster shades every local light, never drops one), cut off at 1% of mid-gray on a white surface.
 - **Emissive meshes** (constant `emissiveColor` above `eldr:emissiveLightThreshold`, small, max 32) also become rect or sphere lights with shadows. A flat one (a panel) is a rect on each face and, unless thinner than 1% of their area, on each edge: beside a panel under a ceiling the edges give most of its light.
 - **Light shapes** are hidden from the camera unless `eldr:lightShapesVisible`; `inputs:karma:light:renderlightgeo = 0` hides one. The same attribute on a dome hides it from the camera (unauthored: shown, unlike Karma) while it still lights and reflects; `eldr:domeCameraVisible` and Hydra's `domeLightCameraVisibility` hide every dome.
 - **Dome sun** (`eldr:domeSun`): bright HDRI texels become a shadowed distant light.
@@ -461,7 +461,7 @@ Every Karma attribute Eldr reads has an `eldr:` twin; the order is the `eldr:` o
 | Output | Cryptomatte ranks come from film samples in the 3x3 filter footprint; thin objects between samples can be missed. Interactive: one id per pixel. |
 | Hydra | Volumes are not pickable; a field prim's own transform is ignored; OpenVDB assets only. |
 | Hydra | Dome `poleAxis`, portals and shadow colour/distance are ignored; domes and the fog ignore light linking; IES types A and B are read as C, TILT is ignored. One frame in flight. |
-| Lights | 63 lights per cluster (the rest are dropped); every cluster tests every light. |
+| Lights | 255 lights per cluster (a fuller cluster loops over all local lights: slower, not wrong); every cluster tests every light. |
 | Lights | Textured lights use two taps, not a filtered polygon; traced hits, probes, fog and volumes read one tap above the shaded point (no highlight tint); emissive-as-light ignores the texture. |
 | Lights | Emissive surfaces become lights only when constant, rigid, small and at most 32; others light via GI only. |
 | Shadows | Sun: no blend between cascades; kernels clamp to 5% of a cascade. Local lights: redraw is all-or-nothing when a caster moves; kernels clamp at cube-face seams. |

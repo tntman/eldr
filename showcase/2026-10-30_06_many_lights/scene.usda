@@ -6,10 +6,10 @@
 
 # Many lights: 200 small coloured sphere lights (seeded random hues) hang
 # just above a glossy floor around a ball, a box and a post, under a faint
-# night dome. Clustered shading (63 lights per cluster, cut off at 1% of
-# mid-gray) lights each pixel with the few lights near it.
+# night dome. Clustered shading (up to 255 lights per cluster, cut off at 1% of
+# mid-gray) lights each pixel with the lights that reach it.
 # /Render/lights (the default): clustered. /Render/clustersOff: every light
-# for every pixel, the same picture, slower. /Render/localLightsOff: no
+# for every pixel, the same picture. /Render/localLightsOff: no
 # local lights at all, only the night dome.
 
 def Camera "cam"
