@@ -16,7 +16,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // w: of them the fixed rays (kGiFixedRays with relocation, else 0)
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
     uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
-    vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), w: layer stride (rows)
+    vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), z: share of the
+                         // samples each light is traced in (rt_pixels.rgen; 0: all), w: layer stride (rows)
     uvec4 shadowInfo;    // x: shadow rays' cull mask (kRtMaskTranslucent: through translucent casters),
                          // y: volumes they march (0: none), z: lights per texel of the shadow image
                          // (4: one channel each; 1: colour, rgb), w 1: every light shadowed at
@@ -26,7 +27,9 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
                          // glass bends them, z 1: the first ray sees glass only, up to the prepass depth
     vec4 gather;         // final gather (rt_pixels.rgen): x: ray length, y: 1 while on
     vec4 gatherSamples[8];  // this film sample's gather ray points in [0, 1)^2, two per row
-    vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off)
+    vec4 gatherInfo;     // x: gather rays per pixel, y: denoise strength (gather_denoise.comp; 0: off),
+                         // z: share of the samples a block gathers in (0: all), w 1: light sampling
+                         // (eldr:rtLightSampling: hits shadow one light, rt_pixels.rgen culls)
     vec4 denoise;        // x: traced shadows' largest filter radius in pixels (RtTraced), y: traced
                          // reflections' filter scale (RtReflection); 0: off. z: the shadow image's
                          // first layer of penumbra radii (rt_pixels.rgen PenumbraRadius); w: reflection
@@ -225,12 +228,14 @@ vec4 RtAround(vec3 p, vec3 n, float radius)
     return sum / weights;
 }
 
-// Traced shadow k's texel at `pixel` (rt.shadowInfo.z lights per texel).
+// Traced shadow k's texel at `pixel` (rt.shadowInfo.z lights per texel),
+// over the share of samples its light is traced in (rt.shadowSample.z).
 vec3 RtShadowTexel(ivec2 pixel, uint k)
 {
     uint perTexel = rt.shadowInfo.z;
     vec4 v = imageLoad(rtShadowImage, pixel + ivec2(0, int(k / perTexel) * int(rt.shadowSample.w)));
-    return perTexel == 1u ? v.rgb : vec3(v[k & 3u]);
+    float scale = rt.shadowSample.z > 0.0 ? 1.0 / rt.shadowSample.z : 1.0;
+    return (perTexel == 1u ? v.rgb : vec3(v[k & 3u])) * scale;
 }
 
 // The traced shadow of `light` (its colour: what reaches p through
