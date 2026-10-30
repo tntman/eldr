@@ -993,7 +993,7 @@ void HdVkRenderDelegate::NoteFrame()
     std::lock_guard<std::mutex> lock(_loadMutex);
     const double sync = _loadSyncMs;
     _loadSyncMs = 0;
-    const double total = t.shadersMs + textures + t.bvhMs + sync;
+    const double total = t.shadersMs + textures + t.rtPipelinesMs + t.bvhMs + sync;
     if (total < 250.0) {  // an edit or a camera move, not a load
         return;
     }
@@ -1003,8 +1003,10 @@ void HdVkRenderDelegate::NoteFrame()
     const double gb = 1024.0 * 1024.0 * 1024.0;
     char text[256];
     std::snprintf(text, sizeof text,
-                  "loaded in %.1f s: shaders %.1f, textures %.1f, BVH %.1f, sync %.1f | GPU %.2f GB (textures %.0f MB), RAM %.1f GB (peak %.1f)",
-                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.bvhMs / 1000.0, sync / 1000.0,
+                  "loaded in %.1f s: shaders %.1f, textures %.1f, rt pipelines %.1f, BVH %.1f, sync %.1f | GPU %.2f GB "
+                  "(textures %.0f MB), RAM %.1f GB (peak %.1f)",
+                  total / 1000.0, t.shadersMs / 1000.0, textures / 1000.0, t.rtPipelinesMs / 1000.0, t.bvhMs / 1000.0,
+                  sync / 1000.0,
                   double(_device ? _device->Memory().deviceLocal : 0) / gb,
                   double(_device ? _device->Memory().textures : 0) / (1024.0 * 1024.0), double(ram.resident) / gb,
                   double(ram.peak) / gb);

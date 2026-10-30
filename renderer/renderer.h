@@ -668,10 +668,11 @@ public:
         bool reduced = false;  // a moving reduction (Frame::moving*) applied this frame
     };
     const Stats &GetStats() const { return _stats; }
-    // Time in shading pipeline compiles and acceleration structure builds
-    // since the last call (the render delegate's load summary).
+    // Time in shading pipeline compiles, waiting for the ray tracing
+    // pipelines (compiling since construction) and acceleration structure
+    // builds since the last call (the render delegate's load summary).
     struct LoadTimes {
-        double shadersMs = 0, bvhMs = 0;
+        double shadersMs = 0, rtPipelinesMs = 0, bvhMs = 0;
     };
     LoadTimes TakeLoadTimes()
     {
