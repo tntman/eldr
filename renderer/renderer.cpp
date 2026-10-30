@@ -4003,10 +4003,21 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
         const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1}), mid = TransformPoint(inv, {0, 0, 0});
         const Vec3 forward = Normalize(mid - nearCenter);
-        const float pixel = Length(TransformPoint(inv, {0, 2.0f / float(_height), 0}) - mid);
         cull.orthographic = std::abs(frame.viewProj[3]) + std::abs(frame.viewProj[7]) +
                             std::abs(frame.viewProj[11]) < 1e-9f ? 1.0f : 0.0f;
+        // A pixel up from the centre, moved along its ray to mid's view depth:
+        // an oblique near plane (planar mirrors) tilts NDC z = 0, so the
+        // unmoved point lies at another depth (a 32-pixel mirror render
+        // dropped everything as too small).
+        const Vec3 up = TransformPoint(inv, {0, 2.0f / float(_height), 0});
+        const Vec3 level = cull.orthographic > 0 ? up - forward * Dot(up - mid, forward)
+                                                 : eye + (up - eye) * (Dot(mid - eye, forward) /
+                                                                       Dot(up - eye, forward));
+        const float pixel = Length(level - mid);
         cull.pixelScale = (cull.orthographic > 0 ? 1.0f : Dot(mid - eye, forward)) / std::max(pixel, 1e-30f);
+        // ponytail: cull.comp takes the depth as the distance from the near
+        // plane plus this, off for an oblique (mirror) near plane; pass the
+        // eye and forward if mirror renders cull or pick levels visibly wrong.
         cull.nearDistance = Dot(nearCenter - eye, forward);
         vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
         vkCmdBindDescriptorSets(_cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 1, &_set, 0, nullptr);
