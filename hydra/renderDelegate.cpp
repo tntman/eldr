@@ -1158,6 +1158,7 @@ bool HdVkRenderDelegate::ScreenDicing() const
 void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
 {
     _dicingView = view;
+    _keepMotion = true;
     if (_terminalSceneIndex) {
         HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
                        {HdLegacyDisplayStyleSchema::GetDefaultLocator()});
@@ -1231,7 +1232,8 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
     HdVkReleaseFiles();  // the fields that synced read their files
 #endif
     try {
-        _scene->Commit(false, unchanged);
+        _scene->Commit(_keepMotion, unchanged);
+        _keepMotion = false;
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
         std::lock_guard<std::mutex> lock(_loadMutex);
         _loadSyncMs += _commitMs;

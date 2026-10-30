@@ -371,6 +371,10 @@ public:
     // their motion again (transforms, deformation velocities) even where
     // nothing moved since their last sync.
     bool MotionSettingsChanged() const { return _motionSettingsChanged; }
+    // The meshes re-sync for the same frame (re-dicing, a subdivision
+    // setting): the next commit keeps the last one's motion where it moves
+    // nothing itself (a re-diced mesh uploads geometry, not its motion).
+    void KeepMotion() { _keepMotion = true; }
     // What the film starts over on besides the camera and the settings:
     // every sync of geometry, instancers, materials, volumes and fields
     // (lights through the renderer's lighting hash). Not cameras: an app may
@@ -415,6 +419,7 @@ private:
     uint64_t _committedEdits = ~0ull;   // _sceneEdits at the last CommitResources
     unsigned _committedSettings = ~0u;  // and the render settings' version
     bool _motionSettingsChanged = false;  // since the last CommitResources
+    bool _keepMotion = false;             // KeepMotion since the last CommitResources
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.
