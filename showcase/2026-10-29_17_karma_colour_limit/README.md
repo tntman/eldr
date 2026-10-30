@@ -14,7 +14,7 @@ Look at the panel and the bulb in an EXR viewer or with usdview's pixel probe.
 
 Open: `usdenv usdview --renderer Eldr showcase\2026-10-29_17_karma_colour_limit\scene.usda` and pick a
 settings prim. Or run `husk -R Eldr -s /Render/fullHdr showcase\2026-10-29_17_karma_colour_limit\scene.usda`.
-In Houdini, set Karma's Color Limit to 0 for the same full-HDR emitters in Karma.
+In Houdini, set Karma's Color Limit to a large value such as 1e6 for the same full-HDR emitters in Karma (Karma's 0 renders black, not off).
 
 ## Houdini scene
 
