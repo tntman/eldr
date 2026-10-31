@@ -1,0 +1,68 @@
+#usda 1.0
+(
+    renderSettingsPrimPath = "/Render/eldr_default"
+    upAxis = "Y"
+    metersPerUnit = 1
+    subLayers = [@../../tests/scenes/glass.usda@]
+)
+
+# Refraction Quality: tests/scenes/glass.usda (clear, green and frosted
+# glass balls, a thin pink pane) at 32 film samples with ray-traced
+# refraction. /Render/refractQuality1: one path per pixel and sample, the
+# frosted ball (OpenPBR roughness 0.35) shows grain and sparkles of the
+# sun seen through it. /Render/refractQuality4 (eldr:refractQuality 4):
+# four paths through the rough ball, as clean as about 128 samples; the
+# smooth balls take one path either way.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/refractQuality1
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "refractQuality1"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:filmSamples = 32
+        custom bool eldr:rtRefraction = 1
+        custom float eldr:refractQuality = 1
+    }
+
+    def RenderSettings "refractQuality4"
+    {
+        rel camera = </cam>
+        int2 resolution = (960, 540)
+        custom int eldr:filmSamples = 32
+        custom bool eldr:rtRefraction = 1
+        custom float eldr:refractQuality = 4
+    }
+}
