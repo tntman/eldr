@@ -81,6 +81,15 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
     return background / float(taps);
 }
 
+// The dome's radiance along dir at mip `lod` (0 without a dome).
+vec3 DomeAlong(vec3 dir, float lod)
+{
+    if (frame.envRadiance.w <= 0.0) {
+        return vec3(0.0);
+    }
+    return textureLod(envCube, mat3(frame.envWorldToLocal) * dir, lod).rgb * frame.envRadiance.rgb;
+}
+
 // After shading (`color` premultiplied, highlights whole): adds what the
 // surface refracts and returns the coverage to blend over what's behind
 // with. The refracted ray (thin walls: the view ray) leaves the surface
@@ -89,8 +98,8 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
 // point lands (RefractedBackground). The transmission colour absorbs at
 // the surface, or over the path inside at its transmission depth
 // (Beer-Lambert); Fresnel (Schlick at the ior) splits reflection from
-// transmission. Where it refracts the app's background (clear, coverage 0)
-// coverage drops instead.
+// transmission. Where it refracts past every drawn surface and sky, the
+// dome lights it; without a dome coverage drops instead (the app's background).
 // Closed refractive meshes: the shading passes draw their front faces and
 // discard the back ones (by the authored normal); kShadingPass 3 draws
 // only those back faces, before the front ones (Renderer's refraction
@@ -104,6 +113,15 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
 // faces there draw nothing; other refracting fragments stay screen space.
 // ponytail: screen space: what isn't on screen isn't refracted; one
 // interface per layer, the thickness an estimate.
+// How far along e (object space, scaled so the ellipsoid is the unit ball;
+// the distance in e's units) o is from leaving the unit ball.
+float EllipsoidExit(vec3 o, vec3 e)
+{
+    float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
+    float disc = b * b - a * c;
+    return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
+}
+
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {
@@ -178,24 +196,50 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float thickness = thin ? 0.0 : min(behind, size);
     float spread = perceptual * perceptual * min(behind, camera);
     vec3 tint = m.transmission.rgb;
+    vec3 tintInside = tint;  // along the inside reflection
     if (m.refraction.z > 0.0 && !thin) {
-        tint = pow(max(tint, vec3(1e-4)), vec3(thickness / m.refraction.z));
+        // The path inside: through the ellipsoid that fills the mesh's
+        // bounds (exact for a ball), not the bounds' diagonal. A back face
+        // seen from outside adds none (its front face counted the path),
+        // from inside the medium the way to the camera. Flat meshes (water
+        // sheets): the distance to what is behind, at most the mesh's size.
+        mat4 xf = InstanceTransform(inst);
+        mat3 toObject = inverse(mat3(xf));
+        vec3 extent = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+        vec3 centre = 0.5 * (d.boundsMax.xyz + d.boundsMin.xyz);
+        float path = thickness, pathInside = thickness;
+        if (min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z))) {
+            vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
+            vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
+            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, EllipsoidExit(o, toObject * r / extent));
+            pathInside = EllipsoidExit(o, toObject * reflect(-v, n) / extent);
+        }
+        tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
+        tintInside = pow(max(tintInside, vec3(1e-4)), vec3(pathInside / m.refraction.z));
     }
     float lost = 0.0;  // coverage the app's background takes back
+    // Where the lookup finds no drawn surface or sky (a dome hidden from the
+    // camera), the dome lights it along the ray, as traced refraction and
+    // Karma see it; only without a dome does the app's background show.
+    bool dome = frame.envRadiance.w > 0.0;
+    float domeLod = perceptual * float(frame.counts.z - 1u);
     if (!total) {
         vec4 background = RefractedBackground(r, thickness, spread);
         vec3 transmitted = through * over * tint;
-        color += transmitted * background.rgb;
-        gRefractedLight += transmitted * background.rgb;
-        lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
+        vec3 light = background.rgb + (1.0 - background.a) * DomeAlong(r, domeLod);
+        color += transmitted * light;
+        gRefractedLight += transmitted * light;
+        lost += dome ? 0.0 : dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
     }
     if (inside) {
         // The inside's reflection, all of it past the critical angle.
-        vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
-        vec3 reflected = gRefracted * F * over * tint;
-        color += reflected * mirrored.rgb;
-        gRefractedLight += reflected * mirrored.rgb;
-        lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
+        vec3 inward = reflect(-v, n);
+        vec4 mirrored = RefractedBackground(inward, min(camera, size), spread);
+        vec3 reflected = gRefracted * F * over * tintInside;
+        vec3 light = mirrored.rgb + (1.0 - mirrored.a) * DomeAlong(inward, domeLod);
+        color += reflected * light;
+        gRefractedLight += reflected * light;
+        lost += dome ? 0.0 : dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
     }
     return 1.0 - gStraight - open * lost;
 }

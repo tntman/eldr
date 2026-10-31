@@ -33,10 +33,12 @@ def expect(ok, what):
 
 
 def render(stage, settings={}):
-    """The stage through /cam with HdVk, as a QImage; no TAA, fixed exposure."""
+    """The stage through /cam with HdVk, as a QImage; no TAA, fixed exposure. Bare prims shade as
+    displayColor at full strength (the thresholds below are in its 8-bit levels)."""
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, **settings}.items():
+    for key, value in {"eldr:taa": False, "eldr:autoExposure": False, "eldr:defaultMaterialKarma": False,
+                       **settings}.items():
         engine.SetRendererSetting(key, value)
     frustum = UsdGeom.Camera(stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default()).frustum
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))

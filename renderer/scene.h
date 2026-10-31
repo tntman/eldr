@@ -278,6 +278,7 @@ struct Material {
     float coatAffectColor = 0;
     float coatAffectRoughness = 0;
     bool baseColorFromDisplayColor = false;  // diffuseColor <- primvar reader "displayColor"
+    float displayColorWeight = 1;            // with it: the base weight displayColor is scaled by
     TextureRef baseColorTex, emissiveTex, metallicTex, roughnessTex, occlusionTex,
         normalTex,  // tangent space, after scale/bias
         opacityTex;
@@ -415,6 +416,8 @@ struct Mesh {
     // and motion vectors (Frame::deformationBlur).
     std::vector<float> velocities;
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
+    float opacity = 1;  // constant displayOpacity: the default material's (Scene::SetDefaultMaterial)
+    bool colorAuthored = true;  // false: no displayColor (Karma's default material reads white)
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
@@ -777,6 +780,11 @@ public:
     // Light linking and IES profiles on or off (from the next Commit).
     // Returns whether they changed.
     bool SetLightOptions(bool linking, bool ies);
+    // Meshes without a material: Karma's default material of their
+    // displayColor and displayOpacity (true), else the metallic base's
+    // defaults over displayColor, opaque (from the next Commit). Returns
+    // whether it changed.
+    bool SetDefaultMaterial(bool karma);
     // Light linking: at most this many link categories are honoured
     // (Instance::linkMask); lights in more light everything.
     static constexpr size_t kMaxLinkCategories = 32;
@@ -1073,6 +1081,10 @@ private:
     bool _domeSunOn = false;
     std::vector<std::string> _lightGroups;
     bool _lightLinking = true, _lightIes = true;
+    // SetDefaultMaterial: Karma's default material per displayOpacity.
+    bool _karmaDefault = false;  // the render pass turns it on (Frame::defaultMaterialKarma)
+    std::map<std::pair<float, bool>, std::unique_ptr<Material>> _defaultMaterials;  // by opacity, colorAuthored
+    const Material *_MaterialOf(const Mesh &mesh);
     // Link category id -> its bit in the instances' linkMask (as uploaded).
     std::map<uint32_t, uint32_t> _linkBits;
     uint32_t _LinkMask(const std::vector<uint32_t> &categories) const;
