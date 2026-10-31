@@ -81,6 +81,15 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
     return background / float(taps);
 }
 
+// The dome's radiance along dir at mip `lod` (0 without a dome).
+vec3 DomeAlong(vec3 dir, float lod)
+{
+    if (frame.envRadiance.w <= 0.0) {
+        return vec3(0.0);
+    }
+    return textureLod(envCube, mat3(frame.envWorldToLocal) * dir, lod).rgb * frame.envRadiance.rgb;
+}
+
 // After shading (`color` premultiplied, highlights whole): adds what the
 // surface refracts and returns the coverage to blend over what's behind
 // with. The refracted ray (thin walls: the view ray) leaves the surface
@@ -89,8 +98,8 @@ vec4 RefractedBackground(vec3 dir, float distance, float spread)
 // point lands (RefractedBackground). The transmission colour absorbs at
 // the surface, or over the path inside at its transmission depth
 // (Beer-Lambert); Fresnel (Schlick at the ior) splits reflection from
-// transmission. Where it refracts the app's background (clear, coverage 0)
-// coverage drops instead.
+// transmission. Where it refracts past every drawn surface and sky, the
+// dome lights it; without a dome coverage drops instead (the app's background).
 // Closed refractive meshes: the shading passes draw their front faces and
 // discard the back ones (by the authored normal); kShadingPass 3 draws
 // only those back faces, before the front ones (Renderer's refraction
@@ -182,20 +191,28 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         tint = pow(max(tint, vec3(1e-4)), vec3(thickness / m.refraction.z));
     }
     float lost = 0.0;  // coverage the app's background takes back
+    // Where the lookup finds no drawn surface or sky (a dome hidden from the
+    // camera), the dome lights it along the ray, as traced refraction and
+    // Karma see it; only without a dome does the app's background show.
+    bool dome = frame.envRadiance.w > 0.0;
+    float domeLod = perceptual * float(frame.counts.z - 1u);
     if (!total) {
         vec4 background = RefractedBackground(r, thickness, spread);
         vec3 transmitted = through * over * tint;
-        color += transmitted * background.rgb;
-        gRefractedLight += transmitted * background.rgb;
-        lost += dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
+        vec3 light = background.rgb + (1.0 - background.a) * DomeAlong(r, domeLod);
+        color += transmitted * light;
+        gRefractedLight += transmitted * light;
+        lost += dome ? 0.0 : dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
     }
     if (inside) {
         // The inside's reflection, all of it past the critical angle.
-        vec4 mirrored = RefractedBackground(reflect(-v, n), min(camera, size), spread);
+        vec3 inward = reflect(-v, n);
+        vec4 mirrored = RefractedBackground(inward, min(camera, size), spread);
         vec3 reflected = gRefracted * F * over * tint;
-        color += reflected * mirrored.rgb;
-        gRefractedLight += reflected * mirrored.rgb;
-        lost += dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
+        vec3 light = mirrored.rgb + (1.0 - mirrored.a) * DomeAlong(inward, domeLod);
+        color += reflected * light;
+        gRefractedLight += reflected * light;
+        lost += dome ? 0.0 : dot(reflected, vec3(1.0 / 3.0)) * (1.0 - mirrored.a);
     }
     return 1.0 - gStraight - open * lost;
 }
