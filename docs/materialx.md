@@ -24,7 +24,23 @@ The corpus has 957 materials with a surface. At the last full audit 747 compile 
 
 Lit surfaces that compile whole, against Karma: UsdPreviewSurface median 0.5, standard_surface 1.7 (32 of 56 under 2), OpenPBR without the light bulb: 5 of 9 under 1.4. The worst are car paint (coat, 13), subsurface (ketchup 9, jade 11), velvet/fuzz (5), thin film (19).
 
-Karma's Lama tests (pbrlib `surface` of `lama_*` BSDFs) render the default grey: Karma shades them and black would be further off.
+## BSDF graphs
+
+A MaterialX `surface` of pbrlib BSDFs and EDFs renders as one standard_surface whose inputs come from the graph's leaves (`BsdfMapper` in `hydra/material.cpp`). Nodes defined as nodegraphs of BSDFs (Lama's `lama_*`, a document's own BSDF or surface shader nodes) are expanded first, so they map the same way. The mapping runs once when the material syncs; the result costs what that standard_surface costs.
+
+| Node | Becomes |
+|---|---|
+| `oren_nayar_diffuse_bsdf`, `burley_diffuse_bsdf` | base colour (the leaves' weighted sum), `diffuse_roughness` |
+| `dielectric_bsdf` | specular (`tint`, `ior`, roughness, thin film). On top of a layer whose base reflects (a dielectric or metal): the coat. In `T` or `RT` mode, not on top of a layer: transmission tinted by `tint`; `T` on top of a layer passes light to the base, as MaterialX's layer does |
+| `conductor_bsdf` | metal: its F0 from `ior` and `extinction` (or `artistic_ior`'s reflectivity and edge colour, as in Lama's conductor), the edge colour from the same inputs |
+| `generalized_schlick_bsdf` | alone: a metal of `color0` and `color82`; on top of a layer: a dielectric of `color0`'s mean F0 |
+| `sheen_bsdf`, `subsurface_bsdf`, `translucent_bsdf` | sheen; subsurface (translucent as subsurface with its colour) |
+| `uniform_edf`, `conical_edf`, `measured_edf`, `generalized_schlick_edf` | emission colour (the cone and profile aren't read; Schlick's `color0` tints) |
+| `mix`, `add`, `multiply` (BSDF, EDF) | weights and tints of the leaves under them; a connected mix weight or tint runs as a graph |
+| `layer` | top over base, as above; a VDF base (interior absorption) isn't read |
+| `roughness_anisotropy` feeding a roughness | `specular_roughness` and `specular_anisotropy`; other roughness graphs: the square root of the first component |
+
+Where the graph has both diffuse and metal leaves, they share one base colour (their weighted sum) and `metalness` is the metal's weight: exact where the mix weight is 0 or 1 (masks), between the two colours elsewhere. Roughness, IORs and lobe colours come from the first leaf that sets them. `chiang_hair_bsdf` and unknown BSDF nodes are left out with a warning and counted in the render stats; a graph with no lobe Eldr maps, or a mix of surface shaders, renders the default grey.
 
 ## Nodes that block materials
 
@@ -55,7 +71,7 @@ Where Karma and Storm agree, Eldr follows them. The graph compiler (`hydra/mater
 | `image` address mode `constant` | the image's `default` outside [0, 1] (`TextureRef::constantWrap`, tested in `Fetch`); the direct texture path hands such images to the graph compiler |
 | `image` whose texcoord comes through any node but place2d/texcoord/primvar readers (a `multiply`, a `constant`, ...) | goes to the graph compiler, which reads that texcoord |
 | `normalmap` output used as a colour | world-space normal (T, B, N from derivatives); only the surface's normal input keeps the tangent-space one. The tangent frame comes from derivatives, MaterialX's from a tangent stream |
-| `surface` of BSDFs and EDFs only | default grey, a warning once (Karma shades them; black is further off) until pbrlib BSDFs compose |
+| `surface` of BSDFs and EDFs only | one standard_surface of the graph's leaves (BSDF graphs, above); with no leaf Eldr maps, the default grey and a warning once (Karma shades them; black is further off) |
 
 The TestSuite's `image_addressing` constant cases (`uborder_color`, `vborder_color`) show the `default` colour outside [0, 1], as the MaterialX spec says; Storm renders it black and Karma grey, so their dE against Eldr is 20+. The other addressing cases (clamp, mirror, decal) match Storm (dE 0.1-0.3); Karma is darker there.
 

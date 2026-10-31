@@ -36,6 +36,12 @@ CELL = 2.5
 SURFACES = {"UsdPreviewSurface", "ND_UsdPreviewSurface_surfaceshader", "ND_standard_surface_surfaceshader",
             "ND_open_pbr_surface_surfaceshader", "ND_displacement_float", "ND_displacement_vector3", "ND_volume",
             "ND_gltf_pbr_surfaceshader", "ND_disney_principled", "ND_surface_unlit"}
+# pbrlib nodes material.cpp's BsdfMapper maps onto standard_surface's lobes (BSDF/EDF mix, add and
+# multiply are GRAPH categories already); VDFs under a layer are skipped without a fallback.
+BSDF = {"surface", "layer", "oren_nayar_diffuse_bsdf", "burley_diffuse_bsdf", "translucent_bsdf",
+        "dielectric_bsdf", "conductor_bsdf", "generalized_schlick_bsdf", "subsurface_bsdf", "sheen_bsdf",
+        "uniform_edf", "conical_edf", "measured_edf", "generalized_schlick_edf", "anisotropic_vdf",
+        "absorption_vdf", "roughness_anisotropy"}
 # Karma's VEX nodes Eldr compiles by id (no nodedef).
 KMA = ("kma_rampconst", "kma_color_hextiling", "kma_voronoinoise3d")
 GRAPH = {"add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "absval", "floor", "ceil",
@@ -64,12 +70,14 @@ def eldr_supports(node_id, graphs=None):
     categories, library_defs) into nodes it compiles."""
     if node_id in SURFACES or node_id.startswith(KMA) or eldr_name(node_id) in GRAPH:
         return True
+    if node_id.startswith("ND_") and (node_id[3:] in BSDF or node_id in ("ND_layer_bsdf", "ND_layer_vdf")):
+        return True
     return graphs is not None and _category_ok(None, graphs, node_id, set())
 
 
 def _category_ok(category, graphs, node_id=None, seen=None):
     """A category (or one nodedef) compiles: natively, or through a nodegraph of compiling nodes."""
-    if category in GRAPH:
+    if category in GRAPH or category in BSDF:
         return True
     ids = [node_id] if node_id else graphs["by_category"].get(category, [])
     for i in ids:
@@ -504,7 +512,8 @@ def selftest():
     assert eldr_supports("UsdPrimvarReader_float2") and not eldr_supports("ND_hextiledimage_color3")
     assert eldr_supports("ND_separate3_color3") and eldr_supports("ND_gltf_pbr_surfaceshader")
     assert eldr_supports("ND_burn_color3") and eldr_supports("kma_rampconst_float")
-    assert not eldr_supports("kma_ramp_float") and not eldr_supports("ND_surface")
+    assert not eldr_supports("kma_ramp_float") and not eldr_supports("ND_chiang_hair_bsdf")
+    assert eldr_supports("ND_surface") and eldr_supports("ND_layer_bsdf") and eldr_supports("ND_conductor_bsdf")
     import tempfile
     d = tempfile.mkdtemp()
     src = os.path.join(d, "a.mtlx")
