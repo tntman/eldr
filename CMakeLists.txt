@@ -28,7 +28,7 @@ endif()
 foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp lights.comp skin.comp gtao.frag
                gtao_denoise.frag
                taa.frag lens_tiles.comp dof.frag motion_blur.frag motion_residual.frag histogram.comp exposure.comp bloom_down.frag bloom_up.frag
-               tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp gather_denoise.comp oit_resolve.frag
+               tonemap.frag distortion.frag aov.frag aov.comp tlas.comp gi_update.comp gather_denoise.comp rt_temporal.comp oit_resolve.frag
                shadow_tint.frag translucent_peel.frag matte.frag subsurface_blur.frag fog_inject.comp fog_integrate.comp volume.frag
                volume_upsample.frag volume_shadow.frag volume_grid.comp shadow_min.comp rt_skin.comp rt_displace.comp film.comp
                shutter.comp light_shapes.frag background_unscale.comp)

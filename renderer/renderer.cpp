@@ -827,8 +827,8 @@ void Renderer::_CreateDescriptors()
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          _dev.rayTracing ? 1u : 0u, kRt},
-        {53, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
-        {54, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        {53, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},  // and rt_temporal.comp
+        {54, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {56, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
@@ -3593,6 +3593,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // The same for the light sampling's shared shadow rays and the gather roulette.
     rt.lightSampling = !frame.rtLightSampling ? 0 : film && _filmSamples > 1 ? 2 : 1;
     rt.gatherShare = frame.finalGatherRoulette && film && _filmSamples > 1 ? 0.5f : 1.0f;
+    // eldr:rtTemporalReuse: frames without the film blend the traced
+    // effects with the last frames' (the film's average stays exact).
+    rt.temporal = frame.rtTemporalReuse && !film && _historyValid;
+    rt.temporalFrames = frame.rtTemporalFrames;
+    std::memcpy(rt.prevCameraPos, _prevCameraPos, sizeof(rt.prevCameraPos));
+    // The last frame's jittered camera: the history's texels are its samples.
+    rt.temporal = rt.temporal && _rtViewProjValid;
+    std::memcpy(rt.prevViewProj, _rtPrevViewProj, sizeof(rt.prevViewProj));
+    std::memcpy(_rtPrevViewProj, jitteredViewProj, sizeof(_rtPrevViewProj));
+    _rtViewProjValid = true;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics, with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):

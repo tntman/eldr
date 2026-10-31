@@ -115,3 +115,4 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 |---|---|---|
 | `2026-10-28_08_render_stats` | Eldr's render statistics (renderer, memory, time) show in the Render Gallery's statistics panel and in husk EXRs as `husk:render_stats`. | `default` only (no A/B: the feature is metadata) |
 | `2026-10-30_01_moving_camera` | While the camera moves, Eldr renders smaller (to a GPU frame budget) with one shadow ray and paused GI; after the stop, quality steps up over a few frames and the film starts from the TAA image. | `moving` (the defaults) vs `full` vs `abrupt` |
+| `2026-10-31_04_rt_temporal_reuse` | While the camera moves, traced shadows and rough reflections can reuse earlier frames' rays at the same surface point (`eldr:rtTemporalReuse`, off by default): calmer penumbrae, softer contact shadows. | `rtTemporalReuse` vs `rtTemporalReuseOff` |

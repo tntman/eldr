@@ -1,0 +1,235 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "frame.glsl"
+#include "gi.glsl"
+
+// Temporal reuse of the traced images (Frame::rtTemporalReuse) on frames
+// without the film: each pixel's surface point (the prepass depth) is
+// found in the last frame's history by the camera's reprojection
+// (rt.temporalViewProj: with its jitter, where its texels sampled; without
+// it the history would drift by the jitter each frame, a blur), four
+// bilinear taps, each kept only where the
+// guide history saw the same surface there: its distance to the last
+// camera within 1% (plus the pixel's own depth slope) and its normal
+// within 25 degrees. Moving objects and disocclusions fail that and start
+// over from this frame's rays. The history is clamped to this frame's 3 x 3
+// neighbourhood (mean +- 1.25 standard deviations, Salvi's variance
+// clipping), then blended with this frame's rays by 1 / frames, up to
+// rt.temporal.y frames: shadows (visibility layers), reflections and the
+// final gather (after its denoise), each where rt.temporal.x says the last
+// frame traced it too. Reflections keep history by roughness only (none
+// below 0.1, all from 0.4): a sharp reflection moves with its own parallax,
+// not the surface's, and its neighbourhood (the reflected image's detail)
+// clamps too loosely to stop the ghost. Writes the other history (kParity
+// reads); Record blits it into the traced images mesh.frag reads.
+layout(constant_id = 0) const int kParity = 0;
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 13) uniform sampler2D sceneDepth;  // the prepass depth, window [0, 1]
+layout(set = 0, binding = 53, rgba8) uniform readonly image2D rtShadowImage;
+layout(set = 0, binding = 54, rgba16f) uniform readonly image2D rtReflectionImage;
+layout(set = 0, binding = 87, rgba16f) uniform readonly image2D rtGatherImage;
+layout(set = 1, binding = 12, rgba16f) uniform image2D shadowHistory0;  // visibility layers stacked, h rows apart
+layout(set = 1, binding = 13, rgba16f) uniform image2D shadowHistory1;
+layout(set = 1, binding = 14, rgba16f) uniform image2D radianceHistory0;  // reflections, then gather h rows down
+layout(set = 1, binding = 15, rgba16f) uniform image2D radianceHistory1;
+layout(set = 1, binding = 16, rg32ui) uniform uimage2D guideHistory0;  // x: distance to the camera (float bits, 0:
+layout(set = 1, binding = 17, rg32ui) uniform uimage2D guideHistory1;  // none), y: normal (2 x 12 bits), frames (8)
+layout(set = 1, binding = 18, r8) uniform readonly image2D reflectionRoughness;  // rt_pixels.rgen's
+
+const uint kShadows = 1u, kReflections = 4u, kGather = 16u, kAnyHistory = 64u;
+
+ivec2 size;
+
+vec3 Point(ivec2 pixel)
+{
+    pixel = clamp(pixel, ivec2(0), size - 1);
+    vec2 ndc = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+    vec4 p = frame.invViewProj * vec4(ndc, texelFetch(sceneDepth, pixel, 0).r * 2.0 - 1.0, 1.0);
+    return p.xyz / p.w;
+}
+
+uint PackGuide(vec3 n, uint frames)
+{
+    uvec2 q = uvec2(clamp(OctEncode(n) * 0.5 + 0.5, 0.0, 1.0) * 4095.0 + 0.5);
+    return q.x | (q.y << 12u) | (min(frames, 255u) << 24u);
+}
+
+vec3 GuideNormal(uint g)
+{
+    return OctDecode(vec2(g & 4095u, (g >> 12u) & 4095u) / 4095.0 * 2.0 - 1.0);
+}
+
+uvec2 LoadGuide(ivec2 q)
+{
+    return kParity == 0 ? imageLoad(guideHistory0, q).xy : imageLoad(guideHistory1, q).xy;
+}
+
+// effect 0: shadows (layer: of the visibility layers), 1: reflections, 2: gather.
+vec4 Raw(int effect, ivec2 q, int layer)
+{
+    q = clamp(q, ivec2(0), size - 1);
+    if (effect == 0) {
+        return imageLoad(rtShadowImage, q + ivec2(0, layer * size.y));
+    }
+    return effect == 1 ? imageLoad(rtReflectionImage, q) : imageLoad(rtGatherImage, q);
+}
+
+ivec2 HistoryTexel(int effect, ivec2 q, int layer)
+{
+    return q + ivec2(0, effect == 0 ? layer * size.y : effect == 2 ? size.y : 0);
+}
+
+vec4 LoadHistory(int effect, ivec2 q, int layer)
+{
+    ivec2 t = HistoryTexel(effect, q, layer);
+    if (effect == 0) {
+        return kParity == 0 ? imageLoad(shadowHistory0, t) : imageLoad(shadowHistory1, t);
+    }
+    return kParity == 0 ? imageLoad(radianceHistory0, t) : imageLoad(radianceHistory1, t);
+}
+
+void StoreHistory(int effect, ivec2 q, int layer, vec4 v)
+{
+    ivec2 t = HistoryTexel(effect, q, layer);
+    if (effect == 0) {
+        if (kParity == 0) {
+            imageStore(shadowHistory1, t, v);
+        } else {
+            imageStore(shadowHistory0, t, v);
+        }
+    } else if (kParity == 0) {
+        imageStore(radianceHistory1, t, v);
+    } else {
+        imageStore(radianceHistory0, t, v);
+    }
+}
+
+ivec2 taps[4];
+vec4 tapWeights;  // bilinear, 0 where rejected; sum 1 or all 0
+// All four kept: Catmull-Rom over the 4 x 4 texels around (bilinear taps
+// would blur the history a little every frame, widening penumbrae).
+bool sharp;
+vec2 fraction;
+
+vec4 CatmullRom(float f)
+{
+    return vec4(f * (-0.5 + f * (1.0 - 0.5 * f)), 1.0 + f * f * (-2.5 + 1.5 * f), f * (0.5 + f * (2.0 - 1.5 * f)),
+                f * f * (-0.5 + 0.5 * f));
+}
+
+// This frame's rays at p blended with the history (alpha: this frame's share).
+void Blend(int effect, ivec2 p, int layer, float alpha)
+{
+    vec4 raw = Raw(effect, p, layer);
+    vec4 result = raw;
+    if (alpha < 1.0) {
+        vec4 m1 = vec4(0.0), m2 = vec4(0.0);
+        for (int y = -1; y <= 1; ++y) {
+            for (int x = -1; x <= 1; ++x) {
+                vec4 v = Raw(effect, p + ivec2(x, y), layer);
+                m1 += v;
+                m2 += v * v;
+            }
+        }
+        m1 /= 9.0;
+        vec4 sigma = sqrt(max(m2 / 9.0 - m1 * m1, 0.0));
+        vec4 history = vec4(0.0);
+        if (sharp) {
+            vec4 wx = CatmullRom(fraction.x), wy = CatmullRom(fraction.y);
+            for (int y = 0; y < 4; ++y) {
+                for (int x = 0; x < 4; ++x) {
+                    ivec2 q = clamp(taps[0] + ivec2(x - 1, y - 1), ivec2(0), size - 1);
+                    history += wx[x] * wy[y] * LoadHistory(effect, q, layer);
+                }
+            }
+        } else {
+            for (int i = 0; i < 4; ++i) {
+                if (tapWeights[i] > 0.0) {
+                    history += tapWeights[i] * LoadHistory(effect, taps[i], layer);
+                }
+            }
+        }
+        history = clamp(history, m1 - 1.25 * sigma, m1 + 1.25 * sigma);
+        result = mix(history, raw, alpha);
+    }
+    StoreHistory(effect, p, layer, result);
+}
+
+void main()
+{
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    size = imageSize(rtReflectionImage);
+    if (any(greaterThanEqual(p, size))) {
+        return;
+    }
+    uint flags = rt.temporal.x;
+    bool surface = texelFetch(sceneDepth, p, 0).r < 1.0;
+    vec3 point = Point(p);
+    // The normal from the depths around (of the differences each way the
+    // smaller: less likely across an edge), as rt_pixels.rgen.
+    vec3 dx = Point(p + ivec2(1, 0)) - point, dx2 = point - Point(p - ivec2(1, 0));
+    vec3 dy = Point(p + ivec2(0, 1)) - point, dy2 = point - Point(p - ivec2(0, 1));
+    dx = dot(dx2, dx2) < dot(dx, dx) ? dx2 : dx;
+    dy = dot(dy2, dy2) < dot(dy, dy) ? dy2 : dy;
+    vec3 n = normalize(cross(dx, dy));
+    n = dot(n, frame.cameraPos.xyz - point) < 0.0 ? -n : n;
+
+    float history = 0.0, frames = 0.0;
+    tapWeights = vec4(0.0);
+    sharp = false;
+    int found = 0;
+    if (surface && (flags & kAnyHistory) != 0u) {
+        vec4 c = rt.temporalViewProj * vec4(point, 1.0);
+        if (c.w > 0.0) {
+            vec2 uv = (c.xy / c.w * 0.5 + 0.5) * vec2(size) - 0.5;
+            ivec2 base = ivec2(floor(uv));
+            vec2 f = uv - vec2(base);
+            fraction = f;
+            float expected = distance(point, rt.temporalCamera.xyz);
+            float tolerance = 0.01 * expected + 2.0 * sqrt(max(dot(dx, dx), dot(dy, dy)));
+            for (int i = 0; i < 4; ++i) {
+                ivec2 q = base + ivec2(i & 1, i >> 1);
+                taps[i] = q;
+                if (any(lessThan(q, ivec2(0))) || any(greaterThanEqual(q, size))) {
+                    continue;
+                }
+                uvec2 g = LoadGuide(q);
+                float d = uintBitsToFloat(g.x);
+                if (d > 0.0 && abs(d - expected) < tolerance && dot(GuideNormal(g.y), n) > 0.9) {
+                    float w = ((i & 1) != 0 ? f.x : 1.0 - f.x) * ((i >> 1) != 0 ? f.y : 1.0 - f.y);
+                    tapWeights[i] = w;
+                    ++found;
+                    frames += w * float(g.y >> 24u);
+                }
+            }
+            history = dot(tapWeights, vec4(1.0));
+            sharp = found == 4;
+        }
+    }
+    // Under a fifth of the footprint found: a disocclusion, start over.
+    bool kept = history > 0.2;
+    tapWeights = kept ? tapWeights / history : vec4(0.0);
+    uint count = kept ? min(uint(frames / history + 0.5) + 1u, 255u) : 1u;
+    if (kParity == 0) {
+        imageStore(guideHistory1, p, uvec4(surface ? floatBitsToUint(distance(point, frame.cameraPos.xyz)) : 0u,
+                                           PackGuide(n, count), 0u, 0u));
+    } else {
+        imageStore(guideHistory0, p, uvec4(surface ? floatBitsToUint(distance(point, frame.cameraPos.xyz)) : 0u,
+                                           PackGuide(n, count), 0u, 0u));
+    }
+    float alpha = 1.0 / float(min(count, rt.temporal.y));
+    if ((flags & kShadows) != 0u) {
+        float a = (flags & (kShadows << 1u)) != 0u ? alpha : 1.0;
+        for (int layer = 0; layer < int(rt.temporal.z); ++layer) {
+            Blend(0, p, layer, a);
+        }
+    }
+    if ((flags & kReflections) != 0u) {
+        float keep = smoothstep(0.1, 0.4, imageLoad(reflectionRoughness, p).r);
+        Blend(1, p, 0, (flags & (kReflections << 1u)) != 0u ? mix(1.0, alpha, keep) : 1.0);
+    }
+    if ((flags & kGather) != 0u) {
+        Blend(2, p, 0, (flags & (kGather << 1u)) != 0u ? alpha : 1.0);
+    }
+}
