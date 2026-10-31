@@ -25,6 +25,11 @@
 //   --stop N           after the timed (moving) frames, up to N still ones:
 //                      how long until full quality (the first frame at full
 //                      size without moving reductions), the film and converged
+//   --step DEG         orbit degrees per moving frame (default 0.25; a fast pan: 2)
+//   --dump PREFIX      with --stop: the last moving frame's luminance, the
+//                      converged one's and their absolute difference as
+//                      PREFIX_moving.pfm, _still.pfm, _error.pfm; prints the
+//                      worst 16 x 16 block's mean error (ghosting, disocclusion)
 //   --pause N          after the timed (moving) frames, N frames with the
 //                      camera paused, then N moving again (a pause shorter
 //                      than eldr:stillDelay): per frame ms, GPU ms and size
@@ -84,7 +89,8 @@ int main(int argc, char **argv)
     double appMs = 0;
     bool still = false, ids = false, check = false, nav = false, overlap = false, noOverlap = false, mapAll = true;
     bool houdini = false, startup = false, renderPurpose = false;
-    std::string csvPath, passCsvPath;
+    std::string csvPath, passCsvPath, dumpPrefix;
+    double step = 0.25;
     int warmupFrames = 10, stopFrames = 0, pauseFrames = 0;
     std::vector<std::string> aovs = {"color", "normal", "primvars:st"}, mapped, sets;
     for (int i = 3; i < argc; ++i) {
@@ -115,6 +121,10 @@ int main(int argc, char **argv)
             warmupFrames = std::atoi(next), ++i;
         } else if (a == "--stop") {
             stopFrames = std::atoi(next), ++i;
+        } else if (a == "--step") {
+            step = std::atof(next), ++i;
+        } else if (a == "--dump") {
+            dumpPrefix = next, ++i;
         } else if (a == "--pause") {
             pauseFrames = std::atoi(next), ++i;
         } else if (a == "--pass-csv") {
@@ -624,7 +634,7 @@ int main(int argc, char **argv)
             const auto runStart = Clock::now();
             for (int f = 0; f < warmup + frames; ++f) {
                 // Orbit about the view's centre line: a camera move every frame.
-                const double angle = still ? 0.0 : 0.25 * f;
+                const double angle = still ? 0.0 : step * f;
                 const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), angle));
                 const auto t0 = Clock::now();
                 if (houdini) {  // Houdini's free camera: a prim it edits (and re-sends) each redraw
@@ -732,7 +742,7 @@ int main(int argc, char **argv)
                 }
             }
             std::puts("");
-            double lastAngle = still ? 0.0 : 0.25 * (warmup + frames - 1);
+            double lastAngle = still ? 0.0 : step * (warmup + frames - 1);
             if (pauseFrames > 0) {
                 // Move -> pause -> move: the last moving frames, the paused
                 // ones and the resumed ones should look and cost the same
@@ -741,7 +751,7 @@ int main(int argc, char **argv)
                 const auto p0 = Clock::now();
                 for (int f = -3; f < 2 * pauseFrames + 3; ++f) {
                     const bool paused = f >= 0 && f < pauseFrames;
-                    lastAngle += paused || still ? 0.0 : 0.25;
+                    lastAngle += paused || still ? 0.0 : step;
                     const GfMatrix4d orbit = GfMatrix4d().SetRotate(GfRotation(GfVec3d(0, 1, 0), lastAngle));
                     const auto t0 = Clock::now();
                     if (houdini) {
@@ -865,6 +875,40 @@ int main(int argc, char **argv)
                     worstStill = std::max(worstStill, rms(img));
                 }
                 const double moved = rms(lastMoving);
+                if (!dumpPrefix.empty() && lastMoving.size() == ref.size() && !ref.empty()) {
+                    // Greyscale PFMs (bottom row first, as the buffers) and the
+                    // worst 16 x 16 block of the moving frame's error.
+                    const size_t w = colorOut->GetWidth(), h = colorOut->GetHeight();
+                    std::vector<float> error(ref.size());
+                    for (size_t i = 0; i < ref.size(); ++i) {
+                        error[i] = std::abs(lastMoving[i] - ref[i]);
+                    }
+                    for (auto [suffix, img] : {std::pair{"_moving.pfm", &lastMoving}, std::pair{"_still.pfm", &ref},
+                                               std::pair{"_error.pfm", &error}}) {
+                        if (FILE *f = std::fopen((dumpPrefix + suffix).c_str(), "wb")) {
+                            std::fprintf(f, "Pf\n%zu %zu\n-1.0\n", w, h);
+                            std::fwrite(img->data(), sizeof(float), img->size(), f);
+                            std::fclose(f);
+                        }
+                    }
+                    double worstBlock = 0;
+                    size_t bx = 0, by = 0;
+                    for (size_t y = 0; y + 16 <= h; y += 8) {
+                        for (size_t x = 0; x + 16 <= w; x += 8) {
+                            double sum = 0;
+                            for (size_t j = 0; j < 16; ++j) {
+                                for (size_t i = 0; i < 16; ++i) {
+                                    sum += error[(y + j) * w + x + i];
+                                }
+                            }
+                            if (sum / 256.0 > worstBlock) {
+                                worstBlock = sum / 256.0, bx = x, by = y;
+                            }
+                        }
+                    }
+                    std::printf("  dump: %s_*.pfm, worst 16x16 block mean error %.4f at %zu,%zu (from the bottom)\n",
+                                dumpPrefix.c_str(), worstBlock, bx, by);
+                }
                 std::printf("  sequence: %zu frames, worst %.1f ms, p50 %.1f p95 %.1f (p95/p50 %.2f), %d over 2x p50, "
                             "full quality %.0f ms; noise rms last moving %.4f, worst still %.4f (x%.2f)\n",
                             all.size(), all.back(), p50, p95, p95 / p50, over2, fullMs, moved, worstStill,

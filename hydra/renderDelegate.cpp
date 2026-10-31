@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 #include "processMemory.h"
+#include "timing.h"
 
 #include "camera.h"
 #include "curves.h"
@@ -332,6 +333,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     : HdRenderDelegate(settings)
     , _resourceRegistry(std::make_shared<HdResourceRegistry>())
 {
+    HDVK_MARK(2, "render delegate");
     try {
         const auto start = std::chrono::steady_clock::now();
         _device = std::make_unique<vkr::Device>();
@@ -605,6 +607,7 @@ void HdVkRenderDelegate::DestroyInstancer(HdInstancer *instancer) { delete insta
 
 HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &rprimId)
 {
+    HDVK_MARK(1, "first rprim created");
     if (typeId == HdPrimTypeTokens->mesh) {
         return new HdVkMesh(rprimId, _scene.get());
     }
@@ -626,6 +629,7 @@ void HdVkRenderDelegate::DestroyRprim(HdRprim *rprim) { delete rprim; }
 
 HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &sprimId)
 {
+    HDVK_MARK(1, "first sprim created");
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdVkCamera(sprimId);
     }
@@ -1023,9 +1027,12 @@ bool HdVkOnOff(VtValue const &value, bool fallback)
     return i.IsEmpty() ? fallback : i.UncheckedGet<int>() >= 2;
 }
 
-void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
+void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view, bool redice)
 {
     _dicingView = view;
+    if (!redice) {
+        return;
+    }
     _keepMotion = true;
     if (_terminalSceneIndex) {
         HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},
@@ -1090,6 +1097,7 @@ void HdVkRenderDelegate::NoteFrame()
 
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
+    HDVK_MARK(3, "commit begins");
     const auto start = std::chrono::steady_clock::now();
     // Nothing synced (camera-only frames: cameras note no edit) and no
     // setting changed since the last commit: the scene can skip its rebuild.
@@ -1107,6 +1115,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
         _scene->Commit(_keepMotion, unchanged);
         _keepMotion = false;
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        HDVK_MARK(3, "commit ends, %.0f ms", _commitMs);
         std::lock_guard<std::mutex> lock(_loadMutex);
         _loadSyncMs += _commitMs;
     } catch (const std::exception &e) {

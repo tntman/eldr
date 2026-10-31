@@ -827,8 +827,8 @@ void Renderer::_CreateDescriptors()
         // images), vertex and index pools, mesh slots, probe atlases, uniforms.
         {52, _dev.rayTracing ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
          _dev.rayTracing ? 1u : 0u, kRt},
-        {53, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
-        {54, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt},
+        {53, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},  // and rt_temporal.comp
+        {54, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment | kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {55, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {56, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
         {57, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, kRt | VK_SHADER_STAGE_COMPUTE_BIT},
@@ -1370,6 +1370,9 @@ uint32_t Renderer::_ShadingSet(uint32_t features, bool lazy)
         return uint32_t(it - _shadingSets.begin());
     }
     _shadingSets.push_back(features);
+    if (std::getenv("HDVK_TIMING")) {
+        std::fprintf(stderr, "HdVk shading set %zu: features 0x%x\n", _shadingSets.size() - 1, features);
+    }
     const uint32_t set = uint32_t(_shadingSets.size() - 1);
     const ShadingTargets targets = _SetTargets(set);
     // The prewarm's, if it has them (or is making them); else made here.
@@ -3195,7 +3198,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.geometry[1] = frame.lodBias;
         fd.geometry[2] = float(++_lodFrame & 0xFFFFFFu);  // exact as a float
         // ponytail: a fixed length, the TAA's history; a setting if it matters.
-        fd.lodFade[0] = frame.lodFade && gpu.drawCount > gpu.meshCount ? kLodFadeFrames : 0;
+        // Levels still building count: the first frames compile the shading set
+        // the later ones use (a cold start compiles one set, not two).
+        fd.lodFade[0] = frame.lodFade && (gpu.drawCount > gpu.meshCount || scene.LodsPending()) ? kLodFadeFrames : 0;
     }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
@@ -3588,6 +3593,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // The same for the light sampling's shared shadow rays and the gather roulette.
     rt.lightSampling = !frame.rtLightSampling ? 0 : film && _filmSamples > 1 ? 2 : 1;
     rt.gatherShare = frame.finalGatherRoulette && film && _filmSamples > 1 ? 0.5f : 1.0f;
+    // eldr:rtTemporalReuse: frames without the film blend the traced
+    // effects with the last frames' (the film's average stays exact).
+    rt.temporal = frame.rtTemporalReuse && !film && _historyValid;
+    rt.temporalFrames = frame.rtTemporalFrames;
+    std::memcpy(rt.prevCameraPos, _prevCameraPos, sizeof(rt.prevCameraPos));
+    // The last frame's jittered camera: the history's texels are its samples.
+    rt.temporal = rt.temporal && _rtViewProjValid;
+    std::memcpy(rt.prevViewProj, _rtPrevViewProj, sizeof(rt.prevViewProj));
+    std::memcpy(_rtPrevViewProj, jitteredViewProj, sizeof(_rtPrevViewProj));
+    _rtViewProjValid = true;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics, with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):

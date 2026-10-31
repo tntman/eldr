@@ -48,7 +48,7 @@ Settings marked [RT] need a GPU with Vulkan ray tracing. Without it they are ski
 
 ## The first frame takes long
 
-Eldr compiles its GPU programs on the first frame with a new feature set (seconds to tens of seconds when cold) and caches them on disk. The second start is fast. A new Eldr build starts a fresh cache.
+Eldr compiles its GPU programs on the first frame with a new feature set (seconds to tens of seconds when cold) and caches them on disk. The second start is fast. A build with new shaders starts a fresh cache.
 
 ## husk renders crowds slowly or runs out of memory
 

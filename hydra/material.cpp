@@ -3515,6 +3515,7 @@ void HdVkMaterial::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                         HdDirtyBits *dirtyBits)
 {
     HdVkTimedCall timed(HdVkCallTimes::kSync);
+    HDVK_MARK(1, "first material sync");
     HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     if (*dirtyBits & (DirtyResource | DirtyParams)) {
         vkr::Material m;  // UsdPreviewSurface defaults

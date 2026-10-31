@@ -41,6 +41,13 @@ struct RayTracingData {
     float causticSphere[4];      // the casters' bounding sphere: centre, radius
     uint32_t causticInfo[4];     // photons per light, lights, hash cells (power of 2), photon capacity
     uint32_t causticLights[8];   // the lights sending them
+    // rt_temporal.comp (Work::temporal): x bits 1/2 traced shadows / their
+    // history valid, 4/8 reflections, 16/32 final gather, 64 any history;
+    // y the most frames blended, z shadow layers traced; w the last
+    // frame's camera position (xyz, temporalCamera).
+    uint32_t temporal[4];
+    float temporalCamera[4];
+    float temporalViewProj[16];  // the last frame's camera, jitter included
 };
 constexpr uint32_t kMaxGatherRays = 16;
 constexpr uint32_t kMaxCausticLights = 8;
@@ -149,6 +156,14 @@ public:
         float sceneExtent = 0.0f;
         // Static BLASes are compacted after building (Frame::rtCompaction).
         bool compaction = true;
+        // Temporal reuse (rt_temporal.comp, Frame::rtTemporalReuse): this
+        // frame's traced shadows, reflections and gather blend with the
+        // last frames' at the same surface point (reprojected from
+        // prevCameraPos and the frame's prevViewProj), up to temporalFrames.
+        bool temporal = false;
+        uint32_t temporalFrames = 16;
+        float prevCameraPos[3] = {};
+        float prevViewProj[16] = {};  // the last frame's, jitter included
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -249,6 +264,7 @@ private:
     void _ReserveScratch(VkDeviceSize bytes);
     Image _CreateAtlas(VkFormat format, uint32_t width, uint32_t height);  // storage + sampled, GENERAL, zero
     void _CreateImages(uint32_t width, uint32_t height, uint32_t shadowLayers);
+    void _CreateHistory();  // Work::temporal's images, for the traced images' size
     void _CreatePipelines(VkDescriptorSetLayout sceneLayout);  // layouts and the set
     // The ray tracing pipelines, one per ray generation shader (each with the
     // misses and hit groups), and their shader binding tables.
@@ -337,6 +353,18 @@ private:
     // it weighs by (octahedral geometric, shading; rt_pixels.rgen's).
     Image _gatherTemp, _gatherGuide;
     VkPipeline _gatherDenoise[2] = {};
+    // Temporal reuse (Work::temporal): per parity the history it reads
+    // (the other one it writes, then copies into the traced images): the
+    // shadows' visibility layers, reflections and gather (rows 0 and
+    // height), and the guide (distance to the camera, normal, frames).
+    Image _shadowHistory[2], _radianceHistory[2], _guideHistory[2];
+    Image _reflectionRoughness;  // rt_pixels.rgen's, per pixel: mirrors keep no reflection history
+    VkPipeline _temporalPass[2] = {};
+    uint32_t _temporalRead = 0;  // this frame's parity
+    bool _temporalNow = false;   // this frame runs it
+    bool _temporalRan = false;   // the last frame did: history[_temporalRead] holds it
+    uint32_t _temporalLast[2] = {};  // the last frame's x flags and shadow lights' hash
+    uint32_t _historyKey[4] = {};    // the size it was made for: width, height, shadow layers, radiance rows
     uint32_t _width = 0, _height = 0, _shadowLayers = 0;
     Image _giIrradiance, _giVisibility;
     Image _giOffsets;  // relocation per probe (rgba32f, xyz)

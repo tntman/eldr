@@ -218,12 +218,12 @@ public:
     unsigned SettingsVersion() const { return GetRenderSettingsVersion() - _hostOnlyChanges; }
     // eldr:screenDicing: subdivision surfaces dice for DicingView, the view the render pass
     // last re-diced for (null before the first). SetDicingView re-syncs the
-    // meshes; only the render pass calls it, between syncs.
+    // meshes (with `redice`); only the render pass calls it, between syncs.
     bool ScreenDicing() const;
     // Whether materials load block-compressed textures now.
     bool TextureCompression() const;
     const HdVkDicingView *DicingView() const { return _dicingView ? &*_dicingView : nullptr; }
-    void SetDicingView(std::optional<HdVkDicingView> const &view);
+    void SetDicingView(std::optional<HdVkDicingView> const &view, bool redice = true);
 
     // The descriptor of an AOV Eldr knows by `name`; invalid otherwise.
     static HdAovDescriptor KnownAovDescriptor(TfToken const &name);

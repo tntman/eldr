@@ -41,6 +41,9 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 causticSphere;      // the casters' bounding sphere: centre, radius
     uvec4 causticInfo;       // photons per light, lights, hash cells (a power of 2), photon capacity
     uvec4 causticLights[2];  // the lights sending them (indices into lights[])
+    uvec4 temporal;          // rt_temporal.comp: x flags, y most frames blended, z shadow layers
+    vec4 temporalCamera;     // xyz: the last frame's camera position
+    mat4 temporalViewProj;   // the last frame's camera, jitter included
 } rt;
 
 // TLAS instance masks (tlas.comp): opaque and cutout meshes are seen by
