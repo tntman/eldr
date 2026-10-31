@@ -10,32 +10,14 @@
 #include <stdexcept>
 #include <vector>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
-#endif
-
 namespace {
 
-// Identifies the build this code runs in (size and time of the module file
-// holding it): every shader is embedded in it, so a pipeline cache file
-// keyed by it never holds entries of other shader versions. 0 when unknown.
-uint64_t BuildStamp()
-{
-#ifdef _WIN32
-    HMODULE module = nullptr;
-    wchar_t path[MAX_PATH];
-    WIN32_FILE_ATTRIBUTE_DATA info;
-    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<LPCWSTR>(&BuildStamp), &module) &&
-        GetModuleFileNameW(module, path, MAX_PATH) && GetFileAttributesExW(path, GetFileExInfoStandard, &info)) {
-        return ((uint64_t(info.nFileSizeHigh) << 32 | info.nFileSizeLow) * 1099511628211ull) ^
-               (uint64_t(info.ftLastWriteTime.dwHighDateTime) << 32 | info.ftLastWriteTime.dwLowDateTime);
-    }
-#endif
-    return 0;
-}
+// Every shader's SPIR-V hashed at build time (shader_hash.cmake): a
+// pipeline cache file keyed by it holds no entries of other shader
+// versions, and a build whose shaders didn't change keeps its file.
+constexpr uint64_t kAllShaders =
+#include "shader_hash.inc"
+    ;
 
 } // namespace
 
@@ -606,7 +588,7 @@ void Device::LoadPipelineCache(uint64_t shaderHash)
         n += std::snprintf(name + n, sizeof(name) - n, "%02x", b);
     }
     std::snprintf(name + n, sizeof(name) - n, "-%016llx.bin",
-                  static_cast<unsigned long long>(shaderHash ^ BuildStamp() * 0x9E3779B97F4A7C15ull));
+                  static_cast<unsigned long long>(shaderHash ^ kAllShaders * 0x9E3779B97F4A7C15ull));
     _pipelineCachePath = (folder / name).string();
 
     // The driver checks the header (vendor, device, cache UUID) and starts

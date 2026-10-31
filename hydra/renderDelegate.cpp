@@ -607,6 +607,7 @@ void HdVkRenderDelegate::DestroyInstancer(HdInstancer *instancer) { delete insta
 
 HdRprim *HdVkRenderDelegate::CreateRprim(TfToken const &typeId, SdfPath const &rprimId)
 {
+    HDVK_MARK(1, "first rprim created");
     if (typeId == HdPrimTypeTokens->mesh) {
         return new HdVkMesh(rprimId, _scene.get());
     }
@@ -628,6 +629,7 @@ void HdVkRenderDelegate::DestroyRprim(HdRprim *rprim) { delete rprim; }
 
 HdSprim *HdVkRenderDelegate::CreateSprim(TfToken const &typeId, SdfPath const &sprimId)
 {
+    HDVK_MARK(1, "first sprim created");
     if (typeId == HdPrimTypeTokens->camera) {
         return new HdVkCamera(sprimId);
     }
@@ -1025,9 +1027,12 @@ bool HdVkOnOff(VtValue const &value, bool fallback)
     return i.IsEmpty() ? fallback : i.UncheckedGet<int>() >= 2;
 }
 
-void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view)
+void HdVkRenderDelegate::SetDicingView(std::optional<HdVkDicingView> const &view, bool redice)
 {
     _dicingView = view;
+    if (!redice) {
+        return;
+    }
     _keepMotion = true;
     if (_terminalSceneIndex) {
         HdVkDirtyPrims(HdSceneIndexBaseRefPtr(_terminalSceneIndex), {HdPrimTypeTokens->mesh},

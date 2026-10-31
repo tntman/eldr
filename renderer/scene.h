@@ -611,6 +611,8 @@ private:
 // Dome light (environment). The first visible one lights the scene.
 struct Dome {
     std::shared_ptr<Texture> texture;    // latlong, see BuildEnvironment; null = uniform
+    // Still decoding (the app syncs on meanwhile): Commit takes it as `texture`.
+    std::shared_future<std::shared_ptr<Texture>> textureLoading;
     float radiance[3] = {1, 1, 1};       // texture multiplier: intensity * 2^exposure * color
     float worldToLocal[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};  // USD order
     bool visible = true;
@@ -753,6 +755,14 @@ public:
     }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
+    // Blocks until the levels of detail being built are done (the next
+    // Commit stores them).
+    void WaitForLods()
+    {
+        for (PendingLods &p : _pendingLods) {
+            p.levels.wait();
+        }
+    }
     // Pool geometries meshes share (_sharedGeometry), each with its users.
     size_t SharedGeometries() const { return _sharedGeometry.size(); }
     // Meshes whose tag has no bit in `mask` are not drawn (from the next
@@ -1134,6 +1144,7 @@ private:
     void _ReleaseGeometry(Mesh &mesh);
     // Meshes synced since the last Commit whose arrays others share (ShareEarly).
     std::mutex _earlyMutex;
+    std::mutex _uploadMutex;  // _UploadGeometry's pools, shared geometry and staging
     std::unordered_multimap<uint64_t, Mesh *> _early;
 };
 

@@ -72,7 +72,33 @@ Hair and fur (BasisCurves) render as 6-sided tubes with hair shading; **Curves a
 
 ## Start-up time
 
-The first render with a new combination of features compiles GPU programs (pipelines): seconds, sometimes tens of seconds on a cold start. Eldr keeps them in a cache file (**Pipeline Cache on Disk**, in `%LOCALAPPDATA%\Eldr`), so the next start takes about 2 s. A new Eldr build starts a fresh cache.
+The first render with a new combination of features compiles GPU programs (pipelines): seconds, sometimes tens of seconds on a cold start. Eldr keeps them in a cache file (**Pipeline Cache on Disk**, in `%LOCALAPPDATA%\Eldr`), so the next start takes about 2 s. The file is keyed by Eldr's shaders: a build with new shaders starts a fresh cache, other builds keep it.
+
+## First image
+
+From launch to the written EXR, husk (and **Render to MPlay**, which runs husk) goes through these steps. crowd_9k at 2048x1080, default settings, 64 film samples, GTX 1080 Ti, warm cache:
+
+| Step | Time | Whose |
+|---|---|---|
+| husk starts, loads its plugins | 2.1 s | husk |
+| Stage load, Eldr's GPU device | 1.2 s | USD, Eldr (0.3 s) |
+| Hydra fills the scene, Eldr syncs the prims | 5.4 s | mostly USD (UsdSkel's crowd poses) |
+| Upload to the GPU | 0.3 s | Eldr |
+| Up to the first sample: levels of detail, pipelines | 0.5 s | Eldr |
+| 64 film samples | 9.0 s | Eldr (the scene's shading and lights) |
+| EXR write, exit | 0.7 s | husk |
+
+What Eldr does to start sooner:
+
+- A dome's texture decodes on another thread while the meshes sync.
+- Meshes upload on all cores.
+- An offline render waits for its levels of detail before the first sample, so no samples are thrown away when they arrive.
+- Without subdivision surfaces, the first frame renders straight away; with them, husk syncs once more for **Dicing by Screen Size**.
+- The first frame compiles the pipelines the later frames use, so a cold start compiles them once.
+
+**Offline Samples per Execute** (1 s) sets how often husk gets an image back: each update costs about 0.1 s, so a larger value finishes a long render a little sooner and updates MPlay less often.
+
+`HDVK_TIMING=2` prints a timeline on the console (`HdVk mark:` lines, the first commits' parts, each update's GPU passes) and writes the frame timing CSV ([Houdini](../houdini.md)).
 
 ## Where the time goes
 

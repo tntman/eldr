@@ -3,6 +3,7 @@
 #include "camera.h"
 #include "glInterop.h"
 #include "instancer.h"
+#include "mesh.h"
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
@@ -954,9 +955,12 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         const bool still = _lastDicing && dicing == *_lastDicing && !frame.cameraHold;
         _lastDicing = dicing;
         if ((!vk->DicingView() || !(dicing == *vk->DicingView())) && (offline || still)) {
-            vk->SetDicingView(dicing);
-            _redicing = true;
-            if (offline) {
+            // Without subdivision surfaces nothing re-dices: the view is
+            // only kept for ones that come later (no re-sync, no wait).
+            const bool redice = HdVkSubdivisionMeshes() > 0;
+            vk->SetDicingView(dicing, redice);
+            _redicing = redice;
+            if (offline && redice) {
                 return;
             }
         }
@@ -1230,6 +1234,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         _lastDeferred = frame.deferReadback;
         _lastReadback = readback;
         _lastDepthConstants = depthConstants;
+        // Offline, levels of detail that arrive mid-frame start the film
+        // over: the frame waits for them (they build on other threads)
+        // and starts with them.
+        if (offline && _scene.LodsPending()) {
+            _scene.WaitForLods();
+            _scene.Commit(true);
+        }
         tRender = FrameTiming::Clock::now();
         if (batchSeconds > 0.0f && !frame.deferReadback) {
             vkr::Renderer::Targets sample = out;
@@ -1253,6 +1264,13 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
         tRendered = FrameTiming::Clock::now();
         HDVK_MARK(8, "rendered and read back, converged %d", int(_renderer->IsConverged()));
+        if (HdVkCallTimes::On() && timing && timing->frame < 3) {  // the last sample's GPU passes
+            std::string passes;
+            for (const auto &[name, ms] : _renderer->GetStats().passMs) {
+                passes += TfStringPrintf(" %s %.1f", name, ms);
+            }
+            std::fprintf(stderr, "HdVk passes:%s\n", passes.c_str());
+        }
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();
