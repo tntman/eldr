@@ -229,6 +229,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
     HdVkTimedCall timed(HdVkCallTimes::kSync);
+    HDVK_MARK(1, "first mesh sync");
     HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     vkr::Mesh &m = *_mesh;

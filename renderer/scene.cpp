@@ -10,6 +10,8 @@
 #include <chrono>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <type_traits>
@@ -251,6 +253,25 @@ uint32_t PackUnorm16(float a, float b)
     auto q = [](float x) { return uint32_t(std::lround(std::clamp(x, 0.0f, 1.0f) * 65535.0f)); };
     return q(a) | (q(b) << 16);
 }
+
+// HDVK_TIMING: the first commits' parts over 5 ms on stderr (startup profile).
+struct CommitLaps {
+    bool on;
+    int commit;
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    void operator()(const char *what)
+    {
+        if (!on) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+        if (ms >= 5.0) {
+            std::fprintf(stderr, "HdVk commit %d: %s %.1f ms\n", commit, what, ms);
+        }
+        last = now;
+    }
+};
 
 // World AABB of an object-space box under a row-vector matrix.
 void TransformBounds(const float *lo, const float *hi, const float *x, float *outLo, float *outHi)
@@ -1826,7 +1847,11 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         return;
     }
+    static std::atomic<int> commits{0};
+    const int commitNumber = ++commits;
+    CommitLaps lap{commitNumber <= 4 && std::getenv("HDVK_TIMING") != nullptr, commitNumber};
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
+    lap("wait");
     // First commit: create the pools so every descriptor has a buffer.
     if (!_vertices.buffer) {
         _EnsureCapacity(_vertices, _vertexAlloc, 0, sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);
@@ -1919,6 +1944,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             }
         }
     }
+    lap("geometry uploads");
     // The pools have it now: the arrays would only take memory (a scene's
     // whole geometry again, per corner). A new sync refills them; geometry
     // uploaded by a later Commit no longer finds this to share.
@@ -1977,6 +2003,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         // New points with velocities (deformation blur) move too.
         _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
+    lap("instances and joints");
     _gpu.moved = _gpu.moved || !motion.empty() || !shutterSkin.empty();
     shutterRows = shutterRows || !shutterSkin.empty();
     // Skinned meshes that uploaded replace the shutter's poses; without
@@ -2014,7 +2041,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         it = _pendingLods.erase(it);
     }
+    lap("shutter poses and levels of detail");
     _Flush();
+    lap("flush");
 
     // Per-mesh tables, materials and textures are small: rebuilt every
     // commit from what visible meshes use (O(meshes), not O(instances)).
@@ -2303,6 +2332,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // draws 11 G, which as one call ran ~2.2 s and reset the driver.
     // ponytail: a single slot over the budget stays one call; splitting it
     // needs instance ranges.
+    lap("draw table");
     constexpr double kChunkTriangles = 5e8;
     // Levels of detail (cull.comp picks one per instance): commands drawn
     // with their mesh's pipeline, counted at most all its instances.
@@ -2808,6 +2838,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;
     _gpu.shapeLightCount = shapeLights;
+    lap("commands, materials, lights");
     if (_device && _device->sceneTraces) {
         _device->sceneTraces(_gpu.refraction,
                              _gpu.causticMin[0] <= _gpu.causticMax[0] && !_gpu.causticLights.empty());

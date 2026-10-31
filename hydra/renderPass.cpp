@@ -234,6 +234,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     if (!_renderer) {
         return;
     }
+    HDVK_MARK(8, "execute begins");
     FrameTiming *const timing = FrameTiming::Get();
     const FrameTiming::Clock::time_point tBegin = FrameTiming::Clock::now();
     FrameTiming::Clock::time_point tCollect = tBegin, tRender = tBegin, tRendered = tBegin;
@@ -1247,6 +1248,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             vkDelegate->NoteFrame();
         }
         tRendered = FrameTiming::Clock::now();
+        HDVK_MARK(8, "rendered and read back, converged %d", int(_renderer->IsConverged()));
         shared = interop && interop->Present(*_renderer);
         if (interop && !shared) {
             vkDelegate->DisableGLInterop();

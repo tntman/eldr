@@ -1,5 +1,6 @@
 #include "renderDelegate.h"
 #include "processMemory.h"
+#include "timing.h"
 
 #include "camera.h"
 #include "curves.h"
@@ -332,6 +333,7 @@ HdVkRenderDelegate::HdVkRenderDelegate(HdRenderSettingsMap const &settings)
     : HdRenderDelegate(settings)
     , _resourceRegistry(std::make_shared<HdResourceRegistry>())
 {
+    HDVK_MARK(2, "render delegate");
     try {
         const auto start = std::chrono::steady_clock::now();
         _device = std::make_unique<vkr::Device>();
@@ -1090,6 +1092,7 @@ void HdVkRenderDelegate::NoteFrame()
 
 void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
 {
+    HDVK_MARK(3, "commit begins");
     const auto start = std::chrono::steady_clock::now();
     // Nothing synced (camera-only frames: cameras note no edit) and no
     // setting changed since the last commit: the scene can skip its rebuild.
@@ -1107,6 +1110,7 @@ void HdVkRenderDelegate::CommitResources(HdChangeTracker *)
         _scene->Commit(_keepMotion, unchanged);
         _keepMotion = false;
         _commitMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        HDVK_MARK(3, "commit ends, %.0f ms", _commitMs);
         std::lock_guard<std::mutex> lock(_loadMutex);
         _loadSyncMs += _commitMs;
     } catch (const std::exception &e) {
