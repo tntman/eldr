@@ -423,6 +423,14 @@ public:
         // While only the camera moves, settled GI probes skip their update
         // (they don't depend on the camera; eldr:movingGiPause).
         bool movingGiPause = true;
+        // Frames without the film (moving, held, ramping; TAA when still)
+        // blend the traced shadows, reflections and final gather with the
+        // earlier frames' (reprojected, rejected at depth and normal edges,
+        // clamped to the pixel's neighbourhood; RayTracing::Work::temporal),
+        // up to rtTemporalFrames (eldr:rtTemporalReuse; interactive only:
+        // the film and offline renders never use it).
+        bool rtTemporalReuse = false;
+        uint32_t rtTemporalFrames = 16;
         // The camera stopped less than eldr:stillDelay ago (the app's wall
         // time): still frames count as moving (the reductions above, TAA's
         // moving blend, no film); the ramp starts when it ends.

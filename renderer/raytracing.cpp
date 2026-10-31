@@ -58,6 +58,9 @@ const uint32_t kGiUpdateComp[] =
 const uint32_t kGatherDenoiseComp[] =
 #include "gather_denoise.comp.inc"
 ;
+const uint32_t kRtTemporalComp[] =
+#include "rt_temporal.comp.inc"
+;
 
 // GI probes: at most this many (the grid coarsens until it fits), atlas
 // tiles per row, rays per probe (gi_update.comp's kMaxRays).
@@ -211,7 +214,9 @@ RayTracing::~RayTracing()
     vkDeviceWaitIdle(_dev.device);
     Release();
     for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_gatherTemp,
-                       &_gatherGuide, &_giIrradiance, &_giVisibility, &_giOffsets}) {
+                       &_gatherGuide, &_giIrradiance, &_giVisibility, &_giOffsets, &_shadowHistory[0],
+                       &_shadowHistory[1], &_radianceHistory[0], &_radianceHistory[1], &_guideHistory[0],
+                       &_guideHistory[1]}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_uniforms);
@@ -223,7 +228,8 @@ RayTracing::~RayTracing()
     _dev.Destroy(_instanceBlasBuffer);
     _dev.Destroy(_photons);
     for (VkPipeline p : {_pipelines[0], _pipelines[1], _pipelines[2], _pipelines[3], _tlasPipeline, _skinPipeline,
-                         _displacePipeline, _giUpdate[0], _giUpdate[1], _gatherDenoise[0], _gatherDenoise[1]}) {
+                         _displacePipeline, _giUpdate[0], _giUpdate[1], _gatherDenoise[0], _gatherDenoise[1],
+                         _temporalPass[0], _temporalPass[1]}) {
         vkDestroyPipeline(_dev.device, p, nullptr);
     }
     vkDestroyPipelineLayout(_dev.device, _layout, nullptr);
@@ -266,6 +272,7 @@ void RayTracing::Release()
     }
     _photonCapacity = 0;
     _work = Work();
+    _temporalRan = _temporalNow = false;
 }
 
 bool RayTracing::Converged() const
@@ -300,6 +307,14 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         // normals rt_pixels.rgen writes.
         {10, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         {11, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
+        // Temporal reuse (rt_temporal.comp): per parity the shadows', the
+        // reflections' and gather's and the guide's history.
+        {12, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {13, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {14, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {15, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {16, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        {17, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
     };
     constexpr uint32_t kBindings = sizeof(bindings) / sizeof(bindings[0]);
     VkDescriptorBindingFlags partial[kBindings];
@@ -311,7 +326,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     slci.bindingCount = kBindings;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 5}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -383,6 +398,16 @@ void RayTracing::_CompileCompute()
         r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_gatherDenoise[pass]);
     }
     vkDestroyShaderModule(device, denoiseModule, nullptr);
+    Check(r, "vkCreateComputePipelines");
+    // Temporal reuse, a pipeline per parity (the history it reads).
+    VkShaderModule temporalModule = CreateShaderModule(device, kRtTemporalComp, sizeof(kRtTemporalComp));
+    cci.stage.module = temporalModule;
+    for (int32_t parity = 0; parity < 2 && r == VK_SUCCESS; ++parity) {
+        const VkSpecializationInfo spec{1, &entry, sizeof(parity), &parity};
+        cci.stage.pSpecializationInfo = &spec;
+        r = vkCreateComputePipelines(device, _dev.pipelineCache, 1, &cci, nullptr, &_temporalPass[parity]);
+    }
+    vkDestroyShaderModule(device, temporalModule, nullptr);
     Check(r, "vkCreateComputePipelines");
 }
 
@@ -552,7 +577,7 @@ Image RayTracing::_CreateAtlas(VkFormat format, uint32_t width, uint32_t height)
 {
     Image img = _dev.CreateImage(format, width, height, 1, 1,
                                  VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                                     VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                  VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _dev.Submit([&](VkCommandBuffer cmd) {
         const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -603,6 +628,39 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     }
     _width = width;
     _height = height;
+}
+
+// Temporal reuse's images for the traced images' size: rgba16f history
+// (rgba8 shadows would stick within 8 / 255 of 0 and 1 at 1 / 16 a frame),
+// the guide as rg32ui. Partially bound: written once they exist.
+void RayTracing::_CreateHistory()
+{
+    const uint32_t radianceRows = _work.gather ? 2 : 1;
+    VkDescriptorImageInfo images[6];
+    for (uint32_t i = 0; i < 2; ++i) {
+        _dev.Destroy(_shadowHistory[i]);
+        _dev.Destroy(_radianceHistory[i]);
+        _dev.Destroy(_guideHistory[i]);
+        _shadowHistory[i] = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, _width, _height * _shadowLayers);
+        _radianceHistory[i] = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, _width, _height * radianceRows);
+        _guideHistory[i] = _CreateAtlas(VK_FORMAT_R32G32_UINT, _width, _height);
+        images[i] = {VK_NULL_HANDLE, _shadowHistory[i].view, VK_IMAGE_LAYOUT_GENERAL};
+        images[2 + i] = {VK_NULL_HANDLE, _radianceHistory[i].view, VK_IMAGE_LAYOUT_GENERAL};
+        images[4 + i] = {VK_NULL_HANDLE, _guideHistory[i].view, VK_IMAGE_LAYOUT_GENERAL};
+    }
+    VkWriteDescriptorSet writes[6] = {};
+    for (uint32_t i = 0; i < 6; ++i) {
+        writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[i].dstSet = _set;
+        writes[i].dstBinding = 12 + i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo = &images[i];
+    }
+    vkUpdateDescriptorSets(_dev.device, 6, writes, 0, nullptr);
+    const uint32_t key[4] = {_width, _height, _shadowLayers, radianceRows};
+    std::copy(key, key + 4, _historyKey);
+    _temporalRan = false;
 }
 
 void RayTracing::_DestroyBlas(Blas &blas)
@@ -1299,6 +1357,36 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.denoise[1] = work.reflectionDenoise;
     d.denoise[2] = float(_shadowLayers);
     d.denoise[3] = float(work.reflectionRoulette);
+    // Temporal reuse: the effects this frame traces blend with the history
+    // the last frame wrote, each where the last frame traced it too (the
+    // shadows: for the same lights in the same channels).
+    const bool tShadows = work.shadows && d.params[1] > 0 && lights > 0;
+    const bool tReflections = work.reflections && d.params[2] > 0;
+    const bool tGather = work.gather && gatherRays > 0;
+    _temporalNow = work.temporal && (tShadows || tReflections || tGather);
+    if (_temporalNow) {
+        const uint32_t key[4] = {_width, _height, _shadowLayers, work.gather ? 2u : 1u};
+        if (!_guideHistory[0].view || !std::equal(key, key + 4, _historyKey)) {
+            _CreateHistory();
+        }
+        uint32_t hash = perTexel;
+        for (uint32_t k = 0; k < lights; ++k) {
+            hash = hash * 16777619u ^ work.shadowLights[k];
+        }
+        const uint32_t flags = (tShadows ? 1u : 0u) | (tReflections ? 4u : 0u) | (tGather ? 16u : 0u);
+        const bool ran = _temporalRan;
+        d.temporal[0] = flags | (ran ? 64u : 0u) |
+                        (ran && tShadows && (_temporalLast[0] & 1u) && _temporalLast[1] == hash ? 2u : 0u) |
+                        (ran && tReflections && (_temporalLast[0] & 4u) ? 8u : 0u) |
+                        (ran && tGather && (_temporalLast[0] & 16u) ? 32u : 0u);
+        d.temporal[1] = std::clamp(work.temporalFrames, 1u, 64u);
+        d.temporal[2] = (lights + perTexel - 1) / perTexel;
+        std::copy(work.prevCameraPos, work.prevCameraPos + 3, d.temporalCamera);
+        _temporalLast[0] = flags;
+        _temporalLast[1] = hash;
+        _temporalRead = ran ? _temporalRead ^ 1u : 0u;  // the history the last frame wrote
+    }
+    _temporalRan = _temporalNow;
     _PrepareCaustics(d);
     if (!work.gi) {
         return;
@@ -1656,9 +1744,47 @@ void RayTracing::Record(VkCommandBuffer cmd, VkDescriptorSet set, const Scene::G
             }
             written |= VK_PIPELINE_STAGE_2_RAY_TRACING_SHADER_BIT_KHR;  // the refraction's
         }
-        MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
         pass("rayTracing");
+        VkAccessFlags2 writes = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        if (_temporalNow) {
+            // Temporal reuse (rt_temporal.comp): the blend into the other
+            // history, then blitted (rgba16f to the shadows' rgba8) into
+            // the images mesh.frag reads.
+            MemoryBarrier(cmd, written, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _temporalPass[_temporalRead]);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _layout, 0, 2, sets, 0, nullptr);
+            vkCmdDispatch(cmd, (_width + 7) / 8, (_height + 7) / 8, 1);
+            MemoryBarrier(cmd, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            const RayTracingData &d = *static_cast<const RayTracingData *>(_uniforms.mapped);
+            const uint32_t to = 1u - _temporalRead;
+            auto blit = [&](const Image &from, int32_t row, const Image &dst, int32_t rows) {
+                VkImageBlit region{};
+                region.srcSubresource = region.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.srcOffsets[0] = {0, row, 0};
+                region.srcOffsets[1] = {int32_t(_width), row + rows, 1};
+                region.dstOffsets[1] = {int32_t(_width), rows, 1};
+                vkCmdBlitImage(cmd, from.image, VK_IMAGE_LAYOUT_GENERAL, dst.image, VK_IMAGE_LAYOUT_GENERAL, 1, &region,
+                               VK_FILTER_NEAREST);
+            };
+            if (d.temporal[0] & 1u) {
+                blit(_shadowHistory[to], 0, _shadowImage, int32_t(_height * d.temporal[2]));
+            }
+            if (d.temporal[0] & 4u) {
+                blit(_radianceHistory[to], 0, _reflectionImage, int32_t(_height));
+            }
+            if (d.temporal[0] & 16u) {
+                blit(_radianceHistory[to], int32_t(_height), _gatherImage, int32_t(_height));
+            }
+            written |= VK_PIPELINE_STAGE_2_BLIT_BIT;
+            writes |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        }
+        MemoryBarrier(cmd, written, writes,
+                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        if (_temporalNow) {
+            pass("rtTemporal");
+        }
     }
 }
 

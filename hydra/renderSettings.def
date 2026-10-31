@@ -71,6 +71,8 @@ HDVK_SETTING(movingRenderScale, "Render Scale while Moving", frame.movingRenderS
 HDVK_SETTING(interactiveSamples, "Interactive Noise Loop (samples)", int(frame.interactiveSamples))
 HDVK_SETTING(movingShadowRays, "Ray-Traced Shadow Rays while Moving", int(frame.movingShadowRays))
 HDVK_SETTING(movingGiPause, "Pause Settled GI Probes while the Camera Moves", frame.movingGiPause)
+HDVK_SETTING(rtTemporalReuse, "Ray-Traced Temporal Reuse", true)
+HDVK_SETTING(rtTemporalFrames, "Ray-Traced History Frames", 16)
 HDVK_SETTING(rampFrames, "Ramp to Full Quality (frames)", 6)
 HDVK_SETTING(movingFrameBudget, "Frame Budget while Moving (ms)", 33.0f)
 HDVK_SETTING(filmWarmStart, "Film Warm Start (samples)", 4.0f)
