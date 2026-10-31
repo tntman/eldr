@@ -393,6 +393,15 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             geometryDirty = true;
         }
     }
+    // displayOpacity, the default material's (vkr::Mesh::opacity).
+    // ponytail: its first value; varying opacity needs a material.
+    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->displayOpacity)) {
+        HdInterpolation interp;
+        const VtValue v = FindPrimvar(sceneDelegate, id, HdTokens->displayOpacity, &interp)
+            ? sceneDelegate->Get(id, HdTokens->displayOpacity) : VtValue();
+        const VtFloatArray a = v.GetWithDefault(VtFloatArray());
+        m.opacity = a.empty() ? v.GetWithDefault(1.0f) : a[0];
+    }
     // Primvars the material programs read, as the mesh has them (re-read
     // with any primvar change; flattened with the geometry).
     // ponytail: like the uv set, a material rewired to other primvars takes
@@ -643,6 +652,7 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.jointsDirty = true;
         }
         std::copy(m.color, m.color + 3, d.color);
+        d.opacity = m.opacity;
         d.primId = m.primId;
         d.visible = m.visible;
         d.holdout = m.holdout;

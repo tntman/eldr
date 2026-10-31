@@ -476,6 +476,31 @@ bool Scene::SetLightOptions(bool linking, bool ies)
     return changed;
 }
 
+bool Scene::SetDefaultMaterial(bool karma)
+{
+    const bool changed = karma != _karmaDefault;
+    _karmaDefault = karma;
+    return changed;
+}
+
+// Karma's material for prims without one (libBRAY builds it in code; the
+// parameters are fitted to husk renders): FIT_PLACEHOLDER
+const Material *Scene::_MaterialOf(const Mesh &mesh)
+{
+    if (mesh.material || !_karmaDefault) {
+        return mesh.material.get();
+    }
+    const float opacity = std::clamp(mesh.opacity, 0.0f, 1.0f);
+    std::unique_ptr<Material> &m = _defaultMaterials[opacity];
+    if (!m) {
+        m = std::make_unique<Material>();
+        m->baseColorFromDisplayColor = true;
+        m->opacity = opacity;
+        m->opacityPresence = true;  // Karma's Of: the whole response
+    }
+    return m.get();
+}
+
 uint32_t Scene::_LinkMask(const std::vector<uint32_t> &categories) const
 {
     uint32_t mask = 0;
@@ -534,7 +559,7 @@ std::vector<Scene::Emitter> Scene::_FindEmitters()
     const float maxRadius = 0.25f * std::sqrt(diagonal);
     for (const auto &mp : _meshes) {
         Mesh &m = *mp;
-        const Material *mat = m.material.get();
+        const Material *mat = _MaterialOf(m);
         if (!mat || mat->emissiveTex.texture || !mat->emissiveTex.udim.empty() ||
             (!mat->program.Empty() && mat->program.Outputs(MaterialProgram::kEmissive)) ||
             std::max({mat->emissive[0], mat->emissive[1], mat->emissive[2]}) * mat->opacity < _emissiveThreshold ||
@@ -2073,6 +2098,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         if (inserted) {
             GpuMaterial g{};
             std::copy(m.baseColor, m.baseColor + 3, g.baseColor);
+            if (m.baseColorFromDisplayColor) {  // the shaders' displayColor times rgb
+                std::fill(g.baseColor, g.baseColor + 3, m.displayColorWeight);
+            }
             g.baseColor[3] = m.baseColorFromDisplayColor ? 1.0f : 0.0f;
             std::copy(m.emissive, m.emissive + 3, g.emissive);
             g.emissive[3] = m.opacityThreshold;
@@ -2166,25 +2194,26 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         // A skinned mesh without (valid) skinning transforms has nothing to draw.
         const bool drawable = m.visible && m.rays != 0 && (m.tag & _tagMask) && m._indexCount > 0 && m._instanceCount > 0 &&
                               (m._skinCount == 0 || m._skinXformSlots > 0) && !m.reflectionProbe;
+        const Material *mat = drawable ? _MaterialOf(m) : nullptr;
         DrawInfo &d = draws[slot];
         d = DrawInfo{};
         std::copy(m._boundsMin, m._boundsMin + 3, d.boundsMin);
         std::copy(m._boundsMax, m._boundsMax + 3, d.boundsMax);
-        d.boundsMax[3] = drawable && m.material ? m.material->displacementBound : 0.0f;
+        d.boundsMax[3] = mat ? mat->displacementBound : 0.0f;
         std::copy(m.color, m.color + 3, d.color);
-        d.material = drawable && m.material ? materialIndex(*m.material) : kNoMaterial;
+        d.material = mat ? materialIndex(*mat) : kNoMaterial;
         d.motion = motionBase[slot];
         d.hair = m.hair ? 1 : 0;
         d.facing = m.facing;
         d.uvSpacing = m._uvSpacing;
         facing = facing || (drawable && m.facing != Mesh::kNotFacing);
-        const bool program = drawable && m.material && !m.material->program.Empty() && m.material->program.Valid();
+        const bool program = mat && !mat->program.Empty() && mat->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
                                 (m._skinCount > 0 && m.dualQuaternion ? Gpu::kDualQuat : 0) |
                                 (program ? Gpu::kProgram : 0) |
-                                (program && m.material->program.Procedural() ? Gpu::kProcedural : 0) |
-                                (m.hair || (drawable && m.material && m.material->Layered()) ? Gpu::kLayers : 0) |
-                                ((drawable && m.material && m.material->displacementBound > 0) ||
+                                (program && mat->program.Procedural() ? Gpu::kProcedural : 0) |
+                                (m.hair || (mat && mat->Layered()) ? Gpu::kLayers : 0) |
+                                ((mat && mat->displacementBound > 0) ||
                                          m.facing != Mesh::kNotFacing
                                      ? Gpu::kDisplaced
                                      : 0);
@@ -2193,10 +2222,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.primvars = kNone;
         d.primvarVertices = m._primvarVertexCount > 0 ? m._primvarVertexOffset : kNone;
         d.velocities = m._velocityCount > 0 ? m._velocityOffset : kNone;
-        const bool displacementProgram = drawable && m.material && !m.material->displacementProgram.Empty();
-        if ((program || displacementProgram) && !m.material->program.primvars.empty()) {
+        const bool displacementProgram = mat && !mat->displacementProgram.Empty();
+        if ((program || displacementProgram) && !mat->program.primvars.empty()) {
             d.primvars = uint32_t(primvarTable.size() / 4);
-            for (const std::string &name : m.material->program.primvars) {
+            for (const std::string &name : mat->program.primvars) {
                 uint32_t e[4] = {0, 0, 0, 0};
                 for (size_t p = 0; p < m.primvars.size(); ++p) {
                     const Primvar &pv = m.primvars[p];
@@ -2223,23 +2252,23 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 primvarTable.insert(primvarTable.end(), e, e + 4);
             }
         }
-        if (drawable && m.material && m.material->opacityThreshold > 0) {
+        if (mat && mat->opacityThreshold > 0) {
             kind[slot] = Gpu::kCutout;
-        } else if (drawable && m.material &&
-                   (m.material->opacity < 1 || m.material->opacityTex.texture || m.material->Transmits() ||
-                    (program && m.material->program.Outputs(MaterialProgram::kOpacity)))) {
+        } else if (mat &&
+                   (mat->opacity < 1 || mat->opacityTex.texture || mat->Transmits() ||
+                    (program && mat->program.Outputs(MaterialProgram::kOpacity)))) {
             kind[slot] = Gpu::kTranslucent;
-            _gpu.refraction = _gpu.refraction || m.material->Transmits() || m.material->opacityRefracts;
+            _gpu.refraction = _gpu.refraction || mat->Transmits() || mat->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
             _gpu.translucentFlags.push_back(
-                (m.material->transmission > 0 || m.material->opacityRefracts ? Gpu::kRefracts : 0) |
-                (m.holdout ? Gpu::kHoldout : 0) | (m.material->thinWalled ? Gpu::kThin : 0));
+                (mat->transmission > 0 || mat->opacityRefracts ? Gpu::kRefracts : 0) |
+                (m.holdout ? Gpu::kHoldout : 0) | (mat->thinWalled ? Gpu::kThin : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }
         }
-        if (kind[slot] != Gpu::kTranslucent && drawable && m.material && m.material->Scatters()) {
+        if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
             _gpu.subsurfaceVariant.push_back(variant >> 2);
         }
@@ -2248,7 +2277,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.holdout = m.holdout ? 1u : 0u;
         // Caustics: casters pass photons on, receivers gather them (by
         // default every mesh but refracting glass).
-        const bool receives = m.causticsReceive >= 0 ? m.causticsReceive != 0 : !(m.material && m.material->Transmits());
+        const bool receives = m.causticsReceive >= 0 ? m.causticsReceive != 0 : !(mat && mat->Transmits());
         d.caustics = (drawable && m.causticsCast ? 1u : 0u) | (receives ? 2u : 0u);
         d.causticsRoughness = m.causticsRoughness;
         _gpu.holdouts = _gpu.holdouts || (drawable && m.holdout);
@@ -2268,9 +2297,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         // A displacement graph reading per-instance inputs, with instances
         // to differ: ray tracing displaces each (LargestDisplacedInstances).
         m._displacePerInstance =
-            drawable && m.material && m._instanceCount > 1 && m._skinCount == 0 && (variant & Gpu::kDisplaced) &&
-            m.material->displacementProgram.PerInstance([&](uint32_t slot) {
-                const std::vector<std::string> &names = m.material->program.primvars;
+            mat && m._instanceCount > 1 && m._skinCount == 0 && (variant & Gpu::kDisplaced) &&
+            mat->displacementProgram.PerInstance([&](uint32_t slot) {
+                const std::vector<std::string> &names = mat->program.primvars;
                 for (const Primvar &pv : m.primvars) {
                     if (slot < names.size() && pv.name == names[slot]) {
                         return pv.rate == Primvar::Rate::Instance;
@@ -2447,7 +2476,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             m.transforms.size() < 16) {
             continue;
         }
-        const Material *mat = m.material.get();
+        const Material *mat = _MaterialOf(m);
         const bool glossy = mat && mat->roughness <= 0.3f && !mat->roughnessTex.texture &&
                             !(mat->program.Valid() && mat->program.Outputs(MaterialProgram::kRoughness));
         const float size = Length(Vec3{m._worldMax[0] - m._worldMin[0], m._worldMax[1] - m._worldMin[1],

@@ -62,6 +62,7 @@ public:
         bool lightLinking = true;        // UsdLux collection:lightLink / shadowLink (Scene::SetLightOptions)
         bool lightIes = true;            // UsdLux shaping:ies:file profiles (Scene::SetLightOptions)
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
+        bool defaultMaterialKarma = true;  // prims without a material: Karma's default (Scene::SetDefaultMaterial)
         bool normalMaps = true;
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
         bool objectMotion = true;        // moving objects' motion vectors (TAA, motion blur); off: camera only
