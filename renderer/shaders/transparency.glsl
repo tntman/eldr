@@ -46,7 +46,11 @@ void TransmissionBegin(inout float alpha)
         alpha = 1.0;
         return;
     }
-    gRefracted = alpha * m.transmission.w;
+    // standard_surface and OpenPBR refract under the dielectric only: the
+    // metal's share (metallic) doesn't. ponytail: the constant metallic; a
+    // textured one refracts whole.
+    float metal = m.surface.x > 0.5 && m.tex[2].index < 0 ? clamp(m.params.x, 0.0, 1.0) : 0.0;
+    gRefracted = alpha * m.transmission.w * (1.0 - metal);
     alpha *= 1.0 - m.transmission.w;
     if (m.refraction.w > 0.0) {
         gRefracted += gStraight;  // UsdPreviewSurface with an ior

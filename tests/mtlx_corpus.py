@@ -130,6 +130,31 @@ def unns(tag):
 COLOUR_LIKE = {"float", "vector2", "vector3", "vector4", "color4", "integer", "boolean"}
 
 
+CLOSURES = ("BSDF", "EDF", "surfaceshader")
+
+
+def hoist_closures(root, used):
+    """usdMtlx drops BSDF/EDF nodes inside nodegraphs (USD's "Shader not found ... NodeGraphs"), so
+    Karma and Eldr would both see an empty surface: an unused nodegraph with a BSDF, EDF or surface
+    shader output moves its nodes to the document, named <graph>_<node>, its outputs too."""
+    for ng in [e for e in root if e.tag == "nodegraph" and not e.get("nodedef")]:
+        name = ng.get("name")
+        outs = [o for o in ng if o.tag == "output"]
+        if any(e.tag == "input" for e in ng) or any((name, o.get("name")) in used or (name, "") in used
+                                                   for o in outs) or \
+                not any(o.get("type") in CLOSURES for o in outs):
+            continue
+        for e in list(ng):
+            e.set("name", "%s_%s" % (name, e.get("name")))
+            for i in e.iter("input"):
+                if i.get("nodename"):
+                    i.set("nodename", "%s_%s" % (name, i.get("nodename")))
+            if e.get("nodename"):
+                e.set("nodename", "%s_%s" % (name, e.get("nodename")))
+            root.append(e)
+        root.remove(ng)
+
+
 def wrap(src, dst):
     """Writes src with materials for its unused outputs to dst; returns what it skipped."""
     root = parse(src)
@@ -141,6 +166,7 @@ def wrap(src, dst):
         if fp and not os.path.isabs(fp) and not fp.startswith("resources/"):
             e.set("fileprefix", os.path.join(base, fp).replace("\\", "/") + "/")
     used = {(e.get("nodegraph"), e.get("output") or "") for e in root.iter("input") if e.get("nodegraph")}
+    hoist_closures(root, used)
     used_nodes = {e.get("nodename") for e in root.iter("input") if e.get("nodename")}
     skipped = []
     n = [0]
@@ -526,6 +552,13 @@ def selftest():
     assert skipped == ["g.m (matrix33)"] and list(labels.values()) == ["g.out"], (skipped, labels)
     mats = materials(os.path.join(d, "b.mtlx"), "/MaterialX")
     assert len(mats) == 1 and mats[0][2] and "ND_convert_float_color3" in mats[0][3], mats
+    with open(src, "w") as f:  # a BSDF nodegraph: its nodes reach Hydra (hoisted)
+        f.write('<?xml version="1.0"?><materialx version="1.39"><nodegraph name="g">'
+                '<oren_nayar_diffuse_bsdf name="d" type="BSDF"/><output name="out" type="BSDF" nodename="d"/>'
+                '</nodegraph></materialx>')
+    wrap(src, os.path.join(d, "c.mtlx"))
+    mats = materials(os.path.join(d, "c.mtlx"), "/MaterialX")
+    assert len(mats) == 1 and "ND_oren_nayar_diffuse_bsdf" in mats[0][3], mats
     print("selftest ok")
 
 

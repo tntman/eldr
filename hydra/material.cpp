@@ -82,15 +82,20 @@ mx::DocumentPtr const &MxLibraries()
 }
 
 // A node id's MaterialX nodedef: the libraries', else a document's own
-// (HdMtlxGetNodeDef finds it through Sdr's implementation URI).
-mx::NodeDefPtr MxNodeDef(TfToken const &id)
+// (HdMtlxGetNodeDef finds it through Sdr's implementation URI). `known`:
+// a nodedef found otherwise (a nodegraph's own document's, MxNodeDefOf),
+// remembered for an id that has none.
+mx::NodeDefPtr MxNodeDef(TfToken const &id, mx::NodeDefPtr const &known = nullptr)
 {
     static std::mutex mutex;
     static std::map<TfToken, mx::NodeDefPtr> cache;
     std::lock_guard<std::mutex> lock(mutex);
     const auto it = cache.find(id);
-    if (it != cache.end()) {
+    if (it != cache.end() && (it->second || !known)) {
         return it->second;
+    }
+    if (known) {
+        return cache[id] = known;
     }
     mx::NodeDefPtr def = MxLibraries()->getNodeDef(id.GetString());
     if (!def && !id.IsEmpty() && SdrRegistry::GetInstance().GetShaderNodeByIdentifier(id)) {
@@ -932,6 +937,9 @@ mx::NodeGraphPtr ExpandNodeGraph(HdMaterialNode2 const &n, SdfPath const &path,
         const mx::NodeDefPtr nodeDef = MxNodeDefOf(node);
         HdMaterialNode2 &h = (*nodes)[inner(node->getName())];
         h.nodeTypeId = TfToken(nodeDef ? nodeDef->getName() : node->getCategory());
+        if (nodeDef) {
+            MxNodeDef(h.nodeTypeId, nodeDef);  // a document's own nodedef: later lookups by id find it
+        }
         for (const mx::InputPtr &in : node->getInputs()) {
             const TfToken name(in->getName());
             if (in->hasNodeName()) {
@@ -2308,10 +2316,23 @@ public:
             set("base_color", diffuse ? *diffuse : C(GfVec3f(0.0f)));
         }
         // standard_surface's specular also weights the metal's edge colour.
-        const std::optional<Term> specular = Sum("specular");
+        // standard_surface weighs specular, transmission and subsurface
+        // within the dielectric's share (1 - metalness): a constant metal
+        // weight scales them up to it (a graph-driven one is a mask: exact).
+        const float share = metal && !metal->Connected() && metal->v[0] < 1.0f ? 1.0f - std::max(metal->v[0], 0.0f)
+                                                                                : 1.0f;
+        auto dielectricWeight = [&](std::optional<Term> t) {
+            if (t && share < 1.0f) {
+                t = Op("multiply", *t, F(1.0f / share));
+                t->v = t->Connected() ? t->v : GfVec3f(std::min(t->v[0], 1.0f));
+            }
+            return t;
+        };
+        const std::optional<Term> specular = dielectricWeight(Sum("specular"));
         set("specular", specular ? *specular : F(metal ? 1.0f : 0.0f));
         for (const char *name : {"coat", "sheen", "transmission", "subsurface", "emission_color"}) {
-            if (const std::optional<Term> t = Sum(name)) {
+            const bool dielectricPart = std::string(name) == "transmission" || std::string(name) == "subsurface";
+            if (const std::optional<Term> t = dielectricPart ? dielectricWeight(Sum(name)) : Sum(name)) {
                 set(name, *t);
             }
         }
