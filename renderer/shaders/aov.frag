@@ -59,7 +59,7 @@ void main()
     if (material != kNoMaterial) {
         Material m = materials[material];
         present = Present(m, inUv);
-        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor, 1.0) : m.baseColor, inUv).rgb;
+        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor * m.baseColor.rgb, 1.0) : m.baseColor, inUv).rgb;
         emissive = Fetch(m.tex[1], m.emissive, inUv).rgb;
         metallic = Fetch(m.tex[2], m.params.xxxx, inUv).r;
         hasNormalMap = m.tex[5].index >= 0;

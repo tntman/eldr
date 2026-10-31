@@ -64,6 +64,7 @@ Groups follow topics. The switches people change most come first, in open groups
 | Denoise<br>`eldr:denoise` | off | [film] Cleans the converged image with Intel Open Image Denoise on the CPU, guided by albedo and normals. Can smear fine detail. The eldr:beautyRaw AOV keeps the undenoised image. Karma's `karma:hydra:denoise` also turns it on. | 1080p: about 1.3 s once per frame (CPU); guide pass +10 ms per sample |
 | Diffuse Quality<br>`eldr:diffuseQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:diffusequality`: multiplies the rays used for bounced diffuse light (final gather, GI probes, AO, SSGI). Values below 1 skip some samples. | emissive.usda 960x540: 15 / 20 / 35 ms per sample at 0.5 / 1 / 2; 2 at 32 samples is as clean as 64 |
 | Reflection Quality<br>`eldr:reflectQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:reflectquality`: multiplies the traced reflection rays. Fractions spread over film samples. | Linear in the reflections |
+| Refraction Quality<br>`eldr:refractQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:refractquality`: multiplies the ray-traced refraction paths through rough glass (fractions spread over film samples) and the screen-space refraction blur taps (up to 16). | glass.usda 960x540, traced: 19.9 / 22.5 / 33.1 ms per sample at 1 / 2 / 4; 2 at 16 samples is as clean as 1 at 32. Screen space: 4.9 / 5.2 / 5.4 ms |
 | Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:global:light_sampling_quality`: multiplies the traced shadow rays per light. Shadow maps don't change. | Linear in the traced shadows |
 | Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:sssquality`: multiplies `eldr:subsurfaceSamples`. | Linear in the subsurface blur |
 | Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:volumequality`: multiplies `eldr:volumeShadowSteps`. | Linear in the volume lighting |
@@ -256,6 +257,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
+| Karma Default Material<br>`eldr:defaultMaterialKarma` | on | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity. Off: `displayColor` at full strength, opaque, as Storm (about 2.3x as bright). | None measurable (a material like any other) |
 | Normal Maps<br>`eldr:normalMaps` | on | Applies normal maps. | |
 | Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface `useSpecularWorkflow = 1` uses F0 = `specularColor`. Off: 0.04. | |
 | Clearcoat<br>`eldr:clearcoat` | on | A glossy coat layer: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials that use it pay |
