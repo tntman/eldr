@@ -47,6 +47,7 @@ struct Base {
     float dielEta;                   // > 0: the exact Fresnel of this relative index, else Schlick's
     vec3 dielW;                      // its weight times tint: 1 - metallic, specular colour, layers above
     float msK;                       // multiple scattering (Turquin 2019): (1 - Ess) / Ess, 0: single
+    float dielMsK;                   // the dielectric's: none for standard_surface, as Karma
     uint model;                      // vkr::Material::Model
     uint diffuse;                    // 0 Lambert, 1 Oren-Nayar (standard_surface), 2 energy-compensated (OpenPBR)
     float diffuseRoughness;
@@ -119,7 +120,7 @@ vec3 DielectricFresnel(float mu)
 vec3 BaseFresnel(float mu)
 {
     vec3 fm = MetalFresnel(mu), fd = DielectricFresnel(mu);
-    return base.metalW * fm * (1.0 + fm * base.msK) + base.dielW * fd * (1.0 + fd * base.msK);
+    return base.metalW * fm * (1.0 + fm * base.msK) + base.dielW * fd * (1.0 + fd * base.dielMsK);
 }
 
 // The dielectric's and the whole base's directional albedo towards the
@@ -127,7 +128,7 @@ vec3 BaseFresnel(float mu)
 // for the dielectric Schlick's albedo at its F0, as MaterialX).
 vec3 DielectricAlbedo(float NoV, vec3 dfg)
 {
-    return (base.dielF0 * dfg.x + dfg.y) * (1.0 + DielectricFresnel(NoV) * base.msK);
+    return (base.dielF0 * dfg.x + dfg.y) * (1.0 + DielectricFresnel(NoV) * base.dielMsK);
 }
 
 vec3 BaseAlbedo(float NoV, vec3 dfg)
@@ -229,6 +230,7 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
     bool multi = (frame.features.x & kFeatureMultiScatter) != 0u && base.model != 0u;
     float Ess = dfg.x + dfg.y;
     base.msK = multi ? (1.0 - Ess) / max(Ess, 1e-4) : 0.0;
+    base.dielMsK = base.model == 1u ? 0.0 : base.msK;
     base.metalF90 = vec3(1.0);
     base.metalA = vec3(0.0);
     base.dielEta = 0.0;

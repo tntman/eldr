@@ -62,6 +62,7 @@ public:
         bool lightLinking = true;        // UsdLux collection:lightLink / shadowLink (Scene::SetLightOptions)
         bool lightIes = true;            // UsdLux shaping:ies:file profiles (Scene::SetLightOptions)
         bool imageBasedLighting = true;  // the dome's diffuse and specular light
+        bool defaultMaterialKarma = true;  // prims without a material: Karma's default (Scene::SetDefaultMaterial)
         bool normalMaps = true;
         bool materialGraphs = true;      // material programs (MaterialX graphs); off: plain inputs
         bool objectMotion = true;        // moving objects' motion vectors (TAA, motion blur); off: camera only
@@ -297,7 +298,9 @@ public:
         // over the samples (0.5: the traced effect every other sample, the
         // others keep its image; 1.5: 1, 2, 1, 2 rays), so the film averages
         // base x quality rays per sample. Interactive: rounded, at least 1.
-        float lightQuality = 1.0f, reflectQuality = 1.0f, diffuseQuality = 1.0f;
+        // Refract: traced refraction paths through rough glass (at least 1)
+        // and screen-space refraction's blur taps (rounded, 16 at most).
+        float lightQuality = 1.0f, reflectQuality = 1.0f, diffuseQuality = 1.0f, refractQuality = 1.0f;
         // Edge-aware denoise of the gathered light before the albedo
         // (gather_denoise.comp), 0..1: the filtered share per frame.
         float finalGatherDenoise = 1.0f;

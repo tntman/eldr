@@ -54,40 +54,6 @@ FINAL_ATTRS = "\n        ".join("custom %s %s = %d" % ("bool" if isinstance(v, b
 # Karma's default diffuse limit is 1 bounce; Eldr's GI is every bounce. With 10, Karma's Cornell box matches
 # Eldr's within 3% (it is 1.27x Karma's default there). Part of every reference's hash.
 KARMA_ALL = "custom int karma:object:diffuselimit = 10"
-# Prims without a material get a plain UsdPreviewSurface of their displayColor in both renderers:
-# Karma shades bare prims as about 0.4 x displayColor with a steeper falloff (docs/testing.md), Eldr as
-# Lambert of displayColor (as Storm); the goldens compare materials, not that fallback.
-_BARE = """
-def Scope "goldenMtl" {{{mtls}
-}}{overs}"""
-_MTL = """
-    def Material "{name}" {{
-        token outputs:surface.connect = </goldenMtl/{name}/pbr.outputs:surface>
-        def Shader "pbr" {{
-            uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor = ({c})
-            token outputs:surface
-        }}
-    }}"""
-_BIND = """
-over "{prim}" (prepend apiSchemas = ["MaterialBindingAPI"]) {{
-    rel material:binding = </goldenMtl/{name}>
-}}"""
-
-
-def bare(binds):  # {prim: grey or (r, g, b)}
-    rgb = lambda c: c if isinstance(c, tuple) else (c, c, c)
-    name = lambda c: ("rgb" + "_".join(str(x).replace(".", "") for x in c) if isinstance(c, tuple)
-                      else "grey" + str(c).replace(".", ""))
-    return _BARE.format(mtls="".join(_MTL.format(name=name(c), c=", ".join(map(str, rgb(c))))
-                                     for c in sorted(set(binds.values()), key=rgb)),
-                        overs="".join(_BIND.format(prim=p, name=name(c)) for p, c in binds.items()))
-
-
-# displayColor 0.7 on the ground; the cubes and ball have none: a mid grey. volume: its displayColors.
-OVERS = {"sunangle": bare({"ground": 0.7, "postLeft": 0.5, "postRight": 0.5, "beam": 0.5, "ball": 0.5}),
-         "displacement": bare({"ground": 0.5}),
-         "volume": bare({"floor": 0.5, "orb": (0.8, 0.2, 0.1)})}
 
 
 def scene_path(name):
@@ -95,13 +61,11 @@ def scene_path(name):
 
 
 def sha1(path, crlf=False):
-    # Line endings normalised: git may check the scene out with CRLF. The scene's golden overs count too:
-    # changing either needs a new reference.
+    # Line endings normalised: git may check the scene out with CRLF. KARMA_ALL counts too: changing either
+    # needs a new reference.
     with open(path, "rb") as f:
         data = f.read().replace(b"\r\n", b"\n")
-    name = os.path.splitext(os.path.basename(path))[0]
-    extra = KARMA_ALL + OVERS.get(name, "")
-    return hashlib.sha1((data.replace(b"\n", b"\r\n") if crlf else data) + extra.encode()).hexdigest()
+    return hashlib.sha1((data.replace(b"\n", b"\r\n") if crlf else data) + KARMA_ALL.encode()).hexdigest()
 
 
 def wrapper(folder, name, exr=None):
@@ -152,7 +116,6 @@ def Scope "Render" {{
         {EXTRA_SCENE.get(name, "")}{product}
     }}
 }}
-{OVERS.get(name, "")}
 """)
     return path.replace("\\", "/")
 

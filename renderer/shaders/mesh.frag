@@ -1149,7 +1149,7 @@ void main()
         if (m.emissive.w <= 0.0) {
             alpha = clamp(Fetch(m.tex[6], m.params.wwww).r, 0.0, 1.0);
         }
-        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor, 1.0) : m.baseColor).rgb;
+        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(inColor * m.baseColor.rgb, 1.0) : m.baseColor).rgb;
         emissive = Fetch(m.tex[1], m.emissive).rgb;
         metallic = Fetch(m.tex[2], m.params.xxxx).r;
         roughness = Fetch(m.tex[3], m.params.yyyy).r;

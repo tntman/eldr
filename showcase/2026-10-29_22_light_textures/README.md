@@ -27,3 +27,7 @@ Open `scene.hip`. Its LOP network sublayers `scene.usda` and has one render sett
 Pick a node and render its USD Render ROP (`render_<node>`; images go to `render/`). Eldr's ROPs run `$ELDR_HUSK`, Karma's plain husk. Nothing switches automatically. For the viewport, choose Eldr in the viewport's renderer menu (a script can't set it). The same prims are in `scene.usda` for usdview and husk: `husk -R Eldr -s /Render/eldr_final scene.usda`.
 
 The file is built by `hython houdini/make_showcase_hip.py`; rerun it after changing `scene.usda`.
+
+## Colours against Karma
+
+The panel's linear values match Karma's to within 2% per quadrant (set `eldr:tonemapper` to `none` and undo the sRGB display encoding). In the default picture the green looks paler than Karma's PNG because Eldr's default ACES tone mapper rolls bright saturated colours towards white (a green of 2.3 has red and blue of 0.09), while Karma's PNG clamps each channel. `eldr:tonemapper = none` shows the clamped look.

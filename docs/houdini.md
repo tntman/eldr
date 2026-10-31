@@ -67,7 +67,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are read too (they win over the styles) but have no control: Render Curves As and Render Points As cover them.
 
-Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the limit controls (Volume Limit aside), the quality controls per object (Karma Render Settings' Diffuse, Reflection, SSS and Volume Quality and Light Sampling Quality are honoured globally, from the settings prim: `eldr:diffuseQuality` and its twins win), light-source scales, portals, LPE tags on objects (lights' tags are light groups), fake caustics (caustics themselves are honoured: Enable Caustics, Roughness Clamp, a light's Contributes to Caustics), outlines, trace sets and stencils.
+Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the limit controls (Volume Limit aside), the quality controls per object (Karma Render Settings' Diffuse, Reflection, Refraction, SSS and Volume Quality and Light Sampling Quality are honoured globally, from the settings prim: `eldr:diffuseQuality` and its twins win), light-source scales, portals, LPE tags on objects (lights' tags are light groups), fake caustics (caustics themselves are honoured: Enable Caustics, Roughness Clamp, a light's Contributes to Caustics), outlines, trace sets and stencils.
 
 ## Subdivision surfaces
 
@@ -108,7 +108,7 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 ## Materials
 
-Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; median dE 1.7 (docs/materialx.md).
+Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; the median dE is in the Houdini basic + quick row of the table in docs/materialx.md.
 
 ## Volumes
 
@@ -188,7 +188,7 @@ step4 with StinsonBeach.hdr loaded in both (husk, 320x180, linear, Eldr's auto e
 | What | Karma | Eldr |
 |---|---|---|
 | Rect-light texture orientation | File's top row at +Y, left edge at +X | Same |
-| `primvars:displayColor` | Read as sRGB (0.5 = 0.214 linear) | Linear, as USD defines; a 0.5 floor is 0.43 as bright in Karma |
+| Prims without a material | A default material: 0.4 x `displayColor` (white without one), a faint untinted highlight, `displayOpacity` as opacity | The same (`eldr:defaultMaterialKarma`): diffuse within 1%, highlight up to 3.5x Karma's at grazing mirror angles; off: `displayColor` at full strength, as Storm |
 | Dome in the camera | Hidden unless `renderlightgeo` is 1 (schema default 0) | Drawn unless `inputs:karma:light:renderlightgeo` is authored 0 on the dome, `eldr:domeCameraVisible` is off or Hydra's `domeLightCameraVisibility` is false; lighting and reflections keep the dome |
 | Small-light highlights on rough floors | Colour limit 20 clips by 10%; with it off, within 4% of a GGX integral | Within 5% of Karma |
 | `ray:primid` | Id with coverage | Id + 1, no coverage |

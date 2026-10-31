@@ -37,6 +37,8 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-30_19_curves_points` | Every curve basis as tubes or ribbons, points as spheres or discs, and hair shading. | `curves` vs `ribbons`, `sprites`, `hairOff` |
 | `2026-10-30_21_textures_colour` | Texture colour spaces (ACEScg, Rec.709), UDIM tiles and anisotropic filtering (`eldr:anisotropy`). | `textures` vs `aniso1` |
 | `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropic highlights and hair, plus toon shading. | `lobes` vs `lobesOff`, `toon` (`eldr:toonBands` 3) |
+| `2026-10-31_02_karma_default_material` | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity (`eldr:defaultMaterialKarma`). | `karmaDefault` vs `lambertDefault` |
+| `2026-10-31_03_houdini_karma_nodes` | Houdini's basic materials that use Karma's own nodes (Ramp Const, Hex-Tiled Texture, Voronoi Noise 3D) render as in Karma, and juice absorbs over its path through the ball. | `graphsOn` vs `graphsOff` |
 
 ## Ray tracing
 
@@ -78,6 +80,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_07_oidn_denoiser` | The converged film is denoised by Intel Open Image Denoise, guided by albedo and normal (`eldr:denoise`, or Karma's image filter). | `raw16` vs `denoise16`, `karmaImageFilter16` (Karma's denoiser string), `raw64` |
 | `2026-10-29_11_effect_denoise` | The final gather, traced shadows and traced reflections are each filtered in their own signal during the first film samples. | `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64` |
 | `2026-10-29_12_quality_multipliers` | More rays for the noisy component (diffuse, light, reflection) instead of more film samples, as Karma's quality controls. | `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames` (Karma's names), `allHalf` |
+| `2026-10-31_01_refraction_quality` | More paths through rough glass instead of more film samples (`eldr:refractQuality`, Karma's `karma:object:refractquality`). | `refractQuality1` vs `refractQuality4` |
 
 ## AOVs
 

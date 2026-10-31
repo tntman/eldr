@@ -338,6 +338,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             _colorsInterp = colorsInterp;
             geometryDirty = true;
         }
+        m.colorAuthored = !_colors.IsEmpty();
         // A constant displayColor is a per-mesh value, not vertex data.
         if (_colors.IsHolding<VtVec3fArray>() && !_colors.UncheckedGet<VtVec3fArray>().empty()) {
             const GfVec3f &c = _colors.UncheckedGet<VtVec3fArray>()[0];
@@ -393,6 +394,15 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             _velocities = std::move(velocities);
             geometryDirty = true;
         }
+    }
+    // displayOpacity, the default material's (vkr::Mesh::opacity).
+    // ponytail: its first value; varying opacity needs a material.
+    if (HdChangeTracker::IsPrimvarDirty(*dirtyBits, id, HdTokens->displayOpacity)) {
+        HdInterpolation interp;
+        const VtValue v = FindPrimvar(sceneDelegate, id, HdTokens->displayOpacity, &interp)
+            ? sceneDelegate->Get(id, HdTokens->displayOpacity) : VtValue();
+        const VtFloatArray a = v.GetWithDefault(VtFloatArray());
+        m.opacity = a.empty() ? v.GetWithDefault(1.0f) : a[0];
     }
     // Primvars the material programs read, as the mesh has them (re-read
     // with any primvar change; flattened with the geometry).
@@ -644,6 +654,8 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
             d.jointsDirty = true;
         }
         std::copy(m.color, m.color + 3, d.color);
+        d.opacity = m.opacity;
+        d.colorAuthored = m.colorAuthored;
         d.primId = m.primId;
         d.visible = m.visible;
         d.holdout = m.holdout;

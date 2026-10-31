@@ -498,6 +498,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
                                 {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
                                 {t2.lightLinking, &frame.lightLinking}, {t2.lightIes, &frame.lightIes},
+                                {t2.defaultMaterialKarma, &frame.defaultMaterialKarma},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
@@ -734,7 +735,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     {
         static const TfToken karmaLight("karma:global:light_sampling_quality"),
             karmaDiffuse("karma:object:diffusequality"), karmaReflect("karma:object:reflectquality"),
-            karmaSss("karma:object:sssquality"), karmaVolume("karma:object:volumequality");
+            karmaRefract("karma:object:refractquality"), karmaSss("karma:object:sssquality"),
+            karmaVolume("karma:object:volumequality");
         const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
         auto number = [&](const TfToken &key) {
             VtValue v = delegate->GetRenderSetting(key);
@@ -754,6 +756,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         frame.lightQuality = quality(t2.lightQuality, karmaLight);
         frame.diffuseQuality = quality(t2.diffuseQuality, karmaDiffuse);
         frame.reflectQuality = quality(t2.reflectQuality, karmaReflect);
+        frame.refractQuality = quality(t2.refractQuality, karmaRefract);
         frame.subsurfaceSamples =
             uint32_t(std::clamp(std::lround(frame.subsurfaceSamples * quality(t2.sssQuality, karmaSss)), 1l, 64l));
         frame.volume.shadowSteps =
@@ -875,7 +878,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Any may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
                                                     frame.indirectClamp);
-    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes);
+    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes) |
+                              _scene.SetDefaultMaterial(frame.defaultMaterialKarma);
     if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive || lightOptions) {
         _scene.Commit(true);  // the frame's second: its motion stays
     }

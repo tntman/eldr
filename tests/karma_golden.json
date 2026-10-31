@@ -26,9 +26,9 @@
       "mald": 0.0505
     },
     "sunangle": {
-      "lum": 1.0072,
-      "region": 0.0121,
-      "mald": 0.0095
+      "lum": 1.0089,
+      "region": 0.0142,
+      "mald": 0.0123
     },
     "mtlx": {
       "lum": 1.0078,
@@ -41,9 +41,9 @@
       "mald": 0.2193
     },
     "volume": {
-      "lum": 0.9913,
-      "region": 0.0458,
-      "mald": 0.044,
+      "lum": 0.9769,
+      "region": 0.0608,
+      "mald": 0.0367,
       "tolerance": {
         "lum": 0.02,
         "region": 0.03,
@@ -51,9 +51,9 @@
       }
     },
     "displacement": {
-      "lum": 0.9848,
-      "region": 0.0425,
-      "mald": 0.0172
+      "lum": 0.9963,
+      "region": 0.043,
+      "mald": 0.025
     },
     "subsurface": {
       "lum": 0.9419,

@@ -65,7 +65,7 @@ void main()
     float metallic = 0.0, roughness = 0.5;
     if (d.material != kNoMaterial) {
         Material m = materials[d.material];
-        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(color, 1.0) : m.baseColor, uv).rgb;
+        baseColor = Fetch(m.tex[0], m.baseColor.w > 0.5 ? vec4(color * m.baseColor.rgb, 1.0) : m.baseColor, uv).rgb;
         emissive = Fetch(m.tex[1], m.emissive, uv).rgb;
         metallic = clamp(Fetch(m.tex[2], m.params.xxxx, uv).r, 0.0, 1.0);
         roughness = Fetch(m.tex[3], m.params.yyyy, uv).r;
