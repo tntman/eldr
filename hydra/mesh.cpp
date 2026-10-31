@@ -337,6 +337,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
             _colorsInterp = colorsInterp;
             geometryDirty = true;
         }
+        m.colorAuthored = !_colors.IsEmpty();
         // A constant displayColor is a per-mesh value, not vertex data.
         if (_colors.IsHolding<VtVec3fArray>() && !_colors.UncheckedGet<VtVec3fArray>().empty()) {
             const GfVec3f &c = _colors.UncheckedGet<VtVec3fArray>()[0];
@@ -653,6 +654,7 @@ void HdVkMesh::_SyncSubsets(HdSceneDelegate *sceneDelegate)
         }
         std::copy(m.color, m.color + 3, d.color);
         d.opacity = m.opacity;
+        d.colorAuthored = m.colorAuthored;
         d.primId = m.primId;
         d.visible = m.visible;
         d.holdout = m.holdout;

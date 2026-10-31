@@ -28,6 +28,7 @@ The `showcase/` folder has one small scene per feature. Open `showcase/<folder>/
 - `2026-10-30_19_curves_points`: Curves and points
 - `2026-10-30_21_textures_colour`: Textures and colour spaces
 - `2026-10-30_22_material_lobes`: Material lobes
+- `2026-10-31_02_karma_default_material`: Karma default material
 
 ## Ray tracing
 

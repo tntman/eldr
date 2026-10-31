@@ -417,6 +417,7 @@ struct Mesh {
     std::vector<float> velocities;
     float color[3] = {0.5f, 0.5f, 0.5f};  // used when material is null
     float opacity = 1;  // constant displayOpacity: the default material's (Scene::SetDefaultMaterial)
+    bool colorAuthored = true;  // false: no displayColor (Karma's default material reads white)
     std::shared_ptr<Material> material;
     int32_t primId = -1;         // written to the primId target (Hydra picking)
     bool visible = true;
@@ -1082,7 +1083,7 @@ private:
     bool _lightLinking = true, _lightIes = true;
     // SetDefaultMaterial: Karma's default material per displayOpacity.
     bool _karmaDefault = false;  // the render pass turns it on (Frame::defaultMaterialKarma)
-    std::map<float, std::unique_ptr<Material>> _defaultMaterials;
+    std::map<std::pair<float, bool>, std::unique_ptr<Material>> _defaultMaterials;  // by opacity, colorAuthored
     const Material *_MaterialOf(const Mesh &mesh);
     // Link category id -> its bit in the instances' linkMask (as uploaded).
     std::map<uint32_t, uint32_t> _linkBits;

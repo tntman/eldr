@@ -483,18 +483,29 @@ bool Scene::SetDefaultMaterial(bool karma)
     return changed;
 }
 
-// Karma's material for prims without one (libBRAY builds it in code; the
-// parameters are fitted to husk renders): FIT_PLACEHOLDER
+// Karma's material for prims without one. libBRAY builds it in code; fitted
+// to husk renders of flat patches under a distant light (0-75 degrees, view
+// 0-75 degrees) and a white dome: diffuse 0.4 x displayColor (white without
+// one), within 1%, plus an untinted lobe of directional albedo 0.033 at any
+// view angle (no Fresnel rise), Beckmann-like of width 0.29. Here: GGX of
+// alpha 0.29 (roughness 0.54) and F0 0.034 (ior 1.45); the diffuse weight
+// makes up for the 3.5% the specular takes from it.
+// ponytail: GGX's longer tail is 2x Karma's lobe 30 degrees off the mirror
+// direction (0.002 against 0.001 of the light); Schlick rises at grazing.
 const Material *Scene::_MaterialOf(const Mesh &mesh)
 {
     if (mesh.material || !_karmaDefault) {
         return mesh.material.get();
     }
     const float opacity = std::clamp(mesh.opacity, 0.0f, 1.0f);
-    std::unique_ptr<Material> &m = _defaultMaterials[opacity];
+    std::unique_ptr<Material> &m = _defaultMaterials[{opacity, mesh.colorAuthored}];
     if (!m) {
         m = std::make_unique<Material>();
         m->baseColorFromDisplayColor = true;
+        // Mesh::color is 0.5 without a displayColor; Karma reads white.
+        m->displayColorWeight = (mesh.colorAuthored ? 0.4f : 0.8f) / (1.0f - 0.035f);
+        m->roughness = 0.54f;
+        m->ior = 1.45f;
         m->opacity = opacity;
         m->opacityPresence = true;  // Karma's Of: the whole response
     }

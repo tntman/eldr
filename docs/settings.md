@@ -257,7 +257,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Karma Default Material<br>`eldr:defaultMaterialKarma` | on | Prims without a material shade as in Karma: its default material over `displayColor`, with `displayOpacity` as opacity. Off: the base material's defaults over `displayColor`, opaque, as Storm. | |
+| Karma Default Material<br>`eldr:defaultMaterialKarma` | on | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity. Off: `displayColor` at full strength, opaque, as Storm (about 2.3x as bright). | None measurable (a material like any other) |
 | Normal Maps<br>`eldr:normalMaps` | on | Applies normal maps. | |
 | Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface `useSpecularWorkflow = 1` uses F0 = `specularColor`. Off: 0.04. | |
 | Clearcoat<br>`eldr:clearcoat` | on | A glossy coat layer: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials that use it pay |
