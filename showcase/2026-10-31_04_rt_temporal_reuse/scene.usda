@@ -5,10 +5,10 @@
 )
 
 # Ray-traced temporal reuse: tumble this scene with traced shadows and
-# reflections on. /Render/rtTemporalReuse (the default) blends each moving
+# reflections on. /Render/rtTemporalReuse blends each moving
 # frame's rays with earlier frames' at the same surface point;
-# /Render/rtTemporalReuseOff traces each moving frame on its own (TAA
-# alone smooths it). Still frames (the film) are the same in both.
+# /Render/rtTemporalReuseOff (the default) traces each moving frame on its
+# own (TAA alone smooths it). Still frames (the film) are the same in both.
 
 def Scope "Render"
 {
@@ -50,6 +50,7 @@ def Scope "Render"
         int2 resolution = (1280, 720)
         custom bool eldr:rtShadows = 1
         custom bool eldr:rtReflections = 1
+        custom bool eldr:rtTemporalReuse = 1
     }
 
     def RenderSettings "rtTemporalReuseOff"

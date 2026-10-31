@@ -216,7 +216,7 @@ RayTracing::~RayTracing()
     for (Image *img : {&_shadowImage, &_reflectionImage, &_refractionImage, &_gatherImage, &_gatherTemp,
                        &_gatherGuide, &_giIrradiance, &_giVisibility, &_giOffsets, &_shadowHistory[0],
                        &_shadowHistory[1], &_radianceHistory[0], &_radianceHistory[1], &_guideHistory[0],
-                       &_guideHistory[1]}) {
+                       &_guideHistory[1], &_reflectionRoughness}) {
         _dev.Destroy(*img);
     }
     _dev.Destroy(_uniforms);
@@ -315,6 +315,8 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
         {15, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         {16, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
         {17, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute},
+        // The reflecting surfaces' roughness (rt_pixels.rgen, for rt_temporal.comp).
+        {18, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, compute | VK_SHADER_STAGE_RAYGEN_BIT_KHR},
     };
     constexpr uint32_t kBindings = sizeof(bindings) / sizeof(bindings[0]);
     VkDescriptorBindingFlags partial[kBindings];
@@ -326,7 +328,7 @@ void RayTracing::_CreatePipelines(VkDescriptorSetLayout sceneLayout)
     slci.bindingCount = kBindings;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(device, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
-    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 11}};
+    const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 12}};
     VkDescriptorPoolCreateInfo dpci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     dpci.maxSets = 1;
     dpci.poolSizeCount = 2;
@@ -636,7 +638,7 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
 void RayTracing::_CreateHistory()
 {
     const uint32_t radianceRows = _work.gather ? 2 : 1;
-    VkDescriptorImageInfo images[6];
+    VkDescriptorImageInfo images[7];
     for (uint32_t i = 0; i < 2; ++i) {
         _dev.Destroy(_shadowHistory[i]);
         _dev.Destroy(_radianceHistory[i]);
@@ -648,8 +650,11 @@ void RayTracing::_CreateHistory()
         images[2 + i] = {VK_NULL_HANDLE, _radianceHistory[i].view, VK_IMAGE_LAYOUT_GENERAL};
         images[4 + i] = {VK_NULL_HANDLE, _guideHistory[i].view, VK_IMAGE_LAYOUT_GENERAL};
     }
-    VkWriteDescriptorSet writes[6] = {};
-    for (uint32_t i = 0; i < 6; ++i) {
+    _dev.Destroy(_reflectionRoughness);
+    _reflectionRoughness = _CreateAtlas(VK_FORMAT_R8_UNORM, _width, _height);
+    images[6] = {VK_NULL_HANDLE, _reflectionRoughness.view, VK_IMAGE_LAYOUT_GENERAL};
+    VkWriteDescriptorSet writes[7] = {};
+    for (uint32_t i = 0; i < 7; ++i) {
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = _set;
         writes[i].dstBinding = 12 + i;
@@ -657,7 +662,7 @@ void RayTracing::_CreateHistory()
         writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
         writes[i].pImageInfo = &images[i];
     }
-    vkUpdateDescriptorSets(_dev.device, 6, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 7, writes, 0, nullptr);
     const uint32_t key[4] = {_width, _height, _shadowLayers, radianceRows};
     std::copy(key, key + 4, _historyKey);
     _temporalRan = false;
@@ -1382,6 +1387,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
         d.temporal[1] = std::clamp(work.temporalFrames, 1u, 64u);
         d.temporal[2] = (lights + perTexel - 1) / perTexel;
         std::copy(work.prevCameraPos, work.prevCameraPos + 3, d.temporalCamera);
+        std::copy(work.prevViewProj, work.prevViewProj + 16, d.temporalViewProj);
         _temporalLast[0] = flags;
         _temporalLast[1] = hash;
         _temporalRead = ran ? _temporalRead ^ 1u : 0u;  // the history the last frame wrote

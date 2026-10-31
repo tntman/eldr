@@ -35,6 +35,7 @@ layout(set = 0, binding = 53, rgba8) uniform writeonly image2D rtShadowImage;
 layout(set = 0, binding = 54, rgba16f) uniform writeonly image2D rtReflectionImage;
 layout(set = 0, binding = 87, rgba16f) uniform writeonly image2D rtGatherImage;
 layout(set = 1, binding = 11, rgba16f) uniform writeonly image2D gatherGuide;  // octahedral geometric, shading normal
+layout(set = 1, binding = 18, r8) uniform writeonly image2D reflectionRoughness;  // with temporal reuse (rt_temporal.comp)
 layout(set = 0, binding = 13) uniform sampler2D sceneDepth;  // the prepass depth, window [0, 1]
 
 vec3 PrepassPoint(ivec2 pixel)
@@ -304,6 +305,9 @@ void main()
             reflection.a = (1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual)) / keep;
         }
         imageStore(rtReflectionImage, pixel, reflection);
+        if ((rt.temporal.x & 4u) != 0u) {
+            imageStore(reflectionRoughness, pixel, vec4(perceptual));
+        }
     }
 
     // eldr:finalGatherRoulette: from the film's second sample each 8 x 8

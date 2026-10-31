@@ -886,10 +886,7 @@ int main(int argc, char **argv)
                     for (auto [suffix, img] : {std::pair{"_moving.pfm", &lastMoving}, std::pair{"_still.pfm", &ref},
                                                std::pair{"_error.pfm", &error}}) {
                         if (FILE *f = std::fopen((dumpPrefix + suffix).c_str(), "wb")) {
-                            std::fprintf(f, "Pf
-%zu %zu
--1.0
-", w, h);
+                            std::fprintf(f, "Pf\n%zu %zu\n-1.0\n", w, h);
                             std::fwrite(img->data(), sizeof(float), img->size(), f);
                             std::fclose(f);
                         }
@@ -909,8 +906,7 @@ int main(int argc, char **argv)
                             }
                         }
                     }
-                    std::printf("  dump: %s_*.pfm, worst 16x16 block mean error %.4f at %zu,%zu (from the bottom)
-",
+                    std::printf("  dump: %s_*.pfm, worst 16x16 block mean error %.4f at %zu,%zu (from the bottom)\n",
                                 dumpPrefix.c_str(), worstBlock, bx, by);
                 }
                 std::printf("  sequence: %zu frames, worst %.1f ms, p50 %.1f p95 %.1f (p95/p50 %.2f), %d over 2x p50, "

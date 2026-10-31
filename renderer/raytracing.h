@@ -47,6 +47,7 @@ struct RayTracingData {
     // frame's camera position (xyz, temporalCamera).
     uint32_t temporal[4];
     float temporalCamera[4];
+    float temporalViewProj[16];  // the last frame's camera, jitter included
 };
 constexpr uint32_t kMaxGatherRays = 16;
 constexpr uint32_t kMaxCausticLights = 8;
@@ -162,6 +163,7 @@ public:
         bool temporal = false;
         uint32_t temporalFrames = 16;
         float prevCameraPos[3] = {};
+        float prevViewProj[16] = {};  // the last frame's, jitter included
     };
     // Before recording, with the GPU idle: builds the BLASes the scene lacks
     // (in submits of their own), frees unused ones, sizes the TLAS and the
@@ -356,6 +358,7 @@ private:
     // shadows' visibility layers, reflections and gather (rows 0 and
     // height), and the guide (distance to the camera, normal, frames).
     Image _shadowHistory[2], _radianceHistory[2], _guideHistory[2];
+    Image _reflectionRoughness;  // rt_pixels.rgen's, per pixel: mirrors keep no reflection history
     VkPipeline _temporalPass[2] = {};
     uint32_t _temporalRead = 0;  // this frame's parity
     bool _temporalNow = false;   // this frame runs it

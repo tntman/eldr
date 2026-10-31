@@ -3598,6 +3598,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.temporal = frame.rtTemporalReuse && !film && _historyValid;
     rt.temporalFrames = frame.rtTemporalFrames;
     std::memcpy(rt.prevCameraPos, _prevCameraPos, sizeof(rt.prevCameraPos));
+    // The last frame's jittered camera: the history's texels are its samples.
+    rt.temporal = rt.temporal && _rtViewProjValid;
+    std::memcpy(rt.prevViewProj, _rtPrevViewProj, sizeof(rt.prevViewProj));
+    std::memcpy(_rtPrevViewProj, jitteredViewProj, sizeof(_rtPrevViewProj));
+    _rtViewProjValid = true;
     rt.displacement = frame.rtDisplacement && frame.displacement && gpu.displaced ? frame.displacementScale : 0.0f;
     // Caustics, with casters and lights that
     // send photons. Progressive photon mapping (Knaus and Zwicker 2011):

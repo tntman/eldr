@@ -427,8 +427,8 @@ public:
         // blend the traced shadows, reflections and final gather with the
         // earlier frames' (reprojected, rejected at depth and normal edges,
         // clamped to the pixel's neighbourhood; RayTracing::Work::temporal),
-        // up to rtTemporalFrames (eldr:rtTemporalReuse; interactive only:
-        // the film and offline renders never use it).
+        // up to rtTemporalFrames (eldr:rtTemporalReuse, off; interactive
+        // only: the film and offline renders never use it).
         bool rtTemporalReuse = false;
         uint32_t rtTemporalFrames = 16;
         // The camera stopped less than eldr:stillDelay ago (the app's wall
@@ -998,6 +998,8 @@ private:
     Buffer _shutterRows, _shutterJoints, _shutterWeights, _savedInstances, _savedJoints, _savedWeights;
     bool _shutterMoved = false;     // the last frame rendered the scene at a shutter time
     float _prevCameraPos[3] = {};   // with _prevViewProj
+    float _rtPrevViewProj[16] = {};  // the last frame's jittered camera (RayTracing::Work::prevViewProj)
+    bool _rtViewProjValid = false;
     Aovs _aovs{_dev};  // extra AOVs
     // Frame::denoise and the raw beauty AOV: the final film run wants them
     // (_denoiseRun); its state: 0 accumulating, 1 converged (the next frame

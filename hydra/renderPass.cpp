@@ -1021,7 +1021,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         offline ? 0.0f : std::clamp(delegate->GetRenderSetting<float>(t2.movingFrameBudget, 33.0f), 0.0f, 1000.0f);
     frame.filmWarmStart = std::clamp(delegate->GetRenderSetting<float>(t2.filmWarmStart, 4.0f), 0.0f, 1000.0f);
     // eldr:rtTemporalReuse: interactive only (offline frames are films).
-    frame.rtTemporalReuse = !offline && delegate->GetRenderSetting<bool>(t2.rtTemporalReuse, true);
+    frame.rtTemporalReuse = !offline && delegate->GetRenderSetting<bool>(t2.rtTemporalReuse, false);
     frame.rtTemporalFrames = uint32_t(std::clamp(delegate->GetRenderSetting<int>(t2.rtTemporalFrames, 16), 1, 64));
     // eldr:staleMovingIds: while Houdini's viewport camera moves the ids (its
     // picking and selection outline, mapped every frame) keep the last still

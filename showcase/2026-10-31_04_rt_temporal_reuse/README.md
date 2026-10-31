@@ -1,25 +1,25 @@
 # Ray-traced temporal reuse
 
 <!-- summary -->
-While the camera moves, traced shadows and reflections reuse earlier frames' rays at the same surface point, so moving frames are cleaner with one ray per light (`eldr:rtTemporalReuse`).
+While the camera moves, traced shadows and rough reflections can reuse earlier frames' rays at the same surface point (`eldr:rtTemporalReuse`, off by default): calmer penumbrae, softer contact shadows.
 
 - **Compare:** open `showcase/2026-10-31_04_rt_temporal_reuse/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `rtTemporalReuse` vs `rtTemporalReuseOff`.
-- **Look at:** Tumble the camera: soft shadow edges and rough reflections crawl less with `rtTemporalReuse`. Once still, both are the same.
+- **Look at:** Tumble the camera: soft shadow edges crawl less with `rtTemporalReuse`, and the thin contact shadows at the box and ball bases soften. Once still, both are the same.
 <!-- summary -->
 
 `tests/scenes/emissive.usda` with traced shadows and reflections on. While the camera moves, each frame traces one shadow ray per light (`eldr:movingShadowRays`) and one reflection ray per pixel.
 
 ## What to look at
 
-- `/Render/rtTemporalReuse` (the default): each pixel's traced shadow and reflection blend with up to 16 earlier frames (`eldr:rtTemporalFrames`) where the same surface was seen. Penumbrae and rough reflections stay calm while tumbling. Where a surface comes into view from behind another, it starts from this frame's rays, so a thin noisy edge shows for a few frames.
-- `/Render/rtTemporalReuseOff`: each moving frame's rays stand alone; only TAA averages them, and it clamps the noise to the pixel's neighbours, so penumbrae crawl.
+- `/Render/rtTemporalReuse`: each pixel's traced shadow and rough reflection blend with up to 16 earlier frames (`eldr:rtTemporalFrames`) where the same surface was seen. Penumbrae stay calm while tumbling, but thin contact shadows soften (fewer history frames soften them less). Mirror-like reflections keep no history. Where a surface comes into view from behind another, it starts from this frame's rays.
+- `/Render/rtTemporalReuseOff` (the default): each moving frame's rays stand alone and TAA averages them; penumbrae show more fine noise.
 - Stop the camera: the film takes over and both prims give the same image.
 
 ## Open
 
 - usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_04_rt_temporal_reuse\scene.usda`, then pick a settings prim (right-click, set as active), or flip **Ray-Traced Temporal Reuse** in Eldr > Render Settings (Viewport group).
 - Houdini: reference the scene in a LOP network, pick Eldr in the viewport and tumble.
-- Measure: `viewportBench scene.usda /cam --houdini --stop 1500 --set eldr:rtShadows=1 --set eldr:rtReflections=1` (add `--set eldr:rtTemporalReuse=0` for the A/B).
+- Measure: `viewportBench scene.usda /cam --houdini --stop 1500 --set eldr:rtShadows=1 --set eldr:rtReflections=1` (add `--set eldr:rtTemporalReuse=1` for the A/B).
 
 ## Houdini scene
 
