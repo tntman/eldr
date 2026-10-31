@@ -1370,6 +1370,9 @@ uint32_t Renderer::_ShadingSet(uint32_t features, bool lazy)
         return uint32_t(it - _shadingSets.begin());
     }
     _shadingSets.push_back(features);
+    if (std::getenv("HDVK_TIMING")) {
+        std::fprintf(stderr, "HdVk shading set %zu: features 0x%x\n", _shadingSets.size() - 1, features);
+    }
     const uint32_t set = uint32_t(_shadingSets.size() - 1);
     const ShadingTargets targets = _SetTargets(set);
     // The prewarm's, if it has them (or is making them); else made here.
@@ -3195,7 +3198,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.geometry[1] = frame.lodBias;
         fd.geometry[2] = float(++_lodFrame & 0xFFFFFFu);  // exact as a float
         // ponytail: a fixed length, the TAA's history; a setting if it matters.
-        fd.lodFade[0] = frame.lodFade && gpu.drawCount > gpu.meshCount ? kLodFadeFrames : 0;
+        // Levels still building count: the first frames compile the shading set
+        // the later ones use (a cold start compiles one set, not two).
+        fd.lodFade[0] = frame.lodFade && (gpu.drawCount > gpu.meshCount || scene.LodsPending()) ? kLodFadeFrames : 0;
     }
     std::memcpy(fd.viewProj, frame.viewProj, sizeof(fd.viewProj));
     std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));

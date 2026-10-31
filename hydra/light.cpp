@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <future>
 #include <map>
 #include <mutex>
 #include <sstream>
@@ -200,6 +201,9 @@ HdVkLight::HdVkLight(SdfPath const &id, TfToken const &type, vkr::Scene *scene,
 HdVkLight::~HdVkLight()
 {
     if (_dome) {
+        if (_dome->textureLoading.valid()) {
+            _dome->textureLoading.wait();  // it reads the texture cache
+        }
         _scene->RemoveDome(_dome);
     } else {
         _scene->RemoveLight(_light);
@@ -213,6 +217,7 @@ HdVkLight::~HdVkLight()
 void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBits *dirtyBits)
 {
     HdVkTimedCall timed(HdVkCallTimes::kSync);
+    HDVK_MARK(1, "first light sync");
     if (!(*dirtyBits & (DirtyTransform | DirtyParams | DirtyShadowParams | DirtyCollection | DirtyResource))) {
         *dirtyBits = Clean;
         return;
@@ -251,14 +256,13 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
     }
     const bool visible = sceneDelegate->GetVisible(id);
     // inputs:texture:file (domes, rects, disks).
-    auto texture = [&]() -> std::shared_ptr<vkr::Texture> {
-        const VtValue file = param(HdLightTokens->textureFile, VtValue());
-        std::string path;
-        if (file.IsHolding<SdfAssetPath>()) {
-            const SdfAssetPath &p = file.UncheckedGet<SdfAssetPath>();
-            path = p.GetResolvedPath().empty() ? p.GetAssetPath() : p.GetResolvedPath();
-        }
-        return path.empty() ? nullptr : _textures->Get(path, TfToken());
+    std::string texturePath;
+    if (const VtValue file = param(HdLightTokens->textureFile, VtValue()); file.IsHolding<SdfAssetPath>()) {
+        const SdfAssetPath &p = file.UncheckedGet<SdfAssetPath>();
+        texturePath = p.GetResolvedPath().empty() ? p.GetAssetPath() : p.GetResolvedPath();
+    }
+    auto texture = [textures = _textures, texturePath]() -> std::shared_ptr<vkr::Texture> {
+        return texturePath.empty() ? nullptr : textures->Get(texturePath, TfToken());
     };
     const bool normalize = param(HdLightTokens->normalize, false);
 
@@ -266,7 +270,14 @@ void HdVkLight::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBit
         const GfMatrix4f toLocal(xf.GetInverse());
         std::copy(toLocal.data(), toLocal.data() + 16, _dome->worldToLocal);
         std::copy(color.data(), color.data() + 3, _dome->radiance);
-        _dome->texture = texture();
+        // A dome's environment (often hundreds of MB) decodes on another
+        // thread while the meshes sync; the next Commit takes it.
+        if (!texturePath.empty()) {
+            _dome->textureLoading = std::async(std::launch::async, texture).share();
+        } else {
+            _dome->texture = nullptr;
+            _dome->textureLoading = {};
+        }
         _dome->visible = visible;
         // Karma's "Render Light Geometry" hides the dome from the camera only.
         // Karma's schema default is off; Eldr shows a dome unless authored false.

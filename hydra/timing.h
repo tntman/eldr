@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
 // HDVK_TIMING=2: time the app spends in Eldr's entry points between two
@@ -73,3 +74,14 @@ private:
     bool _on;
     std::chrono::steady_clock::time_point _start;
 };
+
+// HDVK_TIMING: a line on stderr the first `times` times this call site runs
+// (a startup timeline: a log reader stamps the lines as they arrive).
+#define HDVK_MARK(times, ...)                                                  \
+    do {                                                                       \
+        static std::atomic<int> hdvkMarks{0};                                  \
+        if (std::getenv("HDVK_TIMING") && hdvkMarks.fetch_add(1) < (times)) {  \
+            std::fprintf(stderr, "HdVk mark: " __VA_ARGS__);                   \
+            std::fputc('\n', stderr);                                          \
+        }                                                                      \
+    } while (0)

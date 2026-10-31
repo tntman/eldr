@@ -10,8 +10,12 @@
 #include <chrono>
 #include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
+#include <exception>
+#include <thread>
 #include <type_traits>
 #include <limits>
 
@@ -251,6 +255,25 @@ uint32_t PackUnorm16(float a, float b)
     auto q = [](float x) { return uint32_t(std::lround(std::clamp(x, 0.0f, 1.0f) * 65535.0f)); };
     return q(a) | (q(b) << 16);
 }
+
+// HDVK_TIMING: the first commits' parts over 5 ms on stderr (startup profile).
+struct CommitLaps {
+    bool on;
+    int commit;
+    std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
+    void operator()(const char *what)
+    {
+        if (!on) {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(now - last).count();
+        if (ms >= 5.0) {
+            std::fprintf(stderr, "HdVk commit %d: %s %.1f ms\n", commit, what, ms);
+        }
+        last = now;
+    }
+};
 
 // World AABB of an object-space box under a row-vector matrix.
 void TransformBounds(const float *lo, const float *hi, const float *x, float *outLo, float *outHi)
@@ -889,8 +912,12 @@ void Scene::_ReleaseGeometry(Mesh &m)
     m._lods.clear();
 }
 
+// Runs on several threads at once (Commit): the pools, the shared
+// geometry and the staging are under _uploadMutex, the per-mesh work (the
+// vertices, bounds and level of detail inputs) outside it.
 void Scene::_UploadGeometry(Mesh &m)
 {
+    std::unique_lock<std::mutex> lock(_uploadMutex);
     _ReleaseGeometry(m);
     m._velocityCount = 0;
     m._lods.clear();
@@ -964,6 +991,7 @@ void Scene::_UploadGeometry(Mesh &m)
             return;
         }
     }
+    lock.unlock();
     // Emissive lights: the object-space area (the arrays go after Commit).
     double area = 0;
     for (size_t t = 0; t + 2 < corners; t += 3) {
@@ -1030,6 +1058,7 @@ void Scene::_UploadGeometry(Mesh &m)
         blend = uint64_t(m.blendRanges[i * 2]) + m.blendRanges[i * 2 + 1] <= offsets;
     }
     if (blend) {
+        std::lock_guard<std::mutex> pools(_uploadMutex);
         while (!_blendAlloc.Allocate(offsets, &m._blendBase)) {
             _EnsureCapacity(_blendOffsets, _blendAlloc, offsets, 4 * sizeof(float),
                             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false);
@@ -1153,6 +1182,52 @@ void Scene::_UploadGeometry(Mesh &m)
     }
     m._uvSpacing = corners > 0 ? float(uvLength / double(corners)) : 0.0f;
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
+    // Levels of detail of heavy meshes (lod.h), built on other threads; a
+    // later Commit stores them (the mesh draws whole until then).
+    const bool lods = indexCount / 3 >= kLodMinTriangles && m.facing == Mesh::kNotFacing;
+    std::vector<float> lodVertices;
+    size_t stride = 0;
+    std::vector<std::pair<uint32_t, float>> influences;  // skinned: each vertex's (joint, weight), m.influences each
+    if (lods) {
+        // Position, then the shading attributes as distances (see BuildLods):
+        // normals and colours relative to the bounding radius (a turn of
+        // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
+        // by how far they slide the texture over the surface (its area per
+        // uv area).
+        const float radius = 0.5f * Length(Vec3{m._boundsMax[0] - m._boundsMin[0], m._boundsMax[1] - m._boundsMin[1],
+                                                m._boundsMax[2] - m._boundsMin[2]});
+        double area = 0.0, uvArea = 0.0;
+        for (size_t t = 0; !m.uvs.empty() && t + 2 < indices.size(); t += 3) {
+            const Vertex &a = vertices[indices[t]], &b = vertices[indices[t + 1]], &c = vertices[indices[t + 2]];
+            const Vec3 pa{a.position[0], a.position[1], a.position[2]};
+            area += Length(Cross(Vec3{b.position[0], b.position[1], b.position[2]} - pa,
+                                 Vec3{c.position[0], c.position[1], c.position[2]} - pa));
+            uvArea += std::abs((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]));
+        }
+        const float uvScale = uvArea > 0.0 ? float(std::sqrt(area / uvArea)) : 0.0f;
+        stride = 3 + (m.normals.empty() ? 0 : 3) + (uvScale > 0.0f ? 2 : 0) + (m.colors.empty() ? 0 : 3);
+        lodVertices.resize(vertices.size() * stride);
+        for (size_t v = 0; v < vertices.size(); ++v) {
+            float *out = std::copy_n(vertices[v].position, 3, &lodVertices[v * stride]);
+            for (int k = 0; k < 3 && !m.normals.empty(); ++k) {
+                *out++ = vertices[v].normal[k] * radius * kLodNormalWeight;
+            }
+            for (int k = 0; k < 2 && uvScale > 0.0f; ++k) {
+                *out++ = vertices[v].uv[k] * uvScale;
+            }
+            for (int k = 0; k < 3 && !m.colors.empty(); ++k) {
+                *out++ = FromHalf(vertices[v].color[k]) * radius * kLodColorWeight;
+            }
+        }
+        for (size_t v = 0; skinned && v < vertices.size(); ++v) {
+            for (uint32_t k = 0; k < m.influences; ++k) {
+                const SkinVertex &sv = skin[v * (m.influences == 8 ? 2 : 1) + k / 4];
+                const uint32_t pair = sv.weights[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu;
+                influences.push_back({sv.joints[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu, float(pair) / 65535.0f});
+            }
+        }
+    }
+    lock.lock();
     uint32_t vertexOffset, firstIndex;
     while (!_vertexAlloc.Allocate(vertexCount, &vertexOffset)) {
         _EnsureCapacity(_vertices, _vertexAlloc, vertexCount, sizeof(Vertex),
@@ -1172,48 +1247,7 @@ void Scene::_UploadGeometry(Mesh &m)
     m._vertexCount = vertexCount;
     m._firstIndex = firstIndex;
     m._indexCount = indexCount;
-    // Levels of detail of heavy meshes (lod.h), built on other threads; a
-    // later Commit stores them (the mesh draws whole until then).
-    if (indexCount / 3 >= kLodMinTriangles && m.facing == Mesh::kNotFacing) {
-        // Position, then the shading attributes as distances (see BuildLods):
-        // normals and colours relative to the bounding radius (a turn of
-        // 1/64 radian on an object 64 pixels in radius costs a pixel), uvs
-        // by how far they slide the texture over the surface (its area per
-        // uv area).
-        const float radius = 0.5f * Length(Vec3{m._boundsMax[0] - m._boundsMin[0], m._boundsMax[1] - m._boundsMin[1],
-                                                m._boundsMax[2] - m._boundsMin[2]});
-        double area = 0.0, uvArea = 0.0;
-        for (size_t t = 0; !m.uvs.empty() && t + 2 < indices.size(); t += 3) {
-            const Vertex &a = vertices[indices[t]], &b = vertices[indices[t + 1]], &c = vertices[indices[t + 2]];
-            const Vec3 pa{a.position[0], a.position[1], a.position[2]};
-            area += Length(Cross(Vec3{b.position[0], b.position[1], b.position[2]} - pa,
-                                 Vec3{c.position[0], c.position[1], c.position[2]} - pa));
-            uvArea += std::abs((b.uv[0] - a.uv[0]) * (c.uv[1] - a.uv[1]) - (b.uv[1] - a.uv[1]) * (c.uv[0] - a.uv[0]));
-        }
-        const float uvScale = uvArea > 0.0 ? float(std::sqrt(area / uvArea)) : 0.0f;
-        const size_t stride = 3 + (m.normals.empty() ? 0 : 3) + (uvScale > 0.0f ? 2 : 0) + (m.colors.empty() ? 0 : 3);
-        std::vector<float> lodVertices(vertices.size() * stride);
-        for (size_t v = 0; v < vertices.size(); ++v) {
-            float *out = std::copy_n(vertices[v].position, 3, &lodVertices[v * stride]);
-            for (int k = 0; k < 3 && !m.normals.empty(); ++k) {
-                *out++ = vertices[v].normal[k] * radius * kLodNormalWeight;
-            }
-            for (int k = 0; k < 2 && uvScale > 0.0f; ++k) {
-                *out++ = vertices[v].uv[k] * uvScale;
-            }
-            for (int k = 0; k < 3 && !m.colors.empty(); ++k) {
-                *out++ = FromHalf(vertices[v].color[k]) * radius * kLodColorWeight;
-            }
-        }
-        // Skinned: each vertex's influences (joint, weight), m.influences each.
-        std::vector<std::pair<uint32_t, float>> influences;
-        for (size_t v = 0; skinned && v < vertices.size(); ++v) {
-            for (uint32_t k = 0; k < m.influences; ++k) {
-                const SkinVertex &sv = skin[v * (m.influences == 8 ? 2 : 1) + k / 4];
-                const uint32_t pair = sv.weights[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu;
-                influences.push_back({sv.joints[(k % 4) / 2] >> (16 * (k % 2)) & 0xFFFFu, float(pair) / 65535.0f});
-            }
-        }
+    if (lods) {
         const uint32_t n = m.influences;
         _pendingLods.push_back(
             {&m, m._lodGeneration,
@@ -1862,7 +1896,19 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         return;
     }
+    // Dome textures decoded while the app synced the rest.
+    for (const auto &d : _domes) {
+        if (d->textureLoading.valid()) {
+            d->texture = d->textureLoading.get();
+            d->textureLoading = {};
+            _changed = true;
+        }
+    }
+    static std::atomic<int> commits{0};
+    const int commitNumber = ++commits;
+    CommitLaps lap{commitNumber <= 4 && std::getenv("HDVK_TIMING") != nullptr, commitNumber};
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
+    lap("wait");
     // First commit: create the pools so every descriptor has a buffer.
     if (!_vertices.buffer) {
         _EnsureCapacity(_vertices, _vertexAlloc, 0, sizeof(Vertex), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, false);
@@ -1947,14 +1993,43 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // after the ones they share.
     _early.clear();
     std::vector<uint8_t> uploaded(_meshes.size());
+    // Meshes of their own upload on all cores (_UploadGeometry builds their
+    // vertices outside its lock); the sharers then only join.
     for (const bool sharing : {false, true}) {
+        std::vector<Mesh *> todo;
         for (const auto &m : _meshes) {
             if (m->geometryDirty && (m->_donor != nullptr) == sharing) {
                 uploaded[m->_slot] = 1;
-                _UploadGeometry(*m);
+                todo.push_back(m.get());
             }
         }
+        std::atomic<size_t> next{0};
+        std::exception_ptr failed;
+        std::mutex failedMutex;
+        auto work = [&] {
+            for (size_t i; (i = next++) < todo.size();) {
+                try {
+                    _UploadGeometry(*todo[i]);
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(failedMutex);
+                    failed = failed ? failed : std::current_exception();
+                }
+            }
+        };
+        const size_t threads = sharing ? 0 : std::min<size_t>(std::thread::hardware_concurrency(), todo.size() / 8);
+        std::vector<std::thread> pool(threads > 1 ? threads - 1 : 0);
+        for (std::thread &t : pool) {
+            t = std::thread(work);
+        }
+        work();
+        for (std::thread &t : pool) {
+            t.join();
+        }
+        if (failed) {
+            std::rethrow_exception(failed);
+        }
     }
+    lap("geometry uploads");
     // The pools have it now: the arrays would only take memory (a scene's
     // whole geometry again, per corner). A new sync refills them; geometry
     // uploaded by a later Commit no longer finds this to share.
@@ -2013,6 +2088,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         // New points with velocities (deformation blur) move too.
         _gpu.moved = _gpu.moved || (joints && !geometry) || (geometry && m->_velocityCount > 0);
     }
+    lap("instances and joints");
     _gpu.moved = _gpu.moved || !motion.empty() || !shutterSkin.empty();
     shutterRows = shutterRows || !shutterSkin.empty();
     // Skinned meshes that uploaded replace the shutter's poses; without
@@ -2050,7 +2126,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
         it = _pendingLods.erase(it);
     }
+    lap("shutter poses and levels of detail");
     _Flush();
+    lap("flush");
 
     // Per-mesh tables, materials and textures are small: rebuilt every
     // commit from what visible meshes use (O(meshes), not O(instances)).
@@ -2343,6 +2421,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     // draws 11 G, which as one call ran ~2.2 s and reset the driver.
     // ponytail: a single slot over the budget stays one call; splitting it
     // needs instance ranges.
+    lap("draw table");
     constexpr double kChunkTriangles = 5e8;
     // Levels of detail (cull.comp picks one per instance): commands drawn
     // with their mesh's pipeline, counted at most all its instances.
@@ -2848,6 +2927,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.lightCount = lightCount;
     _gpu.localLightCount = localLightCount;
     _gpu.shapeLightCount = shapeLights;
+    lap("commands, materials, lights");
     if (_device && _device->sceneTraces) {
         _device->sceneTraces(_gpu.refraction,
                              _gpu.causticMin[0] <= _gpu.causticMax[0] && !_gpu.causticLights.empty());
