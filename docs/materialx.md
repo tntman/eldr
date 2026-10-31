@@ -72,7 +72,6 @@ Eldr matches Storm here.
 | color4 `image` outputs, HDR images, place2d | Karma darker or offset |
 | OpenPBR `emission_luminance` | Karma scales nits down (10000 renders as about 20) |
 | negative values | Karma keeps negative radiance; Eldr clamps at 0 (the harness clamps both) |
-| `kma_*` nodes | Karma-only VEX shaders, not MaterialX |
 
 ## How the compiler handles nodes
 
