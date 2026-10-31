@@ -45,7 +45,7 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (960, 540)
         custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
-        custom int karma:global:pathtracedsamples = 256
+        custom int karma:global:pathtracedsamples = 32
     }
     # --- end standard settings ---
     def RenderSettings "refractQuality1"

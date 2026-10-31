@@ -83,7 +83,6 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (960, 540)
     }
-
     def RenderSettings "eldr_final"
     {
         rel camera = </cam>
@@ -101,7 +100,6 @@ def Scope "Render"
         custom int eldr:rtShadowSamples = 1
         custom bool eldr:rtShadows = 1
     }
-
     def RenderSettings "karma"
     {
         rel camera = </cam>
