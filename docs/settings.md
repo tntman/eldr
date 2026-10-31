@@ -264,7 +264,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Sheen<br>`eldr:sheen` | on | A soft velvet-like layer: standard_surface `sheen`, OpenPBR `fuzz_*`. | Same |
 | Thin Film Iridescence<br>`eldr:thinFilm` | on | Soap-bubble colours: standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. | Same |
 | Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). | Same |
-| Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (MaterialX's) where the surface's spec has it: standard_surface and OpenPBR. UsdPreviewSurface is single scattering, as Storm and Karma. Off: single scattering everywhere. | |
+| Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (MaterialX's): standard_surface metals and OpenPBR. standard_surface's dielectric specular and UsdPreviewSurface are single scattering, as Karma. Off: single scattering everywhere. | |
 | Hair Shading<br>`eldr:hairShading` | on | BasisCurves shade as hair (Kajiya-Kay), no SSR. `primvars:eldr:hair = 0` opts a prim out. | |
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
 | Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |

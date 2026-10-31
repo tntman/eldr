@@ -113,6 +113,15 @@ vec3 DomeAlong(vec3 dir, float lod)
 // faces there draw nothing; other refracting fragments stay screen space.
 // ponytail: screen space: what isn't on screen isn't refracted; one
 // interface per layer, the thickness an estimate.
+// How far along e (object space, scaled so the ellipsoid is the unit ball;
+// the distance in e's units) o is from leaving the unit ball.
+float EllipsoidExit(vec3 o, vec3 e)
+{
+    float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
+    float disc = b * b - a * c;
+    return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
+}
+
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {
@@ -187,8 +196,26 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float thickness = thin ? 0.0 : min(behind, size);
     float spread = perceptual * perceptual * min(behind, camera);
     vec3 tint = m.transmission.rgb;
+    vec3 tintInside = tint;  // along the inside reflection
     if (m.refraction.z > 0.0 && !thin) {
-        tint = pow(max(tint, vec3(1e-4)), vec3(thickness / m.refraction.z));
+        // The path inside: through the ellipsoid that fills the mesh's
+        // bounds (exact for a ball), not the bounds' diagonal. A back face
+        // seen from outside adds none (its front face counted the path),
+        // from inside the medium the way to the camera. Flat meshes (water
+        // sheets): the distance to what is behind, at most the mesh's size.
+        mat4 xf = InstanceTransform(inst);
+        mat3 toObject = inverse(mat3(xf));
+        vec3 extent = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+        vec3 centre = 0.5 * (d.boundsMax.xyz + d.boundsMin.xyz);
+        float path = thickness, pathInside = thickness;
+        if (min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z))) {
+            vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
+            vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
+            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, EllipsoidExit(o, toObject * r / extent));
+            pathInside = EllipsoidExit(o, toObject * reflect(-v, n) / extent);
+        }
+        tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
+        tintInside = pow(max(tintInside, vec3(1e-4)), vec3(pathInside / m.refraction.z));
     }
     float lost = 0.0;  // coverage the app's background takes back
     // Where the lookup finds no drawn surface or sky (a dome hidden from the
@@ -208,7 +235,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         // The inside's reflection, all of it past the critical angle.
         vec3 inward = reflect(-v, n);
         vec4 mirrored = RefractedBackground(inward, min(camera, size), spread);
-        vec3 reflected = gRefracted * F * over * tint;
+        vec3 reflected = gRefracted * F * over * tintInside;
         vec3 light = mirrored.rgb + (1.0 - mirrored.a) * DomeAlong(inward, domeLod);
         color += reflected * light;
         gRefractedLight += reflected * light;
