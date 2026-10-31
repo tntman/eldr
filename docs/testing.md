@@ -51,9 +51,6 @@ materials and light rather than defaults:
   with Karma's default Eldr is 1.27x brighter there. That is Karma's default, not a lighting difference:
   to match Karma's look, raise the limit in Karma or accept the brighter bounce. The setting is part of
   every reference's hash.
-- **Prims without a material get a plain UsdPreviewSurface of their displayColor** in sunangle,
-  displacement and volume (`OVERS` in karma_refs.py, also hashed), because Karma's materialless surface differs
-  (see below).
 
 ### Karma's colour limit
 
@@ -66,7 +63,7 @@ so a white wall gets about 20/0.73 of the panel's 40. Eldr does both, from the s
 ### Baseline
 
 Mean luminance ratio Eldr / Karma, Houdini 22.0.466: cornell 1.03, emissive 1.01, lights 1.01, step4
-1.08, sunangle 1.01, mtlx 1.01, glass 0.93, volume 0.99, displacement 0.98, subsurface 0.94, caustics
+1.08, sunangle 1.01, mtlx 1.01, glass 0.93, volume 0.98, displacement 1.00, subsurface 0.94, caustics
 0.97, transparency_order 1.05, lightlink 1.02, ies 1.01. `tests/karma_golden.json` has all metrics; volume has its
 own tighter tolerance.
 ies's mald is 0.12: its near-black corners get 0.0002-0.0003 of bounce light in Eldr against 0.0001 in
@@ -74,13 +71,20 @@ Karma, under the 1% eps; its lit cells match within 2%.
 
 ### Prims without a material
 
-Karma shades a prim with only a displayColor differently from Eldr. In sunangle the ground (displayColor
-0.7, no material, under sun and sky) is 0.65 in Eldr, the Lambert value (0.68), and 0.28 in Karma.
-Under the same sun a UsdPreviewSurface with diffuse 0.5 renders equally in both (0.270 Karma, 0.272
-Eldr, Lambert 0.274), while a bare displayColor 0.5 gives 0.110 in Karma. Karma does use displayColor,
-but scaled by about 0.4 with a steeper falloff towards grazing light (about cos^1.45). That is not
-USD's displayColor fallback, so Eldr keeps Lambert of displayColor, as Storm does. Bind materials when
-measuring against Karma; the goldens do.
+Karma gives a prim without a material a default material that libBRAY builds in code (no shader file or
+setting describes it). Fitted to husk renders of flat patches under a distant light (0-75 degrees from
+the normal, viewed from 0-75 degrees) and under a white dome:
+
+- Diffuse: 0.4 x displayColor, Lambert, within 1% at every angle; white (0.4) without a displayColor.
+- An untinted highlight: under a white dome 0.033 of the light at any view angle (no Fresnel rise); at
+  the mirror direction 0.032 of the light whatever the angle; a Beckmann-like lobe of width 0.29.
+
+Eldr renders the same as a material (`eldr:defaultMaterialKarma`, on by default): diffuse within 1%, the
+highlight a GGX lobe of roughness 0.54 and F0 0.034. That highlight is narrower near the mirror
+direction, about twice Karma's 30 degrees off it, and up to 3.5x Karma's at a 60 degree mirror
+reflection (Schlick Fresnel); under a dome viewed at 60 degrees it is 0.046 against 0.031. The goldens
+compare sunangle, displacement and volume with their bare prims: Eldr / Karma 1.01, 1.00 and 0.98
+(2.29, 1.88 and 1.31 with the setting off).
 
 ### usdrecord adds a camera light; pass `--disableCameraLight` to compare
 

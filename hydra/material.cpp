@@ -2287,6 +2287,9 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         }
         TfToken primvar;
         ReadTexture(net, &surface, name, textures, m, ref, &primvar);
+        if (ref == &m->baseColorTex && m->baseColorFromDisplayColor) {
+            m->displayColorWeight = weight;  // standard_surface's base (0.8 by default), OpenPBR's base_weight
+        }
         // With a texture the constant only shows where it yields nothing:
         // the texture node's fallback, weighted as its texels are.
         for (int i = 0; ref->texture && i < size; ++i) {

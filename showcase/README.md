@@ -37,6 +37,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-30_19_curves_points` | Every curve basis as tubes or ribbons, points as spheres or discs, and hair shading. | `curves` vs `ribbons`, `sprites`, `hairOff` |
 | `2026-10-30_21_textures_colour` | Texture colour spaces (ACEScg, Rec.709), UDIM tiles and anisotropic filtering (`eldr:anisotropy`). | `textures` vs `aniso1` |
 | `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropic highlights and hair, plus toon shading. | `lobes` vs `lobesOff`, `toon` (`eldr:toonBands` 3) |
+| `2026-10-31_02_karma_default_material` | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity (`eldr:defaultMaterialKarma`). | `karmaDefault` vs `lambertDefault` |
 
 ## Ray tracing
 

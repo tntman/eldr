@@ -52,7 +52,7 @@ You can keep using Karma's controls; Eldr's own `eldr:` setting wins when both a
 |---|---|---|
 | Bounce light | One diffuse bounce by default | Every bounce (GI): rooms come out brighter. Raise Karma's Diffuse Limit to match |
 | Dome in the camera | Hidden unless Render Light Geometry is on | Shown unless it is authored off |
-| `displayColor` | Read as sRGB | Linear, as USD defines: a 0.5 grey floor is brighter in Eldr |
+| Prims without a material | A default material: 0.4 x `displayColor` and a faint highlight | The same; highlights at grazing angles are brighter. Turn off Karma Default Material for `displayColor` at full strength, as Storm |
 | Light groups | Direct and indirect light | Direct light only |
 | Subsurface | Random walk | Screen-space blur |
 | Shadow AOV | Counts occluded indirect light too | Lights' and the dome's direct shadow only |

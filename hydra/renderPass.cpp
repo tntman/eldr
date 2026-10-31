@@ -497,6 +497,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.fogGiAmbient, &frame.fogGiAmbient},
                                 {t2.lightTextures, &frame.lightTextures}, {t2.productLinear, &frame.linearBeauty},
                                 {t2.lightLinking, &frame.lightLinking}, {t2.lightIes, &frame.lightIes},
+                                {t2.defaultMaterialKarma, &frame.defaultMaterialKarma},
                                 {t2.displacementGraphs, &frame.displacementGraphs},
                                 {t2.lodFade, &frame.lodFade},
                                 {t2.splitDomeDirect, &frame.splitDomeDirect},
@@ -876,7 +877,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // Any may change the light table: commit once.
     const bool emissive = _scene.SetEmissiveLights(frame.emissiveLights, frame.emissiveLightThreshold,
                                                     frame.indirectClamp);
-    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes);
+    const bool lightOptions = _scene.SetLightOptions(frame.lightLinking, frame.lightIes) |
+                              _scene.SetDefaultMaterial(frame.defaultMaterialKarma);
     if (_scene.SetDomeSun(frame.domeSun, frame.domeSunThreshold) || emissive || lightOptions) {
         _scene.Commit(true);  // the frame's second: its motion stays
     }

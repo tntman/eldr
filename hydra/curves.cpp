@@ -398,6 +398,8 @@ void HdVkTessellated<Base>::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *
         const Primvar<GfVec3f> colors(sceneDelegate, id, HdTokens->displayColor);
         const GfVec3f color = colors.interp == HdInterpolationConstant ? colors.At(0, GfVec3f(0.5f)) : GfVec3f(0.5f);
         std::copy(color.data(), color.data() + 3, m.color);
+        m.opacity = Primvar<float>(sceneDelegate, id, HdTokens->displayOpacity).At(0, 1.0f);  // its first value
+        m.colorAuthored = !colors.values.empty();
         m.points.clear();
         m.normals.clear();
         m.uvs.clear();
