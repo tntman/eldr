@@ -108,7 +108,7 @@ There is no menu entry named "Render Statistics" in Houdini 22. Unverified: whic
 
 ## Materials
 
-Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; median dE 1.7 (docs/materialx.md).
+Houdini's Material Library and Karma-context (`kma`) networks are read as MaterialX, with Houdini's MaterialX library when `$HFS` is set. Karma's own VEX nodes that have no MaterialX definition are compiled by Eldr: Karma Ramp Const (`kma_rampconst`, every ramp basis as `hou.Ramp` evaluates it), Karma Hex-Tiled Texture (`kma_color_hextiling`, as Houdini's viewport GLSL; `direction` and the `weights` output aren't read) and Voronoi Noise 3D (`kma_voronoinoise3d`, distances with the four metrics; MaterialX's cells, so the pattern differs from Karma's). Against Karma all 121 basic and quick materials compile; the median dE is in the Houdini basic + quick row of the table in docs/materialx.md.
 
 ## Volumes
 
