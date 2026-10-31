@@ -277,7 +277,7 @@ Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSp
 
 Material context order: `mtlx`, Storm's `glslfx`, then universal (`outputs:surface`). Surfaces Eldr doesn't read (a mix of surface shaders, a BSDF graph with no lobe Eldr maps) render the default grey and warn once; docs/materialx.md has the measured node coverage.
 
-**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_16_materialx_nodes` (MaterialX nodes and surfaces), `2026-10-31_04_bsdf_graphs` (MaterialX BSDF graphs), `2026-10-31_02_karma_default_material` (Karma default material), `2026-10-30_22_material_lobes` (Material lobes), `2026-10-30_13_subsurface` (Subsurface scattering), `2026-10-30_18_displacement` (Displacement), `2026-10-29_21_displacement_bound` (Displacement bound), `2026-10-30_21_textures_colour` (Textures and colour spaces), `2026-10-29_19_texture_compression` (Texture compression).
+**Showcases** (open `showcase/<folder>/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`): `2026-10-29_16_materialx_nodes` (MaterialX nodes and surfaces), `2026-10-31_05_bsdf_graphs` (MaterialX BSDF graphs), `2026-10-31_02_karma_default_material` (Karma default material), `2026-10-30_22_material_lobes` (Material lobes), `2026-10-30_13_subsurface` (Subsurface scattering), `2026-10-30_18_displacement` (Displacement), `2026-10-29_21_displacement_bound` (Displacement bound), `2026-10-30_21_textures_colour` (Textures and colour spaces), `2026-10-29_19_texture_compression` (Texture compression).
 
 ### Spec conformance
 

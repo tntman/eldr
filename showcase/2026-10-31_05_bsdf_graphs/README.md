@@ -3,7 +3,7 @@
 <!-- summary -->
 MaterialX `surface` shaders built from pbrlib BSDFs (mix, layer, add, multiply of diffuse, dielectric, conductor, sheen and subsurface BSDFs, an EDF), Lama's BSDFs, and glTF PBR, on spheres.
 
-- **Compare:** open `showcase/2026-10-31_04_bsdf_graphs/scene.usda` and compare `eldr_default` vs `karma`; the feature's A/B nodes: `graphsOn` vs `graphsOff` (`eldr:materialGraphs` off).
+- **Compare:** open `showcase/2026-10-31_05_bsdf_graphs/scene.usda` and compare `eldr_default` vs `karma`; the feature's A/B nodes: `graphsOn` vs `graphsOff` (`eldr:materialGraphs` off).
 - **Look at:** Each sphere against Karma: the mixed diffuse is the average of red and green, the coated gold has a sharp clear highlight over a blurred gold one, the masked sphere is red paint on the left and gold on the right.
 <!-- summary -->
 
@@ -16,9 +16,9 @@ A/B: `/Render/graphsOn` (default) vs `/Render/graphsOff` (`eldr:materialGraphs` 
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_04_bsdf_graphs\scene.usda`
-- husk: `husk -R Eldr -s /Render/graphsOn showcase/2026-10-31_04_bsdf_graphs/scene.usda`; Karma: `husk -s /Render/karma ...`
-- usdrecord: `usdenv usdrecord --renderer Eldr --disableCameraLight --camera /cam showcase\2026-10-31_04_bsdf_graphs\scene.usda out.png`
+- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_05_bsdf_graphs\scene.usda`
+- husk: `husk -R Eldr -s /Render/graphsOn showcase/2026-10-31_05_bsdf_graphs/scene.usda`; Karma: `husk -s /Render/karma ...`
+- usdrecord: `usdenv usdrecord --renderer Eldr --disableCameraLight --camera /cam showcase\2026-10-31_05_bsdf_graphs\scene.usda out.png`
 
 ## Houdini scene
 
