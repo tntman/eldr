@@ -196,8 +196,18 @@ HdVkMesh::HdVkMesh(SdfPath const &id, vkr::Scene *scene)
 {
 }
 
+namespace {
+std::atomic<int> subdivisionMeshes{0};
+}
+
+int HdVkSubdivisionMeshes()
+{
+    return subdivisionMeshes.load();
+}
+
 HdVkMesh::~HdVkMesh()
 {
+    subdivisionMeshes -= _subdivisionCounted ? 1 : 0;
     _scene->RemoveMesh(_mesh);
     for (vkr::Mesh *subset : _subsetMeshes) {
         _scene->RemoveMesh(subset);
@@ -229,6 +239,7 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     HdDirtyBits *dirtyBits, TfToken const &)
 {
     HdVkTimedCall timed(HdVkCallTimes::kSync);
+    HDVK_MARK(1, "first mesh sync");
     HdVkRenderDelegate::NoteSceneEdit(sceneDelegate);
     const SdfPath &id = GetId();
     vkr::Mesh &m = *_mesh;
@@ -258,6 +269,9 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         topology.SetSubdivTags(GetSubdivTags(sceneDelegate));  // creases, corners, boundary rules
         if (!(topology == _topology)) {
             _topology = topology;
+            const bool subdivision = _topology.GetScheme() != PxOsdOpenSubdivTokens->none;
+            subdivisionMeshes += int(subdivision) - int(_subdivisionCounted);
+            _subdivisionCounted = subdivision;
             HdMeshUtil(&_topology, id).ComputeTriangleIndices(&_triangles, &_primitiveParams);
             geometryDirty = true;
         }

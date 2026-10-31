@@ -84,6 +84,10 @@ bool HdVkMotionBlur(HdSceneDelegate *sceneDelegate, SdfPath const &id);
 // `pointCount` there.
 VtVec3fArray HdVkShutterVelocities(HdSceneDelegate *sceneDelegate, SdfPath const &id, size_t pointCount);
 
+// Subdivision surface meshes in the process: without any, a new dicing
+// view (eldr:screenDicing) has nothing to re-dice.
+int HdVkSubdivisionMeshes();
+
 // Sync() only copies scene data into its vkr::Mesh; no Vulkan here.
 class HdVkMesh final : public HdMesh
 {
@@ -168,6 +172,7 @@ private:
     bool _FlattenRefined();
     int _refineLevel = 0;
     bool _asSubdivision = false;  // primvars:eldr:renderAsSubdivision
+    bool _subdivisionCounted = false;  // in HdVkSubdivisionMeshes
     std::shared_ptr<HdVkSubdivision> _subdivision;
     // The points changed after the first sync: keep _subdivision. A still
     // mesh frees it (its refiner holds every level: Kitchen_set at level 3,
