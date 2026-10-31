@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <optional>
 #include <set>
@@ -81,15 +82,20 @@ mx::DocumentPtr const &MxLibraries()
 }
 
 // A node id's MaterialX nodedef: the libraries', else a document's own
-// (HdMtlxGetNodeDef finds it through Sdr's implementation URI).
-mx::NodeDefPtr MxNodeDef(TfToken const &id)
+// (HdMtlxGetNodeDef finds it through Sdr's implementation URI). `known`:
+// a nodedef found otherwise (a nodegraph's own document's, MxNodeDefOf),
+// remembered for an id that has none.
+mx::NodeDefPtr MxNodeDef(TfToken const &id, mx::NodeDefPtr const &known = nullptr)
 {
     static std::mutex mutex;
     static std::map<TfToken, mx::NodeDefPtr> cache;
     std::lock_guard<std::mutex> lock(mutex);
     const auto it = cache.find(id);
-    if (it != cache.end()) {
+    if (it != cache.end() && (it->second || !known)) {
         return it->second;
+    }
+    if (known) {
+        return cache[id] = known;
     }
     mx::NodeDefPtr def = MxLibraries()->getNodeDef(id.GetString());
     if (!def && !id.IsEmpty() && SdrRegistry::GetInstance().GetShaderNodeByIdentifier(id)) {
@@ -911,6 +917,64 @@ bool ToVec4(VtValue const &v, GfVec4f *out)
     return true;
 }
 
+// The nodegraph implementing node `n` (null: none), its nodes added once to
+// `nodes` as Hydra nodes under `path`: interface inputs take the node's
+// connections, values (with their colour spaces) or its nodedef's defaults,
+// a defaultgeomprop as the node `geomProp` makes (none without it).
+mx::NodeGraphPtr ExpandNodeGraph(HdMaterialNode2 const &n, SdfPath const &path,
+                                 std::map<SdfPath, HdMaterialNode2> *nodes,
+                                 std::function<SdfPath(std::string const &)> const &geomProp)
+{
+    const mx::NodeDefPtr def = MxNodeDef(n.nodeTypeId);
+    const mx::InterfaceElementPtr impl = def ? def->getImplementation() : nullptr;
+    const mx::NodeGraphPtr graph = impl ? impl->asA<mx::NodeGraph>() : nullptr;
+    const std::vector<mx::NodePtr> graphNodes = graph ? graph->getNodes() : std::vector<mx::NodePtr>();
+    auto inner = [&](std::string const &name) { return path.AppendChild(TfToken(TfMakeValidIdentifier(name))); };
+    if (graphNodes.empty() || nodes->count(inner(graphNodes[0]->getName()))) {
+        return graph;
+    }
+    for (const mx::NodePtr &node : graphNodes) {
+        const mx::NodeDefPtr nodeDef = MxNodeDefOf(node);
+        HdMaterialNode2 &h = (*nodes)[inner(node->getName())];
+        h.nodeTypeId = TfToken(nodeDef ? nodeDef->getName() : node->getCategory());
+        if (nodeDef) {
+            MxNodeDef(h.nodeTypeId, nodeDef);  // a document's own nodedef: later lookups by id find it
+        }
+        for (const mx::InputPtr &in : node->getInputs()) {
+            const TfToken name(in->getName());
+            if (in->hasNodeName()) {
+                const std::string out = in->getOutputString();
+                h.inputConnections[name] = {{inner(in->getNodeName()), TfToken(out.empty() ? "out" : out)}};
+            } else if (in->hasInterfaceName()) {
+                const TfToken outer(in->getInterfaceName());
+                const auto c = n.inputConnections.find(outer);
+                const auto value = n.parameters.find(outer);
+                const mx::InputPtr d = def->getActiveInput(outer.GetString());
+                if (c != n.inputConnections.end() && !c->second.empty()) {
+                    h.inputConnections[name] = c->second;
+                } else if (value != n.parameters.end()) {
+                    h.parameters[name] = value->second;
+                    const TfToken cs(SdfPath::JoinIdentifier(TfToken("colorSpace"), outer));
+                    if (n.parameters.count(cs)) {
+                        h.parameters[TfToken(SdfPath::JoinIdentifier(TfToken("colorSpace"), name))] =
+                            n.parameters.at(cs);
+                    }
+                } else if (d && d->hasDefaultGeomPropString()) {
+                    if (geomProp) {
+                        h.inputConnections[name] = {{geomProp(d->getDefaultGeomPropString()), TfToken("out")}};
+                    }
+                } else if (d && d->getValue()) {
+                    h.parameters[name] = MxValue(d->getValue());
+                }
+            } else if (in->getValue()) {  // file names with their [tokens] filled in
+                h.parameters[name] = in->getType() == "filename" ? VtValue(in->getResolvedValueString())
+                                                                 : MxValue(in->getValue());
+            }
+        }
+    }
+    return graph;
+}
+
 // Compiles the shading graphs behind material inputs that the texture and
 // constant path can't express (MaterialX math, several textures, primvars,
 // noise)
@@ -1249,53 +1313,15 @@ private:
 
     // A node with a nodegraph implementation (MaterialX's *_ng.mtlx, Houdini's
     // library, a document's own nodedefs) as the nodegraph's nodes, made
-    // once as Hydra nodes under its path: interface inputs take the node's
-    // connections, values or its nodedef's defaults (geomprops included).
+    // once as Hydra nodes under its path (ExpandNodeGraph).
     std::optional<Value> _Expand(HdMaterialNode2 const &n, SdfPath const &path, TfToken const &output, int depth)
     {
-        const mx::NodeDefPtr def = MxNodeDef(n.nodeTypeId);
-        const mx::InterfaceElementPtr impl = def ? def->getImplementation() : nullptr;
-        const mx::NodeGraphPtr graph = impl ? impl->asA<mx::NodeGraph>() : nullptr;
+        const mx::NodeGraphPtr graph =
+            ExpandNodeGraph(n, path, &_extra, [this](std::string const &g) { return _GeomProp(g); });
         if (!graph) {
             return std::nullopt;
         }
         auto inner = [&](std::string const &name) { return path.AppendChild(TfToken(TfMakeValidIdentifier(name))); };
-        if (_expanded.insert(path).second) {
-            for (const mx::NodePtr &node : graph->getNodes()) {
-                const mx::NodeDefPtr nodeDef = MxNodeDefOf(node);
-                HdMaterialNode2 &h = _extra[inner(node->getName())];
-                h.nodeTypeId = TfToken(nodeDef ? nodeDef->getName() : node->getCategory());
-                for (const mx::InputPtr &in : node->getInputs()) {
-                    const TfToken name(in->getName());
-                    if (in->hasNodeName()) {
-                        const std::string out = in->getOutputString();
-                        h.inputConnections[name] = {{inner(in->getNodeName()), TfToken(out.empty() ? "out" : out)}};
-                    } else if (in->hasInterfaceName()) {
-                        const TfToken outer(in->getInterfaceName());
-                        const auto c = n.inputConnections.find(outer);
-                        const auto value = n.parameters.find(outer);
-                        const mx::InputPtr d = def->getActiveInput(outer.GetString());
-                        if (c != n.inputConnections.end() && !c->second.empty()) {
-                            h.inputConnections[name] = c->second;
-                        } else if (value != n.parameters.end()) {
-                            h.parameters[name] = value->second;
-                            const TfToken cs(SdfPath::JoinIdentifier(TfToken("colorSpace"), outer));
-                            if (n.parameters.count(cs)) {
-                                h.parameters[TfToken(SdfPath::JoinIdentifier(TfToken("colorSpace"), name))] =
-                                    n.parameters.at(cs);
-                            }
-                        } else if (d && d->hasDefaultGeomPropString()) {
-                            h.inputConnections[name] = {{_GeomProp(d->getDefaultGeomPropString()), TfToken("out")}};
-                        } else if (d && d->getValue()) {
-                            h.parameters[name] = MxValue(d->getValue());
-                        }
-                    } else if (in->getValue()) {  // file names with their [tokens] filled in
-                        h.parameters[name] = in->getType() == "filename" ? VtValue(in->getResolvedValueString())
-                                                                         : MxValue(in->getValue());
-                    }
-                }
-            }
-        }
         mx::OutputPtr out = output.IsEmpty() ? nullptr : graph->getOutput(output.GetString());
         if (!out) {
             const std::vector<mx::OutputPtr> outs = graph->getOutputs();
@@ -1950,9 +1976,8 @@ private:
     std::map<std::pair<SdfPath, TfToken>, Value> _memo;
     // Memoized values with a bypassed node upstream (they count again where reused).
     std::set<std::pair<SdfPath, TfToken>> _tainted;
-    // Nodes of expanded nodegraphs and geomprop readers, and the expanded nodes.
+    // Nodes of expanded nodegraphs and geomprop readers.
     std::map<SdfPath, HdMaterialNode2> _extra;
-    std::set<SdfPath> _expanded;
     size_t _fallbackEvents = 0, _hardFailures = 0;
     std::string _failed;
 };
@@ -2204,6 +2229,542 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
     m->toonSoftness = ReadOr(p, _tokens->toonSoftness, 0.05f);
 }
 
+// MaterialX's `surface` of pbrlib BSDFs and EDFs, mapped onto one
+// standard_surface (the lobes Eldr has). The graph's leaves, weighted as
+// mix, layer, add and multiply weight them, become its inputs; connected
+// weights and colours combine through stdlib multiply/add nodes that the
+// graph compiler runs. Nodegraph-implemented nodes (Lama's, a document's
+// own BSDFs and surface shaders) are expanded first.
+//   oren_nayar / burley diffuse: base_color (their weighted sum)
+//   dielectric R (RT on top of a layer): specular; on top of a reflecting
+//     base: coat. T or RT not on top of a layer: transmission (T on top of
+//     a layer passes light to the base, as MaterialX's layer)
+//   conductor: metalness; base_color its F0 (from ior and extinction, or
+//     artistic_ior's reflectivity), specular_color its edge colour
+//   generalized_schlick: a conductor of color0 and color82 alone, a
+//     dielectric of color0's F0 on top of a layer
+//   sheen: sheen; subsurface and translucent: subsurface
+//   uniform, conical, measured EDF: emission_color
+// ponytail: one base_color serves diffuse and metal (exact where a mix
+// weight is 0 or 1, as with masks); roughness, IORs and lobe colours come
+// from the first leaf that has them; layer thickness, VDFs (interior
+// absorption) and thin-walled translucency aren't read.
+class BsdfMapper
+{
+public:
+    explicit BsdfMapper(HdMaterialNetwork2 const &network)
+        : net(network)
+    {
+    }
+
+    // Points the surface terminal at a standard_surface made from `path`'s
+    // BSDF graph, or at the surface a nodegraph-implemented shader wraps.
+    // False if no lobe maps (the material stays the default).
+    bool Map(SdfPath path)
+    {
+        for (int depth = 0;; ++depth) {
+            const auto it = net.nodes.find(path);
+            if (depth > 8 || it == net.nodes.end()) {
+                return false;
+            }
+            HdMaterialNode2 const &node = it->second;
+            if (std::any_of(Surfaces().begin(), Surfaces().end(),
+                            [&](SurfaceInputs const &k) { return k.id == node.nodeTypeId; })) {
+                net.terminals[HdMaterialTerminalTokens->surface] = {path, TfToken("out")};
+                return true;
+            }
+            if (Category(node) == "surface") {
+                break;
+            }
+            const mx::NodeGraphPtr graph = ExpandNodeGraph(node, path, &net.nodes, nullptr);
+            const std::optional<HdMaterialConnection2> out = graph ? GraphOutput(graph, node, path, TfToken())
+                                                                   : std::nullopt;
+            if (!out) {
+                return false;
+            }
+            path = out->upstreamNode;
+        }
+        HdMaterialNode2 const &surface = net.nodes.at(path);
+        int found = 0;
+        for (const char *input : {"bsdf", "edf"}) {
+            const auto c = surface.inputConnections.find(TfToken(input));
+            if (c != surface.inputConnections.end() && !c->second.empty()) {
+                found |= Walk(c->second[0], F(1.0f), C(GfVec3f(1.0f)), 0, 0);
+            }
+        }
+        if (!found) {
+            return false;
+        }
+        const Term opacity = In(surface, "opacity", 1.0f);
+        const auto thinWalled = surface.parameters.find(TfToken("thin_walled"));
+
+        const SdfPath sPath("/__eldr_bsdf/surface");
+        HdMaterialNode2 &s = net.nodes[sPath];
+        s.nodeTypeId = _tokens->ND_standard_surface_surfaceshader;
+        auto set = [&](const char *name, Term const &t) { Set(&s, TfToken(name), t); };
+        const std::optional<Term> diffuse = Sum("base_color"), metal = Fold(_metal), metalColor = Fold(_metalColor);
+        const bool dielectric = _sums.count(TfToken("specular")) || _sums.count(TfToken("transmission")) ||
+                                _sums.count(TfToken("subsurface"));
+        if (metal && !diffuse && !dielectric) {
+            set("metalness", F(1.0f));  // its colour carries its weight
+            set("base_color", *metalColor);
+        } else if (metal) {
+            set("metalness", *metal);
+            set("base_color", diffuse ? Op("add", *diffuse, *metalColor)
+                                      : metal->Connected() ? *metalColor : Op("divide", *metalColor, *metal));
+        } else {
+            set("base_color", diffuse ? *diffuse : C(GfVec3f(0.0f)));
+        }
+        // standard_surface's specular also weights the metal's edge colour.
+        // standard_surface weighs specular, transmission and subsurface
+        // within the dielectric's share (1 - metalness): a constant metal
+        // weight scales them up to it (a graph-driven one is a mask: exact).
+        const float share = metal && !metal->Connected() && metal->v[0] < 1.0f ? 1.0f - std::max(metal->v[0], 0.0f)
+                                                                                : 1.0f;
+        auto dielectricWeight = [&](std::optional<Term> t) {
+            if (t && share < 1.0f) {
+                t = Op("multiply", *t, F(1.0f / share));
+                t->v = t->Connected() ? t->v : GfVec3f(std::min(t->v[0], 1.0f));
+            }
+            return t;
+        };
+        const std::optional<Term> specular = dielectricWeight(Sum("specular"));
+        set("specular", specular ? *specular : F(metal ? 1.0f : 0.0f));
+        for (const char *name : {"coat", "sheen", "transmission", "subsurface", "emission_color"}) {
+            const bool dielectricPart = std::string(name) == "transmission" || std::string(name) == "subsurface";
+            if (const std::optional<Term> t = dielectricPart ? dielectricWeight(Sum(name)) : Sum(name)) {
+                set(name, *t);
+            }
+        }
+        if (_sums.count(TfToken("emission_color"))) {
+            set("emission", F(1.0f));
+        }
+        for (auto const &[name, t] : _first) {
+            Set(&s, name, t);
+        }
+        if (opacity.Connected() || opacity.v[0] != 1.0f) {
+            set("opacity", opacity);
+        }
+        if (thinWalled != surface.parameters.end()) {
+            s.parameters[TfToken("thin_walled")] = thinWalled->second;
+        }
+        net.terminals[HdMaterialTerminalTokens->surface] = {sPath, TfToken("out")};
+        return true;
+    }
+
+    HdMaterialNetwork2 net;
+    std::vector<std::string> unsupported;  // nodes left out: "name (id)"
+
+private:
+    // A float or colour (n 1 or 3; a vector2 has 2): a constant (floats
+    // splat), or a connected output.
+    struct Term {
+        GfVec3f v{0.0f};
+        int n = 1;
+        HdMaterialConnection2 c;
+        bool Connected() const { return !c.upstreamNode.IsEmpty(); }
+        bool Is(float x) const { return !Connected() && v == GfVec3f(x); }
+    };
+    static Term F(float x)
+    {
+        Term t;
+        t.v = GfVec3f(x);
+        return t;
+    }
+    static Term C(GfVec3f const &c)
+    {
+        Term t;
+        t.v = c;
+        t.n = 3;
+        return t;
+    }
+
+    enum : int { kAny = 1, kReflects = 2 };
+
+    static std::string Category(HdMaterialNode2 const &n)
+    {
+        const mx::NodeDefPtr def = MxNodeDef(n.nodeTypeId);
+        return def ? def->getNodeString() : n.nodeTypeId.GetString();
+    }
+
+    HdMaterialNode2 const *Up(Term const &t) const
+    {
+        const auto it = t.Connected() ? net.nodes.find(t.c.upstreamNode) : net.nodes.end();
+        return it == net.nodes.end() ? nullptr : &it->second;
+    }
+
+    // Input `name`: connected, authored (colours in linear Rec.709), its
+    // nodedef's default, else `fallback`.
+    static Term In(HdMaterialNode2 const &node, const char *name, float fallback = 0.0f)
+    {
+        const TfToken token(name);
+        const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId);
+        const mx::InputPtr d = def ? def->getActiveInput(name) : nullptr;
+        Term t;
+        t.n = d ? int(Components(d->getType())) : 1;
+        const auto c = node.inputConnections.find(token);
+        if (c != node.inputConnections.end() && !c->second.empty()) {
+            t.c = c->second[0];
+            return t;
+        }
+        const auto p = node.parameters.find(token);
+        const VtValue v = p != node.parameters.end() ? p->second : d ? MxValue(d->getValue()) : VtValue();
+        std::vector<float> f;
+        uint32_t k = 0;
+        if (v.IsEmpty() || !HdVkToFloats(v, &f, &k) || f.empty()) {
+            t.v = GfVec3f(fallback);
+            return t;
+        }
+        t.n = int(std::min<size_t>(f.size(), 3));
+        t.v = t.n == 1 ? GfVec3f(f[0]) : GfVec3f(f[0], f[1], t.n > 2 ? f[2] : 0.0f);
+        if (t.n == 3 && p != node.parameters.end()) {
+            t.v = ReadColor(node.parameters, token, t.v);
+        }
+        return t;
+    }
+
+    static std::string Str(HdMaterialNode2 const &node, const char *name)
+    {
+        const auto p = node.parameters.find(TfToken(name));
+        if (p != node.parameters.end() && p->second.IsHolding<std::string>()) {
+            return p->second.UncheckedGet<std::string>();
+        }
+        if (p != node.parameters.end() && p->second.IsHolding<TfToken>()) {
+            return p->second.UncheckedGet<TfToken>().GetString();
+        }
+        const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId);
+        const mx::InputPtr d = def ? def->getActiveInput(name) : nullptr;
+        return d ? d->getValueString() : std::string();
+    }
+
+    static void Set(HdMaterialNode2 *node, TfToken const &name, Term const &t)
+    {
+        if (t.Connected()) {
+            node->inputConnections[name] = {t.c};
+        } else {
+            node->parameters[name] = t.n == 1 ? VtValue(t.v[0]) : VtValue(t.v);
+        }
+    }
+
+    // A stdlib node `id` of `inputs`, added to the network.
+    Term Node(std::string const &id, std::vector<std::pair<const char *, Term>> const &inputs, int n)
+    {
+        const SdfPath path = SdfPath("/__eldr_bsdf").AppendChild(TfToken("op" + std::to_string(_ops++)));
+        HdMaterialNode2 &node = net.nodes[path];
+        node.nodeTypeId = TfToken(id);
+        for (auto const &[name, t] : inputs) {
+            Set(&node, TfToken(name), t);
+        }
+        Term t;
+        t.n = n;
+        t.c = {path, TfToken("out")};
+        return t;
+    }
+
+    // a `op` b (multiply, add, subtract, divide): folded when constant.
+    Term Op(std::string const &op, Term a, Term b)
+    {
+        const bool mul = op == "multiply", add = op == "add";
+        if (!a.Connected() && !b.Connected()) {
+            Term r = a.n >= b.n ? a : b;
+            for (int i = 0; i < 3; ++i) {
+                const float x = a.v[i], y = b.v[i];
+                r.v[i] = mul ? x * y : add ? x + y : op == "subtract" ? x - y : y != 0.0f ? x / y : 0.0f;
+            }
+            return r;
+        }
+        if ((mul || add) && a.n < b.n) {
+            std::swap(a, b);
+        }
+        if ((mul && b.Is(1.0f)) || (add && b.Is(0.0f)) || (op == "subtract" && b.Is(0.0f))) {
+            return a;
+        }
+        if (mul && (a.Is(0.0f) || b.Is(0.0f))) {
+            Term zero = F(0.0f);
+            zero.n = std::max(a.n, b.n);
+            return zero;
+        }
+        if (mul && a.Is(1.0f) && a.n == b.n) {
+            return b;
+        }
+        if (a.n < b.n) {  // float - colour, float / colour
+            a = a.Connected() ? Node("ND_convert_float_color3", {{"in", a}}, 3) : C(a.v);
+        }
+        return Node("ND_" + op + (a.n == 3 ? "_color3" : "_float") + (a.n == 3 && b.n == 1 ? "FA" : ""),
+                    {{"in1", a}, {"in2", b}}, a.n);
+    }
+
+    std::optional<Term> Fold(std::vector<Term> const &terms)
+    {
+        std::optional<Term> sum;
+        for (Term const &t : terms) {
+            sum = sum ? Op("add", *sum, t) : t;
+        }
+        return sum;
+    }
+
+    std::optional<Term> Sum(const char *name)
+    {
+        const auto it = _sums.find(TfToken(name));
+        return it == _sums.end() ? std::nullopt : Fold(it->second);
+    }
+
+    void Add(const char *name, Term const &t) { _sums[TfToken(name)].push_back(t); }
+    void First(const char *name, Term const &t) { _first.emplace(TfToken(name), t); }
+
+    // `t` past switches with a constant `which` and converts that keep its size.
+    Term Through(Term t) const
+    {
+        for (int i = 0; i < 16; ++i) {
+            HdMaterialNode2 const *u = Up(t);
+            const std::string category = u ? Category(*u) : std::string();
+            Term next;
+            if (category == "switch") {
+                const Term which = In(*u, "which");
+                if (which.Connected()) {
+                    break;
+                }
+                next = In(*u, ("in" + std::to_string(int(which.v[0]) + 1)).c_str());
+            } else if (category == "convert") {
+                next = In(*u, "in");
+                if (next.n != t.n) {
+                    break;
+                }
+            } else {
+                break;
+            }
+            next.n = t.n;
+            t = next;
+        }
+        return t;
+    }
+
+    // A vector2 roughness (alpha) as specular_roughness and
+    // specular_anisotropy: roughness_anisotropy's inputs, else alpha's
+    // square root (of its first component; of constants, their mean).
+    std::pair<Term, Term> Roughness(HdMaterialNode2 const &node)
+    {
+        const Term a = Through(In(node, "roughness"));
+        if (!a.Connected()) {
+            return {F(std::sqrt(std::sqrt(std::max(a.v[0], 0.0f) * std::max(a.n > 1 ? a.v[1] : a.v[0], 0.0f)))),
+                    F(0.0f)};
+        }
+        HdMaterialNode2 const *u = Up(a);
+        if (u && Category(*u) == "roughness_anisotropy") {
+            return {In(*u, "roughness"), In(*u, "anisotropy")};
+        }
+        Term x = Node("ND_extract_vector2", {{"in", a}}, 1);
+        net.nodes[x.c.upstreamNode].parameters[TfToken("index")] = VtValue(0);
+        return {Node("ND_sqrt_float", {{"in", x}}, 1), F(0.0f)};
+    }
+
+    // A conductor's F0 and edge colour (artistic_ior's inverse, Gulbrandsen):
+    // artistic_ior's own inputs, else from ior n and extinction k (white
+    // edge when they are connected).
+    std::pair<Term, Term> Conductor(HdMaterialNode2 const &node)
+    {
+        const Term n = Through(In(node, "ior")), k = Through(In(node, "extinction"));
+        HdMaterialNode2 const *u = Up(n);
+        if (u && Category(*u) == "artistic_ior") {
+            return {In(*u, "reflectivity"), In(*u, "edge_color")};
+        }
+        const Term k2 = Op("multiply", k, k), a = Op("subtract", n, C(GfVec3f(1.0f))),
+                   b = Op("add", n, C(GfVec3f(1.0f)));
+        const Term f0 = Op("divide", Op("add", Op("multiply", a, a), k2), Op("add", Op("multiply", b, b), k2));
+        if (f0.Connected()) {
+            return {f0, C(GfVec3f(1.0f))};
+        }
+        GfVec3f edge;
+        for (int i = 0; i < 3; ++i) {
+            const float r = std::clamp(f0.v[i], 0.0f, 0.99f), s = std::sqrt(r);
+            const float nMin = (1.0f - r) / (1.0f + r), nMax = (1.0f + s) / (1.0f - s);
+            edge[i] = std::clamp((nMax - n.v[i]) / std::max(nMax - nMin, 1e-6f), 0.0f, 1.0f);
+        }
+        return {f0, C(edge)};
+    }
+
+    void Metal(Term const &w, Term const &tint, Term const &f0, Term const &edge, HdMaterialNode2 const &node)
+    {
+        _metal.push_back(w);
+        _metalColor.push_back(Op("multiply", Op("multiply", f0, tint), w));
+        const auto [roughness, anisotropy] = Roughness(node);
+        First("specular_color", edge);
+        First("specular_roughness", roughness);
+        First("specular_anisotropy", anisotropy);
+    }
+
+    void ThinFilm(HdMaterialNode2 const &node)
+    {
+        const Term t = In(node, "thinfilm_thickness");
+        if (t.Connected() || t.v[0] > 0.0f) {
+            First("thin_film_thickness", t);
+            First("thin_film_IOR", In(node, "thinfilm_ior", 1.5f));
+        }
+    }
+
+    void Normal(HdMaterialNode2 const &node)
+    {
+        const Term n = In(node, "normal");
+        if (n.Connected()) {
+            First("normal", n);
+        }
+    }
+
+    // The lobes under connection `c`, weighted by w (float) and tint
+    // (colour). ctx: 0 free, 1 the top of a layer, 2 the top of a layer
+    // over a reflecting base (a coat). Returns kAny | kReflects.
+    int Walk(HdMaterialConnection2 const &c, Term const &w, Term const &tint, int ctx, int depth)
+    {
+        const auto it = net.nodes.find(c.upstreamNode);
+        if (depth > 64 || it == net.nodes.end()) {
+            return 0;
+        }
+        const SdfPath path = it->first;
+        HdMaterialNode2 const &node = it->second;  // std::map: stays valid as nodes are added
+        const std::string category = Category(node);
+        auto in = [&](const char *name, float fallback = 0.0f) { return In(node, name, fallback); };
+        auto sub = [&](const char *name, Term const &w2, Term const &t2, int ctx2) {
+            const auto i = node.inputConnections.find(TfToken(name));
+            return i == node.inputConnections.end() || i->second.empty() ? 0
+                                                                         : Walk(i->second[0], w2, t2, ctx2, depth + 1);
+        };
+        if (category == "mix") {
+            const Term m = in("mix");
+            return sub("fg", Op("multiply", w, m), tint, ctx) |
+                   sub("bg", Op("multiply", w, Op("subtract", F(1.0f), m)), tint, ctx);
+        }
+        if (category == "add") {
+            return sub("in1", w, tint, ctx) | sub("in2", w, tint, ctx);
+        }
+        if (category == "multiply") {
+            const Term k = in("in2", 1.0f);
+            return k.n == 3 ? sub("in1", w, Op("multiply", tint, k), ctx) : sub("in1", Op("multiply", w, k), tint, ctx);
+        }
+        if (category == "layer") {
+            const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId);
+            const mx::InputPtr base = def ? def->getActiveInput("base") : nullptr;
+            const int below = base && base->getType() == "VDF" ? 0 : sub("base", w, tint, ctx);
+            return below | sub("top", w, tint, below ? std::max(ctx, below & kReflects ? 2 : 1) : ctx);
+        }
+        const Term lw = Op("multiply", w, in("weight", 1.0f));
+        auto colour = [&](const char *name) { return Op("multiply", in(name, 1.0f), tint); };
+        if (category == "oren_nayar_diffuse_bsdf" || category == "burley_diffuse_bsdf") {
+            Add("base_color", Op("multiply", colour("color"), lw));
+            First("diffuse_roughness", in("roughness"));
+            Normal(node);
+            return kAny;
+        }
+        if (category == "subsurface_bsdf" || category == "translucent_bsdf") {
+            Add("subsurface", lw);
+            First("subsurface_color", colour("color"));
+            if (category == "subsurface_bsdf") {
+                First("subsurface_radius", in("radius", 1.0f));
+            }
+            Normal(node);
+            return kAny;
+        }
+        if (category == "sheen_bsdf") {
+            Add("sheen", lw);
+            First("sheen_color", colour("color"));
+            First("sheen_roughness", in("roughness", 0.3f));
+            return kAny;
+        }
+        if (category == "conductor_bsdf") {
+            const auto [f0, edge] = Conductor(node);
+            Metal(lw, tint, f0, edge, node);
+            ThinFilm(node);
+            Normal(node);
+            return kAny | kReflects;
+        }
+        if (category == "dielectric_bsdf" || category == "generalized_schlick_bsdf") {
+            const bool schlick = category == "generalized_schlick_bsdf";
+            const std::string mode = Str(node, "scatter_mode");
+            if (schlick && mode != "T" && mode != "RT" && ctx == 0) {
+                Metal(lw, tint, in("color0", 1.0f), in("color82", 1.0f), node);
+                ThinFilm(node);
+                Normal(node);
+                return kAny | kReflects;
+            }
+            Term ior = Through(in("ior", 1.5f));
+            if (schlick) {  // the index of color0's mean F0
+                const Term f0 = in("color0", 1.0f);
+                const float s = std::sqrt(std::clamp((f0.v[0] + f0.v[1] + f0.v[2]) / 3.0f, 0.0f, 0.95f));
+                ior = F(f0.Connected() ? 1.5f : (1.0f + s) / (1.0f - s));
+            }
+            const Term tinted = schlick ? tint : colour("tint");
+            const auto [roughness, anisotropy] = Roughness(node);
+            int found = kAny;
+            if (mode != "T" && ctx == 2) {
+                Add("coat", lw);
+                First("coat_IOR", ior);
+                First("coat_roughness", roughness);
+                found |= kReflects;
+            } else if (mode != "T") {
+                Add("specular", lw);
+                First("specular_color", tinted);
+                First("specular_IOR", ior);
+                First("specular_roughness", roughness);
+                First("specular_anisotropy", anisotropy);
+                ThinFilm(node);
+                found |= kReflects;
+            }
+            if (mode != "R" && ctx == 0) {
+                Add("transmission", lw);
+                First("transmission_color", tinted);
+                First("specular_IOR", ior);
+                First("specular_roughness", roughness);
+            }
+            Normal(node);
+            return found;
+        }
+        if (category == "uniform_edf" || category == "conical_edf" || category == "measured_edf") {
+            Add("emission_color", Op("multiply", colour("color"), w));
+            return kAny;
+        }
+        if (category == "generalized_schlick_edf") {
+            return sub("base", w, Op("multiply", tint, in("color0", 1.0f)), ctx);
+        }
+        if (const mx::NodeGraphPtr graph = ExpandNodeGraph(node, path, &net.nodes, nullptr)) {
+            if (const std::optional<HdMaterialConnection2> out = GraphOutput(graph, node, path, c.upstreamOutputName)) {
+                return Walk(*out, w, tint, ctx, depth + 1);
+            }
+        }
+        unsupported.push_back(path.GetName() + " (" + node.nodeTypeId.GetString() + ")");
+        return 0;
+    }
+
+    // Where nodegraph `graph` (expanded under `path` from `node`) takes
+    // output `name` (empty, or not there: its first) from.
+    static std::optional<HdMaterialConnection2> GraphOutput(mx::NodeGraphPtr const &graph, HdMaterialNode2 const &node,
+                                                            SdfPath const &path, TfToken const &name)
+    {
+        mx::OutputPtr out = name.IsEmpty() ? nullptr : graph->getOutput(name.GetString());
+        if (!out) {
+            const std::vector<mx::OutputPtr> outs = graph->getOutputs();
+            if (outs.empty()) {
+                return std::nullopt;
+            }
+            out = outs[0];
+        }
+        if (out->hasInterfaceName()) {
+            const auto c = node.inputConnections.find(TfToken(out->getInterfaceName()));
+            return c == node.inputConnections.end() || c->second.empty() ? std::nullopt
+                                                                           : std::optional(c->second[0]);
+        }
+        if (!out->hasNodeName()) {
+            return std::nullopt;
+        }
+        const std::string o = out->getOutputString();
+        return HdMaterialConnection2{path.AppendChild(TfToken(TfMakeValidIdentifier(out->getNodeName()))),
+                                     TfToken(o.empty() ? "out" : o)};
+    }
+
+    std::map<TfToken, std::vector<Term>> _sums;
+    std::map<TfToken, Term> _first;
+    std::vector<Term> _metal, _metalColor;
+    int _ops = 0;
+};
+
 // ponytail: metallic and specular workflows; the lobes ReadLobes reads.
 // Transmission and subsurface below. Ignored for now: displacement.
 // *uvPrimvar: the uv set in the mesh's vertices, the first one a texture
@@ -2239,12 +2800,31 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
     const auto kind = std::find_if(Surfaces().begin(), Surfaces().end(),
                                    [&](SurfaceInputs const &k) { return k.id == surface.nodeTypeId; });
     if (kind == Surfaces().end()) {
-        fallbacks->Add(1, {surfaceIt->first.GetName() + " (" + surface.nodeTypeId.GetString() + ")"});
-        // A shader Eldr doesn't read (MaterialX's `surface` of BSDFs and
-        // EDFs too, until pbrlib BSDFs compose): the default material, as
-        // Karma shades those rather than black.
+        // MaterialX's `surface` of BSDFs and EDFs, or a nodegraph-implemented
+        // shader: as a standard_surface (BsdfMapper). BSDF nodes it can't map
+        // are left out and counted.
+        BsdfMapper mapper(net);
+        const bool mapped = mapper.Map(surfaceIt->first);
         static std::mutex mutex;
         static std::set<std::string> warned;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            for (const std::string &node : mapper.unsupported) {
+                const std::string id = node.substr(node.rfind(" (") + 2, node.size() - node.rfind(" (") - 3);
+                if (warned.insert(id).second) {
+                    TF_WARN("HdVk: BSDF node '%s' doesn't map onto Eldr's lobes; the surface leaves it out",
+                            id.c_str());
+                }
+            }
+        }
+        fallbacks->Add(int(mapper.unsupported.size()), mapper.unsupported);
+        if (mapped) {
+            ReadSurface(mapper.net, textures, m, uvPrimvar, fallbacks, karma);
+            return;
+        }
+        fallbacks->Add(1, {surfaceIt->first.GetName() + " (" + surface.nodeTypeId.GetString() + ")"});
+        // A shader Eldr doesn't read: the default material, as Karma shades
+        // those rather than black.
         std::lock_guard<std::mutex> lock(mutex);
         if (warned.insert(surface.nodeTypeId.GetString()).second) {
             TF_WARN("HdVk: surface shader '%s' isn't supported; the material renders as the default",

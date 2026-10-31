@@ -36,6 +36,12 @@ CELL = 2.5
 SURFACES = {"UsdPreviewSurface", "ND_UsdPreviewSurface_surfaceshader", "ND_standard_surface_surfaceshader",
             "ND_open_pbr_surface_surfaceshader", "ND_displacement_float", "ND_displacement_vector3", "ND_volume",
             "ND_gltf_pbr_surfaceshader", "ND_disney_principled", "ND_surface_unlit"}
+# pbrlib nodes material.cpp's BsdfMapper maps onto standard_surface's lobes (BSDF/EDF mix, add and
+# multiply are GRAPH categories already); VDFs under a layer are skipped without a fallback.
+BSDF = {"surface", "layer", "oren_nayar_diffuse_bsdf", "burley_diffuse_bsdf", "translucent_bsdf",
+        "dielectric_bsdf", "conductor_bsdf", "generalized_schlick_bsdf", "subsurface_bsdf", "sheen_bsdf",
+        "uniform_edf", "conical_edf", "measured_edf", "generalized_schlick_edf", "anisotropic_vdf",
+        "absorption_vdf", "roughness_anisotropy"}
 # Karma's VEX nodes Eldr compiles by id (no nodedef).
 KMA = ("kma_rampconst", "kma_color_hextiling", "kma_voronoinoise3d")
 GRAPH = {"add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "absval", "floor", "ceil",
@@ -64,12 +70,14 @@ def eldr_supports(node_id, graphs=None):
     categories, library_defs) into nodes it compiles."""
     if node_id in SURFACES or node_id.startswith(KMA) or eldr_name(node_id) in GRAPH:
         return True
+    if node_id.startswith("ND_") and (node_id[3:] in BSDF or node_id in ("ND_layer_bsdf", "ND_layer_vdf")):
+        return True
     return graphs is not None and _category_ok(None, graphs, node_id, set())
 
 
 def _category_ok(category, graphs, node_id=None, seen=None):
     """A category (or one nodedef) compiles: natively, or through a nodegraph of compiling nodes."""
-    if category in GRAPH:
+    if category in GRAPH or category in BSDF:
         return True
     ids = [node_id] if node_id else graphs["by_category"].get(category, [])
     for i in ids:
@@ -122,6 +130,31 @@ def unns(tag):
 COLOUR_LIKE = {"float", "vector2", "vector3", "vector4", "color4", "integer", "boolean"}
 
 
+CLOSURES = ("BSDF", "EDF", "surfaceshader")
+
+
+def hoist_closures(root, used):
+    """usdMtlx drops BSDF/EDF nodes inside nodegraphs (USD's "Shader not found ... NodeGraphs"), so
+    Karma and Eldr would both see an empty surface: an unused nodegraph with a BSDF, EDF or surface
+    shader output moves its nodes to the document, named <graph>_<node>, its outputs too."""
+    for ng in [e for e in root if e.tag == "nodegraph" and not e.get("nodedef")]:
+        name = ng.get("name")
+        outs = [o for o in ng if o.tag == "output"]
+        if any(e.tag == "input" for e in ng) or any((name, o.get("name")) in used or (name, "") in used
+                                                   for o in outs) or \
+                not any(o.get("type") in CLOSURES for o in outs):
+            continue
+        for e in list(ng):
+            e.set("name", "%s_%s" % (name, e.get("name")))
+            for i in e.iter("input"):
+                if i.get("nodename"):
+                    i.set("nodename", "%s_%s" % (name, i.get("nodename")))
+            if e.get("nodename"):
+                e.set("nodename", "%s_%s" % (name, e.get("nodename")))
+            root.append(e)
+        root.remove(ng)
+
+
 def wrap(src, dst):
     """Writes src with materials for its unused outputs to dst; returns what it skipped."""
     root = parse(src)
@@ -133,6 +166,7 @@ def wrap(src, dst):
         if fp and not os.path.isabs(fp) and not fp.startswith("resources/"):
             e.set("fileprefix", os.path.join(base, fp).replace("\\", "/") + "/")
     used = {(e.get("nodegraph"), e.get("output") or "") for e in root.iter("input") if e.get("nodegraph")}
+    hoist_closures(root, used)
     used_nodes = {e.get("nodename") for e in root.iter("input") if e.get("nodename")}
     skipped = []
     n = [0]
@@ -504,7 +538,8 @@ def selftest():
     assert eldr_supports("UsdPrimvarReader_float2") and not eldr_supports("ND_hextiledimage_color3")
     assert eldr_supports("ND_separate3_color3") and eldr_supports("ND_gltf_pbr_surfaceshader")
     assert eldr_supports("ND_burn_color3") and eldr_supports("kma_rampconst_float")
-    assert not eldr_supports("kma_ramp_float") and not eldr_supports("ND_surface")
+    assert not eldr_supports("kma_ramp_float") and not eldr_supports("ND_chiang_hair_bsdf")
+    assert eldr_supports("ND_surface") and eldr_supports("ND_layer_bsdf") and eldr_supports("ND_conductor_bsdf")
     import tempfile
     d = tempfile.mkdtemp()
     src = os.path.join(d, "a.mtlx")
@@ -517,6 +552,13 @@ def selftest():
     assert skipped == ["g.m (matrix33)"] and list(labels.values()) == ["g.out"], (skipped, labels)
     mats = materials(os.path.join(d, "b.mtlx"), "/MaterialX")
     assert len(mats) == 1 and mats[0][2] and "ND_convert_float_color3" in mats[0][3], mats
+    with open(src, "w") as f:  # a BSDF nodegraph: its nodes reach Hydra (hoisted)
+        f.write('<?xml version="1.0"?><materialx version="1.39"><nodegraph name="g">'
+                '<oren_nayar_diffuse_bsdf name="d" type="BSDF"/><output name="out" type="BSDF" nodename="d"/>'
+                '</nodegraph></materialx>')
+    wrap(src, os.path.join(d, "c.mtlx"))
+    mats = materials(os.path.join(d, "c.mtlx"), "/MaterialX")
+    assert len(mats) == 1 and "ND_oren_nayar_diffuse_bsdf" in mats[0][3], mats
     print("selftest ok")
 
 

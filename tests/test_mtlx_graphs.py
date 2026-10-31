@@ -122,12 +122,17 @@ def document(tests):
                    (i, i))
         out.append('<surfacematerial name="m%d" type="material">'
                    '<input name="surfaceshader" type="surfaceshader" nodename="s%d"/></surfacematerial>' % (i, i))
-    # 10. a surface of BSDFs only renders the default grey (and Eldr says it doesn't read it).
+    # 10. a surface of a grey diffuse BSDF maps onto standard_surface's lobes: lit grey, no warning.
     out.append('<oren_nayar_diffuse_bsdf name="bsdf" type="BSDF"><input name="color" type="color3" '
                'value="0.8, 0.8, 0.8"/></oren_nayar_diffuse_bsdf>')
     out.append('<surface name="sb" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="bsdf"/></surface>')
     out.append('<surfacematerial name="mb" type="material">'
                '<input name="surfaceshader" type="surfaceshader" nodename="sb"/></surfacematerial>')
+    # 11. a surface of a hair BSDF only (no lobe Eldr maps): the default grey, and a warning.
+    out.append('<chiang_hair_bsdf name="hair" type="BSDF"/>')
+    out.append('<surface name="sh" type="surfaceshader"><input name="bsdf" type="BSDF" nodename="hair"/></surface>')
+    out.append('<surfacematerial name="mh" type="material">'
+               '<input name="surfaceshader" type="surfaceshader" nodename="sh"/></surfacematerial>')
     out.append("</materialx>")
     return "\n".join(out)
 
@@ -149,7 +154,8 @@ def main():
     src = os.path.join(folder, "graphs.mtlx")
     with open(src, "w") as f:
         f.write(document(tests))
-    cells = [(src, "/MaterialX", "Materials/m%d" % i) for i in range(len(tests))] + [(src, "/MaterialX", "Materials/mb")]
+    cells = [(src, "/MaterialX", "Materials/m%d" % i) for i in range(len(tests))] + [(src, "/MaterialX", "Materials/mb"),
+                                                                                    (src, "/MaterialX", "Materials/mh")]
     scene, cols = corpus.scene(folder, "graphs", cells)
     exr, _, rc, err = corpus.run_eldr(folder, "graphs", scene, cols)
     assert rc == 0, err
@@ -162,14 +168,15 @@ def main():
         print("%s %-44s expected %s got %s" % ("ok  " if ok else "FAIL", name, rgb, tuple(round(float(m), 3) for m in mean)))
         if not ok:
             failures.append(name)
-    mean, px = corpus.cell_stats(got, len(tests), cols)
-    ok = float(mean.min()) > 0.02 and float(mean.max() - mean.min()) < 0.01  # lit default grey, not black
-    print("%s %-44s expected grey, got %s" % ("ok  " if ok else "FAIL", "surface of BSDFs only",
-                                             tuple(round(float(m), 3) for m in mean)))
-    if not ok:
-        failures.append("surface of BSDFs only")
-    if "surface shader 'ND_surface' isn't supported" not in err:
-        print("FAIL: no warning for the unsupported surface shader")
+    for i, label in ((len(tests), "surface of a diffuse BSDF"), (len(tests) + 1, "surface of a hair BSDF only")):
+        mean, px = corpus.cell_stats(got, i, cols)
+        ok = float(mean.min()) > 0.02 and float(mean.max() - mean.min()) < 0.01  # lit grey, not black
+        print("%s %-44s expected grey, got %s" % ("ok  " if ok else "FAIL", label,
+                                                 tuple(round(float(m), 3) for m in mean)))
+        if not ok:
+            failures.append(label)
+    if "BSDF node 'ND_chiang_hair_bsdf' doesn't map" not in err or             "surface shader 'ND_surface' isn't supported" not in err:
+        print("FAIL: no warnings for the hair-only surface")
         failures.append("warning")
     print("%d failed" % len(failures) if failures else "all passed")
     return 1 if failures else 0

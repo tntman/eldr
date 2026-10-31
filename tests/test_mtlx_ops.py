@@ -281,6 +281,41 @@ def disney(stage, path):
     return surface_material(stage, path, "ND_disney_principled", baseColor=(Sdf.ValueTypeNames.Color3f, (0.8, 0.2, 0.2)))
 
 
+def edf_mix(stage, path, mix=None):
+    """A pbrlib `surface` of mix(uniform red, uniform blue, 0.25): fg weighs 0.25 (or `mix`'s output)."""
+    T = Sdf.ValueTypeNames
+    red = usd_shader(stage, path + "/red", "ND_uniform_edf", color=(T.Color3f, (1, 0, 0)))
+    blue = usd_shader(stage, path + "/blue", "ND_uniform_edf", color=(T.Color3f, (0, 0, 1)))
+    m = usd_shader(stage, path + "/mix", "ND_mix_edf", fg=(red, "out"), bg=(blue, "out"),
+                   mix=mix(stage, path) if mix else (T.Float, 0.25))
+    return surface_material(stage, path, "ND_surface", edf=(m, "out"))
+
+
+def u_mix(stage, path):
+    """texcoord u (0.5 at the centre): the mix weight as a graph."""
+    uv = usd_shader(stage, path + "/uv", "ND_texcoord_vector2")
+    return usd_shader(stage, path + "/u", "ND_extract_vector2", **{"in": (uv, "out"), "index": (Sdf.ValueTypeNames.Int, 0)}), "out"
+
+
+def bsdf_layer(stage, path):
+    """A dielectric over a diffuse, emission halved by multiply: only the emission without lights."""
+    T = Sdf.ValueTypeNames
+    top = usd_shader(stage, path + "/top", "ND_dielectric_bsdf", ior=(T.Float, 1.5))
+    base = usd_shader(stage, path + "/base", "ND_oren_nayar_diffuse_bsdf", color=(T.Color3f, (0.8, 0.2, 0.2)))
+    layer = usd_shader(stage, path + "/layer", "ND_layer_bsdf", top=(top, "out"), base=(base, "out"))
+    edf = usd_shader(stage, path + "/edf", "ND_uniform_edf", color=(T.Color3f, (0.4, 0.6, 0.8)))
+    half = usd_shader(stage, path + "/half", "ND_multiply_edfF", in1=(edf, "out"), in2=(T.Float, 0.5))
+    return surface_material(stage, path, "ND_surface", bsdf=(layer, "out"), edf=(half, "out"))
+
+
+def lama(stage, path):
+    """Lama's conductor and emission (nodegraph-implemented): the emission's colour."""
+    T = Sdf.ValueTypeNames
+    cond = usd_shader(stage, path + "/cond", "ND_lama_conductor", roughness=(T.Float, 0.3))
+    em = usd_shader(stage, path + "/em", "ND_lama_emission", color=(T.Color3f, (0.1, 0.2, 0.3)))
+    return surface_material(stage, path, "ND_surface", bsdf=(cond, "out"), edf=(em, "out"))
+
+
 # Cases authored as USD (a function making the material, expected rgb).
 USD_CASES = [("bump in scene units (Karma context)", karma_bump, (0.5 ** 0.5, 0, 0.5 ** 0.5)),
              ("kma_rampconst monotone cubic", kma_ramp_float, (0.15625,) * 3),
@@ -289,7 +324,11 @@ USD_CASES = [("bump in scene units (Karma context)", karma_bump, (0.5 ** 0.5, 0,
              ("kma_color_hextiling", kma_hextiling, (64 / 255, 128 / 255, 192 / 255)),
              ("surface_unlit", unlit, (0.2, 0.4, 0.5)),
              ("gltf_pbr emissive", gltf, (0.3, 0.5, 0.7)),
-             ("disney_principled", disney, (0, 0, 0))]
+             ("disney_principled", disney, (0, 0, 0)),
+             ("surface: mix of EDFs", edf_mix, (0.25, 0, 0.75)),
+             ("surface: mix of EDFs by a graph", lambda s, p: edf_mix(s, p, u_mix), (0.5, 0, 0.5)),
+             ("surface: layered BSDFs, multiplied EDF", bsdf_layer, (0.2, 0.3, 0.4)),
+             ("surface: Lama conductor and emission", lama, (0.1, 0.2, 0.3))]
 
 SIZE = 512
 COLS = 8

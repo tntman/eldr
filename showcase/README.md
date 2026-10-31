@@ -39,6 +39,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-30_22_material_lobes` | Clearcoat, sheen, fuzz, thin film, anisotropic highlights and hair, plus toon shading. | `lobes` vs `lobesOff`, `toon` (`eldr:toonBands` 3) |
 | `2026-10-31_02_karma_default_material` | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity (`eldr:defaultMaterialKarma`). | `karmaDefault` vs `lambertDefault` |
 | `2026-10-31_03_houdini_karma_nodes` | Houdini's basic materials that use Karma's own nodes (Ramp Const, Hex-Tiled Texture, Voronoi Noise 3D) render as in Karma, and juice absorbs over its path through the ball. | `graphsOn` vs `graphsOff` |
+| `2026-10-31_05_bsdf_graphs` | MaterialX `surface` shaders built from pbrlib BSDFs (mix, layer, add, multiply of diffuse, dielectric, conductor, sheen and subsurface BSDFs, an EDF), Lama's BSDFs, and glTF PBR, on spheres. | `graphsOn` vs `graphsOff` (`eldr:materialGraphs` off); `eldr_default` vs `karma` |
 
 ## Ray tracing
 
