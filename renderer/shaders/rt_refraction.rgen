@@ -62,6 +62,77 @@ void TraceReach(vec3 origin, vec3 dir, float cone, uint mask, float tMax)
 #ifdef PHOTONS
 #include "rt_photons.glsl"
 #else
+// One refracted path from the first refracting surface s (hit: its hit),
+// arriving along dir, through up to `interfaces` interfaces: rgb the light
+// it brings, a 1, or -1 where it left the scene with no dome. `ray` steps
+// the first microfacet normal along R2 (stratified across a pixel's rays).
+vec4 RefractedPath(Surface s, vec3 dir, float cone, uint interfaces, uvec3 seed, uint ray)
+{
+    const uint kMaskAll = kRtMaskSurfaces | kRtMaskTranslucent;
+    vec3 throughput = vec3(1.0);
+    bool inMedium = false;
+    vec3 mediumColor = vec3(1.0);
+    float mediumDepth = 0.0;
+    for (uint bounce = 0u; bounce < interfaces; ++bounce) {
+        if (bounce > 0u) {
+            s = Evaluate(dir, cone);
+        }
+        Material m = s.m;
+        vec2 u = Random2(seed + uvec3(0u, 0u, 104729u + bounce), 0u);
+        // After the first surface: straight through, refracted, or its own
+        // diffuse surface, by its fractions.
+        bool straight = bounce > 0u && u.x < s.straight;
+        if (bounce > 0u && !straight && u.x >= s.straight + s.refracted) {
+            return vec4(throughput * ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u), 1.0);
+        }
+        vec3 n = s.n, ng = s.ng;
+        if (!straight) {
+            bool thin = m.refraction.y > 0.0;
+            bool exiting = !thin && m.refraction.x != 1.0 && s.backface;
+            float ior = max(m.refraction.x, 1e-3);
+            // A microfacet normal (facing the ray) by the roughness.
+            vec3 t, bt;
+            Basis(n, t, bt);
+            vec3 v = -dir;
+            vec3 h = SampleGgxVndf(vec3(dot(v, t), dot(v, bt), max(dot(v, n), 1e-4)), s.roughness * s.roughness,
+                                   Random2(seed + uvec3(0u, 0u, 7907u * (bounce + 1u)), bounce == 0u ? ray : 0u));
+            n = normalize(t * h.x + bt * h.y + n * h.z);
+            vec3 r = thin ? dir : refract(dir, n, exiting ? ior : 1.0 / ior);
+            bool total = dot(r, r) == 0.0;
+            float f0 = (ior - 1.0) / (ior + 1.0);
+            f0 *= f0;
+            float cosine = exiting ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
+            float F = total ? 1.0 : f0 + (1.0 - f0) * pow(1.0 - cosine, 5.0);
+            bool mirrored = total || (bounce > 0u && u.y < F);
+            if (!mirrored) {
+                if (bounce > 0u && (thin || (!exiting && m.refraction.z <= 0.0))) {
+                    throughput *= m.transmission.rgb;  // the first surface's tint is the shading pass's
+                }
+                if (!thin) {
+                    inMedium = !exiting;
+                    mediumColor = m.transmission.rgb;
+                    mediumDepth = m.refraction.z;
+                }
+            }
+            dir = mirrored ? reflect(dir, n) : r;
+        }
+        TraceMask(OffsetRay(hit.position, dot(dir, ng) > 0.0 ? ng : -ng), dir, cone, kMaskAll);
+        if (inMedium && mediumDepth > 0.0) {
+            float travelled = hit.t < 0.0 ? 1e30 : hit.t;
+            throughput *= pow(max(mediumColor, vec3(1e-4)), vec3(travelled / mediumDepth));
+        }
+        if (hit.t < 0.0) {
+            return vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), frame.envRadiance.w > 0.0 ? 1.0 : -1.0);
+        }
+        if ((hit.flags & kHitTranslucent) == 0u) {
+            EvaluateHit(dir, cone);
+            return vec4(throughput * ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u), 1.0);
+        }
+    }
+    // Out of interfaces inside glass: the dome along the last direction.
+    return vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), 1.0);
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -104,73 +175,22 @@ void main()
     }
     float first = max(distance(hit.position, frame.cameraPos.xyz), 1e-6);
     uvec3 seed = uvec3(pixel, rt.params.x);
-    vec3 throughput = vec3(1.0);
-    bool inMedium = false;
-    vec3 mediumColor = vec3(1.0);
-    float mediumDepth = 0.0;
-    for (uint bounce = 0u; bounce < interfaces; ++bounce) {
-        if (bounce > 0u) {
-            s = Evaluate(dir, cone);
-        }
-        Material m = s.m;
-        vec2 u = Random2(seed + uvec3(0u, 0u, 104729u + bounce), 0u);
-        // After the first surface: straight through, refracted, or its own
-        // diffuse surface, by its fractions.
-        bool straight = bounce > 0u && u.x < s.straight;
-        if (bounce > 0u && !straight && u.x >= s.straight + s.refracted) {
-            vec3 shaded = ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u);
-            imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
-            return;
-        }
-        vec3 n = s.n, ng = s.ng;
-        if (!straight) {
-            bool thin = m.refraction.y > 0.0;
-            bool exiting = !thin && m.refraction.x != 1.0 && s.backface;
-            float ior = max(m.refraction.x, 1e-3);
-            // A microfacet normal (facing the ray) by the roughness.
-            vec3 t, bt;
-            Basis(n, t, bt);
-            vec3 v = -dir;
-            vec3 h = SampleGgxVndf(vec3(dot(v, t), dot(v, bt), max(dot(v, n), 1e-4)), s.roughness * s.roughness,
-                                   Random2(seed + uvec3(0u, 0u, 7907u * (bounce + 1u)), 0u));
-            n = normalize(t * h.x + bt * h.y + n * h.z);
-            vec3 r = thin ? dir : refract(dir, n, exiting ? ior : 1.0 / ior);
-            bool total = dot(r, r) == 0.0;
-            float f0 = (ior - 1.0) / (ior + 1.0);
-            f0 *= f0;
-            float cosine = exiting ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
-            float F = total ? 1.0 : f0 + (1.0 - f0) * pow(1.0 - cosine, 5.0);
-            bool mirrored = total || (bounce > 0u && u.y < F);
-            if (!mirrored) {
-                if (bounce > 0u && (thin || (!exiting && m.refraction.z <= 0.0))) {
-                    throughput *= m.transmission.rgb;  // the first surface's tint is the shading pass's
-                }
-                if (!thin) {
-                    inMedium = !exiting;
-                    mediumColor = m.transmission.rgb;
-                    mediumDepth = m.refraction.z;
-                }
-            }
-            dir = mirrored ? reflect(dir, n) : r;
-        }
-        TraceMask(OffsetRay(hit.position, dot(dir, ng) > 0.0 ? ng : -ng), dir, cone, kMaskAll);
-        if (inMedium && mediumDepth > 0.0) {
-            float travelled = hit.t < 0.0 ? 1e30 : hit.t;
-            throughput *= pow(max(mediumColor, vec3(1e-4)), vec3(travelled / mediumDepth));
-        }
-        if (hit.t < 0.0) {
-            bool dome = frame.envRadiance.w > 0.0;
-            imageStore(rtRefractionImage, pixel, vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), dome ? first : -first));
-            return;
-        }
-        if ((hit.flags & kHitTranslucent) == 0u) {
-            EvaluateHit(dir, cone);
-            vec3 shaded = ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u);
-            imageStore(rtRefractionImage, pixel, vec4(throughput * shaded, first));
-            return;
-        }
+    // rt.refraction.w paths per pixel (eldr:refractQuality), on rough glass
+    // only: through smooth glass they would all take one way.
+    // ponytail: by the first surface's roughness; rough glass behind smooth
+    // glass gets one path.
+    uint paths = s.roughness > 0.05 ? max(rt.refraction.w, 1u) : 1u;
+    Surface firstSurface = s;
+    RtHit firstHit = hit;
+    vec3 sum = vec3(0.0);
+    float side = 1.0;
+    for (uint ray = 0u; ray < paths; ++ray) {
+        hit = firstHit;
+        // Path 0 keeps the pixel's seed; the others hash apart from it.
+        vec4 path = RefractedPath(firstSurface, dir, cone, interfaces, seed ^ uvec3(0u, 0u, ray * 0x9E3779B9u), ray);
+        sum += path.rgb;
+        side = ray == 0u ? path.a : side;  // ponytail: the first path decides the coverage
     }
-    // Out of interfaces inside glass: the dome along the last direction.
-    imageStore(rtRefractionImage, pixel, vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), first));
+    imageStore(rtRefractionImage, pixel, vec4(sum / float(paths), side * first));
 }
 #endif

@@ -62,6 +62,7 @@ More film samples clean everything at once. The **quality** settings add rays on
 |---|---|---|
 | Diffuse Quality | Diffuse Quality | Final gather, GI probes, AO and SSGI |
 | Reflection Quality | Reflection Quality | Ray-traced reflections |
+| Refraction Quality | Refraction Quality | Rough glass: ray-traced refraction paths, screen-space blur taps |
 | Light Quality | Light Sampling Quality | Ray-traced shadows |
 | Subsurface Quality | SSS Quality | Subsurface blur |
 | Volume Quality | Volume Quality | Volume shadow steps |

@@ -1282,6 +1282,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.refraction[0] = std::clamp(work.refractionBounces, 1u, 16u);
     d.refraction[1] = work.refractionDisplacement && work.displacement != 0.0f ? 1u : 0u;
     d.refraction[2] = work.refractionClip ? 1u : 0u;
+    d.refraction[3] = std::clamp(work.refractionRays, 1u, 16u);
     d.gather[1] = work.gather && work.gi ? 1.0f : 0.0f;
     const uint32_t gatherRays = std::min(work.gatherRays, kMaxGatherRays);
     for (uint32_t i = 0; i < gatherRays; ++i) {

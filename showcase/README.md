@@ -78,6 +78,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_07_oidn_denoiser` | The converged film is denoised by Intel Open Image Denoise, guided by albedo and normal (`eldr:denoise`, or Karma's image filter). | `raw16` vs `denoise16`, `karmaImageFilter16` (Karma's denoiser string), `raw64` |
 | `2026-10-29_11_effect_denoise` | The final gather, traced shadows and traced reflections are each filtered in their own signal during the first film samples. | `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64` |
 | `2026-10-29_12_quality_multipliers` | More rays for the noisy component (diffuse, light, reflection) instead of more film samples, as Karma's quality controls. | `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames` (Karma's names), `allHalf` |
+| `2026-10-31_01_refraction_quality` | More paths through rough glass instead of more film samples (`eldr:refractQuality`, Karma's `karma:object:refractquality`). | `refractQuality1` vs `refractQuality4` |
 
 ## AOVs
 

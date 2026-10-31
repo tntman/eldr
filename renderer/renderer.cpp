@@ -3540,6 +3540,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // One light point per traced sample (more rays per light: R2 steps from it).
     ScrambledSobol(spread && frame.lightQuality * shadowRays < 1.0f ? shadowFirst : sobolIndex,
                    kSeedRtShadow, rt.shadowSample, 2);
+    // Traced refraction: one path per pixel times eldr:refractQuality, at least one (the shading pass reads
+    // this sample's image).
+    uint32_t refractionFirst = 0;
+    rt.refractionRays = std::max(SampleRays(frame.refractQuality, spread, sobolIndex, 16, &refractionFirst), 1u);
     rt.reflectionSamples = SampleRays(double(frame.rtReflectionSamples) * frame.reflectQuality, spread, sobolIndex, 16,
                                       &reflectionFirst);
     rt.sun = gpu.shadowLight;
@@ -3942,7 +3946,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     lap("descriptors", 5.0);
     if (refraction) {
         fd.features[0] |= kFeatureRefraction;
-        fd.translucency[0] = float(std::clamp(frame.refractionSamples, 1u, 16u));
+        // Blur taps: eldr:refractionSamples times eldr:refractQuality (mesh.frag's kPoisson: 16 at most).
+        fd.translucency[0] = float(std::clamp(std::lround(double(frame.refractionSamples) * frame.refractQuality), 1l, 16l));
         fd.translucency[1] = float(_transparency.BackgroundLevels());
         fd.rtRefraction[0] = rt.refraction ? 1u : 0u;
     }

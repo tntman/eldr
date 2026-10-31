@@ -733,7 +733,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     {
         static const TfToken karmaLight("karma:global:light_sampling_quality"),
             karmaDiffuse("karma:object:diffusequality"), karmaReflect("karma:object:reflectquality"),
-            karmaSss("karma:object:sssquality"), karmaVolume("karma:object:volumequality");
+            karmaRefract("karma:object:refractquality"), karmaSss("karma:object:sssquality"),
+            karmaVolume("karma:object:volumequality");
         const HdRenderSettings *prim = static_cast<HdVkRenderDelegate *>(delegate)->ActiveRenderSettings();
         auto number = [&](const TfToken &key) {
             VtValue v = delegate->GetRenderSetting(key);
@@ -753,6 +754,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         frame.lightQuality = quality(t2.lightQuality, karmaLight);
         frame.diffuseQuality = quality(t2.diffuseQuality, karmaDiffuse);
         frame.reflectQuality = quality(t2.reflectQuality, karmaReflect);
+        frame.refractQuality = quality(t2.refractQuality, karmaRefract);
         frame.subsurfaceSamples =
             uint32_t(std::clamp(std::lround(frame.subsurfaceSamples * quality(t2.sssQuality, karmaSss)), 1l, 64l));
         frame.volume.shadowSteps =
