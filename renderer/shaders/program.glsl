@@ -387,7 +387,7 @@ vec4 GeometryOp(uint code, uint imm0, uint imm1, vec4 a, vec4 b, vec4 x, uint c)
         return vec4(ProgramSpace(ProgramTangent(imm1 != 0u), imm0), 0.0);
     }
     if (code == kOpViewDirection) {  // from the camera to the point
-        return vec4(ProgramSpace(normalize(Geometry(false, 1u) - frame.cameraPos.xyz), imm0), 0.0);
+        return vec4(ProgramSpace(-ViewDirection(Geometry(false, 1u)), imm0), 0.0);  // orthographic too
     }
     if (code == kOpTime) {
         return vec4(imm0 == 0u ? frame.scene.x : frame.scene.y);
