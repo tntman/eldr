@@ -1314,7 +1314,10 @@ void main()
     if (mirror) {
         specular = PlanarSpecular(mirrorIndex, specular, inWorldPos, n, perceptual);
     }
-    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    // No base specular (e.g. standard_surface specular 0): nothing to reflect,
+    // so no ray (the crowd's agents: SSR was most of the shading pass).
+    const bool reflects = max(max(FssEss.r, FssEss.g), FssEss.b) > 1e-4;
+    float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
 #ifdef LAYERS
     ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
 #endif
