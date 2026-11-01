@@ -1,31 +1,19 @@
 # Volume shadow grids
 
 <!-- summary -->
-Each volume's optical depth towards each light is built once on a grid instead of a shadow march per step (`eldr:volumeShadowGrid`).
-
-- **Compare:** open `showcase/2026-10-30_03_volume_shadow_grid/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `grid` (64, default) vs `exact` (0) vs `grid32`.
-- **Look at:** The same picture (57-60 dB); the volume pass drops from 234 to 77 ms per sample at 1080p.
+Each volume's shadow towards each light is built once on a grid instead of marched per step.
 <!-- summary -->
 
-tests/scenes/volume.usda's three volumes (sun, dome) with three sphere lights. Each volume's optical
-depth towards the dome, the sun and (for mutual shadows) the sphere lights is built once on a 64^3 grid
-per light and read trilinearly in the march, instead of a shadow march per step and light.
+Smoke volumes lit by the sun, dome and three sphere lights. The pictures match; the volume pass drops from 234 to 77 ms per sample at 1080p.
 
-- `/Render/grid`: the default, `eldr:volumeShadowGrid` 64.
-- `/Render/exact`: `eldr:volumeShadowGrid` 0 marches every shadow ray.
-- `/Render/grid32`: a coarser grid.
-
-All three should look the same (57-60 dB PSNR). At 1920x1080 with the final-render settings (`eldr_final`) the volume pass drops from
-234 to 77 ms per sample.
-
-Open: `usdenv usdview --renderer Eldr showcase\2026-10-30_03_volume_shadow_grid\scene.usda` and pick a
-settings prim, or `husk -R Eldr -s /Render/exact scene.usda`.
+- **grid**: the default 64-cell grid.
+- **exact**: every shadow marched; slowest.
+- **grid32**: a coarser 32-cell grid.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_03_volume_shadow_grid\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_03_volume_shadow_grid/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_03_volume_shadow_grid\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_03_volume_shadow_grid/scene.usda`.
 
 ## Houdini scene
 

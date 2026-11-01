@@ -1,19 +1,20 @@
 # Lens distortion
 
 <!-- summary -->
-The camera's `lensDistortion:*` bows straight lines, as HdCamera and a Karma Physical Lens describe it (`eldr:lensDistortion`).
-
-- **Compare:** open `showcase/2026-10-30_24_lens_distortion/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `lens` vs `distortionOff`.
-- **Look at:** The ground's straight edges: bowed outwards (barrel) or straight. Karma reads the distortion only through a Physical Lens shader, so `karma` is undistorted. Render frame 1.
+The camera's lens distortion bows straight lines.
 <!-- summary -->
 
-`tests/scenes/lens.usda` with a barrel distortion on the camera (`lensDistortion:k1` 0.12, `k2` 0.02, as `tests/scenes/distortion.usda`).
+A ground plane under a camera with barrel distortion. Karma reads distortion only from a Physical Lens, so the karma node stays undistorted.
+
+- **lens**: the ground's straight edges bow outwards.
+- **distortionOff**: the edges stay straight.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+Render frame 1.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_24_lens_distortion\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_24_lens_distortion/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_24_lens_distortion\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_24_lens_distortion/scene.usda`.
 
 ## Houdini scene
 

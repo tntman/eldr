@@ -1,25 +1,21 @@
 # Height fog
 
 <!-- summary -->
-Height fog with light shafts from the sun and spot lights (`eldr:fog`).
-
-- **Compare:** open `showcase/2026-10-30_12_fog/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `fog` vs `fogOff`, `fogDense`.
-- **Look at:** The shafts between the pillars, the spot's cone and the hazy far wall.
+Height fog with light shafts from the sun and spot lights.
 <!-- summary -->
 
-`tests/scenes/fog.usda`: a low sun behind a colonnade shining towards the camera, a blue spot on the right. Fog is settings only (no USD fog schema): height fog in a 160x90x64 froxel grid, lit by the sun's cascades (the pillars throw shafts), local lights (the spot's cone) and the dome, Henyey-Greenstein phase (`eldr:fogAnisotropy` 0.6).
+A low sun behind a colonnade shines towards the camera, with a blue spot on the right.
 
-## What to look at
+- **fog**: shafts between the pillars, the spot's cone and a hazy far wall.
+- **fogOff**: clear air.
+- **fogDense**: thick, warm haze.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/fog`: density 0.03, height falloff 0.15: shafts between the pillars, the spot's cone, the far wall hazy.
-- `/Render/fogOff` (`eldr:fog` off): clear air. `eldr_default` and `eldr_final` are fog-free too (fog is off by default).
-- `/Render/fogDense`: density 0.08, warm `eldr:fogColor`, no falloff: thick haze.
-- Karma has no fog setting: its `karma` node renders clear air; a Karma comparison needs a volume box.
+Fog is off in eldr_default, eldr_final and karma; Karma has no fog setting.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_12_fog\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/fog scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_12_fog\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_12_fog/scene.usda`.
 
 ## Houdini scene
 

@@ -1,22 +1,18 @@
 # Emissive meshes as lights
 
 <!-- summary -->
-Glowing meshes light the scene as lights do, with shadows (`eldr:emissiveLights`).
-
-- **Compare:** open `showcase/2026-10-28_03_emissive_lights/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `emissiveLightsOn` vs `emissiveLightsOff`.
-- **Look at:** The ceiling next to the glowing panel and the floor around the bulb: lit and shadowed with it on, dark without.
+Glowing meshes light the scene like lights, with shadows.
 <!-- summary -->
 
-The Cornell box of `tests/scenes/emissive.usda`, lit only by a glowing panel under the ceiling and a small bulb on the floor, with a chrome ball.
+A Cornell box lit only by a glowing ceiling panel and a small bulb on the floor, with a chrome ball.
 
-- `/Render/emissiveLightsOn`: `eldr:emissiveLights` on (the default): the panel's edges light the ceiling, the box and ball cast shadows from the panel and the bulb.
-- `/Render/emissiveLightsOff`: off: the emitters only glow; without GI the room stays dark.
+- **emissiveLightsOn**: the panel and bulb light the room and cast shadows from the box and ball.
+- **emissiveLightsOff**: they only glow; the room stays dark.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_03_emissive_lights\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_03_emissive_lights/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_03_emissive_lights\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_03_emissive_lights/scene.usda`.
 
 ## Houdini scene
 

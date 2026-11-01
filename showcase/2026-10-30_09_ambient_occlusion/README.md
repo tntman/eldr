@@ -1,25 +1,21 @@
 # Ambient occlusion
 
 <!-- summary -->
-The dome's light is darkened in corners and gaps by screen-space ambient occlusion (`eldr:ambientOcclusion`).
-
-- **Compare:** open `showcase/2026-10-30_09_ambient_occlusion/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `ambient` vs `aoOff`, `aoWide` (`eldr:aoRadius` 2).
-- **Look at:** The white corner, the gaps between the boxes and under the ball.
+The dome's light is darkened in corners and gaps.
 <!-- summary -->
 
-A white corner (floor and two walls), stacked boxes and a ball against the wall, lit only by a plain white dome (no texture, so no sun to extract). Ambient light is the dome's unoccluded light darkened by GTAO, screen-space ambient occlusion over `eldr:aoRadius` (0.5); with screen-space GI (SSGI) on, its traced visibility replaces it; under the final gather, traced rays do.
+A white corner, stacked boxes and a ball lit by a plain white dome. Look at the corner, the gaps between the boxes and under the ball.
 
-## What to look at
+- **ambient**: corners and gaps are darkened.
+- **aoOff**: flat sky light everywhere.
+- **aoWide**: a wider, softer darkening.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/ambient` (the default): AO darkens the corner, the gaps between the boxes and under the ball.
-- `/Render/aoOff` (`eldr:ambientOcclusion` off): flat sky light everywhere.
-- `/Render/aoWide` (`eldr:aoRadius` 2): wider, softer darkening.
-- `eldr_final` (final gather) shows the traced version of the same occlusion.
+eldr_final computes the same occlusion by ray tracing.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_09_ambient_occlusion\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/ambient scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_09_ambient_occlusion\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_09_ambient_occlusion/scene.usda`.
 
 ## Houdini scene
 

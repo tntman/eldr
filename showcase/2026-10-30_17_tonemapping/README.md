@@ -1,19 +1,21 @@
 # Tonemapping
 
 <!-- summary -->
-The display tonemapper: ACES, AgX or none (`eldr:tonemapper`).
-
-- **Compare:** open `showcase/2026-10-30_17_tonemapping/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `aces` (default) vs `agx` vs `linear`.
-- **Look at:** The bulb: clipping towards yellow with ACES, desaturating towards white with AgX, hard-clipped with none.
+The display tonemapper: ACES, AgX or none.
 <!-- summary -->
 
-The Cornell box lit by a glowing panel (40) and a warm bulb (60, 30, 8) seen directly, so the image has values far over 1. Linear Beauty (`eldr:productLinear`, on by default) makes husk's and Houdini's beauty linear with no tonemap, so every prim here turns it off; usdview and usdrecord tonemap either way. `eldr:colorLimit` 1000 keeps the emitters' full HDR. `eldr_default` and `karma` write linear EXRs: view them with a display transform.
+A Cornell box with a bright panel and a warm bulb seen directly, so values go far over 1. Look at the bulb: ACES clips towards yellow, AgX fades to white, none clips hard.
+
+- **aces**: the default tonemapper.
+- **agx**: AgX.
+- **linear**: no tonemapping.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+eldr_default and karma write linear EXRs; view them with a display transform.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_17_tonemapping\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_17_tonemapping/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_17_tonemapping\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_17_tonemapping/scene.usda`.
 
 ## Houdini scene
 

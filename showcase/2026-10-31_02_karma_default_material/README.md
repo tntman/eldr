@@ -1,23 +1,18 @@
 # Karma default material
 
 <!-- summary -->
-Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity (`eldr:defaultMaterialKarma`).
-
-- **Compare:** open `showcase/2026-10-31_02_karma_default_material/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `karmaDefault` vs `lambertDefault`.
-- **Look at:** The ground, posts and balls about as bright as Karma's; the blue ball on the right half see-through.
+Objects without a material look as they do in Karma: dim, with a faint white highlight.
 <!-- summary -->
 
-`tests/scenes/sunangle.usda` (a ground of `displayColor` 0.7, two posts, a beam and a ball without a `displayColor`, under a sun and a blue sky) plus a red ball and a blue ball with `displayOpacity` 0.5. None has a material.
+A ground, posts, a beam and balls with no material, plus a blue ball that is half see-through.
 
-## What to look at
-
-- `/Render/karmaDefault` (the default): the ground is about 0.4 of its `displayColor`; the posts, beam and white ball read white at the same 0.4. The blue ball shows the ground through it. Karma renders the same.
-- `/Render/lambertDefault` (`eldr:defaultMaterialKarma` off): `displayColor` at full strength (as Storm), about 2.3x as bright in a linear render (auto exposure evens much of it out), posts and ball a mid grey, both balls opaque.
+- **karmaDefault**: about 0.4 of the object's display colour, as in Karma.
+- **lambertDefault**: full display colour, about 2.3x brighter; both balls opaque.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_02_karma_default_material\scene.usda`, then pick a settings prim (right-click, set as active), or flip the setting in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/karmaDefault scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_02_karma_default_material\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-31_02_karma_default_material/scene.usda`.
 
 ## Houdini scene
 

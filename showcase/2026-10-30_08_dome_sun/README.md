@@ -1,25 +1,18 @@
 # Dome sun
 
 <!-- summary -->
-The HDRI's sun is taken out of the dome and cast as a shadowed distant light (`eldr:domeSun`).
-
-- **Compare:** open `showcase/2026-10-30_08_dome_sun/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `domeSun` vs `domeSunOff`.
-- **Look at:** Crisp sun shadows on the ground and the sun's glint in the chrome; none without.
+The sun in an HDRI becomes a distant light that casts crisp shadows.
 <!-- summary -->
 
-`tests/scenes/step4.usda` (chrome, gold and matte objects on a ground) lit by StinsonBeach.hdr alone; its distant light is set to 0. The HDRI's sun is a few very bright texels: as image light only they give soft, shadowless sunlight. Eldr takes texels brighter than `eldr:domeSunThreshold` (10) out of the dome and lights with them as a shadowed distant light of the same power and direction.
+Chrome, gold and matte objects on a ground, lit only by an HDRI of a beach.
 
-## What to look at
-
-- `/Render/domeSun` (the default): crisp sun shadows from the HDRI, the sun's glint in the chrome.
-- `/Render/domeSunOff` (`eldr:domeSun` off): the dome alone: no cast shadows.
-
-StinsonBeach.hdr ships with USD: `usdenv.cmd` puts its folder on the resolver's search path. For husk set `PXR_AR_DEFAULT_SEARCH_PATH` to `<USD>\lib\usd\hdx\resources\textures` (Houdini's own USD has the same file).
+- **domeSun**: crisp sun shadows on the ground and the sun's glint in the chrome.
+- **domeSunOff**: the HDRI alone; soft light, no cast shadows.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_08_dome_sun\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/domeSun scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_08_dome_sun\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_08_dome_sun/scene.usda`.
 
 ## Houdini scene
 

@@ -1,25 +1,21 @@
 # Subsurface scattering
 
 <!-- summary -->
-Light scattering under the surface of skin, jade and leaves (`eldr:subsurface`).
-
-- **Compare:** open `showcase/2026-10-30_13_subsurface/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `subsurface` vs `subsurfaceOff`, `subsurfaceQuality`.
-- **Look at:** The soft skin and jade, the ears and the leaf glowing against the sun.
+Light scatters under the surface of skin, jade and leaves.
 <!-- summary -->
 
-`tests/scenes/subsurface.usda`: a head-like ball with thin ears (standard_surface skin), an OpenPBR jade ball and a thin-walled leaf, the sun low behind them. Eldr's subsurface is a per-channel, depth-aware blur of the diffuse light over the subsurface radius; thin parts transmit the sun.
+A head-like ball with thin ears, a jade ball and a thin leaf, with the sun low behind them.
 
-## What to look at
+- **subsurface**: soft skin and jade; the ears and leaf glow where the sun shines through.
+- **subsurfaceOff**: hard surfaces and dark ears.
+- **subsurfaceQuality**: more samples; less noise in the soft look.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/subsurface` (the default): soft skin and jade (red reaching furthest), the ears and the leaf glowing where the sun shines through.
-- `/Render/subsurfaceOff` (`eldr:subsurface` off): hard diffuse, dark ears.
-- `/Render/subsurfaceQuality` (`eldr:sssQuality` 4, Karma's `sssquality`): more taps: less noise in the blur.
-- Karma's random walk is the reference: Eldr's blur is an approximation (docs/features.md, Spec conformance).
+Eldr approximates what Karma computes by random walk.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_13_subsurface\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/subsurface scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_13_subsurface\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_13_subsurface/scene.usda`.
 
 ## Houdini scene
 

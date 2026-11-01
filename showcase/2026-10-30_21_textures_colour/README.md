@@ -1,24 +1,18 @@
 # Textures and colour spaces
 
 <!-- summary -->
-Texture colour spaces (ACEScg, Rec.709), UDIM tiles and anisotropic filtering (`eldr:anisotropy`).
-
-- **Compare:** open `showcase/2026-10-30_21_textures_colour/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `textures` vs `aniso1`.
-- **Look at:** The far floor tiles: crisp at 16x, smeared at 1x; each colour pair matches.
+Textures in ACEScg and Rec.709, UDIM tiles, and sharp textures at grazing angles.
 <!-- summary -->
 
-Middle: `tests/scenes/colorspace.usda`: each column pairs a colour authored in ACEScg (top, tagged `lin_ap1_scene`) with the same colour pre-converted to linear Rec.709 (bottom); Eldr shades in linear Rec.709, so each pair matches. Left column constants, right column 16-bit textures. Right: a MaterialX image of `udim.<UDIM>.png` on uvs 0..2: tiles 1001 (bottom left), 1002 (bottom right), 1011 (top left); 1012 is missing and shows the image's `default` (black, lit only by the specular), as Karma. Bottom: a floor tiling `quadrants.png` (sRGB) 40 times towards the horizon.
+Colour pairs (ACEScg and the same colour in Rec.709) that match, UDIM tiles with one missing, and a long tiled floor.
 
-## What to look at
-
-- `/Render/textures` (the default, `eldr:anisotropy` 16): the tiles stay crisp far down the floor; each colour pair matches.
-- `/Render/aniso1` (`eldr:anisotropy` 1, trilinear only): the far floor blurs into a smear.
-- Texture compression has its own showcase (2026-10-29_19).
+- **textures**: the far floor stays crisp.
+- **aniso1**: the far floor smears.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_21_textures_colour\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/textures scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_21_textures_colour\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_21_textures_colour/scene.usda`.
 
 ## Houdini scene
 

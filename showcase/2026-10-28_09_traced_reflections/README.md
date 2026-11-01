@@ -1,25 +1,21 @@
 # Ray-traced reflections
 
 <!-- summary -->
-Reflections traced against the whole scene, including what is behind the camera or off screen (`eldr:rtReflections`).
-
-- **Compare:** open `showcase/2026-10-28_09_traced_reflections/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `traced` vs `screenSpace` (`eldr:rtReflections` off), `tracedNoHitShadows` (`eldr:rtHitShadows` off).
-- **Look at:** The chrome ball: traced, it shows the room behind the camera and the walls the screen cannot see; screen-space, patches stay dark. Without hit shadows the floor seen in the ball is unshadowed.
+Reflections trace the whole scene, including what is behind the camera or off screen.
 <!-- summary -->
 
-`tests/scenes/emissive.usda`: the Cornell box lit by a glowing panel and a bulb, a chrome ball, no dome.
+A Cornell box lit by a glowing panel and a bulb, with a chrome ball.
 
-- `/Render/traced`: `eldr:rtReflections` with `eldr:rtHitShadows` on: the ball reflects the whole room, and the floor in it is shadowed.
-- `/Render/screenSpace`: `eldr:rtReflections` off (the default): screen-space reflections and the probe.
-- `/Render/tracedNoHitShadows`: traced, but reflected surfaces are shaded without shadows: cheaper, the floor in the ball is lit under the box.
+- **traced**: the ball shows the whole room, with shadows on the reflected floor.
+- **screenSpace**: only what is on screen reflects; some patches stay dark.
+- **tracedNoHitShadows**: traced, but the reflected floor is unshadowed; cheaper.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-Ray tracing runs on a compute fallback on GPUs without RT cores, so it costs more there.
+Ray tracing costs more on GPUs without RT cores.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_09_traced_reflections\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_09_traced_reflections/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_09_traced_reflections\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_09_traced_reflections/scene.usda`.
 
 ## Houdini scene
 

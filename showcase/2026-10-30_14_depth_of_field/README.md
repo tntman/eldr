@@ -1,19 +1,20 @@
 # Depth of field
 
 <!-- summary -->
-The camera's f-stop and focus distance blur what is out of focus, with true bokeh over the film (`eldr:depthOfField`).
-
-- **Compare:** open `showcase/2026-10-30_14_depth_of_field/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `lens` vs `dofOff`.
-- **Look at:** Only the green sphere at 5 m is sharp; everything is sharp with it off. Render frame 1.
+The camera's f-stop and focus distance blur what is out of focus, with true bokeh.
 <!-- summary -->
 
-`tests/scenes/lens.usda` (centimetres: an 85 mm lens at f/1.4 focused at 5 m on spheres from 2 to 20 m). Under the film the camera moves across the aperture every sample (true bokeh with occlusion). Render frame 1: the orange cube moves from frame 2 on.
+Spheres from 2 to 20 m, seen through an 85 mm f/1.4 lens focused at 5 m.
+
+- **lens**: only the green sphere at 5 m is sharp.
+- **dofOff**: everything is sharp.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+Render frame 1.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_14_depth_of_field\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_14_depth_of_field/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_14_depth_of_field\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_14_depth_of_field/scene.usda`.
 
 ## Houdini scene
 

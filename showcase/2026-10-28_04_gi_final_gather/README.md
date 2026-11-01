@@ -1,30 +1,24 @@
-# Global illumination and final gather
+# Bounced light
 
 <!-- summary -->
-Bounced light from GI probes, a traced final gather or screen-space GI.
-
-- **Compare:** open `showcase/2026-10-28_04_gi_final_gather/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `probesOnly`, `finalGather`, `ssgi`, `giPlusSsgi`; tuning: `finalGatherNoRelocation`, `finalGatherDistance0`/`05`, `denoise0`/`1`, `rays1`/`4`.
-- **Look at:** The walls and ceiling lit by the panel's bounce, the colour bleeding from the red and green walls, the leaks at the corners with probes only.
+Bounced light from light probes, a traced final gather, or screen-space GI.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` (the Cornell box lit by the glowing panel and bulb; `cornell.usda` is the rect-light version) with the bounced-light settings. The A/B prims here (except `probesOnly` and `ssgi`) also set the final-render settings, so the image converges over film samples: wait for it.
+A Cornell box lit by a glowing panel, showing how walls pick up light and colour from each other. Most nodes use the final settings, so the image sharpens over film samples: wait for it.
 
-- `/Render/probesOnly`: `eldr:gi` with `eldr:finalGather` 0, light probes (DDGI) only: soft, with some light leaking at walls.
-- `/Render/finalGather`: `eldr:finalGather` 1, a ray per pixel and sample shaded at its hit.
-- `/Render/finalGatherNoRelocation`: `eldr:giRelocation` off; probes near walls are only switched off. With final gather the first bounce is traced, so the difference is tiny; look at `/Render/probesOnly` with it toggled.
-- `/Render/finalGatherDistance0` vs `...05`: `eldr:finalGatherDistance` 0 (rays go until they hit) vs 0.5 (short rays, probes beyond).
-- `/Render/ssgi`: screen-space GI (SSGI, bounce light from what is on screen) only; `/Render/giPlusSsgi`: both.
-
-- `/Render/denoise0` vs `/Render/denoise1`: `eldr:finalGatherDenoise` 0 to 1. It filters only the indirect light, so edges and textures stay sharp.
-- `/Render/rays1` vs `/Render/rays4`: `eldr:finalGatherRays` 1 or 4 per pixel and sample. 4 rays cost about 4x the gather for little gain once denoised.
+- **probesOnly**: soft bounce from light probes; some light leaks at the corners.
+- **finalGather**: traced bounce, a ray per pixel.
+- **finalGatherNoRelocation**: final gather with probes near walls left in place.
+- **finalGatherDistance0 / finalGatherDistance05**: gather rays travel until they hit, or only 0.5 units before probes take over.
+- **denoise0 / denoise1**: the bounce light unfiltered or fully filtered; edges and textures stay sharp.
+- **rays1 / rays4**: one or four gather rays; four cost about four times as much for little gain.
+- **ssgi**: bounce from what is on screen only.
+- **giPlusSsgi**: final gather and screen-space bounce together.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_04_gi_final_gather\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_04_gi_final_gather/scene.usda`
-
-Settings prims: `/Render/probesOnly`, `/Render/finalGather`, `/Render/finalGatherNoRelocation`, `/Render/finalGatherDistance0`, `/Render/finalGatherDistance05`, `/Render/denoise0`, `/Render/denoise1`, `/Render/rays1`, `/Render/rays4`, `/Render/ssgi`, `/Render/giPlusSsgi`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_04_gi_final_gather\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_04_gi_final_gather/scene.usda`.
 
 ## Houdini scene
 

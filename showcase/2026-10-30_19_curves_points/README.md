@@ -1,25 +1,20 @@
 # Curves and points
 
 <!-- summary -->
-Every curve basis as tubes or ribbons, points as spheres or discs, and hair shading.
-
-- **Compare:** open `showcase/2026-10-30_19_curves_points/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `curves` vs `ribbons`, `sprites`, `hairOff`.
-- **Look at:** The curves' shapes, the points, and the fur's hair highlight.
+Every curve type as tubes or ribbons, points as spheres or discs, and hair shading.
 <!-- summary -->
 
-Beyond showcase 2026-10-28_06: every basis of `tests/scenes/curves.usda` (polyline with vertex widths, periodic square, ribbon with normals, bspline, catmullRom, pinned bspline, bezier, periodic loop, points with vertex widths and colours) plus a patch of 600 hair curves without a material (bottom left: Kajiya-Kay hair shading), under a sun and a soft dome. The camera is pulled back to fit the patch.
+Curves of every basis, points with widths and colours, and a patch of 600 hair strands in the bottom left.
 
-## What to look at
-
-- `/Render/curves` (the default): 6-sided tubes, icosahedron points, shiny hair.
-- `/Render/ribbons` (`eldr:curveRibbons`): camera-facing ribbons (2 triangles a step instead of 12): flat-shaded strokes.
-- `/Render/sprites` (`eldr:pointSprites`): points as camera-facing discs.
-- `/Render/hairOff` (`eldr:hairShading` off): the fur as plain diffuse tubes, no hair highlight.
+- **curves**: tubes, sphere points and shiny hair.
+- **ribbons**: flat camera-facing ribbons instead of tubes.
+- **sprites**: points as flat discs.
+- **hairOff**: the fur as plain diffuse tubes, no hair highlight.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_19_curves_points\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/curves scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_19_curves_points\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_19_curves_points/scene.usda`.
 
 ## Houdini scene
 

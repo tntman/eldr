@@ -1,26 +1,21 @@
-# Per-effect denoise
+# Denoising during the first samples
 
 <!-- summary -->
-The final gather, traced shadows and traced reflections are each filtered in their own signal during the first film samples.
-
-- **Compare:** open `showcase/2026-10-29_11_effect_denoise/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `raw4` vs `denoise4`, `raw16` vs `denoise16`, `raw64` vs `denoise64`, `noFade64`.
-- **Look at:** The soft shadow under the box and the walls' indirect light at 4 samples.
+Bounced light, traced shadows and traced reflections are filtered while few film samples exist, so early images are clean.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` (Cornell box lit by a glowing panel and a bulb, chrome ball) with the ray-traced recipe: GI final gather, traced shadows and traced reflections. Each effect's signal is filtered before it is shaded: the gathered light by two edge-aware a-trous passes (`eldr:finalGatherDenoise`), the shadow visibility over its penumbra (up to 3 pixels) in the receiver's plane (`eldr:rtShadowDenoise`), rough reflections over up to 12 pixels (`eldr:rtReflectionDenoise`). The filters fade out over the film's first `eldr:effectDenoiseSamples` (64) samples, so few samples come out clean and the converged image stays sharp.
+A Cornell box with a chrome ball. Look at the soft shadow under the box and the walls' bounce light.
 
-- `/Render/raw4` vs `/Render/denoise4`: 4 film samples. Look at the floor's soft shadow under the box and the walls' indirect light.
-- `/Render/raw16` vs `/Render/denoise16`: 16 samples.
-- `/Render/raw64` vs `/Render/denoise64`: 64 samples; the denoised one is still cleaner (RMSE vs 1024 samples 0.008 against 0.012); from sample 64 on the filters are off.
-- `/Render/noFade64`: `eldr:effectDenoiseSamples` 0, the filters run on every sample: smoother, but the shadow edges and corners stay slightly blurred however long it renders.
+- **raw4 / raw16 / raw64**: 4, 16 or 64 film samples, no filtering; noisy.
+- **denoise4 / denoise16 / denoise64**: the same sample counts, filtered; cleaner.
+- **noFade64**: filtering stays on for every sample; smooth, but shadow edges and corners stay slightly soft.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+The filters fade out over the first 64 samples, so a converged image stays sharp.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_11_effect_denoise\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_11_effect_denoise/scene.usda`
-
-Settings prims: `/Render/raw4`, `/Render/denoise4`, `/Render/raw16`, `/Render/denoise16`, `/Render/raw64`, `/Render/denoise64`, `/Render/noFade64`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_11_effect_denoise\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_11_effect_denoise/scene.usda`.
 
 ## Houdini scene
 

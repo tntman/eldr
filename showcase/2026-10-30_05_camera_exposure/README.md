@@ -1,24 +1,18 @@
 # Camera exposure
 
 <!-- summary -->
-The USD camera's exposure (exposure, ISO, time, f-stop, responsivity) scales the image as in Karma (`eldr:cameraExposure`).
-
-- **Compare:** open `showcase/2026-10-30_05_camera_exposure/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `camera` vs `ignored`.
-- **Look at:** The whole image: 4x brighter (linear) with the camera's exposure.
+The camera's exposure, ISO, shutter and f-stop scale the image, as in Karma.
 <!-- summary -->
 
-Eldr applies the USD camera's exposure as Karma does: the image times `HdCamera::GetLinearExposureScale()`, which UsdGeomCamera computes from `exposure`, `exposure:iso`, `exposure:time`, `exposure:fStop` and `exposure:responsivity`. Beauty and light AOVs (emission, the diffuse and glossy splits, light groups) scale; depth, normals, ids and albedo do not.
+A Cornell box whose camera is set to exposure 1 at ISO 200, which is 4x brighter in linear light.
 
-What to look at: the Cornell box's `/cam` here is exposure 1 at ISO 200 (4x). `/Render/camera` (the default) is 4x brighter (linear, before tonemapping) than `/Render/ignored` (`eldr:cameraExposure` off). Colour limits clamp the exposed values, as in Karma: on `tests/scenes/emissive.usda`, whose light is mostly clipped indirect light, 4x exposure brightens it only about 1.03x in both renderers.
-
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_05_camera_exposure\scene.usda`, then pick a settings prim, or flip Camera Exposure in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/camera scene.usda`.
+- **camera**: the camera's exposure applies.
+- **ignored**: the camera's exposure is ignored.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_05_camera_exposure\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_05_camera_exposure/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_05_camera_exposure\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_05_camera_exposure/scene.usda`.
 
 ## Houdini scene
 

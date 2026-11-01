@@ -1,24 +1,19 @@
 # Displacement
 
 <!-- summary -->
-UsdPreviewSurface and MaterialX displacement move the surface, with shadows (`eldr:displacement`).
-
-- **Compare:** open `showcase/2026-10-30_18_displacement/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `displacement` vs `displacementOff`, `displacementHalf`.
-- **Look at:** The bumps rising from the planes and their shadows, and the swollen cube.
+Displacement shaders move the surface and cast shadows.
 <!-- summary -->
 
-`tests/scenes/displacement.usda`. Left: UsdPreviewSurface displacement from a height map (round bumps on five cells of a checker) times 0.6. Middle: the same map through a MaterialX displacement shader. Right: a cube displaced outwards by a constant 0.25. Vertices move along their normals after subdivision (the planes are 16 x 16 quads, diced by their size on screen), so silhouettes, shadows and traced rays agree.
+Bumps rise from two planes (one through a UsdPreviewSurface, one through MaterialX) and a cube swells outwards.
 
-## What to look at
-
-- `/Render/displacement` (the default): bumps rise from the planes and cast shadows; the cube swells.
-- `/Render/displacementOff` (`eldr:displacement` off): flat planes, the cube at its authored size.
-- `/Render/displacementHalf` (`eldr:displacementScale` 0.5): half height.
+- **displacement**: bumps with shadows and a swollen cube.
+- **displacementOff**: flat planes and the cube at its real size.
+- **displacementHalf**: half the height.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_18_displacement\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/displacement scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_18_displacement\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_18_displacement/scene.usda`.
 
 ## Houdini scene
 

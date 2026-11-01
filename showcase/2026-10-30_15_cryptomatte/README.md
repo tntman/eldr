@@ -1,24 +1,20 @@
 # Cryptomatte
 
 <!-- summary -->
-Cryptomatte object and material layers in the EXR, soft (several ids per pixel) or one id per pixel (`eldr:cryptomatteSoft`).
-
-- **Compare:** open `showcase/2026-10-30_15_cryptomatte/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `crypto` vs `cryptoHard`.
-- **Look at:** Open `cryptomatte.exr` in a Cryptomatte viewer and pick the ball's edge: soft mattes against aliased ones.
+The EXR carries Cryptomatte layers for objects and materials, with soft or hard edges.
 <!-- summary -->
 
-The Cornell box with a render product writing the beauty and two Cryptomatte layers: by object (`primvars:__name`, the rprim path) and by material (`primvars:__materialname`), as Karma's Cryptomatte LOP names them. The EXR has `CryptoObject00..02` and `CryptoMaterial00..02` (ranks 0-5, id and coverage pairs) and the spec's metadata (name, MurmurHash3_32, uint32_to_float32, manifest), so Nuke's Cryptomatte gizmo or Houdini's COP Cryptomatte picks mattes.
+A Cornell box rendered to `cryptomatte.exr`. Open it in a Cryptomatte viewer and pick the ball's edge.
 
-## What to look at
+- **crypto**: soft mattes: several ids per edge pixel that add up to 1.
+- **cryptoHard**: one id per pixel; aliased mattes.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/crypto` (the default): soft Cryptomatte (film only): up to 6 ids per pixel with their filtered coverage; the mattes of an edge sum to 1.
-- `/Render/cryptoHard` (`eldr:cryptomatteSoft` off): one id per pixel, coverage 1: aliased mattes.
-- The beauty is the same in both: open `cryptomatte.exr` (written next to where you run husk or usdrecord) in a Cryptomatte viewer and pick the ball's edge.
+The beauty is the same in both.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_15_cryptomatte\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/crypto scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_15_cryptomatte\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_15_cryptomatte/scene.usda`.
 
 ## Houdini scene
 

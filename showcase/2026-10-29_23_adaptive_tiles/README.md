@@ -1,19 +1,18 @@
 # Adaptive sampling by tiles
 
 <!-- summary -->
-With adaptive sampling, tiles whose pixels have all stopped skip shading and rays (`eldr:adaptiveTiles`).
-
-- **Compare:** open `showcase/2026-10-29_23_adaptive_tiles/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `adaptiveTiles256` vs `adaptiveFull256`.
-- **Look at:** The same image; the `rayTracing` and `shading` pass times in the render stats drop with tiles on.
+Where the image has converged, whole tiles stop being shaded.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` with GI and final gather, 256 film samples, adaptive sampling at threshold 0.01 (`eldr:adaptiveThreshold`).
+A Cornell box rendered to 256 film samples with adaptive sampling. The images match; the render stats show shorter ray tracing and shading times with tiles.
+
+- **adaptiveTiles256**: converged tiles are skipped.
+- **adaptiveFull256**: every pixel is shaded for every sample.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_23_adaptive_tiles\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_23_adaptive_tiles/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_23_adaptive_tiles\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_23_adaptive_tiles/scene.usda`.
 
 ## Houdini scene
 

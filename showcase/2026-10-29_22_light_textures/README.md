@@ -1,19 +1,18 @@
 # Light textures
 
 <!-- summary -->
-A rect or disk light's `inputs:texture:file` colours its light, in direct light, bounce light and reflections (`eldr:lightTextures`).
-
-- **Compare:** open `showcase/2026-10-29_22_light_textures/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `lightTextures` vs `lightTexturesOff`.
-- **Look at:** The four colours of the ceiling panel and the matching tints on the walls, floor and in the chrome ball; plain white with it off.
+A rect or disk light with a texture is coloured by it, in direct light, bounce light and reflections.
 <!-- summary -->
 
-`tests/scenes/cornell.usda` with its ceiling light made a 1.6 m panel showing `tests/scenes/textures/quadrants.png` (Karma's orientation). Both prims turn on GI, and the light authors `inputs:karma:light:renderlightgeo = 1` so its shape shows to the camera.
+A Cornell box whose ceiling light is a panel showing four colours. Look at the matching tints on the walls, floor and chrome ball.
+
+- **lightTextures**: the panel's four colours tint the room.
+- **lightTexturesOff**: the light is plain white.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_22_light_textures\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_22_light_textures/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_22_light_textures\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_22_light_textures/scene.usda`.
 
 ## Houdini scene
 

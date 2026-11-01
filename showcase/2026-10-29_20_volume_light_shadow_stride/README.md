@@ -1,23 +1,19 @@
-# Volume local-light shadow stride
+# Volume light shadows
 
 <!-- summary -->
-Volumes take a local light's shadow every second march step instead of every step, for the same image (`eldr:volumeLocalShadowStride`).
-
-- **Compare:** open `showcase/2026-10-29_20_volume_light_shadow_stride/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `stride2` (default) vs `stride1` vs `stride4`.
-- **Look at:** The three coloured lights in the smoke: the same picture, less time (render stats).
+Smoke checks a local light's shadow every second step instead of every step, for the same image in less time.
 <!-- summary -->
 
-`tests/scenes/volume.usda` plus three sphere lights (warm, cool and white). Between taps, the unshadowed light is scaled by the last tap's shadowed fraction.
+A smoke scene lit by three sphere lights (warm, cool and white). The pictures match; compare the render times in the render stats.
 
-- `/Render/stride2`: the default. At 1080p with the final-render settings, volumes take 237 ms per sample.
-- `/Render/stride1`: a tap every step: 258 ms per sample. Against `stride2`: PSNR 63 dB, at most 5/255.
-- `/Render/stride4`: about 209 ms per sample. Against `stride1`: PSNR 57 dB.
+- **stride2**: the default: a shadow check every second step.
+- **stride1**: a check at every step; slowest, reference quality.
+- **stride4**: a check every fourth step; fastest.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_20_volume_light_shadow_stride\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_20_volume_light_shadow_stride/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_20_volume_light_shadow_stride\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_20_volume_light_shadow_stride/scene.usda`.
 
 ## Houdini scene
 

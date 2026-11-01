@@ -1,19 +1,18 @@
 # Reflection probe
 
 <!-- summary -->
-A cube captured around the scene supplies reflections where the screen has none (`eldr:reflectionProbe`).
-
-- **Compare:** open `showcase/2026-10-30_23_reflection_probe/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `probe` vs `probeOff`.
-- **Look at:** The chrome ball: it shows the red wall behind the camera with the probe, the dome without.
+A captured view of the surroundings supplies reflections where the screen has none.
 <!-- summary -->
 
-`tests/scenes/reflections.usda` (columns, an arch and a chrome ball on a polished floor, a red wall behind the camera) plus a rougher strip on the right. Screen-space reflections are on in both prims; the probe fills in what the screen cannot see.
+A polished floor and a chrome ball with a red wall behind the camera.
+
+- **probe**: the ball shows the red wall.
+- **probeOff**: the ball shows only the dome.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_23_reflection_probe\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_23_reflection_probe/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_23_reflection_probe\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_23_reflection_probe/scene.usda`.
 
 ## Houdini scene
 
