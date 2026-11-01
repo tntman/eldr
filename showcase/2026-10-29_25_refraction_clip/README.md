@@ -1,19 +1,18 @@
-# Traced refraction starts at glass
+# Traced refraction cost
 
 <!-- summary -->
-With traced refraction, a pixel's first ray looks for glass only, up to the opaque depth, for the same image (`eldr:rtRefractionClip`).
-
-- **Compare:** open `showcase/2026-10-29_25_refraction_clip/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `clip` (default) vs `noClip`.
-- **Look at:** The glass objects: the same picture; `rayTracing` takes 37.5 instead of 41.7 ms per sample.
+Traced refraction first looks for glass only, for the same image in less time.
 <!-- summary -->
 
-`tests/scenes/glass.usda` with `eldr:rtRefraction` on in both prims.
+Glass objects with traced refraction. The pictures match; ray tracing takes about 37.5 instead of 41.7 ms per sample.
+
+- **clip**: the default; the first ray looks for glass only.
+- **noClip**: the first ray looks at everything; slower.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_25_refraction_clip\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_25_refraction_clip/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_25_refraction_clip\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_25_refraction_clip/scene.usda`.
 
 ## Houdini scene
 

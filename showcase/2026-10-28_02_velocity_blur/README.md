@@ -1,33 +1,22 @@
 # Velocity motion blur
 
 <!-- summary -->
-Objects that only author `velocities` (or instance velocities) blur when their velocity blur is on, as Karma's Velocity Blur.
-
-- **Compare:** open `showcase/2026-10-28_02_velocity_blur/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `blurOn` vs `blurOff` (`eldr:motionBlur`), `blurFinal`, `cameraBlur`.
-- **Look at:** The meshes, points and instances smear along their velocity; the curves stay sharp (eldr vblur 0 beats karma 1).
+Objects that only author velocities blur along them when velocity blur is on, as in Karma.
 <!-- summary -->
 
-`tests/scenes/motion_blur.usda` at frame 24 (the layer's time range is pinned to it) with Velocity Blur turned on per object. Without it, objects that only author `velocities` do not blur (Karma's default).
+A moving scene of meshes, points, instances, curves and a skinned tube at frame 24. Each object turns velocity blur on or off itself. The curves keep it off and stay sharp.
 
-- `mesh_velocitiesOnly`: `primvars:eldr:object:vblur = 1`; `mesh_velocitiesAccelerations`: 2 (adds accelerations).
-- `pointsVelocities`, `inst_angularVelocities`: only `karma:` names (vblur, instance_vblur); Eldr reads them too.
-- `curvesVelocities`: karma vblur 1 but eldr vblur 0. Eldr wins, so it stays sharp.
-- `inst_velocities`: `primvars:eldr:object:instance_vblur = 1`.
-- `skinned`: skel.usda's agent, a tube bent by joints. Sampled motion takes its joints at the shutter's open and close, so it blurs in a single frame (husk, usdrecord) like the rest.
+- **blurOn**: motion blur on; velocity-blur objects smear along their velocity.
+- **blurOff**: motion blur off; everything is sharp.
+- **blurFinal**: final settings with blur averaged over film samples; the smear gets smooth.
+- **cameraBlur**: a panning camera blurs the scene.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-## What to look at
-
-- `/Render/blurOn` vs `/Render/blurOff`: `eldr:motionBlur` toggles blur without changing the frame. Time-sampled objects blur from their samples; velocity-only ones from vblur.
-- `/Render/blurFinal`: the final-render settings (traced reflections and refraction, final gather, caustics), with `eldr:motionBlurTimeSamples` on: each film sample renders at its own shutter time, so the blur converges over film samples.
-- `/Render/cameraBlur`: the panning camera.
+Render frame 24.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_02_velocity_blur\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_02_velocity_blur/scene.usda`
-
-Settings prims: `/Render/blurOn`, `/Render/blurOff`, `/Render/blurFinal`, `/Render/cameraBlur`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_02_velocity_blur\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_02_velocity_blur/scene.usda`.
 
 ## Houdini scene
 

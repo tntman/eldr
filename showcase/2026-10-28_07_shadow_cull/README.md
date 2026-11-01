@@ -1,27 +1,19 @@
 # Small-object culling in sun shadows
 
 <!-- summary -->
-Tiny instances are skipped in the far sun-shadow cascades to save time (`eldr:shadowCullPixels`).
-
-- **Compare:** open `showcase/2026-10-28_07_shadow_cull/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `cull05` (default) vs `cull8` vs `cullOff`.
-- **Look at:** The distant rows of posts: at 8 some lose their shadows; at the default the picture equals `cullOff`, only faster.
+Tiny instances are skipped in the far sun-shadow cascades to save time.
 <!-- summary -->
 
-A ground plane and 1600 small posts (a PointInstancer) far from the camera, under a low sun. Far sun-shadow cascades have big texels, so tiny instances can be skipped there to save time.
+A ground plane with 1600 small posts far from the camera under a low sun. The difference shows in frame time more than in the picture.
 
-- `/Render/cull05`: `eldr:shadowCullPixels` 0.5 (default).
-- `/Render/cull8`: 8: more posts lose their shadows in the far cascades. Look at the distant rows.
-- `/Render/cullOff`: 0, nothing culled (slowest). At the default the picture is the same as with culling off here; 8 is where the far rows change.
-
-Frame time shows the difference better than the picture; use usdview's frame time or husk's log. The effect is biggest in dense crowd scenes: the crowd scenes in `E:\usd-testscenes` show it best (that folder is not part of the repo).
+- **cull05**: the default culling; looks the same as no culling, but faster.
+- **cull8**: strong culling; some distant posts lose their shadows.
+- **cullOff**: no culling; slowest.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_07_shadow_cull\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_07_shadow_cull/scene.usda`
-
-Settings prims: `/Render/cull05`, `/Render/cull8`, `/Render/cullOff`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_07_shadow_cull\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_07_shadow_cull/scene.usda`.
 
 ## Houdini scene
 

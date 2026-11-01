@@ -1,25 +1,21 @@
 # Direct and indirect intensity
 
 <!-- summary -->
-Direct and indirect light scaled separately in the final pixel (`eldr:directIntensity`, `eldr:indirectIntensity`).
-
-- **Compare:** open `showcase/2026-10-30_16_light_path_intensity/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `neutral` vs `indirectBoost` vs `directDim`.
-- **Look at:** The ceiling and the colour bleeding (indirect), the light's pool on the floor (direct).
+Direct and bounced light can be scaled separately in the final pixel.
 <!-- summary -->
 
-The Cornell box under GI, where the ceiling and the colour on the white walls are bounced light. `eldr:directIntensity` and `eldr:indirectIntensity` scale direct or indirect light in the final pixel only, like a comp grade on the light splits: the light transport and the AOVs are unchanged, the beauty is the splits times the intensities. Fog and toon shading stay unscaled.
+A Cornell box where the ceiling and the colour on the white walls are bounced light, and the light's pool on the floor is direct.
 
-## What to look at
+- **neutral**: both at full strength.
+- **indirectBoost**: 3x bounced light: bright ceiling, strong colour bleeding.
+- **directDim**: direct light at 30%; the bounce stays.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/neutral`: both 1, GI on.
-- `/Render/indirectBoost` (`eldr:indirectIntensity` 3): bright ceiling, strong red and green bleeding, filled shadows.
-- `/Render/directDim` (`eldr:directIntensity` 0.3): the light's pool on the floor and the direct highlight dim; the bounce stays.
-- Karma has no such control; its `karma` node is the neutral look.
+Karma has no such control.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_16_light_path_intensity\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/neutral scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_16_light_path_intensity\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_16_light_path_intensity/scene.usda`.
 
 ## Houdini scene
 

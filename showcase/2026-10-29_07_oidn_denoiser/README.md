@@ -1,26 +1,22 @@
-# Intel Open Image Denoise
+# Denoising
 
 <!-- summary -->
-The converged film is denoised by Intel Open Image Denoise, guided by albedo and normal (`eldr:denoise`, or Karma's image filter).
-
-- **Compare:** open `showcase/2026-10-29_07_oidn_denoiser/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `raw16` vs `denoise16`, `karmaImageFilter16` (Karma's denoiser string), `raw64`.
-- **Look at:** The walls and ceiling: grainy raw, smooth with sharp edges denoised; 16 denoised samples beat 64 raw ones.
+The finished image is cleaned by Intel Open Image Denoise, guided by albedo and normal.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` (the Cornell box lit by its glowing panel and bulb) with GI and final gather, so few samples are noisy. Every prim ticks the final-render settings with its own `eldr:filmSamples`.
+A Cornell box with bounced light, rendered with few film samples so it is noisy.
 
-- `/Render/raw16` vs `/Render/denoise16`: 16 film samples, `eldr:denoise` off and on (about 1.3 s at 1080p on the CPU).
-- `/Render/denoise16` also writes `denoise16.exr` with the denoised beauty (`C`) and the raw one (`raw`, source `eldr:beautyRaw`).
-- `/Render/karmaImageFilter16`: no `eldr:denoise`, but Karma's image filter string with `"denoise"` turns the denoiser on too.
-- `/Render/raw64`: 64 raw samples, for comparison.
+- **raw16**: 16 samples, noisy.
+- **denoise16**: 16 samples, denoised: smooth with sharp edges; also writes the raw beauty.
+- **karmaImageFilter16**: 16 samples, denoised through Karma's image filter setting.
+- **raw64**: 64 samples, no denoiser, for comparison.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-Needs Eldr built with OIDN (CMake finds `OIDN_ROOT`, default C:/dev/oidn-2.5.1; inside Houdini, Houdini's own OIDN). Without it `eldr:denoise` prints one warning and renders raw.
+Needs Eldr built with Open Image Denoise; without it the image stays raw.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_07_oidn_denoiser\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_07_oidn_denoiser/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_07_oidn_denoiser\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_07_oidn_denoiser/scene.usda`.
 
 ## Houdini scene
 

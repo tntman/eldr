@@ -1,31 +1,18 @@
 # Karma's AOVs and light groups
 
 <!-- summary -->
-The render vars a Karma Render Settings LOP writes (light groups, diffuse and glossy splits, transmission, subsurface, coat, volume, shadow mattes) come out of Eldr by the same names.
-
-- **Compare:** open `showcase/2026-10-29_06_karma_aovs/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` vs `noHoldouts` (`eldr:holdouts` off).
-- **Look at:** The EXR's layers: `beauty_ceiling` and `beauty_lamp` (one light each), `glossytransmission`, `sss`, `coat`, `combinedvolume`, `holdout_shadow`.
+The render vars a Karma Render Settings node writes (light groups, diffuse and glossy splits, transmission, subsurface, coat, volume, shadow mattes) come out of Eldr by the same names.
 <!-- summary -->
 
-The Cornell box with a product `aovs` listing the render vars a Karma Render Settings LOP writes, by Karma's names and light path expressions: the beauty, diffuse and glossy (direct, indirect), `glossytransmission` (`C<TG>.*L`), `sss` (`C<TD>.*L`), `coat` (`C<...'coat'>.*L`), `combinedvolume` (`CV.*L`), emission, `shadow` (`shadow;C.*[LO]`), `holdout_shadow` (`holdouts;shadow;CDL`) and two light groups, `beauty_ceiling` (`C.*<L.'ceiling'>`) and `beauty_lamp` (`C.*<L.'lamp'>`). The ceiling light and a warm lamp carry Karma's LPE tag (`inputs:karma:light:lpetag`; Eldr's `inputs:eldr:light:lpetag` would win).
+A Cornell box with a glass ball, a subsurface ball, a clear-coat ball, a small cloud and a holdout block, writing one EXR. Look at its layers: `beauty_ceiling` and `beauty_lamp` (one light each), `glossytransmission`, `sss`, `coat`, `combinedvolume` and `holdout_shadow`.
 
-## What to look at
-
-- `beauty_ceiling` and `beauty_lamp`: each light's direct light alone. Groups + `indirectdiffuse` + `indirectglossyreflection` + `glossytransmission` + `combinedemission` + `combinedvolume` rebuild the beauty (the subsurface ball aside: its indirect light is in `sss`).
-- `glossytransmission`: the glass ball's refraction (not part of `indirectglossyreflection`).
-- `sss`: the subsurface ball on the box; its light is out of the diffuse vars.
-- `coat`: the blue ball's clear coat, also counted in glossy (as Karma).
-- `combinedvolume`: the small cloud; what is behind it is dimmed in every split, so the splits still add up.
-- `holdout_shadow`: the block on the floor at the front right is a holdout (`karma:object:holdoutmode`): cut out of the beauty (zero alpha) and no light in any var, its shadows here for comp.
-- `/Render/noHoldouts` (`eldr:holdouts` off): the block is drawn, its shadows move to `shadow`.
+- **default**: writes all the vars; the holdout block is cut out and its shadow goes to `holdout_shadow`.
+- **noHoldouts**: the block is drawn and its shadow joins `shadow`.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- husk: `husk -R Eldr -s /Render/default showcase/2026-10-29_06_karma_aovs/scene.usda` writes `lightGroups.exr`; render the same with `-R BRAY_HdKarma` to compare layer by layer.
-- Houdini: Sublayer LOP on the file, Eldr as the viewport renderer; the Render Outputs menu lists the vars.
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_06_karma_aovs\scene.usda`, AOV menu, or `usdrecord --renderSettingsPrimPath /Render/default`.
-
-Settings prims: `/Render/default`, `/Render/noHoldouts`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_06_karma_aovs\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_06_karma_aovs/scene.usda`.
 
 ## Houdini scene
 

@@ -1,23 +1,18 @@
 # Instancing
 
 <!-- summary -->
-Nested point instancers and native instances, with per-instance culling by screen size (`eldr:cullPixels`).
-
-- **Compare:** open `showcase/2026-10-30_20_instancing/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `instances` vs `cullSmall`.
-- **Look at:** The far rows of trees thin out with `cullSmall`.
+Nested point instancers and native instances render fast, and tiny instances can be skipped.
 <!-- summary -->
 
-A PointInstancer of 12 x 12 "trees" whose prototype holds a trunk and a second, nested PointInstancer of three leaf balls, with per-instance scales; in front on the left three native USD instances (instanceable references of one rock). Each prototype draws once per pass (one indirect draw per prototype) however many times it appears; frustum and small-object culling run per instance on the GPU.
+144 trees (each with a trunk and three leaf balls) and three native rock instances.
 
-## What to look at
-
-- `/Render/instances` (the default): all 144 trees and 432 leaf balls, far ones included (`eldr:cullPixels` 0.5).
-- `/Render/cullSmall` (`eldr:cullPixels` 30): instances under 30 pixels on screen are skipped: the far rows thin out.
+- **instances**: every tree is drawn, far ones included.
+- **cullSmall**: instances under 30 pixels are skipped; the far rows thin out.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_20_instancing\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/instances scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_20_instancing\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_20_instancing/scene.usda`.
 
 ## Houdini scene
 

@@ -1,38 +1,18 @@
 # Texture compression
 
 <!-- summary -->
-8-bit textures are block-compressed on the GPU (BC7, BC4, BC5) and cached on disk, to save memory (`eldr:textureCompression`).
-
-- **Compare:** open `showcase/2026-10-29_19_texture_compression/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `compressed` vs `exact`.
-- **Look at:** The disc edges and one-texel lines: slightly smeared where three colours meet in a block.
+8-bit textures are compressed on the GPU to save memory, at a small cost in detail.
 <!-- summary -->
 
-`eldr:textureCompression` stores 8-bit textures block-compressed on the GPU: colour as
-BC7 (1 byte per texel instead of 4), gray as BC4 (half a byte instead of 1), gray + alpha as BC5. The
-mips are made before compressing (sRGB filtered in linear). Off (the default) loads exact textures, as Karma never compresses; on compresses them. Each file is encoded once and kept in
-`%LOCALAPPDATA%\Eldr\textures`; later loads read it from there.
+Two quads show a colour texture and a grey texture, one pixel per texel. Look at the disc edges and thin lines.
 
-Two quads show their textures as emission, one screen pixel per texel, so differences are not hidden by
-lighting. Left: `detail.png` (sRGB colour, BC7) with gradients, hard-edged discs, a checker and one-texel
-lines. Right: `rings.png` (raw gray, BC4). Look at the disc edges and the thin lines: BC7's mode 6 puts one
-colour line through each 4x4 block, so a block where three colours meet comes out slightly smeared.
-`make_textures.py` writes the two images. Measured (usdrecord, compressed vs exact): 37 dB PSNR here, the worst at the one-texel lines; crowd_9k 52 dB with its textures 172 to 112 MB.
-
-Render settings prims:
-- `/Render/compressed`: `eldr:textureCompression` on.
-- `/Render/exact`: `eldr:textureCompression` off, the exact 8-bit texels.
-
-Open it:
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_19_texture_compression\scene.usda`, then set
-  Texture Compression off or on in the Hydra settings (materials reload their textures).
-- usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/exact scene.usda exact.png`
-- husk: `husk -R HdVkRendererPlugin -s /Render/compressed scene.usda -o out.exr`
+- **compressed**: compressed textures; blocks where three colours meet are slightly smeared.
+- **exact**: exact texels.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_19_texture_compression\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_19_texture_compression/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_19_texture_compression\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_19_texture_compression/scene.usda`.
 
 ## Houdini scene
 

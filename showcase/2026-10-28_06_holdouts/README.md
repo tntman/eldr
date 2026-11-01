@@ -1,25 +1,20 @@
 # Holdouts and phantom objects
 
 <!-- summary -->
-Objects set as holdouts are cut out of the image as mattes, and phantom objects are hidden from the camera but still cast shadows and show in reflections.
-
-- **Compare:** open `showcase/2026-10-28_06_holdouts/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `holdoutScene` vs `holdoutsOff` (`eldr:holdouts`).
-- **Look at:** The ball (a matte: alpha 0, its shadow kept), the box (eldr says no holdout, beating karma's 1: drawn) and the front object (phantom: unseen, its shadow still there).
+Holdout objects are cut out as mattes; phantom objects are hidden from the camera but still shadow and reflect.
 <!-- summary -->
 
-`tests/scenes/holdout.usda` with per-object overrides. Eldr's `primvars:eldr:object:*` names win over `primvars:karma:object:*`; both are set here with different values so you can see the winner. Houdini's Eldr tab on a Render Geometry Settings LOP authors the eldr names.
+The ball is a matte (alpha 0, its shadow stays). The box is marked a holdout for Karma but not for Eldr, so Eldr draws it. The front object is a phantom: unseen, its shadow remains.
 
-- `/box`: karma holdoutmode 1, eldr 0. Eldr wins: the box renders normally.
-- `/ball`: only karma mode 2: a matte.
-- `/front`: eldr `rendervisibility = "-primary"` (phantom), karma says `*`.
+- **holdoutScene**: holdouts and phantoms applied.
+- **holdoutsOff**: everything drawn as usual.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-`/Render/holdoutScene` (`eldr:holdouts` on, the default) cuts the mattes to alpha 0; `/Render/holdoutsOff` draws them as usual. Karma reads the karma names, so its `/box` is a holdout.
+Eldr's own object names win over Karma's, so Karma shows the box as a holdout and Eldr does not.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_06_holdouts\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_06_holdouts/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_06_holdouts\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_06_holdouts/scene.usda`.
 
 ## Houdini scene
 

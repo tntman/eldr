@@ -1,25 +1,20 @@
 # Shadow modes
 
 <!-- summary -->
-Shadows from maps (sun cascades, light atlas) softened by PCSS and jitter, hard PCF, or traced (`eldr:shadowJitter`, `eldr:softShadows`, `eldr:rtShadows`).
-
-- **Compare:** open `showcase/2026-10-30_10_shadow_modes/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `maps` (default) vs `pcss` vs `hard` vs `traced`.
-- **Look at:** The contact hardening: sharp where the posts meet the ground, soft under the beam and the sphere light.
+Shadows can be soft or hard, from shadow maps, or traced.
 <!-- summary -->
 
-`tests/scenes/sunangle.usda` (a 4 degree sun over two posts, a beam and a ball) plus a warm sphere light of radius 0.3 low on the right, so both the sun's cascades and the local light atlas show. Look at the contact hardening: sharp where the posts meet the ground, soft under the beam, and the sphere light's soft shadow of the ball.
+A low sun over two posts, a beam and a ball, plus a warm sphere light. Look at the contact hardening: sharp where the posts meet the ground, soft under the beam and around the ball.
 
-## What to look at
-
-- `/Render/maps` (the default): shadow maps (4 sun cascades, atlas tiles for the sphere light), soft from the light's size (PCSS, percentage-closer soft shadows), exact penumbrae from maps jittered over the light every film sample (`eldr:shadowJitter`).
-- `/Render/pcss` (`eldr:shadowJitter` off): the same maps, PCSS only: penumbra widths estimated.
-- `/Render/hard` (`eldr:softShadows`, `eldr:softSunShadows` off): 3x3 PCF (percentage-closer filtering): hard edges everywhere.
-- `/Render/traced` (`eldr:rtShadows`): ray-traced shadows, soft from the light's size, denoised over the film's first samples.
+- **maps**: the default: shadow maps, soft from the light's size, refined over film samples.
+- **pcss**: the same maps with softness estimated, not refined.
+- **hard**: hard edges everywhere.
+- **traced**: ray-traced shadows, soft from the light's size.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_10_shadow_modes\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/maps scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_10_shadow_modes\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_10_shadow_modes/scene.usda`.
 
 ## Houdini scene
 

@@ -1,19 +1,18 @@
 # Bloom
 
 <!-- summary -->
-A glow around very bright pixels (`eldr:bloomIntensity`).
-
-- **Compare:** open `showcase/2026-10-30_25_bloom/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `bloom` (0.4) vs `bloomOff` (0).
-- **Look at:** The wide glow around the panel and the bulb.
+Very bright pixels glow.
 <!-- summary -->
 
-The Cornell box with a glowing panel (40) and a warm bulb (60, 30, 8) seen directly. Linear Beauty (`eldr:productLinear`) skips bloom in husk's and Houdini's beauty, so both prims turn it off; `eldr:colorLimit` 1000 keeps the emitters' full HDR. The default bloom is 0.04.
+A Cornell box with a bright panel and a warm bulb seen directly.
+
+- **bloom**: a wide glow around the panel and the bulb.
+- **bloomOff**: no glow.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_25_bloom\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_25_bloom/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_25_bloom\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_25_bloom/scene.usda`.
 
 ## Houdini scene
 

@@ -1,33 +1,20 @@
 # Colour limit
 
 <!-- summary -->
-Karma's colour limit clamps what the camera sees of emitters and the light they bounce, with a full-HDR option for comp (`eldr:colorLimit`, `eldr:indirectClamp`).
-
-- **Compare:** open `showcase/2026-10-29_17_colour_limit/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `limit20` (Karma's default) vs `fullHdr` vs `off`, `karmaName5` (Karma's `karma:global:colorlimit` 5).
-- **Look at:** The panel and the bulb in an EXR viewer (20 vs 40/60), and the walls: equal in `limit20` and `fullHdr`, about 1.4x brighter in `off`, darker at limit 5.
+Karma's colour limit clamps how bright emitters and their bounced light can get; a full-HDR option keeps the emitters unclamped for comp.
 <!-- summary -->
 
-The emissive Cornell box (`tests/scenes/emissive.usda`) with three settings prims:
+The glowing Cornell box. Check the panel and bulb in an EXR viewer.
 
-- `/Render/limit20`: Karma's default colour limit of 20. The panel (emission 40) shows as 20 and the bulb
-  (60, 30, 8) as (20, 10, 2.7), hue kept. Their light on the walls is clamped as Karma clamps a bounce
-  sample (radiance x albedo). This matches Karma's render (karma_golden emissive: 1.01).
-- `/Render/fullHdr`: `eldr:colorLimit` 0 with `eldr:indirectClamp` 20. The emitters keep their HDR value
-  for comp, and the bounce clamp stays, so the walls match `karma`.
-- `/Render/off`: `eldr:colorLimit` 0, which also turns off the bounce clamp. The walls are about 1.4x brighter. The brightest pixel is (20, 10, 2.7) in
-  `karma` and (60, 30, 8) in `fullHdr`, and the walls match between those two within 1%.
-
-Look at the panel and the bulb in an EXR viewer or with usdview's pixel probe.
-
-Open: `usdenv usdview --renderer Eldr showcase\2026-10-29_17_colour_limit\scene.usda` and pick a
-settings prim. Or run `husk -R Eldr -s /Render/fullHdr showcase\2026-10-29_17_colour_limit\scene.usda`.
-In Houdini, set Karma's Color Limit to a large value such as 1e6 for the same full-HDR emitters in Karma (Karma's 0 renders black, not off).
+- **limit20**: Karma's default limit of 20: the panel shows as 20, the bulb as (20, 10, 2.7).
+- **fullHdr**: emitters keep their full values (40 and 60); the walls match limit20.
+- **off**: no limit at all; the walls are about 1.4x brighter.
+- **karmaName5**: Karma's own limit setting at 5; darker walls.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_17_colour_limit\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_17_colour_limit/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_17_colour_limit\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_17_colour_limit/scene.usda`.
 
 ## Houdini scene
 

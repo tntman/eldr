@@ -1,29 +1,21 @@
 # Light linking
 
 <!-- summary -->
-A light can skip objects (light linking) and its shadows can skip casters (shadow linking), from UsdLux collections as Houdini's Light Linker writes them.
-
-- **Compare:** open `showcase/2026-10-29_15_light_linking/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` vs `noLinking` (`eldr:lightLinking` off), `traced` (the same links with traced shadows).
-- **Look at:** The right ball, lit only blue and warm (the key light skips it), and the floor with no blue shadow from the left ball.
+A light can skip objects, and its shadows can skip casters.
 <!-- summary -->
 
-Three balls on a floor (`tests/scenes/lightlink.usda`) under three lights:
+Three balls on a floor under three lights. The key light skips the right ball, so it is lit only blue and warm. The blue fill light ignores the left ball as a shadow caster, so the floor has no blue shadow from it.
 
-- `key` (front left, above): its `collection:lightLink` excludes `/balls/right`, so the right ball gets none of its light (it still casts the key's shadow).
-- `fill` (blue, from the right): its `collection:shadowLink` excludes `/balls/left`, so the left ball casts no fill shadow onto the floor.
-- `iesSpot` (warm): an IES spot, shown in `2026-10-29_24_ies_profiles`.
+- **default**: the links apply.
+- **noLinking**: links ignored; the right ball is lit by the key and the left ball's blue shadow returns.
+- **traced**: the same links with ray-traced shadows.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-These are the UsdLux collections Houdini's Light Linker LOP edits (`includeRoot`, `includes`, `excludes` on the light).
-
-- `/Render/default`: the links on.
-- `/Render/noLinking`: the right ball lit by the key too, the left ball's blue shadow back.
-- `/Render/traced` (`eldr:rtShadows` on): the same links with ray-traced shadows.
+These are the collections Houdini's Light Linker writes.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_15_light_linking\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_15_light_linking/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_15_light_linking\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_15_light_linking/scene.usda`.
 
 ## Houdini scene
 

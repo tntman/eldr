@@ -1,25 +1,21 @@
 # Motion blur in reflections
 
 <!-- summary -->
-Planar and traced reflections blur with motion blur, rendered at each film sample's shutter time.
-
-- **Compare:** open `showcase/2026-10-29_10_reflection_motion_blur/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `planar` vs `frozen` (`eldr:planarMotionBlur` off), `traced` (`eldr:rtReflections`).
-- **Look at:** The racing cube's reflection in the floor: blurred like the cube, sharp when frozen. Render frame 2.
+Reflections blur with motion blur, like the objects they show.
 <!-- summary -->
 
-An orange cube races across the mirror floor in front of the chrome ball (3 units a frame, shutter open half a frame). Render frame 2.
+An orange cube races across a mirror floor past a chrome ball.
 
-- `/Render/planar`: the floor's planar reflection blurs as the cube does (`eldr:planarMotionBlur` on: each film sample renders the mirror at its shutter time).
-- `/Render/frozen`: `eldr:planarMotionBlur` off: a sharp reflection under a blurred cube.
-- `/Render/traced`: `eldr:rtReflections` on: floor and ball reflect from each sample's TLAS, so both blur.
-- The chrome ball under `planar`/`frozen` is probe-lit (`eldr:reflectionProbe`): probes are captured at the frame's time, so the cube in the ball stays sharp. A capture is six renders and a CPU prefilter, too slow per film sample; use traced reflections for blurred reflections on curved surfaces.
-- Open: `usdenv usdview --renderer Eldr showcase\2026-10-29_10_reflection_motion_blur\scene.usda` (set the frame to 2), or `husk -R Eldr -s /Render/planar -f 2 scene.usda`.
+- **planar**: the floor reflection blurs with the cube.
+- **frozen**: planar motion blur off; the reflection stays sharp under a blurred cube.
+- **traced**: ray-traced reflections; the cube blurs in the ball too.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+Render frame 2. The ball in `planar` and `frozen` uses a captured reflection, so the cube in it stays sharp; use traced reflections to blur curved surfaces.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_10_reflection_motion_blur\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_10_reflection_motion_blur/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_10_reflection_motion_blur\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_10_reflection_motion_blur/scene.usda`.
 
 ## Houdini scene
 

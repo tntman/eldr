@@ -1,24 +1,20 @@
 # Planar reflection blur
 
 <!-- summary -->
-A rough planar mirror blurs its reflection by its roughness (`eldr:planarBlur`).
-
-- **Compare:** open `showcase/2026-10-29_03_planar_reflection_blur/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `blurred` vs `sharp`.
-- **Look at:** The columns reflected in the wet floor: soft with the blur, mirror-sharp without.
+A rough mirror floor blurs its reflection by its roughness.
 <!-- summary -->
 
-`tests/scenes/reflections.usda` with the floor at roughness 0.4 and flagged as a planar mirror (`primvars:eldr:planarReflection`).
+Columns reflected in a wet floor of roughness 0.4.
 
-- `/Render/sharp` vs `/Render/blurred`: `eldr:planarBlur` 0 vs 1 (12-tap disc, radius about roughness squared).
-- Both set `eldr:rtReflections` 0: with traced reflections on (as in `eldr_final`) they replace the planar mirror, so the blur has nothing to change.
+- **blurred**: the reflection is soft.
+- **sharp**: the reflection is mirror-sharp.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-Not done: refraction in planar mirrors, contact-hardening blur.
+Both turn traced reflections off; with them on, as in eldr_final, they replace the planar mirror.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_03_planar_reflection_blur\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_03_planar_reflection_blur/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_03_planar_reflection_blur\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_03_planar_reflection_blur/scene.usda`.
 
 ## Houdini scene
 

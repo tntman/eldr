@@ -1,32 +1,18 @@
 # Volumes without a material
 
 <!-- summary -->
-A volume with no material scatters as Karma's default medium: white, no absorption, isotropic, the dome lighting it from its upper half.
-
-- **Compare:** open `showcase/2026-10-29_08_volume_default_material/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `newPhase` (the default) vs `oldPhase` (`eldr:volumeAnisotropy` 0.2).
-- **Look at:** The clouds' brightness and the sun-side rim: within 1% of Karma at volume limit 0.
+A volume with no material scatters like Karma's default: white, no absorption, even in all directions.
 <!-- summary -->
 
-`tests/scenes/volume.usda`'s clouds have no material. Eldr gives them Karma's medium: scattering 1
-per unit of density, no absorption, isotropic phase. The dome lights them from its upper half only,
-because Karma's single scattering doesn't see the dome below the ground. Measured against Karma CPU at
-volume limit 0, the sun-lit clouds come out within 1%.
+Clouds with no material, lit by the dome from above. They land within 1% of Karma's brightness.
 
-Render settings prims:
-- `/Render/newPhase`: the default, an isotropic phase (`eldr:volumeAnisotropy` 0), as Karma.
-- `/Render/oldPhase`: `eldr:volumeAnisotropy` 0.2, a forward-scattering phase, for comparison.
-- Multiple scattering (Karma's Volume Limit) has its own showcase, `2026-10-29_26_volume_multiple_scattering`.
-
-Open it:
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_08_volume_default_material\scene.usda`
-- usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam -rs /Render/newPhase scene.usda out.png`
-- husk: `husk -R HdVkRendererPlugin -s /Render/newPhase scene.usda -o out.exr`
+- **newPhase**: scatters evenly, as Karma does.
+- **oldPhase**: scatters mostly forward, for comparison.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_08_volume_default_material\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_08_volume_default_material/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_08_volume_default_material\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_08_volume_default_material/scene.usda`.
 
 ## Houdini scene
 

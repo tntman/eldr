@@ -1,31 +1,17 @@
-# Render statistics in Houdini's Render Gallery
+# Render statistics
 
 <!-- summary -->
-Eldr's render statistics (renderer, memory, time) show in the Render Gallery's statistics panel and in husk EXRs as `husk:render_stats`.
-
-- **Compare:** open `showcase/2026-10-28_08_render_stats/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` only (no A/B: the feature is metadata).
-- **Look at:** The Render Gallery's statistics panel on a snapshot or on the husk EXR; `iinfo -J out.exr` prints the JSON.
+Eldr's render statistics (renderer, memory, time) show in Houdini's Render Gallery and in husk EXRs.
 <!-- summary -->
 
-`scene.usda` sublayers the Cornell box with a `/Render/default` settings prim and one beauty product (`renderStats.exr`). It has no A/B toggles: the feature is the `husk:render_stats` metadata of Eldr's EXRs and the `statsdatapaths` of `houdini/UsdRenderers.json`.
+A Cornell box with one beauty product. The feature is metadata, so there is no image difference: save a snapshot to the Render Gallery, or render with husk and read the EXR with `iinfo -J`.
 
-**Viewport snapshot.** In a Solaris viewport with Eldr as the renderer, save a snapshot to the Render Gallery (Render Gallery > snapshot button). Select its tile and open the statistics panel: renderer "Eldr", stage, progress, Memory and Peak Memory, render time.
-
-**Background Render / husk EXR.** Render the scene with a Karma/USD Render ROP or a Render Gallery Background Render using Eldr as the delegate, or from a shell:
-
-    husk -R HdVkRendererPlugin -s /Render/default -o out.exr scene.usda
-
-The image's tile in the Render Gallery shows the same panel.
-
-**See the data.** `iinfo -J out.exr` (in `$HFS/bin`) prints the image's metadata; the stats are `aovs[0].metadata."husk:render_stats"`, a JSON object with `__delegate` (`HdVkRendererPlugin`), `rendererName`, `rendererStage`, `percentDone`, `totalClockTime`, `totalMemory`, `peakMemory`, `trianglesDrawn`, `gpuTimeMs`, `gpuPassMs` and the rest of `GetRenderStats()`. Compare with `-R BRAY_HdKarma`.
-
-Verified headlessly (husk, `iinfo -J`, the panel's own `normalize_stats` and `findStats` in hython); the panel's look in the Houdini GUI was not checked.
+- **default**: renders the box with the final settings.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_08_render_stats\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_08_render_stats/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_08_render_stats\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_08_render_stats/scene.usda`.
 
 ## Houdini scene
 

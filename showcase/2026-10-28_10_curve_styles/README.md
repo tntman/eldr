@@ -1,24 +1,18 @@
-# Per-object curve and point styles
+# Curve and point styles
 
 <!-- summary -->
-Each curve or points prim can set its width scale, tubes or ribbons, and sphere points, with Eldr's names winning over Karma's.
-
-- **Compare:** open `showcase/2026-10-28_10_curve_styles/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `styles` (the per-object values) vs `ribbons` (`eldr:curveRibbons`: every curve without its own style becomes a ribbon); `eldr_default` vs `karma` (Karma reads only the karma names).
-- **Look at:** The bezier curve (eldr width 0.4 beats karma 3: thin), the bspline (karma 2.5 only: thick), the catmullRom (eldr tubes beat karma ribbons, so it stays a tube under `ribbons`) and the sphere points.
+Each curve or points prim can set its width, tubes or ribbons, and sphere points.
 <!-- summary -->
 
-`tests/scenes/curves.usda` with overrides:
+A few curves and points, each with its own style. Eldr's names win over Karma's, so Eldr and Karma differ on purpose: the bezier is thin in Eldr and thick in Karma, and the catmullRom stays a tube.
 
-- `bezier`: `primvars:eldr:object:width_scale` 0.4 vs karma 3: thin in Eldr, thick in Karma.
-- `bspline`: karma width_scale 2.5 only: Eldr reads it too.
-- `catmullRom`: eldr curve_style 1 (tubes) vs karma 0 (ribbons).
-- `points`: eldr point_style 1 (spheres).
+- **styles**: each object's own style.
+- **ribbons**: every curve without its own style becomes a ribbon.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_10_curve_styles\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_10_curve_styles/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_10_curve_styles\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_10_curve_styles/scene.usda`.
 
 ## Houdini scene
 

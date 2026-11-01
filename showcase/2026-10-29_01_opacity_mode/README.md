@@ -1,19 +1,18 @@
-# UsdPreviewSurface opacity mode
+# Opacity mode
 
 <!-- summary -->
-UsdPreviewSurface's `opacityMode` "presence" fades the whole surface, highlight included, while "transparent" keeps the highlight (`eldr:opacityMode`).
-
-- **Compare:** open `showcase/2026-10-29_01_opacity_mode/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `presence` vs `opacityModeOff` (both quads shaded as transparent).
-- **Look at:** The two dark metal quads at the front left, mirroring the glowing ceiling panel: the right one (presence) has a faded highlight; with `opacityModeOff` both look like the left one.
+A surface set to "presence" fades completely, highlight included; "transparent" keeps the highlight.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` (the Cornell box lit by a glowing panel) with two 30% opaque dark metal quads, tilted to mirror the panel. Left `opacityMode = "transparent"` (the default), right `"presence"`.
+Two 30% opaque dark metal quads in a Cornell box mirror the glowing panel. The left quad is "transparent", the right one "presence".
+
+- **presence**: the right quad's highlight fades with its opacity.
+- **opacityModeOff**: both quads behave as "transparent"; the right one looks like the left.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_01_opacity_mode\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_01_opacity_mode/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_01_opacity_mode\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_01_opacity_mode/scene.usda`.
 
 ## Houdini scene
 

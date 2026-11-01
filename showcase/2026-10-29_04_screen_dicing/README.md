@@ -1,26 +1,20 @@
 # Dicing by screen size
 
 <!-- summary -->
-Subdivision meshes get the refine level their size on screen needs, as Karma's Dicing Quality (`eldr:screenDicing`).
-
-- **Compare:** open `showcase/2026-10-29_04_screen_dicing/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `dicing` vs `fixed`.
-- **Look at:** The five octahedra look the same, but the triangle count (render stats) drops with dicing.
+Subdivision meshes are refined only as much as their size on screen needs.
 <!-- summary -->
 
-Five Catmull-Clark octahedra from near to far (catmullClark, not the referenced mesh's loop: Karma has no loop or bilinear scheme and renders those as the cage, so Karma would not compare). `eldr:screenDicing` (on by default) gives each mesh the refine level its size on screen needs, as Karma's Dicing Quality (`primvars:karma:object:dicingquality` or `primvars:eldr:object:dicingquality`, 0.5: about a polygon per 4 pixels): the near one at level 3, the far ones lower. The farthest has its own quality 4, so it refines more than its size alone would ask.
+Five octahedra from near to far. They look the same at this resolution, but far ones use fewer triangles.
 
-- `/Render/dicing`: the final-render settings with `eldr:screenDicing` on. `eldr_final` and `eldr_default` dice the same way.
-- `/Render/fixed`: the same with `eldr:screenDicing` off: every mesh at the host's level (husk's `--complexity veryhigh`: 3).
+- **dicing**: each mesh is refined by its size on screen.
+- **fixed**: every mesh is refined to the host's level.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-The pictures should look the same at the render resolution; the triangle count drops (usdview's GPU Stats, the stats panel in Houdini, or `trianglesTotal` in husk's `husk:render_stats` EXR metadata). Try `primvars:eldr:object:dicingdepthmin` / `dicingdepthmax` on one mesh, or a fixed `primvars:eldr:refineLevel` (wins over screen dicing).
+Compare the triangle counts in the render statistics.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_04_screen_dicing\scene.usda`, Complexity Very High, then set a settings prim active (right-click). The interactive view re-dices once the camera stops.
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-29_04_screen_dicing/scene.usda`
-
-Settings prims: `/Render/dicing`, `/Render/fixed`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_04_screen_dicing\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_04_screen_dicing/scene.usda`.
 
 ## Houdini scene
 

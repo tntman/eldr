@@ -1,29 +1,21 @@
 # Subdivision levels
 
 <!-- summary -->
-Catmull-Clark meshes are refined to the host's level, capped by `eldr:maxRefineLevel`; a mesh can set its own level or opt a polygon mesh in.
-
-- **Compare:** open `showcase/2026-10-28_01_subdivision_levels/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `level3` vs `level1` (`eldr:maxRefineLevel`), `subdivOff` (`eldr:subdivision` off).
-- **Look at:** The five cubes: rounded at level 3, faceted at 1, plain cages with subdivision off.
+Subdivision surfaces are smoothed to the host's level, and a mesh can set its own level or opt in.
 <!-- summary -->
 
-Eldr refines catmullClark meshes (USD's default scheme when none is authored) to the host's refine level, capped by `eldr:maxRefineLevel`. A mesh can set its own level and can opt a polygon mesh in.
+Five cubes show how smoothly each is refined: the default, one capped at level 1, a plain polygon cage, a polygon cube opted in to smoothing, and one limited by Karma's dicing depth.
 
-Left to right: `catmullDefault` (scheme unauthored, host level), `catmullLevel1` (`primvars:eldr:refineLevel = 1`), `polygonCage` (scheme none: stays a cube), `polygonAsSubdiv` (scheme none plus `primvars:eldr:renderAsSubdivision = 1`, level 2: rounded without changing the mesh), `dicingCap` (`primvars:eldr:object:dicingdepthmax = 1`, Karma's Dicing Maximum Depth under an eldr name).
+- **level3**: every cube refined to level 3; the smooth ones are round.
+- **level1**: the cap is level 1; all cubes look faceted.
+- **subdivOff**: subdivision off; every cube is a plain cage.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-## What to look at
-
-- `/Render/level3` vs `/Render/level1`: `eldr:maxRefineLevel` clamps every cube; at 1 they all look like level 1. `/Render/subdivOff` (`eldr:subdivision` 0): all cages.
-- Levels come from the host: husk `--complexity low|medium|high|veryhigh` = level 0..3 (usdview: View > Complexity). In Houdini: Level of Detail on the viewport, or per object Subdivision Level / Dicing Maximum Depth. The global cap is `eldr:maxRefineLevel`.
-- Memory: husk's peak memory in its log; Eldr prints an `Eldr: loaded in ...` line when the stage is loaded. Compare level 1 and 3 on a heavy scene.
+Husk's `--complexity` and usdview's Complexity menu set the level.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_01_subdivision_levels\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_01_subdivision_levels/scene.usda`
-
-Settings prims: `/Render/level3`, `/Render/level1`, `/Render/subdivOff`; standard: `eldr_default`, `eldr_final`, `karma`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_01_subdivision_levels\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_01_subdivision_levels/scene.usda`.
 
 ## Houdini scene
 

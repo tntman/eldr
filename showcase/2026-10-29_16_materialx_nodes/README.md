@@ -1,26 +1,19 @@
 # MaterialX nodes and surfaces
 
 <!-- summary -->
-MaterialX compositing nodes, glTF PBR, Disney and unlit surfaces, and Karma's Ramp Const, Hex Tiled Texture and Voronoi nodes.
-
-- **Compare:** open `showcase/2026-10-29_16_materialx_nodes/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `graphsOn` vs `graphsOff` (`eldr:materialGraphs` off), `proceduralsOff` (`eldr:proceduralTextures` off).
-- **Look at:** The top row of blend modes and the bottom row of Karma nodes go flat with graphs off; the middle row of surfaces stays.
+MaterialX compositing nodes, glTF, Disney and unlit surfaces, and Karma's ramp, hex-tiled and Voronoi nodes.
 <!-- summary -->
 
-A grid of the nodes and surfaces Eldr reads (`scene.usda` is generated; materials are inline).
+A grid: blend modes on the top row, surface types in the middle, Karma's nodes along the bottom.
 
-- Top row, unlit (emission only): the compositing nodes `plus`, `minus`, `difference`, `burn`, `dodge`, `screen`, `overlay`, `over` (color4) of a left-right ramp (fg: orange to blue) over a bottom-top ramp (bg: dark to light). Burn goes black where the fg is dark blue; dodge blows out towards the top.
-- Middle row: glTF PBR gold (metal), glTF with clearcoat and sheen, glTF with `alpha` 0.3 in BLEND mode (translucent), Disney principled red plastic and coated metal, `surface_unlit` (orange glow, no highlight).
-- Bottom row, Karma context (`outputs:kma:surface`, as Houdini's Material Library writes it): Karma Ramp Const with five bspline colours along u, a float Ramp Const mixing monotone cubic, constant and linear segments along u, Karma Hex Tiled Texture of `tests/scenes/textures/quadrants.png` (rotated, offset hexagonal tiles, no visible repeat grid), Voronoi Noise 3D's F1 distance (unlit), and Voronoi flakes as a bump under a clear coat (Houdini's Car Paint).
-
-A/B: `/Render/graphsOn` (default) vs `/Render/graphsOff` (`eldr:materialGraphs` off: every graph-driven input keeps its constant, so the top and bottom rows go flat) and `/Render/proceduralsOff` (`eldr:proceduralTextures` off: Voronoi reads 0; hex tiling still runs).
+- **graphsOn**: all rows render.
+- **graphsOff**: node graphs ignored; the top and bottom rows go flat, the middle row stays.
+- **proceduralsOff**: procedural textures off; the Voronoi patterns read black, hex tiling still works.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_16_materialx_nodes\scene.usda` (Storm doesn't read the Karma-context bottom row)
-- Houdini: Sublayer LOP on the file, Eldr as the viewport renderer; compare with Karma on the same stage
-- husk: `husk -R Eldr -s /Render/graphsOn showcase/2026-10-29_16_materialx_nodes/scene.usda`
-- usdrecord: `usdenv usdrecord --renderer Eldr --camera /cam showcase\2026-10-29_16_materialx_nodes\scene.usda out.png`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_16_materialx_nodes\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_16_materialx_nodes/scene.usda`.
 
 ## Houdini scene
 

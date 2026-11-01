@@ -1,24 +1,20 @@
-# Batched film samples in husk and usdrecord
+# Batched film samples
 
 <!-- summary -->
-Offline renders run film samples back to back inside one execute, removing the app's wait between samples (`eldr:offlineBatchSeconds`).
-
-- **Compare:** open `showcase/2026-10-29_02_offline_batch/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `batched` vs `oneSamplePerExecute`.
-- **Look at:** The wall time of the two renders (the images are the same).
+Offline renders run film samples back to back, saving the wait between samples.
 <!-- summary -->
 
-`tests/scenes/emissive.usda` with GI, 64 film samples. Offline renders (husk, usdrecord) render film samples back to back inside one execute for up to `eldr:offlineBatchSeconds` and read back only the last one, so the app's wait between executes (husk: about 0.1 s per sample) goes away. The images are the same; only the wall time differs.
+A Cornell box with 64 film samples. The images are identical; only the render time differs.
 
-- `/Render/batched`: `eldr:offlineBatchSeconds` 1 (the default).
-- `/Render/oneSamplePerExecute`: 0, one sample per execute.
+- **batched**: samples run in batches of up to a second.
+- **oneSamplePerExecute**: one sample at a time; slower.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-Compare the wall time of the two. husk's progress updates once per batch.
+Compare the wall time of the two renders.
 
 ## Open
 
-- husk: `husk -R Eldr -s /Render/<name> -o out.exr showcase/2026-10-29_02_offline_batch/scene.usda`
-- usdrecord: `usdenv usdrecord --renderer Eldr --renderSettingsPrimPath /Render/<name> showcase\2026-10-29_02_offline_batch\scene.usda out.png`
-- usdview and Houdini's viewport are interactive: the setting does nothing there.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_02_offline_batch\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_02_offline_batch/scene.usda`.
 
 ## Houdini scene
 

@@ -1,29 +1,20 @@
-# Render vars in the Houdini viewport
+# Render vars in Houdini
 
 <!-- summary -->
-A Render Product's vars (beauty, CDA, N, depth) show in Houdini's Render Outputs menu and husk writes them to one EXR.
-
-- **Compare:** open `showcase/2026-10-28_05_houdini_render_vars/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `default` (writes `renderVars.exr`) vs `viewport` (`houdini:viewport` flag).
-- **Look at:** In Houdini's viewport pick `rendervar1`, N or depth in the Render Outputs menu: each shows an image, not black.
+A render product's vars (beauty, CDA, normal, depth) show in Houdini's Render Outputs menu and are written to one EXR.
 <!-- summary -->
 
-The Cornell box with a product on the settings prims: `beauty` with the vars `C` (`C.*[LO]`), `rendervar1` (`CDA`), `N` (`ray:hitN`) and `depth` (`ray:hitPz`).
+A Cornell box whose render product has four vars. In Houdini's viewport, pick each from the Render Outputs menu: each shows an image, not black.
 
-## What to look at
+- **default**: husk writes all four vars to `renderVars.exr`.
+- **viewport**: renders as the Solaris viewport does.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- Houdini: Sublayer LOP on the file, Eldr viewport. In the viewport's Render Outputs menu pick `rendervar1`. It should show an image, not black. N and depth too. Without a beauty var in the product the menu has no `color` entry (Karma does the same).
-- The RGB / R / G / B channel buttons in the viewport are a known limitation: they do not switch channels for Eldr.
-- husk: `/Render/default` writes all four vars to `renderVars.exr`. `/Render/viewport` sets the `houdini:viewport` flag (interactive, as the Solaris viewport does).
+The RGB/R/G/B channel buttons do not switch channels for Eldr.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_05_houdini_render_vars\scene.usda` (pick a settings prim in the stage tree: right-click, set as active)
-- Houdini: Sublayer or Reference LOP on the file, Eldr as the viewport renderer; a Render Settings LOP can pick `/Render/<name>`
-- husk: `husk -R Eldr -s /Render/<name> showcase/2026-10-28_05_houdini_render_vars/scene.usda`
-
-Settings prims: `/Render/default`, `/Render/viewport`; standard: `eldr_default`, `eldr_final`, `karma`.
-
-Note: Houdini's Render Outputs menu lists render vars that carry Houdini's own authoring (`HuskRenderVarAPI`, `driver:parameters:aov:husk:name` / `format`), as the Render Var LOP writes them; plain UsdRender vars render (husk, usdrecord) but may not show in the menu. This scene authors both, and sets `renderSettingsPrimPath`.
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-28_05_houdini_render_vars\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-28_05_houdini_render_vars/scene.usda`.
 
 ## Houdini scene
 

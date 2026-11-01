@@ -1,19 +1,20 @@
 # Screen-space reflections
 
 <!-- summary -->
-Reflections ray-marched in the last frame's image, fading out with roughness (`eldr:ssr`).
-
-- **Compare:** open `showcase/2026-10-30_11_screen_space_reflections/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `ssr` vs `ssrOff`.
-- **Look at:** The columns and the ball mirrored in the polished floor, blurrier in the rough strip; only the dome without.
+Reflections of what is on screen, blurrier on rougher surfaces.
 <!-- summary -->
 
-`tests/scenes/reflections.usda` (columns, an arch and a chrome ball on a polished floor of roughness 0.08) plus a rougher strip (roughness 0.35) over the right half. SSR is a 32-step march of last frame's image; it fades out between roughness 0.3 and 0.6, and where it has no hit the dome (or the reflection probe, 2026-10-30_23_reflection_probe) is reflected. `eldr_final` (traced reflections) sees everything, on and off screen.
+Columns, an arch and a chrome ball on a polished floor, with a rougher strip over the right half.
+
+- **ssr**: the columns and ball are mirrored in the floor, blurrier on the rough strip.
+- **ssrOff**: the floor reflects only the dome.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+
+eldr_final traces reflections instead, so it also shows what is off screen.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_11_screen_space_reflections\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_11_screen_space_reflections/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_11_screen_space_reflections\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_11_screen_space_reflections/scene.usda`.
 
 ## Houdini scene
 

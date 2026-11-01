@@ -1,19 +1,19 @@
 # Volume multiple scattering
 
 <!-- summary -->
-Light bouncing more than once inside smoke, set with Karma's Volume Limit (`karma:object:volumelimit`) and fitted to Karma's gain.
-
-- **Compare:** open `showcase/2026-10-29_26_volume_multiple_scattering/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `volumeLimit1` vs `volumeLimit4` vs `volumeLimit16`.
-- **Look at:** The clouds get brighter and softer with more bounces (within 7% of Karma at limits 1, 4 and 16).
+Light bounces more than once inside smoke, set with Karma's Volume Limit.
 <!-- summary -->
 
-`tests/scenes/volume.usda`'s smoke clouds (no material) under the sun and a dome.
+Smoke clouds with no material under a sun and dome. More bounces make them brighter and softer.
+
+- **volumeLimit1**: one bounce.
+- **volumeLimit4**: up to four bounces.
+- **volumeLimit16**: up to sixteen bounces.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_26_volume_multiple_scattering\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_26_volume_multiple_scattering/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_26_volume_multiple_scattering\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_26_volume_multiple_scattering/scene.usda`.
 
 ## Houdini scene
 

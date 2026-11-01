@@ -1,24 +1,19 @@
 # Many lights
 
 <!-- summary -->
-Hundreds of small lights shaded through clusters, each pixel lit only by the lights that reach it (`eldr:clusteredLights`).
-
-- **Compare:** open `showcase/2026-10-30_06_many_lights/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `lights` vs `clustersOff`, `localLightsOff`.
-- **Look at:** 200 coloured pools and highlights on the floor; the same with clusters off, only the slower frame time.
+Hundreds of small lights are shaded cheaply: each pixel is lit only by the lights that reach it.
 <!-- summary -->
 
-200 small coloured sphere lights hang just above a glossy floor around a ball, a box and a post, under a faint night dome. Clustered shading (up to 255 lights per cluster, cut off at 1% of mid-gray on a white surface) lights each pixel with only the lights that reach it (here each reaches about 7 units, most of the floor, so clustering saves little: compare a dimmer rig); every light still gets a shadow (atlas tiles halve before any light goes unshadowed).
+200 small coloured sphere lights hang over a glossy floor with a ball, a box and a post, under a faint night dome.
 
-## What to look at
-
-- `/Render/lights` (the default): 200 coloured pools of light and 200 small highlights on the floor.
-- `/Render/clustersOff` (`eldr:clusteredLights` off): every light for every pixel: the same picture; here about as fast, slower once lights reach less of the screen (compare the frame time in Eldr > Render Statistics).
-- `/Render/localLightsOff` (`eldr:localLights` off): no local lights, only the blue night dome: nearly black.
+- **lights**: 200 coloured pools and highlights.
+- **clustersOff**: the same picture, every light checked for every pixel; slower when lights reach less of the screen.
+- **localLightsOff**: no local lights; only the dim dome, nearly black.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_06_many_lights\scene.usda`, then pick a settings prim (right-click, set as active), or flip the settings in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/lights scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_06_many_lights\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_06_many_lights/scene.usda`.
 
 ## Houdini scene
 

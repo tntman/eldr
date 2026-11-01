@@ -1,19 +1,18 @@
 # IES profiles
 
 <!-- summary -->
-A light's IES profile (`inputs:shaping:ies:file`) shapes its light, as in Karma (`eldr:lightIes`).
-
-- **Compare:** open `showcase/2026-10-29_24_ies_profiles/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `ies` vs `noIes`.
-- **Look at:** The warm pool of light between the middle and right balls: a spot leaning left with the profile, a plain sphere light lighting the whole floor without.
+A light's IES profile shapes its light, as in Karma.
 <!-- summary -->
 
-`tests/scenes/lightlink.usda`'s three balls plus `iesSpot`: a warm sphere light with `tests/scenes/textures/spot_asym.ies`, a 40 degree spot brighter towards phi 0 (the light's -X, as in Karma). The scene's light links stay on.
+Three balls on a floor with a warm sphere light that carries a profile. Look at the pool of light between the middle and right balls.
+
+- **ies**: a spot leaning left.
+- **noIes**: a plain sphere light lights the whole floor.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 ## Open
 
-- Houdini: open `scene.hip` (see below)
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_24_ies_profiles\scene.usda`, then pick a settings prim
-- husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_24_ies_profiles/scene.usda`
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-29_24_ies_profiles\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-29_24_ies_profiles/scene.usda`.
 
 ## Houdini scene
 

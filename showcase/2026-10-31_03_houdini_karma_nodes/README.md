@@ -1,23 +1,20 @@
 # Houdini materials with Karma's nodes
 
 <!-- summary -->
-Houdini's basic materials that use Karma's own nodes (Ramp Const, Hex-Tiled Texture, Voronoi Noise 3D) render as in Karma, and juice absorbs over its path through the ball.
-
-- **Compare:** open `showcase/2026-10-31_03_houdini_karma_nodes/scene.hip` (or `scene.usda`) and compare `eldr_default` vs `eldr_final` vs `karma`; the feature's A/B nodes: `graphsOn` vs `graphsOff`.
-- **Look at:** The plastic's hex-tiled grain with no repeat grid, the silk's sheen at the edges, the marble's veins, the car paint's blue under its flakes, the apple juice a dark amber that lets red through.
+Houdini's basic materials that use Karma's own nodes render as in Karma.
 <!-- summary -->
 
-Five spheres with materials from Houdini 22's `basic_materials` library (`$HFS/houdini/usd/materials`): Plastic (`kma_color_hextiling`), SilkSurfaceGreen and Marble (`kma_rampconst`), CarPaintMetallic (`kma_voronoinoise3d` flakes as a bump under a coat, `kma_camerafalloff` colour), AppleJuice (transmission with `transmission_depth`). The library path is Houdini 22.0.466's default install; edit the `Materials` reference for another one. Eldr reads Houdini's MaterialX library (`kma_camerafalloff` and others) from `$HFS`: Houdini sets it; for usdview and husk outside Houdini, set `HFS` to the Houdini folder.
+Five spheres: hex-tiled plastic, silk, marble, car paint with flakes, and apple juice that absorbs more light along a longer path.
 
-## What to look at
+- **graphsOn**: each material as Karma renders it.
+- **graphsOff**: node graphs ignored: the plastic loses its grain, the silk its edge sheen, the marble its veins.
+- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
-- `/Render/graphsOn` (the default): each material as Karma renders it (median colour difference 1.6 dE over Houdini's 121 basic and quick materials). The silk is about 1.2x brighter than Karma's.
-- `/Render/graphsOff` (`eldr:materialGraphs` off): every graph-driven input keeps its constant: the plastic loses its grain, the silk its edge sheen, the marble its veins.
+The materials come from Houdini's library, so set `HFS` to the Houdini folder outside Houdini.
 
 ## Open
 
-- usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_03_houdini_karma_nodes\scene.usda`, then pick a settings prim (right-click, set as active), or flip the setting in Eldr > Render Settings.
-- husk: `husk -R Eldr -s /Render/graphsOn scene.usda` (or `/Render/eldr_final`, `/Render/karma` with `-R BRAY_HdKarma`).
+Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-31_03_houdini_karma_nodes\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-31_03_houdini_karma_nodes/scene.usda`.
 
 ## Houdini scene
 
