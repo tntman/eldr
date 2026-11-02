@@ -4,8 +4,9 @@ lights, so it only absorbs. It darkens the wall where it is, the volume's
 transform moves it, fieldIndex 1 picks the file's second "density" grid (a
 small ball), a MaterialX volume material sets its absorption and emission,
 remaps and ramps of the density (MaterialX's and Houdini's) shape them,
-half resolution stays close, eldr:volumes switches volumes off, and the
-render stats count them and their grid memory.
+half resolution stays close, eldr:volumes switches volumes off, the
+render stats count them and their grid memory, and each volume of
+volume.usda scatters with its own Volume Limit.
 Run: usdenv.cmd python tests\\test_volume.py"""
 import os
 import sys
@@ -318,6 +319,57 @@ def mean(**settings):
 
 maps, traced = mean(), mean(**{"eldr:rtShadows": True})
 expect(traced > 0.95 * maps, "ray-traced sun: volumes as bright as with maps (%.1f, %.1f)" % (maps, traced))
+
+# Volume Limit per volume, as Karma's: a volume's own (primvars eldr:, else
+# karma:object:volumelimit) wins over the render settings' (eldr:, else
+# karma:object:volumelimit, else 0). Each volume looks as at its limit alone:
+# once the frame's largest limit applied to every volume, and the 0 one
+# brightened too.
+sceneViewProj = sceneCam.ComputeViewMatrix() * sceneCam.ComputeProjectionMatrix()
+
+
+def spot(image, point):
+    """Mean green (0-255) of the 5 x 5 pixels around world `point`."""
+    p = sceneViewProj.Transform(Gf.Vec3d(*point))
+    px, py = int((p[0] * 0.5 + 0.5) * SIZE), int((0.5 - p[1] * 0.5) * SIZE)
+    return sum(image.pixelColor(x, y).green() for x in range(px - 2, px + 3) for y in range(py - 2, py + 3)) / 25.0
+
+
+def limits(own, **settings):
+    """The cloud's and the ball's spots with primvars `own` {prim: (name, limit)}."""
+    for path in ("/cloud", "/ball"):
+        api = UsdGeom.PrimvarsAPI(scene.GetPrimAtPath(path))
+        for name in ("eldr:object:volumelimit", "karma:object:volumelimit"):
+            api.RemovePrimvar(name)
+        if path in own:
+            api.CreatePrimvar(own[path][0], Sdf.ValueTypeNames.Int).Set(own[path][1])
+    mean(**settings)
+    image = fbo.toImage()
+    return spot(image, (-2.0, 0.1, 0)), spot(image, (0.4, -1.4, 2.0))
+
+
+single, multiple = limits({}), limits({}, **{"eldr:object:volumelimit": 16})
+print("volume limit 0 / 16: cloud %.1f / %.1f, ball %.1f / %.1f" % (single[0], multiple[0], single[1], multiple[1]))
+expect(multiple[0] > 1.1 * single[0] and multiple[1] > 1.05 * single[1], "Volume Limit 16 brightens both")
+
+
+def near(a, b):
+    return abs(a - b) <= 0.03 * max(a, b) + 1.0
+
+
+karma = limits({}, **{"karma:object:volumelimit": 16})
+expect(near(karma[0], multiple[0]) and near(karma[1], multiple[1]), "Karma's render setting as Eldr's")
+
+
+for own, settings in (({"/cloud": ("eldr:object:volumelimit", 16), "/ball": ("eldr:object:volumelimit", 0)}, {}),
+                      ({"/cloud": ("karma:object:volumelimit", 16)}, {}),
+                      ({"/ball": ("karma:object:volumelimit", 0)}, {"eldr:object:volumelimit": 16})):
+    cloud, ball = limits(own, **settings)
+    print("own %s, settings %s: cloud %.1f, ball %.1f" % (own, settings, cloud, ball))
+    expect(near(cloud, multiple[0]) and near(ball, single[1]),
+           "per-volume limits %s %s: cloud as at 16 (%.1f, %.1f), ball as at 0 (%.1f, %.1f)"
+           % (own, settings, cloud, multiple[0], ball, single[1]))
+limits({})
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

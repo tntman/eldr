@@ -843,9 +843,10 @@ void HdVkVolume::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *, HdDirtyBi
         _UpdateVisibility(sceneDelegate, dirtyBits);
         v.visible = IsVisible();
     }
-    // Volume Limit (eldr:object:volumelimit, else karma:object:volumelimit).
+    // Volume Limit (eldr:object:volumelimit, else karma:object:volumelimit;
+    // -1: neither, the render settings' applies).
     if (HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id)) {
-        v.volumeLimit = std::max(HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", 0.0f), 0.0f);
+        v.volumeLimit = HdVkObjectPrimvar<float>(sceneDelegate, id, "object:volumelimit", -1.0f);
         // Velocity blur, as Karma's: Velocity Blur on (eldr:object:vblur,
         // else karma:object:vblur, above 0), motion blur on (object:mblur),
         // times Volume Velocity Blur Scale (object:volumevblurscale); the

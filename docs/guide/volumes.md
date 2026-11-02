@@ -34,12 +34,17 @@ Eldr reads MaterialX `volume` materials (anisotropic_vdf, absorption_vdf, unifor
 
 ## Multiple scattering: Volume Limit
 
-Bright clouds get their glow from light that bounces many times inside. Karma controls that with **Volume Limit** (Render Geometry Settings, `karma:object:volumelimit`); Eldr reads the same value and fits its look to Karma's at that limit. **Volume Multiple Scattering** on the Eldr tab does the same for all volumes.
+Bright clouds get their glow from light that bounces many times inside. Karma controls that with **Volume Limit**; Eldr reads the same values and fits its look to Karma's at each limit:
+
+- **Render Geometry Settings**, Volume Limit (Eldr or Karma tab): the limit of the volumes it targets.
+- **Render Settings**, Volume Limit (Eldr or Karma tab): the limit of every other volume. 0 (Karma's default) is single scattering.
+
+Each volume uses its own limit, so a thick cloud at 16 and thin smoke at 0 render side by side as Karma renders them.
 
 ![Volume limit 1: single scattering (29_26, volumeLimit1)](../images/volume_limit1.jpg)
 ![Volume limit 16: the cloud brightens as Karma's (29_26, volumeLimit16)](../images/volume_limit16.jpg)
 
-> **Showcase:** open `showcase/2026-10-29_26_volume_multiple_scattering/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `volumeLimit1` vs `volumeLimit4` vs `volumeLimit16`.
+> **Showcase:** open `showcase/2026-10-29_26_volume_multiple_scattering/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `volumeLimit1` vs `volumeLimit4` vs `volumeLimit16`. The small ball keeps its own limit 16 in all of them.
 
 ## Velocity blur
 

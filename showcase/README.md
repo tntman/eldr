@@ -59,7 +59,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_05_coloured_volume_shadows` | Coloured smoke casts coloured shadows. | `maps`, `traced`, `halfResolution`, `shadowsOff` |
 | `2026-10-29_08_volume_default_material` | A volume with no material scatters like Karma's default: white, no absorption, even in all directions. | `newPhase`, `oldPhase` |
 | `2026-10-29_18_volume_motion_blur` | Smoke blurs along its velocity field, as Karma's volume motion blur. | `blur`, `sharp` |
-| `2026-10-29_26_volume_multiple_scattering` | Light bounces more than once inside smoke, set with Karma's Volume Limit. | `volumeLimit1`, `volumeLimit4`, `volumeLimit16` |
+| `2026-10-29_26_volume_multiple_scattering` | Light bounces more than once inside smoke, set with Karma's Volume Limit, per volume or in the render settings. | `volumeLimit1`, `volumeLimit4`, `volumeLimit16`; the ball's own limit 16 |
 | `2026-10-30_12_fog` | Height fog with light shafts from the sun and spot lights. | `fog`, `fogOff`, `fogDense` |
 
 ## Cameras

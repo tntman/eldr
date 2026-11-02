@@ -30,7 +30,7 @@ if os.environ.get("HDVK_DUMP_SETTINGS"):  # key, display name, type, default: fo
 docs = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "docs", "settings.md")
 with open(docs, encoding="utf-8") as f:
     text = f.read()
-documented = set(re.findall(r"`(eldr:\w+)`", text))
+documented = set(re.findall(r"`(eldr:[\w:]+)`", text))
 missing = [k for k in keys if k not in documented]
 unknown = sorted(documented - set(keys))  # a renamed or removed setting left behind
 for k in missing:
@@ -42,7 +42,7 @@ bad = []
 docGroups, h2, defaults = [], "", {}
 for line in text.splitlines():
     heading = re.match(r"(##+) (.*)", line)
-    row = re.match(r"\| [^|]*<br>`(eldr:\w+)` \| ([^|]*)\|", line)
+    row = re.match(r"\| [^|]*<br>`(eldr:[\w:]+)` \| ([^|]*)\|", line)
     if heading:
         h2 = heading.group(2) if heading.group(1) == "##" else h2
         title = heading.group(2) if heading.group(1) == "##" else h2 + ": " + heading.group(2)

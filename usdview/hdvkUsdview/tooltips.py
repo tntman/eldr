@@ -29,7 +29,7 @@ def ReadGroups(path=None):
         if m.group(1):
             out.append((m.group(1), m.group(2) == "true", []))
         else:
-            out[-1][2].append(m.group(3))
+            out[-1][2].append(m.group(3).replace("__", ":"))  # object__volumelimit: object:volumelimit
     return [(title, isOpen, " ".join(keys)) for title, isOpen, keys in out]
 
 
@@ -46,7 +46,7 @@ def Tooltips(path=None):
     if path:
         with open(path, encoding="utf-8") as f:
             for line in f:
-                m = re.match(r"\| [^|]*<br>`(eldr:\w+)` \| (.*?) \| (.*?) \|", line)
+                m = re.match(r"\| [^|]*<br>`(eldr:[\w:]+)` \| (.*?) \| (.*?) \|", line)
                 if m:
                     out[m.group(1)] = Plain(m.group(3))
     return out

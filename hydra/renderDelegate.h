@@ -11,6 +11,7 @@
 
 #include "pxr/base/gf/vec2f.h"
 #include "pxr/usd/sdf/path.h"
+#include "pxr/base/tf/stringUtils.h"
 #include "pxr/base/tf/token.h"
 #include "pxr/base/vt/array.h"
 
@@ -31,12 +32,12 @@ struct VolumeGrid;
 
 PXR_NAMESPACE_OPEN_SCOPE
 
-// HdVkRenderSettingsTokens->name: "eldr:name", for each setting of
+// HdVkRenderSettingsTokens->name: "eldr:name" ("__" a ":"), for each setting of
 // renderSettings.def (no TF_DECLARE_PUBLIC_TOKENS: MSVC can't expand a token
 // list of more than about 140 names).
 struct HdVkRenderSettingsTokensType {
 #define HDVK_GROUP(title, open)
-#define HDVK_SETTING(name, ...) const TfToken name{"eldr:" #name};
+#define HDVK_SETTING(name, ...) const TfToken name{TfStringReplace("eldr:" #name, "__", ":")};
 #define HDVK_VDB_SETTING HDVK_SETTING
 #include "renderSettings.def"
 #undef HDVK_GROUP

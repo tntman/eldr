@@ -16,6 +16,8 @@
 //   default: a C++ expression for the VtValue, its type the setting's
 //     (frame is vkr::Renderer::Frame{}, defaults its post, volume its volume).
 // HDVK_VDB_SETTING: only in builds with OpenVDB (HDVK_VOLUMES).
+// A "__" in a name is a ":" in its key (object__volumelimit: Karma's twin
+// eldr:object:volumelimit).
 
 HDVK_GROUP("Sampling", true)
 HDVK_SETTING(filmSamples, "Film Samples", int(frame.filmSamples))
@@ -60,7 +62,7 @@ HDVK_SETTING(bloomIntensity, "Bloom Intensity (0-1)", defaults.bloomIntensity)
 HDVK_GROUP("Volumes and Fog", true)
 HDVK_SETTING(fog, "Volumetric Fog", frame.fog)
 HDVK_VDB_SETTING(volumes, "Volumes", frame.volumes)
-HDVK_SETTING(volumeMultipleScattering, "Volume Multiple Scattering", frame.volume.multipleScattering)
+HDVK_SETTING(object__volumelimit, "Volume Limit", -1)
 
 HDVK_GROUP("Viewport", true)
 HDVK_SETTING(filmAccumulation, "Film when Still (off: keep TAA)", frame.filmAccumulation)
