@@ -6,6 +6,9 @@
 #include "pxr/base/work/loops.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -104,6 +107,7 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
         std::fill_n(f.clearColor, 4, 0.0f);
     }
     const uint32_t across = (width + tileSize - 1) / tileSize, down = (height + tileSize - 1) / tileSize;
+    const bool timing = std::getenv("HDVK_TIMING") != nullptr;
     for (uint32_t ty = 0; ty < down; ++ty) {
         for (uint32_t tx = 0; tx < across; ++tx) {
             Interior in;
@@ -126,8 +130,11 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
             vkr::Renderer::CropToTile(f, f.prevViewProj, nullptr);
             f.stillCamera = frame.stillCamera;
             const bool lastTile = ty + 1 == down && tx + 1 == across;
+            const auto tileStart = std::chrono::steady_clock::now();
+            int samples = 0;
             for (;;) {
                 renderer.Render(scene, f, t);
+                ++samples;
                 const bool done = renderer.IsConverged() && !scene.LodsPending();
                 sampled(!(done && lastTile));
                 if (done) {
@@ -136,6 +143,12 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
                 f.stillCamera = laterStillCamera;
             }
             renderer.Read(t);
+            if (timing) {
+                std::fprintf(stderr, "HdVk tile %u/%u (%u,%u %ux%u): %d samples, %.0f ms\n", ty * across + tx + 1,
+                             across * down, in.x0, in.y0, in.x1 - in.x0, in.y1 - in.y0, samples,
+                             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tileStart)
+                                 .count());
+            }
             if (t.color) {
                 in.Copy(t.color, hdr.data(), 8);
                 // Unexposed, as PostImage takes it: the tile's exposure out.

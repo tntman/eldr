@@ -1307,6 +1307,20 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                     vkDelegate->CommitResources(nullptr);
                                 }
                             });
+            if (std::getenv("HDVK_TIMING")) {
+                const VtDictionary stats = vkDelegate->GetRenderStats();
+                const auto mb = [&](const char *key) {
+                    const auto it = stats.find(key);
+                    return it != stats.end() && it->second.IsHolding<size_t>()
+                               ? double(it->second.UncheckedGet<size_t>()) / 1048576.0
+                               : 0.0;
+                };
+                std::fprintf(stderr,
+                             "HdVk tiled frame %ux%u: %.1f s, GPU used %.0f MB, GPU peak %.0f MB, VRAM in use %.0f MB\n",
+                             frame.width, frame.height,
+                             std::chrono::duration<double>(FrameTiming::Clock::now() - tRender).count(),
+                             mb("gpuMemoryUsed"), mb("peakMemory"), mb("vramUsage"));
+            }
         } else if (batchSeconds > 0.0f && !frame.deferReadback) {
             vkr::Renderer::Targets sample = out;
             sample.readback = false;
