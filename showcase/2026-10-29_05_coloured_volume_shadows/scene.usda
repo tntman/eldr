@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/volume.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # volume.usda (a grey smoke cloud lit by the sun and a dome) with its fire
@@ -11,25 +13,26 @@
 # through and stops blue, so its shadow on the floor is orange. Settings
 # prims flip how the shadow and the cloud's multiple scattering are made.
 
-over "fire" (active = false)
+def Camera "cam"
 {
+    float focalLength = 30
+    float xformOp:rotateX = -8
+    double3 xformOp:translate = (0, 1.4, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }
 
-def Volume "soot" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
+def DistantLight "sun"
 {
-    rel field:density = </soot/density>
-    rel material:binding = </mtl/soot>
-    double3 xformOp:translate = (2.2, -0.2, 0.3)
-    float3 xformOp:scale = (0.8, 0.8, 0.8)
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 40, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
 
-    def OpenVDBAsset "density"
-    {
-        asset filePath = @../../tests/scenes/volume.vdb@
-        token fieldName = "density"
-    }
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
 }
 
 def Scope "mtl"
@@ -106,28 +109,28 @@ def Scope "Render"
     def RenderSettings "maps"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "traced"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:rtShadows = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "halfResolution"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:volumeResolution = 2
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "shadowsOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:volumeShadows = 0
+        uniform int2 resolution = (960, 540)
     }
-
 }
+

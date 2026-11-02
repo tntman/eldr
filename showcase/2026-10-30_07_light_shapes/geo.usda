@@ -1,0 +1,16 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/glossy>
+    point3f[] points = [(-20, 0, -30), (-20, 0, 14), (20, 0, 14), (20, 0, -30)]
+}
+

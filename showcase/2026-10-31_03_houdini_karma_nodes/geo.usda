@@ -1,0 +1,51 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Sphere "plastic" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </Materials/Plastic>
+    double3 xformOp:translate = (-4.4, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "silk" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </Materials/SilkSurfaceGreen>
+    double3 xformOp:translate = (-2.2, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "marble" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </Materials/Marble>
+    double3 xformOp:translate = (0, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "carPaint" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </Materials/CarPaintMetallic>
+    double3 xformOp:translate = (2.2, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "appleJuice" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </Materials/AppleJuice>
+    double3 xformOp:translate = (4.4, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+

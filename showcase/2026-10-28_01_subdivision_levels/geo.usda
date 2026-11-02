@@ -1,0 +1,84 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-12, 0, 6), (12, 0, 6), (12, 0, -6), (-12, 0, -6)]
+}
+
+def Mesh "catmullDefault" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    double3 xformOp:translate = (-7, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "catmullLevel1" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    int primvars:eldr:refineLevel = 1
+    uniform token subdivisionScheme = "catmullClark"
+    double3 xformOp:translate = (-3.5, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "polygonCage" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (0, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "polygonAsSubdiv" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    int primvars:eldr:refineLevel = 2
+    bool primvars:eldr:renderAsSubdivision = 1
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (3.5, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "dicingCap" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+    int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+    rel material:binding = </mtl/m>
+    point3f[] points = [(-0.8, -0.8, 0.8), (0.8, -0.8, 0.8), (-0.8, 0.8, 0.8), (0.8, 0.8, 0.8), (-0.8, 0.8, -0.8), (0.8, 0.8, -0.8), (-0.8, -0.8, -0.8), (0.8, -0.8, -0.8)]
+    int primvars:eldr:object:dicingdepthmax = 1
+    uniform token subdivisionScheme = "catmullClark"
+    double3 xformOp:translate = (7, 0.8, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+

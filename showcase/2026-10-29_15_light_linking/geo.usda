@@ -1,0 +1,45 @@
+#usda 1.0
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/matte>
+    point3f[] points = [(-6, 0, -4), (-6, 0, 4), (6, 0, 4), (6, 0, -4)]
+}
+
+def Xform "balls"
+{
+    def Sphere "left" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </mtl/matte>
+        double radius = 0.8
+        double3 xformOp:translate = (-2.2, 0.8, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Sphere "middle" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </mtl/matte>
+        double radius = 0.8
+        double3 xformOp:translate = (0, 0.8, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Sphere "right" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        rel material:binding = </mtl/matte>
+        double radius = 0.8
+        double3 xformOp:translate = (2.2, 0.8, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+

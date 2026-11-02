@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/glass.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Refraction Quality: tests/scenes/glass.usda (clear, green and frosted
@@ -13,6 +15,143 @@
 # sun seen through it. /Render/refractQuality4 (eldr:refractQuality 4):
 # four paths through the rough ball, as clean as about 128 samples; the
 # smooth balls take one path either way.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    float xformOp:rotateX = -9
+    double3 xformOp:translate = (0, 1.4, 6.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 150, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/floor/tex.outputs:rgb>
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/udim.1001.png@
+            float2 inputs:st.connect = </mtl/floor/st.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "quadrants"
+    {
+        token outputs:surface.connect = </mtl/quadrants/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/quadrants/tex.outputs:rgb>
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+    }
+
+    def Material "clear"
+    {
+        token outputs:surface.connect = </mtl/clear/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 1, 1)
+            float inputs:ior = 1.5
+            float inputs:opacity = 0
+            float inputs:roughness = 0.02
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:mtlx:surface.connect = </mtl/green/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:specular_IOR = 1.5
+            float inputs:specular_roughness = 0.03
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.25, 0.85, 0.35)
+            float inputs:transmission_depth = 1
+            token outputs:out
+        }
+    }
+
+    def Material "frosted"
+    {
+        token outputs:mtlx:surface.connect = </mtl/frosted/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            float inputs:specular_ior = 1.5
+            float inputs:specular_roughness = 0.35
+            float inputs:transmission_weight = 1
+            token outputs:out
+        }
+    }
+
+    def Material "pane"
+    {
+        token outputs:mtlx:surface.connect = </mtl/pane/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:specular_roughness = 0.1
+            bool inputs:thin_walled = 1
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (1, 0.35, 0.5)
+            token outputs:out
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -51,18 +190,19 @@ def Scope "Render"
     def RenderSettings "refractQuality1"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:filmSamples = 32
-        custom bool eldr:rtRefraction = 1
         custom float eldr:refractQuality = 1
+        custom bool eldr:rtRefraction = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "refractQuality4"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:filmSamples = 32
-        custom bool eldr:rtRefraction = 1
         custom float eldr:refractQuality = 4
+        custom bool eldr:rtRefraction = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

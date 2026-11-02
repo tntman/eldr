@@ -1,0 +1,56 @@
+#usda 1.0
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/floor>
+    point3f[] points = [(-4, 0, -4), (4, 0, -4), (4, 0, 4), (-4, 0, 4)]
+    texCoord2f[] primvars:st = [(0, 0), (4, 0), (4, 4), (0, 4)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+}
+
+def Sphere "ball"
+{
+    color3f[] primvars:displayColor = [(0.8, 0.3, 0.2)]
+    int primvars:karma:object:holdoutmode = 2
+    double radius = 0.6
+    double3 xformOp:translate = (-1.6, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "box"
+{
+    color3f[] primvars:displayColor = [(0.2, 0.5, 0.8)]
+    int primvars:eldr:object:holdoutmode = 0
+    int primvars:karma:object:holdoutmode = 1
+    double size = 1
+    float xformOp:rotateY = 30
+    double3 xformOp:translate = (0, 0.5, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+def Cone "cone"
+{
+    uniform token axis = "Y"
+    double height = 1.4
+    color3f[] primvars:displayColor = [(0.3, 0.8, 0.3)]
+    double radius = 0.5
+    double3 xformOp:translate = (1.6, 0.7, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "front"
+{
+    color3f[] primvars:displayColor = [(0.9, 0.9, 0.9)]
+    string primvars:eldr:object:rendervisibility = "-primary"
+    string primvars:karma:object:rendervisibility = "*"
+    double radius = 0.35
+    double3 xformOp:translate = (-0.9, 0.35, 1.2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+

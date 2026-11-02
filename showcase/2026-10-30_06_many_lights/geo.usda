@@ -1,0 +1,63 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/glossy>
+    point3f[] points = [(-7, 0, -5), (-7, 0, 5), (7, 0, 5), (7, 0, -5)]
+}
+
+def Mesh "wall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/matte>
+    point3f[] points = [(-7, 0, -5), (7, 0, -5), (7, 4, -5), (-7, 4, -5)]
+}
+
+def Sphere "ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/matte>
+    double radius = 0.8
+    double3 xformOp:translate = (-1.5, 0.8, 0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "box" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/matte>
+    double size = 1.2
+    float xformOp:rotateY = 30
+    double3 xformOp:translate = (2, 0.6, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
+}
+
+def Cylinder "post" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    uniform token axis = "Y"
+    double height = 2.5
+    rel material:binding = </mtl/matte>
+    double radius = 0.2
+    double3 xformOp:translate = (0.3, 1.25, -2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Xform "lights200"
+{
+}
+

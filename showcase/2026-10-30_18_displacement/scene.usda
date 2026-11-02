@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/displacement.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Displacement: tests/scenes/displacement.usda. Left: UsdPreviewSurface
@@ -17,6 +19,109 @@
 # /Render/displacementOff: eldr:displacement off: flat planes, the cube at
 # its authored size.
 # /Render/displacementHalf: eldr:displacementScale 0.5: half height.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    float horizontalAperture = 36
+    float verticalAperture = 18
+    float xformOp:rotateX = -28
+    double3 xformOp:translate = (0, 4.5, 8.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, -50, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.3
+}
+
+def Scope "mtl"
+{
+    def Material "preview"
+    {
+        token outputs:displacement.connect = </mtl/preview/pbr.outputs:displacement>
+        token outputs:surface.connect = </mtl/preview/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.75, 0.5, 0.3)
+            float inputs:displacement.connect = </mtl/preview/height.outputs:r>
+            float inputs:roughness = 0.5
+            token outputs:displacement
+            token outputs:surface
+        }
+
+        def Shader "height"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/bumps.png@
+            float4 inputs:scale = (0.6, 0.6, 0.6, 1)
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </mtl/preview/st.outputs:result>
+            float outputs:r
+        }
+
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "mtlx"
+    {
+        token outputs:mtlx:displacement.connect = </mtl/mtlx/displacement.outputs:out>
+        token outputs:mtlx:surface.connect = </mtl/mtlx/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.3, 0.5, 0.75)
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+
+        def Shader "displacement"
+        {
+            uniform token info:id = "ND_displacement_float"
+            float inputs:displacement.connect = </mtl/mtlx/height.outputs:out>
+            float inputs:scale = 0.6
+            token outputs:out
+        }
+
+        def Shader "height"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @../../tests/scenes/textures/bumps.png@
+            float outputs:out
+        }
+    }
+
+    def Material "inflate"
+    {
+        token outputs:displacement.connect = </mtl/inflate/pbr.outputs:displacement>
+        token outputs:surface.connect = </mtl/inflate/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.4, 0.7, 0.4)
+            float inputs:displacement = 0.25
+            token outputs:displacement
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -55,20 +160,21 @@ def Scope "Render"
     def RenderSettings "displacement"
     {
         rel camera = </cam>
-        int2 resolution = (960, 480)
+        uniform int2 resolution = (960, 480)
     }
 
     def RenderSettings "displacementOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 480)
         custom bool eldr:displacement = 0
+        uniform int2 resolution = (960, 480)
     }
 
     def RenderSettings "displacementHalf"
     {
         rel camera = </cam>
-        int2 resolution = (960, 480)
         custom float eldr:displacementScale = 0.5
+        uniform int2 resolution = (960, 480)
     }
 }
+

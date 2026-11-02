@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/volume.usda@]
-    upAxis = "Y"
     metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Volume shadow grids: tests/scenes/volume.usda's three volumes (sun, dome)
@@ -12,28 +14,50 @@
 # each light from a grid built once); /Render/exact marches every shadow
 # ray, as before; /Render/grid32 is a coarser grid. They should look the same.
 
+def Camera "cam"
+{
+    float focalLength = 30
+    float xformOp:rotateX = -8
+    double3 xformOp:translate = (0, 1.4, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 40, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
 def SphereLight "warm"
 {
-    float inputs:radius = 0.1
-    float inputs:intensity = 250
     color3f inputs:color = (1, 0.6, 0.3)
+    float inputs:intensity = 250
+    float inputs:radius = 0.1
     double3 xformOp:translate = (-1.2, 1.6, 1.2)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def SphereLight "cool"
 {
-    float inputs:radius = 0.1
-    float inputs:intensity = 250
     color3f inputs:color = (0.3, 0.6, 1)
-    double3 xformOp:translate = (1.4, 0.6, 1.0)
+    float inputs:intensity = 250
+    float inputs:radius = 0.1
+    double3 xformOp:translate = (1.4, 0.6, 1)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
 def SphereLight "low"
 {
-    float inputs:radius = 0.1
     float inputs:intensity = 250
+    float inputs:radius = 0.1
     double3 xformOp:translate = (0.2, -0.8, 0.6)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
@@ -75,47 +99,48 @@ def Scope "Render"
     def RenderSettings "grid"
     {
         rel camera = </cam>
-        int2 resolution = (960, 704)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 704)
     }
 
     def RenderSettings "exact"
     {
         rel camera = </cam>
-        int2 resolution = (960, 704)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
         custom int eldr:volumeShadowGrid = 0
+        uniform int2 resolution = (960, 704)
     }
 
     def RenderSettings "grid32"
     {
         rel camera = </cam>
-        int2 resolution = (960, 704)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
         custom int eldr:volumeShadowGrid = 32
+        uniform int2 resolution = (960, 704)
     }
 }
+

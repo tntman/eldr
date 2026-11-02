@@ -1,15 +1,148 @@
 #usda 1.0
 (
-    upAxis = "Y"
     metersPerUnit = 1
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/emissive.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # UsdPreviewSurface opacityMode: the Cornell box lit by a glowing panel, with
 # two 30% opaque dark metal quads at the front left, tilted to mirror the
 # panel. Left "transparent" (the default), right "presence": presence fades
 # the highlight with the opacity too.
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:height = 0.5
+    float inputs:intensity = 0
+    float inputs:width = 0.5
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (0, 1.98, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "panel"
+    {
+        token outputs:surface.connect = </mtl/panel/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (40, 40, 38)
+            token outputs:surface
+        }
+    }
+
+    def Material "bulb"
+    {
+        token outputs:surface.connect = </mtl/bulb/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (60, 30, 8)
+            token outputs:surface
+        }
+    }
+
+    def Material "transparentMode"
+    {
+        token outputs:surface.connect = </mtl/transparentMode/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
+            float inputs:metallic = 1
+            float inputs:opacity = 0.3
+            token inputs:opacityMode = "transparent"
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Material "presenceMode"
+    {
+        token outputs:surface.connect = </mtl/presenceMode/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
+            float inputs:metallic = 1
+            float inputs:opacity = 0.3
+            token inputs:opacityMode = "presence"
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -48,66 +181,15 @@ def Scope "Render"
     def RenderSettings "presence"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:opacityMode = 1
+        uniform int2 resolution = (480, 270)
     }
 
     def RenderSettings "opacityModeOff"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:opacityMode = 0
+        uniform int2 resolution = (480, 270)
     }
 }
 
-def Scope "quick"
-{
-    def Mesh "transparentQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
-    {
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        point3f[] points = [(-0.753, 0.145, 1.022), (-0.502, 0.145, 0.778), (-0.697, 0.355, 0.578), (-0.948, 0.355, 0.822)]
-        rel material:binding = </mtl/transparentMode>
-    }
-
-    def Mesh "presenceQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
-    {
-        int[] faceVertexCounts = [4]
-        int[] faceVertexIndices = [0, 1, 2, 3]
-        point3f[] points = [(-0.382, 0.166, 1.007), (-0.056, 0.166, 0.879), (-0.168, 0.334, 0.593), (-0.494, 0.334, 0.721)]
-        rel material:binding = </mtl/presenceMode>
-    }
-}
-
-over "mtl"
-{
-    def Material "transparentMode"
-    {
-        token outputs:surface.connect = </mtl/transparentMode/pbr.outputs:surface>
-        def Shader "pbr"
-        {
-            uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
-            float inputs:metallic = 1
-            float inputs:roughness = 0.4
-            float inputs:opacity = 0.3
-            token inputs:opacityMode = "transparent"
-            token outputs:surface
-        }
-    }
-
-    def Material "presenceMode"
-    {
-        token outputs:surface.connect = </mtl/presenceMode/pbr.outputs:surface>
-        def Shader "pbr"
-        {
-            uniform token info:id = "UsdPreviewSurface"
-            color3f inputs:diffuseColor = (0.12, 0.12, 0.12)
-            float inputs:metallic = 1
-            float inputs:roughness = 0.4
-            float inputs:opacity = 0.3
-            token inputs:opacityMode = "presence"
-            token outputs:surface
-        }
-    }
-}

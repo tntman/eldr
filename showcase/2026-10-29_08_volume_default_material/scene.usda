@@ -1,15 +1,39 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/volume.usda@]
-    upAxis = "Y"
     metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Volumes without a material now render as Karma's: white scattering, no
 # absorption, isotropic phase; the dome lights them from its upper half.
 # /Render/newPhase is the default; /Render/oldPhase is the old forward phase
 # (g 0.2); /Render/volumeLimit16 adds multiple scattering.
+
+def Camera "cam"
+{
+    float focalLength = 30
+    float xformOp:rotateX = -8
+    double3 xformOp:translate = (0, 1.4, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 40, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
 
 def Scope "Render"
 {
@@ -48,14 +72,14 @@ def Scope "Render"
     def RenderSettings "newPhase"
     {
         rel camera = </cam>
-        int2 resolution = (960, 704)
+        uniform int2 resolution = (960, 704)
     }
 
     def RenderSettings "oldPhase"
     {
         rel camera = </cam>
-        int2 resolution = (960, 704)
         custom float eldr:volumeAnisotropy = 0.2
+        uniform int2 resolution = (960, 704)
     }
-
 }
+

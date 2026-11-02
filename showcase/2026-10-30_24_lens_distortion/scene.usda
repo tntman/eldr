@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    upAxis = "Y"
     metersPerUnit = 0.01
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/lens.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Lens distortion (eldr:lensDistortion): tests/scenes/lens.usda with a barrel
@@ -12,10 +14,28 @@
 # /Render/lens (the default): the ground's straight edges bow outwards.
 # /Render/distortionOff: eldr:lensDistortion off: straight lines.
 
-over "cam"
+def Camera "cam"
 {
+    float2 clippingRange = (10, 100000)
+    float focalLength = 85
+    float focusDistance = 500
+    float fStop = 1.4
+    float horizontalAperture = 36
     float lensDistortion:k1 = 0.12
     float lensDistortion:k2 = 0.02
+    double shutter:close = 0.25
+    double shutter:open = -0.25
+    float verticalAperture = 24
+    double3 xformOp:translate = (0, 60, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
 }
 
 def Scope "Render"
@@ -55,13 +75,14 @@ def Scope "Render"
     def RenderSettings "lens"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "distortionOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:lensDistortion = 0
+        uniform int2 resolution = (960, 540)
     }
 }
+

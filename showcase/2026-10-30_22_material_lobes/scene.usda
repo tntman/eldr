@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/lobes.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Material lobes beyond the metallic base: tests/scenes/lobes.usda, one
@@ -19,6 +21,338 @@
 # iridescence and stretched highlights vanish; rough metals darken a
 # little (single scattering).
 # /Render/toon: eldr:toonBands 3 on every material: flat bands of light.
+
+def Camera "cam"
+{
+    float focalLength = 28
+    double3 xformOp:translate = (0, 0, 20)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 25, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "dome"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+def Scope "mtl"
+{
+    def Material "specularWorkflow"
+    {
+        token outputs:surface.connect = </mtl/specularWorkflow/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.02, 0.02, 0.08)
+            float inputs:roughness = 0.25
+            color3f inputs:specularColor = (1, 0.55, 0.1)
+            int inputs:useSpecularWorkflow = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "clearcoat"
+    {
+        token outputs:surface.connect = </mtl/clearcoat/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:clearcoat = 1
+            float inputs:clearcoatRoughness = 0.02
+            color3f inputs:diffuseColor = (0.5, 0.03, 0.02)
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+    }
+
+    def Material "previewAmber"
+    {
+        token outputs:surface.connect = </mtl/previewAmber/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:clearcoat = 1
+            float inputs:clearcoatRoughness = 0.05
+            color3f inputs:diffuseColor = (0.9, 0.9, 0.9)
+            color3f inputs:eldr:clearcoatColor = (1, 0.6, 0.2)
+            float inputs:roughness = 0.5
+            token outputs:surface
+        }
+    }
+
+    def Material "carPaint"
+    {
+        token outputs:mtlx:surface.connect = </mtl/carPaint/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.05, 0.12, 0.45)
+            float inputs:coat = 1
+            float inputs:coat_roughness = 0.03
+            float inputs:metalness = 0.5
+            float inputs:specular_roughness = 0.45
+            token outputs:out
+        }
+    }
+
+    def Material "amberCoat"
+    {
+        token outputs:mtlx:surface.connect = </mtl/amberCoat/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.9, 0.9)
+            color3f inputs:coat_color = (1, 0.6, 0.2)
+            float inputs:coat_roughness = 0.05
+            float inputs:coat_weight = 1
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+    }
+
+    def Material "velvet"
+    {
+        token outputs:mtlx:surface.connect = </mtl/velvet/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.25, 0.02, 0.05)
+            float inputs:sheen = 1
+            color3f inputs:sheen_color = (1, 0.6, 0.7)
+            float inputs:sheen_roughness = 0.3
+            float inputs:specular = 0.2
+            float inputs:specular_roughness = 0.6
+            token outputs:out
+        }
+    }
+
+    def Material "fuzz"
+    {
+        token outputs:mtlx:surface.connect = </mtl/fuzz/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.05, 0.08, 0.3)
+            color3f inputs:fuzz_color = (0.8, 0.85, 1)
+            float inputs:fuzz_roughness = 0.5
+            float inputs:fuzz_weight = 1
+            float inputs:specular_roughness = 0.7
+            token outputs:out
+        }
+    }
+
+    def Material "oilSlick"
+    {
+        token outputs:mtlx:surface.connect = </mtl/oilSlick/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.01, 0.01, 0.01)
+            float inputs:specular_roughness = 0.15
+            float inputs:thin_film_IOR = 1.4
+            float inputs:thin_film_thickness = 400
+            token outputs:out
+        }
+    }
+
+    def Material "anodized"
+    {
+        token outputs:mtlx:surface.connect = </mtl/anodized/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.62)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.25
+            float inputs:thin_film_ior = 2
+            float inputs:thin_film_thickness = 0.35
+            float inputs:thin_film_weight = 1
+            token outputs:out
+        }
+    }
+
+    def Material "brushedSteel"
+    {
+        token outputs:mtlx:surface.connect = </mtl/brushedSteel/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            color3f inputs:base_color = (0.9, 0.9, 0.92)
+            float inputs:metalness = 1
+            float inputs:specular_anisotropy = 0.8
+            float inputs:specular_roughness = 0.35
+            token outputs:out
+        }
+    }
+
+    def Material "brushedGold"
+    {
+        token outputs:mtlx:surface.connect = </mtl/brushedGold/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (1, 0.78, 0.34)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.35
+            float inputs:specular_roughness_anisotropy = 0.8
+            token outputs:out
+        }
+    }
+
+    def Material "toon"
+    {
+        token outputs:surface.connect = </mtl/toon/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.35, 0.1)
+            float inputs:eldr:toonBands = 3
+            float inputs:eldr:toonSoftness = 0.05
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Material "plain"
+    {
+        token outputs:surface.connect = </mtl/plain/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Material "texturedSpecular"
+    {
+        token outputs:surface.connect = </mtl/texturedSpecular/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            float inputs:roughness = 0.3
+            color3f inputs:specularColor.connect = </mtl/texturedSpecular/tex.outputs:rgb>
+            int inputs:useSpecularWorkflow = 1
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/texturedSpecular/st.outputs:result>
+            float3 outputs:rgb
+        }
+
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+
+    def Material "texturedFilm"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedFilm/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_open_pbr_surface_surfaceshader"
+            color3f inputs:base_color = (0.6, 0.6, 0.62)
+            float inputs:base_metalness = 1
+            float inputs:specular_roughness = 0.25
+            float inputs:thin_film_ior = 2
+            float inputs:thin_film_thickness = 0.35
+            float inputs:thin_film_weight.connect = </mtl/texturedFilm/weight.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "weight"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            float outputs:out
+        }
+    }
+
+    def Material "texturedTransmission"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedTransmission/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.8, 0.8, 0.8)
+            float inputs:specular_roughness = 0.2
+            float inputs:transmission.connect = </mtl/texturedTransmission/weight.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "weight"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            float outputs:out
+        }
+    }
+
+    def Material "texturedDepth"
+    {
+        token outputs:mtlx:surface.connect = </mtl/texturedDepth/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 0
+            float inputs:specular = 0
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.3, 0.7, 0.9)
+            float inputs:transmission_depth.connect = </mtl/texturedDepth/depth.outputs:out>
+            token outputs:out
+        }
+
+        def Shader "red"
+        {
+            uniform token info:id = "ND_image_float"
+            asset inputs:file = @../../tests/scenes/textures/quadrants.png@
+            float outputs:out
+        }
+
+        def Shader "depth"
+        {
+            uniform token info:id = "ND_add_float"
+            float inputs:in1.connect = </mtl/texturedDepth/red.outputs:out>
+            float inputs:in2 = 0.5
+            float outputs:out
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -57,24 +391,25 @@ def Scope "Render"
     def RenderSettings "lobes"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "lobesOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:anisotropicSpecular = 0
         custom bool eldr:clearcoat = 0
+        custom bool eldr:multiScatter = 0
         custom bool eldr:sheen = 0
         custom bool eldr:thinFilm = 0
-        custom bool eldr:anisotropicSpecular = 0
-        custom bool eldr:multiScatter = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "toon"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:toonBands = 3
+        uniform int2 resolution = (960, 540)
     }
 }
+

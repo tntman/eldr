@@ -1,7 +1,9 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/reflections.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Traced reflection roulette: in a film, dim reflections (the
@@ -10,6 +12,84 @@
 # to match; the chrome ball and the floor far off (grazing) trace every
 # sample. /Render/roulette (the default) and /Render/everySample converge
 # to the same image; the first is cheaper per sample.
+
+def Camera "cam"
+{
+    float focalLength = 22
+    float xformOp:rotateX = -10
+    double3 xformOp:translate = (0, 2.2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.55, 0.65, 0.9)
+    float inputs:intensity = 0.4
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 2.5
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "polished"
+    {
+        token outputs:surface.connect = </mtl/polished/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.08, 0.08, 0.09)
+            float inputs:roughness = 0.08
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "stone"
+    {
+        token outputs:surface.connect = </mtl/stone/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.66, 0.6)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -48,33 +128,34 @@ def Scope "Render"
     def RenderSettings "roulette"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom bool eldr:filmRestart = 1
-        custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
-        custom int eldr:rtShadowLights = 16
         custom bool eldr:autoExposure = 0
-        custom bool eldr:rtReflections = 1
+        custom bool eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
         custom int eldr:filmSamples = 64
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "everySample"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom bool eldr:filmRestart = 1
-        custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
-        custom int eldr:rtShadowLights = 16
         custom bool eldr:autoExposure = 0
-        custom bool eldr:rtReflections = 1
+        custom bool eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
         custom int eldr:filmSamples = 64
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflectionRoulette = 0
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

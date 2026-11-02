@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    upAxis = "Y"
     metersPerUnit = 1
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/reflections.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # The reflection probe (eldr:reflectionProbe): a cube captured around the
@@ -13,11 +15,90 @@
 # /Render/probe: the chrome ball shows the red wall behind the camera.
 # /Render/probeOff: the default, SSR only: the ball shows the dome there.
 
+def Camera "cam"
+{
+    float focalLength = 22
+    float xformOp:rotateX = -10
+    double3 xformOp:translate = (0, 2.2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.55, 0.65, 0.9)
+    float inputs:intensity = 0.4
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 2.5
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "polished"
+    {
+        token outputs:surface.connect = </mtl/polished/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.08, 0.08, 0.09)
+            float inputs:roughness = 0.08
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "stone"
+    {
+        token outputs:surface.connect = </mtl/stone/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.66, 0.6)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+    }
+}
+
 def Scope "mtlStrip"
 {
     def Material "satin"
     {
         token outputs:surface.connect = </mtlStrip/satin/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -26,16 +107,6 @@ def Scope "mtlStrip"
             token outputs:surface
         }
     }
-}
-
-def Mesh "roughStrip" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(0.5, 0.005, -8), (0.5, 0.005, 8), (8, 0.005, 8), (8, 0.005, -8)]
-    rel material:binding = </mtlStrip/satin>
 }
 
 def Scope "Render"
@@ -75,13 +146,14 @@ def Scope "Render"
     def RenderSettings "probeOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "probe"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:reflectionProbe = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

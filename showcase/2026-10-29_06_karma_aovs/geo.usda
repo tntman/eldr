@@ -1,0 +1,131 @@
+#usda 1.0
+
+def Xform "room"
+{
+    def Mesh "floor" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 0, 1), (1, 0, 1), (1, 0, -1), (-1, 0, -1)]
+    }
+
+    def Mesh "ceiling" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 2, -1), (1, 2, -1), (1, 2, 1), (-1, 2, 1)]
+    }
+
+    def Mesh "back" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 2, -1), (-1, 2, -1)]
+    }
+
+    def Mesh "left" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/red>
+        point3f[] points = [(-1, 0, 1), (-1, 0, -1), (-1, 2, -1), (-1, 2, 1)]
+    }
+
+    def Mesh "right" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/green>
+        point3f[] points = [(1, 0, -1), (1, 0, 1), (1, 2, 1), (1, 2, -1)]
+    }
+}
+
+def Cube "tallBox" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/white>
+    double size = 1
+    float xformOp:rotateY = 18
+    float3 xformOp:scale = (0.55, 1.2, 0.55)
+    double3 xformOp:translate = (-0.35, 0.6, -0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY", "xformOp:scale"]
+}
+
+def Sphere "ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/chrome>
+    double radius = 0.33
+    double3 xformOp:translate = (0.42, 0.33, 0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "coated" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/coat>
+    double radius = 0.25
+    double3 xformOp:translate = (-0.55, 0.25, 0.55)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "glassBall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/glass>
+    double radius = 0.25
+    double3 xformOp:translate = (0.05, 0.25, 0.75)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "skinBall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/skin>
+    double radius = 0.22
+    double3 xformOp:translate = (-0.35, 1.42, -0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "matteBlock"
+{
+    int primvars:karma:object:holdoutmode = 1
+    double size = 1
+    float3 xformOp:scale = (0.4, 0.16, 0.3)
+    double3 xformOp:translate = (0.7, 0.08, 0.8)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Volume "cloud"
+{
+    rel field:density = </cloud/density>
+    float3 xformOp:scale = (0.22, 0.22, 0.22)
+    double3 xformOp:translate = (0.45, 1.25, 0.1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        int fieldIndex = 0
+        token fieldName = "density"
+        asset filePath = @../../tests/scenes/volume.vdb@
+    }
+}
+

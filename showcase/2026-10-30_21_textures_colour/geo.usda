@@ -1,0 +1,113 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+class Mesh "_quad" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "constantTop" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/constantAp1>
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (-1.2, 1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "constantBottom" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/constantRec709>
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (-1.2, -1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "textureTop" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/textureAp1>
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (1.2, 1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "textureBottom" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/textureRec709>
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (1.2, -1.1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "udimQuad" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl69/udim>
+    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (2, 0), (2, 2), (0, 2)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (3.6, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "tileFloor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl69/tiles>
+    point3f[] points = [(-20, -2.4, 8), (20, -2.4, 8), (20, -2.4, -72), (-20, -2.4, -72)]
+    texCoord2f[] primvars:st = [(0, 0), (20, 0), (20, 40), (0, 40)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+}
+

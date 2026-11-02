@@ -1,0 +1,98 @@
+#usda 1.0
+
+def Xform "room"
+{
+    def Mesh "floor" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 0, 1), (1, 0, 1), (1, 0, -1), (-1, 0, -1)]
+    }
+
+    def Mesh "ceiling" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 2, -1), (1, 2, -1), (1, 2, 1), (-1, 2, 1)]
+    }
+
+    def Mesh "back" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/white>
+        point3f[] points = [(-1, 0, -1), (1, 0, -1), (1, 2, -1), (-1, 2, -1)]
+    }
+
+    def Mesh "left" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/red>
+        point3f[] points = [(-1, 0, 1), (-1, 0, -1), (-1, 2, -1), (-1, 2, 1)]
+    }
+
+    def Mesh "right" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/green>
+        point3f[] points = [(1, 0, -1), (1, 0, 1), (1, 2, 1), (1, 2, -1)]
+    }
+}
+
+def Cube "tallBox" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/white>
+    double size = 1
+    float xformOp:rotateY = 18
+    float3 xformOp:scale = (0.55, 1.2, 0.55)
+    double3 xformOp:translate = (-0.35, 0.6, -0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY", "xformOp:scale"]
+}
+
+def Sphere "ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/chrome>
+    double radius = 0.33
+    double3 xformOp:translate = (0.42, 0.33, 0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Cube "panel" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/panel>
+    double size = 1
+    float3 xformOp:scale = (0.5, 0.02, 0.5)
+    double3 xformOp:translate = (0, 1.97, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "bulb" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/bulb>
+    double radius = 0.06
+    double3 xformOp:translate = (0.1, 0.06, 0.65)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+

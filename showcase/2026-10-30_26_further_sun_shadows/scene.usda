@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/volume.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Shadows of further suns: tests/scenes/volume.usda (two smoke clouds, a
@@ -17,11 +19,34 @@
 # /Render/furtherSunsTraced (eldr:rtShadows on): both suns traced.
 # The orb and floor get plain materials, as in Karma's golden comparison.
 
+def Camera "cam"
+{
+    float focalLength = 30
+    float xformOp:rotateX = -8
+    double3 xformOp:translate = (0, 1.4, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-35, 40, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
 def Scope "showcaseMtl"
 {
     def Material "grey"
     {
         token outputs:surface.connect = </showcaseMtl/grey/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -33,6 +58,7 @@ def Scope "showcaseMtl"
     def Material "orange"
     {
         token outputs:surface.connect = </showcaseMtl/orange/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -40,16 +66,6 @@ def Scope "showcaseMtl"
             token outputs:surface
         }
     }
-}
-
-over "floor" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    rel material:binding = </showcaseMtl/grey>
-}
-
-over "orb" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    rel material:binding = </showcaseMtl/orange>
 }
 
 def Scope "Render"
@@ -89,20 +105,21 @@ def Scope "Render"
     def RenderSettings "furtherSuns"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "furtherSunsOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:extraSunShadowMaps = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "furtherSunsTraced"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:rtShadows = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

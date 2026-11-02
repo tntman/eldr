@@ -1,7 +1,9 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/emissive.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Moving camera mode: tumble this scene in usdview or Houdini with GI,
@@ -10,6 +12,105 @@
 # ray per light, GI probes paused; /Render/full keeps everything while
 # moving. Still frames are the same in both. /Render/abrupt turns off the
 # smooth switch (frame budget, ramp, film warm start).
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:height = 0.5
+    float inputs:intensity = 0
+    float inputs:width = 0.5
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (0, 1.98, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "panel"
+    {
+        token outputs:surface.connect = </mtl/panel/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (40, 40, 38)
+            token outputs:surface
+        }
+    }
+
+    def Material "bulb"
+    {
+        token outputs:surface.connect = </mtl/bulb/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (60, 30, 8)
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -48,38 +149,37 @@ def Scope "Render"
     def RenderSettings "moving"
     {
         rel camera = </cam>
-        int2 resolution = (1280, 720)
         custom bool eldr:gi = 1
-        custom bool eldr:ssgi = 1
-        custom bool eldr:rtShadows = 1
         custom bool eldr:rtReflections = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:ssgi = 1
+        uniform int2 resolution = (1280, 720)
     }
 
     def RenderSettings "full"
     {
         rel camera = </cam>
-        int2 resolution = (1280, 720)
         custom bool eldr:gi = 1
-        custom bool eldr:ssgi = 1
-        custom bool eldr:rtShadows = 1
-        custom bool eldr:rtReflections = 1
+        custom bool eldr:movingGiPause = 0
         custom float eldr:movingRenderScale = 1
         custom int eldr:movingShadowRays = 0
-        custom bool eldr:movingGiPause = 0
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:ssgi = 1
+        uniform int2 resolution = (1280, 720)
     }
 
-    # The smooth switch off: a fixed half size while moving, full quality
-    # in one frame after the stop, the film from its first sample.
     def RenderSettings "abrupt"
     {
         rel camera = </cam>
-        int2 resolution = (1280, 720)
-        custom bool eldr:gi = 1
-        custom bool eldr:ssgi = 1
-        custom bool eldr:rtShadows = 1
-        custom bool eldr:rtReflections = 1
-        custom int eldr:rampFrames = 0
-        custom float eldr:movingFrameBudget = 0
         custom float eldr:filmWarmStart = 0
+        custom bool eldr:gi = 1
+        custom float eldr:movingFrameBudget = 0
+        custom int eldr:rampFrames = 0
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:ssgi = 1
+        uniform int2 resolution = (1280, 720)
     }
 }
+

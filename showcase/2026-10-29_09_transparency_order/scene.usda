@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/transparency_order.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # tests/scenes/transparency_order.usda: a translucent red quad in front of
@@ -14,11 +16,91 @@
 # (no refracting mesh between them in the back-to-front walk), yellow
 # behind cyan. Sorted (eldr:oit 0) blends them in order; weighted
 # blended OIT averages them by depth weight, so the overlap shifts colour.
-over "mtl"
+
+def Camera "cam"
 {
+    float focalLength = 24
+    double3 xformOp:translate = (0, 0.3, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-40, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.6, 0.7, 1)
+    float inputs:intensity = 0.4
+}
+
+def Scope "mtl"
+{
+    def Material "grey"
+    {
+        token outputs:surface.connect = </mtl/grey/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/surface.outputs:surface>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.9, 0.1, 0.1)
+            float inputs:opacity = 0.5
+            float inputs:roughness = 0.6
+            token outputs:surface
+        }
+    }
+
+    def Material "blueGlass"
+    {
+        token outputs:mtlx:surface.connect = </mtl/blueGlass/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:specular_roughness = 0.05
+            bool inputs:thin_walled = 1
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.3, 0.5, 1)
+            token outputs:out
+        }
+    }
+
+    def Material "greenGlass"
+    {
+        token outputs:mtlx:surface.connect = </mtl/greenGlass/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:specular_roughness = 0.05
+            bool inputs:thin_walled = 1
+            float inputs:transmission = 1
+            color3f inputs:transmission_color = (0.55, 0.9, 0.55)
+            token outputs:out
+        }
+    }
+
     def Material "cyan"
     {
         token outputs:surface.connect = </mtl/cyan/surface.outputs:surface>
+
         def Shader "surface"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -28,9 +110,11 @@ over "mtl"
             token outputs:surface
         }
     }
+
     def Material "yellow"
     {
         token outputs:surface.connect = </mtl/yellow/surface.outputs:surface>
+
         def Shader "surface"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -39,30 +123,6 @@ over "mtl"
             float inputs:roughness = 0.6
             token outputs:surface
         }
-    }
-}
-
-def Xform "oitPair"
-{
-    def Mesh "yellowBack" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-        inherits = </Quad>
-    )
-    {
-        rel material:binding = </mtl/yellow>
-        double3 xformOp:translate = (-2.6, -0.9, 3)
-        float3 xformOp:scale = (1, 0.8, 1)
-        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
-    }
-    def Mesh "cyanFront" (
-        prepend apiSchemas = ["MaterialBindingAPI"]
-        inherits = </Quad>
-    )
-    {
-        rel material:binding = </mtl/cyan>
-        double3 xformOp:translate = (-1.8, -0.9, 4)
-        float3 xformOp:scale = (1, 0.8, 1)
-        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
     }
 }
 
@@ -103,42 +163,43 @@ def Scope "Render"
     def RenderSettings "default"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "sorted"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:oit = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "oneLayer"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:refractionLayers = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "volumesOverGlass"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:volumeUnderTransparency = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "final"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

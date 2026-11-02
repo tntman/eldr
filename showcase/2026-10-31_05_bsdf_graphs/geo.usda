@@ -1,0 +1,140 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/floor>
+    point3f[] points = [(-9, -2.6, 4), (9, -2.6, 4), (9, -2.6, -4), (-9, -2.6, -4)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+    uniform token subdivisionScheme = "none"
+}
+
+def Sphere "s_mixDiffuse" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/mixDiffuse>
+    double radius = 1
+    double3 xformOp:translate = (-6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_plastic" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/plastic>
+    double radius = 1
+    double3 xformOp:translate = (-3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_coatedGold" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/coatedGold>
+    double radius = 1
+    double3 xformOp:translate = (-1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_maskedMetal" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/maskedMetal>
+    double radius = 1
+    double3 xformOp:translate = (1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_sheenCloth" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/sheenCloth>
+    double radius = 1
+    double3 xformOp:translate = (3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_glass" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/glass>
+    double radius = 1
+    double3 xformOp:translate = (6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_subsurface" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/subsurface>
+    double radius = 1
+    double3 xformOp:translate = (-6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_emissive" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/emissive>
+    double radius = 1
+    double3 xformOp:translate = (-3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_lamaCoatedCopper" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/lamaCoatedCopper>
+    double radius = 1
+    double3 xformOp:translate = (-1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_lamaMix" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/lamaMix>
+    double radius = 1
+    double3 xformOp:translate = (1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_gltfIridescent" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/gltfIridescent>
+    double radius = 1
+    double3 xformOp:translate = (3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "s_gltfBrushed" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/gltfBrushed>
+    double radius = 1
+    double3 xformOp:translate = (6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
