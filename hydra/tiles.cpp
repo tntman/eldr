@@ -133,9 +133,25 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
             const bool lastTile = ty + 1 == down && tx + 1 == across;
             const auto tileStart = std::chrono::steady_clock::now();
             int samples = 0;
+            double gpuMs = 0.0, cpuMs = 0.0;
+            std::vector<std::pair<const char *, double>> passMs;  // summed over the tile's samples
             for (;;) {
                 renderer.Render(scene, f, t);
                 ++samples;
+                if (timing) {
+                    const vkr::Renderer::Stats &stats = renderer.GetStats();
+                    gpuMs += stats.gpuMs;
+                    cpuMs += stats.cpuMs;
+                    for (const auto &[name, ms] : stats.passMs) {
+                        auto it = std::find_if(passMs.begin(), passMs.end(),
+                                               [&](const auto &p) { return std::strcmp(p.first, name) == 0; });
+                        if (it == passMs.end()) {
+                            passMs.emplace_back(name, ms);
+                        } else {
+                            it->second += ms;
+                        }
+                    }
+                }
                 const bool done = renderer.IsConverged() && !scene.LodsPending();
                 sampled(!(done && lastTile));
                 if (done) {
@@ -145,10 +161,18 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
             }
             renderer.Read(t);
             if (timing) {
-                std::fprintf(stderr, "HdVk tile %u/%u (%u,%u %ux%u): %d samples, %.0f ms\n", ty * across + tx + 1,
-                             across * down, in.x0, in.y0, in.x1 - in.x0, in.y1 - in.y0, samples,
+                std::fprintf(stderr, "HdVk tile %u/%u (%u,%u %ux%u): %d samples, %.0f ms (gpu %.0f, render cpu %.0f);",
+                             ty * across + tx + 1, across * down, in.x0, in.y0, in.x1 - in.x0, in.y1 - in.y0, samples,
                              std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tileStart)
-                                 .count());
+                                 .count(),
+                             gpuMs, cpuMs);
+                std::fputs(" gpu passes ms:", stderr);
+                for (const auto &[name, ms] : passMs) {
+                    if (ms >= 0.5) {
+                        std::fprintf(stderr, " %s %.0f", name, ms);
+                    }
+                }
+                std::fputc('\n', stderr);
             }
             if (t.color) {
                 in.Copy(t.color, hdr.data(), 8);
