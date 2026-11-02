@@ -366,6 +366,7 @@ private:
     uint32_t _temporalLast[2] = {};  // the last frame's x flags and shadow lights' hash
     uint32_t _historyKey[4] = {};    // the size it was made for: width, height, shadow layers, radiance rows
     uint32_t _width = 0, _height = 0, _shadowLayers = 0;
+    bool _imageShadows = false, _imageReflections = false;  // _shadowImage, _reflectionImage full size
     Image _giIrradiance, _giVisibility;
     Image _giOffsets;  // relocation per probe (rgba32f, xyz)
     VkSampler _sampler = VK_NULL_HANDLE;

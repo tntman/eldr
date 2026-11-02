@@ -272,6 +272,9 @@ void RayTracing::Release()
     }
     _photonCapacity = 0;
     _work = Work();
+    if (_width > 1 || _height > 1) {  // the screen-size images too, until traced again
+        _CreateImages(1, 1, 1);
+    }
     _temporalRan = _temporalNow = false;
 }
 
@@ -605,9 +608,14 @@ void RayTracing::_CreateImages(uint32_t width, uint32_t height, uint32_t shadowL
     _dev.Destroy(_gatherTemp);
     _dev.Destroy(_gatherGuide);
     // Then as many layers of the denoise's penumbra radii (four lights a texel, rt_pixels.rgen).
-    _shadowImage = _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers * 2);
+    // 1 x 1 while their effect is off (bound, never read or written).
+    _imageShadows = _work.shadows;
+    _imageReflections = _work.reflections;
+    _shadowImage = _imageShadows ? _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, width, height * shadowLayers * 2)
+                                 : _CreateAtlas(VK_FORMAT_R8G8B8A8_UNORM, 1, 1);
     _shadowLayers = shadowLayers;
-    _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
+    _reflectionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, _imageReflections ? width : 1,
+                                    _imageReflections ? height : 1);
     if (_work.refraction) {
         _refractionImage = _CreateAtlas(VK_FORMAT_R16G16B16A16_SFLOAT, width, height);
     }
@@ -1315,6 +1323,7 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     const uint32_t layers = std::max((lights + perTexel - 1) / perTexel, std::max(_shadowLayers, 1u));
     if ((work.shadows || work.reflections || work.refraction || work.gather) &&
         (width != _width || height != _height || layers != _shadowLayers ||
+         work.shadows != _imageShadows || work.reflections != _imageReflections ||
          work.refraction != (_refractionImage.view != VK_NULL_HANDLE) ||
          work.gather != (_gatherImage.view != VK_NULL_HANDLE))) {
         _CreateImages(width, height, layers);
@@ -1337,8 +1346,8 @@ void RayTracing::Prepare(const Scene::Gpu &gpu, const Work &work, uint32_t width
     d.params[0] = _frame++;
     // 0 rays (quality multipliers below 1, film samples between traced
     // ones): rt_pixels.rgen leaves that image as the last sample wrote it.
-    d.params[1] = std::min(work.shadowSamples, 16u);
-    d.params[2] = std::min(work.reflectionSamples, 16u);
+    d.params[1] = work.shadows ? std::min(work.shadowSamples, 16u) : 0u;
+    d.params[2] = work.reflections ? std::min(work.reflectionSamples, 16u) : 0u;
     d.params[3] = work.sun;
     d.skinned[0] = gpu.instanceCapacity;
     d.skinned[1] = uint32_t(_skinnedOrder.size());

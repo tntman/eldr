@@ -72,10 +72,12 @@ Transparency::~Transparency()
 
 void Transparency::_Destroy()
 {
-    vkDestroyDescriptorPool(_dev.device, _pool, nullptr);
-    _pool = VK_NULL_HANDLE;
-    _dev.Destroy(_accum);
-    _dev.Destroy(_revealage);
+    EnsureAccumulation(false);
+    DropBackground();
+}
+
+void Transparency::DropBackground()
+{
     vkDestroyImageView(_dev.device, _backgroundLevel0, nullptr);
     _backgroundLevel0 = VK_NULL_HANDLE;
     _dev.Destroy(_background);
@@ -87,6 +89,21 @@ void Transparency::Resize(uint32_t width, uint32_t height)
     _Destroy();
     _width = width;
     _height = height;
+}
+
+void Transparency::EnsureAccumulation(bool on)
+{
+    if (!on) {
+        vkDestroyDescriptorPool(_dev.device, _pool, nullptr);
+        _pool = VK_NULL_HANDLE;
+        _dev.Destroy(_accum);
+        _dev.Destroy(_revealage);
+        return;
+    }
+    if (_accum.image) {
+        return;
+    }
+    const uint32_t width = _width, height = _height;
     constexpr VkImageUsageFlags kUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
     _accum = _dev.CreateImage(kAccumFormat, width, height, 1, 1, kUsage, VK_IMAGE_ASPECT_COLOR_BIT,
                               VK_IMAGE_VIEW_TYPE_2D);

@@ -13,6 +13,7 @@
 #include <functional>
 #include <random>
 #include <tuple>
+#include <utility>
 #include <map>
 #include <vector>
 
@@ -1738,14 +1739,13 @@ void Renderer::_CreateConstantImages()
     _ssr.SetBlueNoise(_blueNoise.view);
 }
 
-// The frame's size: TAA's resolve and history, post and the readback; the
-// scene's targets start at it too (_ResizeScene).
+// The frame's size: TAA's resolve and history and post; the scene's
+// targets start at it too (_ResizeScene).
 void Renderer::_Resize(uint32_t width, uint32_t height)
 {
     _outWidth = width;
     _outHeight = height;
-    _dev.Reserve(_readback, VkDeviceSize(width) * height * (8 + 4 + 4 + 4 + 4 + 8),
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    _dev.Destroy(_readback);  // Read's, sized by what it reads
     _taa.Resize(width, height);
     _post.Resize(width, height, _taa.Output());
     for (Image &img : _up) {
@@ -1762,6 +1762,13 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
 {
     for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_filmIds[0], &_filmIds[1], &_filmIds[2]}) {
         _dev.Destroy(*img);
+    }
+    // Back at the frame's size: the upscale's copies go (their memory is
+    // recycled for the targets below).
+    if (width == _outWidth && height == _outHeight) {
+        for (Image &img : _up) {
+            _dev.Destroy(img);
+        }
     }
     _width = width;
     _height = height;
@@ -1790,8 +1797,10 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
     _subsurface.Resize(width, height, _depth.view);
     _ssr.Resize(width, height, _depth.view);
     // The frame's size: made once, kept while the scene's size changes
-    // (eldr:rampFrames, eldr:movingFrameBudget); _Resize drops them.
+    // (eldr:rampFrames, eldr:movingFrameBudget) until it is the frame's again.
     if ((width != _outWidth || height != _outHeight) && !_up[0].image) {
+        // At the frame's size already: no room to grow (Device::recycleGrowth).
+        const double growth = std::exchange(_dev.recycleGrowth, 1.0);
         const VkFormat formats[4] = {kDepthFormat, kIdFormat, kIdFormat, kVelocityFormat};
         for (int i = 0; i < 4; ++i) {
             _up[i] = _dev.CreateImage(formats[i], _outWidth, _outHeight, 1, 1,
@@ -1800,6 +1809,7 @@ void Renderer::_ResizeScene(uint32_t width, uint32_t height)
                                       i == 0 ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT,
                                       VK_IMAGE_VIEW_TYPE_2D);
         }
+        _dev.recycleGrowth = growth;
     }
 }
 
@@ -4012,6 +4022,11 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     fd.lightPath[0] = std::max(frame.directIntensity, 0.0f);
     fd.lightPath[1] = std::max(frame.indirectIntensity, 0.0f);
     fd.lightPath[2] = lightPath ? 1.0f : 0.0f;
+    // Screen-size targets of translucency only while it draws (bytes per pixel).
+    _transparency.EnsureAccumulation(draw && frame.translucency && frame.oit && !gpu.translucent.empty());
+    if (!refraction) {
+        _transparency.DropBackground();
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -4741,6 +4756,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         _lens.RecordResidualMotionBlur(_cmd, lens);
         pass("motionBlur");
     }
+    if (!dof && !residualBlur) {
+        _lens.DropScratch();
+    }
     if (frame.postProcess) {
         // HDR color feeds TAA and post (TAA also reads the read-only depth).
         ImageBarrier(_cmd, _color.image, Range(VK_IMAGE_ASPECT_COLOR_BIT),
@@ -5051,11 +5069,17 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         {outImages[3]->image, VK_IMAGE_ASPECT_COLOR_BIT, 4, out.velocity, 0},
     };
     const bool defer = frame.deferReadback && std::none_of(aovTargets, aovTargets + Aovs::kCount, [](float *a) { return a; });
-    // Not the slot the app may be reading (Targets::inPlace).
-    const uint32_t slot = _deliveredSlot ^ 1u;
+    // Not the slot the app may be reading (Targets::inPlace); outputs copied
+    // out on delivery need one slot only. Sized by what is read back.
+    const uint32_t slot = out.inPlace ? _deliveredSlot ^ 1u : _deliveredSlot;
     Buffer &readback = _frameReadback[slot];
-    _dev.Reserve(readback, VkDeviceSize(_outWidth) * _outHeight * (8 + 4 + 4 + 4 + 4), VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    VkDeviceSize readBytes = 0;
+    for (const Output &o : outputs) {
+        readBytes += o.dst && out.readback ? o.bytesPerPixel * _outWidth * _outHeight : 0;
+    }
+    if (readBytes > 0) {
+        _dev.Reserve(readback, readBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    }
     _deferred = {};
     _deferred.slot = slot;
     _deferred.width = _outWidth;
@@ -5087,7 +5111,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     toHost.buffer = readback.buffer;
     toHost.size = VK_WHOLE_SIZE;
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.bufferMemoryBarrierCount = 1;
+    dep.bufferMemoryBarrierCount = readBytes > 0 ? 1 : 0;
     dep.pBufferMemoryBarriers = &toHost;
     vkCmdPipelineBarrier2(_cmd, &dep);
     pass("readback");
@@ -5362,6 +5386,13 @@ void Renderer::Read(const Targets &out)
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     Check(vkBeginCommandBuffer(_cmd, &bi), "vkBeginCommandBuffer");
     VkDeviceSize offsets[6] = {}, offset = 0;  // its own buffer: Render's outputs stay
+    for (int i = 0; i < 6; ++i) {
+        offset += outputs[i].second ? bytesPerPixel[i] * _outWidth * _outHeight : 0;
+    }
+    if (offset > 0) {
+        _dev.Reserve(_readback, offset, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    }
+    offset = 0;
     for (int i = 0; i < 6; ++i) {
         if (outputs[i].second) {
             offsets[i] = offset;

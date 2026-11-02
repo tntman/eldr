@@ -66,6 +66,7 @@ public:
 private:
     void _Destroy();
     void _CreateSsgi();
+    void _CreateAo();
     void _Draw(VkCommandBuffer cmd, VkPipeline pipeline, VkDescriptorSet set, const Image &target, uint32_t width,
                uint32_t height, const void *params);
 
