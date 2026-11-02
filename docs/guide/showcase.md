@@ -85,6 +85,7 @@ The `showcase/` folder has one small scene per feature. Open `showcase/<folder>/
 - `2026-10-30_03_volume_shadow_grid`: Volume shadow grids
 - `2026-10-30_04_light_sampling`: Traced light sampling
 - `2026-10-30_20_instancing`: Instancing
+- `2026-11-02_01_tiles`: Tiled rendering of very large images
 
 ## Viewport
 

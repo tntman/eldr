@@ -109,6 +109,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-30_03_volume_shadow_grid` | Each volume's shadow towards each light is built once on a grid instead of marched per step. | `grid`, `exact`, `grid32` |
 | `2026-10-30_04_light_sampling` | Traced hits shoot a shadow ray at one chosen light instead of every light. | `sampled`, `everyLight` |
 | `2026-10-30_20_instancing` | Nested point instancers and native instances render fast, and tiny instances can be skipped. | `instances`, `cullSmall` |
+| `2026-11-02_01_tiles` | husk and usdrecord render very large images tile by tile, so GPU memory follows the tile size. | `tiles`, `whole` |
 
 ## Viewport
 

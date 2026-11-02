@@ -234,7 +234,7 @@ add_library(hdVk SHARED
     hydra/rendererPlugin.cpp hydra/renderDelegate.cpp hydra/processMemory.cpp hydra/renderPass.cpp
     hydra/mesh.cpp hydra/curves.cpp hydra/material.cpp hydra/light.cpp hydra/instancer.cpp
     hydra/sceneIndexPlugin.cpp hydra/glInterop.cpp hydra/matteSceneIndex.cpp hydra/subdivision.cpp
-    hydra/camera.cpp hydra/renderProducts.cpp)
+    hydra/camera.cpp hydra/renderProducts.cpp hydra/tiles.cpp)
 target_link_libraries(hdVk PRIVATE ar cameraUtil garch hd hdMtlx hdsi hgi hio pxOsd sdr vkrenderer)
 target_compile_definitions(hdVk PRIVATE MFB_PACKAGE_NAME=hdVk MFB_ALT_PACKAGE_NAME=hdVk)
 # OpenVDB volumes when USD was built with OpenVDB (build_usd.py --openvdb,
@@ -404,6 +404,9 @@ if(WIN32)
     # eldr:denoise (Intel Open Image Denoise; passes as a skip without it).
     add_test(NAME denoise COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_denoise.py)
     set_tests_properties(denoise PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
+    # eldr:tileSize: tiled usdrecord image = whole one, no seams.
+    add_test(NAME tiles COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_tiles.py)
+    set_tests_properties(tiles PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME aovs COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_aovs.py)
     set_tests_properties(aovs PROPERTIES ENVIRONMENT "HDVK_BUILD=$<TARGET_FILE_DIR:hdVk>")
     add_test(NAME interop COMMAND ${usdenv} python ${CMAKE_SOURCE_DIR}/tests/test_interop.py)

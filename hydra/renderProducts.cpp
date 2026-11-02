@@ -162,7 +162,7 @@ void HdVkRenderProducts::Prepare(const HdRenderSettings *settings, uint32_t widt
 
 void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame,
                                const std::string &objectManifest, const std::string &materialManifest, bool linear,
-                               const std::function<std::string()> &statsJson)
+                               const vkr::Renderer::Targets *host, const std::function<std::string()> &statsJson)
 {
     // FNV-1a over what the image shows; a time step of usdrecord or a
     // script can converge in its first frame (the post motion blur's).
@@ -186,18 +186,23 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
 #ifdef HDVK_EXR
     const size_t pixels = size_t(_width) * _height;
     // Colour, depth and the ids from the frame's images.
-    std::vector<uint16_t> color(pixels * 4);
-    std::vector<float> depth(pixels);
-    std::vector<int32_t> primId(pixels), instanceId(pixels);
+    const size_t own = host ? 0 : pixels;
+    std::vector<uint16_t> color(own * 4);
+    std::vector<float> depth(own);
+    std::vector<int32_t> primId(own), instanceId(own);
     vkr::Renderer::Targets read;
     read.color = color.data();
     // Exposed but neither bloomed nor tonemapped, whatever eldr:tonemapper is.
-    std::vector<uint16_t> linearColor(linear ? pixels * 4 : 0);
+    std::vector<uint16_t> linearColor(linear ? own * 4 : 0);
     read.linearColor = linear ? linearColor.data() : nullptr;
     read.depth = depth.data();
     read.primId = primId.data();
     read.instanceId = instanceId.data();
-    renderer.Read(read);
+    if (host) {  // tiled: the frame's own (the renderer holds the last tile)
+        read = *host;
+    } else {
+        renderer.Read(read);
+    }
 
     const std::string stats = statsJson ? statsJson() : std::string();  // husk:render_stats for the panel
     for (const Product &product : _products) {
@@ -216,15 +221,15 @@ void HdVkRenderProducts::Write(vkr::Renderer &renderer, const vkr::Renderer::Fra
             if (var.source == Source::Color) {
                 for (uint32_t c = 0; c < 4; ++c) {
                     channels.push_back(beauty ? var.name + "." + rgba[c] : std::string(rgba[c]));
-                    sources.push_back({linear ? linearColor.data() : color.data(), 1, 4, c});
+                    sources.push_back({linear ? read.linearColor : read.color, 1, 4, c});
                 }
                 beauty = true;
             } else if (var.source == Source::Depth) {
                 channels.push_back(var.name + ".Z");
-                sources.push_back({depth.data(), 0, 1, 0});
+                sources.push_back({read.depth, 0, 1, 0});
             } else if (var.source == Source::PrimId || var.source == Source::InstanceId) {
                 channels.push_back(var.name + ".R");
-                sources.push_back({var.source == Source::PrimId ? primId.data() : instanceId.data(), 2, 1, 0});
+                sources.push_back({var.source == Source::PrimId ? static_cast<const void *>(read.primId) : read.instanceId, 2, 1, 0});
             } else if (!_aovs[var.kind].empty()) {
                 const uint32_t components = uint32_t(_aovs[var.kind].size() / pixels);
                 if (IsCryptomatte(var.kind)) {

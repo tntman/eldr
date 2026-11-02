@@ -336,6 +336,53 @@ void PostProcess::Record(VkCommandBuffer cmd, const Settings &s, float dt, bool 
     }
 }
 
+void PostProcess::Apply(Device &dev, const Settings &s, const float background[4], const void *hdr, uint32_t width,
+                        uint32_t height, void *color, void *linear)
+{
+    PostProcess post(dev);
+    Image source = dev.CreateImage(kFormat, width, height, 1, 1,
+                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                   VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    post.Resize(width, height, source.view);
+    const VkDeviceSize bytes = VkDeviceSize(width) * height * 8;
+    Buffer staging;  // the image in, then each output out
+    dev.Reserve(staging, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+    std::memcpy(staging.mapped, hdr, bytes);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {width, height, 1};
+    auto readBack = [&](VkCommandBuffer cmd, VkImage image) {
+        BufferBarrier(cmd, staging.buffer, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
+                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, staging.buffer, 1, &copy);
+        BufferBarrier(cmd, staging.buffer, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_HOST_BIT, VK_ACCESS_2_HOST_READ_BIT);
+    };
+    dev.Submit([&](VkCommandBuffer cmd) {
+        ImageBarrier(cmd, source.image, Mip(0), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COPY_BIT,
+                     VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        vkCmdCopyBufferToImage(cmd, staging.buffer, source.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        ImageBarrier(cmd, source.image, Mip(0), VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                     VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        post.Record(cmd, s, 0.0f, true, background, linear != nullptr);
+        if (color) {
+            readBack(cmd, post.Output());
+        }
+    });
+    if (color) {
+        std::memcpy(color, staging.mapped, bytes);
+    }
+    if (linear) {
+        dev.Submit([&](VkCommandBuffer cmd) { readBack(cmd, post.LinearOutput()); });
+        std::memcpy(linear, staging.mapped, bytes);
+    }
+    dev.Destroy(staging);
+    dev.Destroy(source);
+}
+
 float PostProcess::Exposure() const
 {
     return std::exp2(static_cast<const ExposureState *>(_exposureBuffer.mapped)->ev);
