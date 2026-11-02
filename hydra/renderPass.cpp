@@ -1023,7 +1023,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // ids for picking but needn't read them each frame. GPU sharing: colour
     // and depth also go to the app's OpenGL as textures. Tiled: all of them.
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
-    HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
+    HdVkGLInterop *interop = frame.shareFrame && color && !productSized && !tiled ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
     std::vector<int32_t> huskIds;  // the frame's; the float buffer gets them resampled
     if (idForHusk &&

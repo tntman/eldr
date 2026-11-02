@@ -19,7 +19,9 @@
 def Camera "cam"
 {
     float focalLength = 22
-    float fStop = 1.4
+    float horizontalAperture = 20.955
+    float verticalAperture = 11.7872
+    float fStop = 4
     float focusDistance = 4.1
     double3 xformOp:translate = (0, 1, 4.4)
     uniform token[] xformOpOrder = ["xformOp:translate"]
@@ -158,6 +160,7 @@ def Scope "Render"
         custom float eldr:bloomIntensity = 0.4
         custom float eldr:colorLimit = 1000
         custom bool eldr:productLinear = 0
+        custom bool eldr:reflectionProbe = 1
         custom int eldr:tileSize = 0
         uniform int2 resolution = (1920, 1080)
     }
@@ -168,6 +171,7 @@ def Scope "Render"
         custom float eldr:bloomIntensity = 0.4
         custom float eldr:colorLimit = 1000
         custom bool eldr:productLinear = 0
+        custom bool eldr:reflectionProbe = 1
         custom int eldr:tileSize = 512
         uniform int2 resolution = (1920, 1080)
     }

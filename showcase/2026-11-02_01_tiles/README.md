@@ -4,10 +4,10 @@
 husk and usdrecord render very large images tile by tile, so GPU memory follows the tile size, not the image.
 <!-- summary -->
 
-A Cornell box with a glowing panel and a warm bulb (bloom), depth of field focused on the chrome ball, screen-space reflections in the ball and ambient occlusion in the corners. Any of them would show a seam between tiles.
+A Cornell box with a glowing panel and a warm bulb (bloom), depth of field focused on the chrome ball and ambient occlusion in the corners. Any of them would show a seam between tiles. Both A/B nodes turn on the reflection probe (`eldr:reflectionProbe`): screen-space reflections see only a tile and its border, and the probe fills in what lies farther away.
 
 - **tiles**: 512-pixel tiles (12 at 1920x1080), rendered one after another. Look for seams along the tile edges (x = 512, 1024, 1536; y = 512 from the bottom): there are none.
-- **whole**: the same settings, the whole image at once. The two images differ only by a little noise.
+- **whole**: the same settings, the whole image at once. The two images differ only by a little noise, except in the chrome ball: there the whole image's screen-space reflections find the panel and walls on screen, while a tile reflects the probe.
 - **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
 Tiles apply to husk and usdrecord only; the viewport renders the whole image. Use **Tile Size** for images too large for the GPU (8K and up): 2048 is a good start.

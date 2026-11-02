@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cstring>
 #include <vector>
+#include <cstdio>
+#include <cstdlib>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -136,6 +138,12 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
                 f.stillCamera = laterStillCamera;
             }
             renderer.Read(t);
+            if (std::getenv("HDVK_DEBUG_TILES")) {  // TEMP
+                const GfHalf *c = windowColor.data() + (size_t(windowHeight / 2) * windowWidth + windowWidth / 2) * 4;
+                std::fprintf(stderr, "tile %u,%u window %u,%u %ux%u exposure %g centre %g %g %g %g\n", in.x0, in.y0,
+                             in.windowX, in.windowY, windowWidth, windowHeight, renderer.GetStats().exposure,
+                             float(c[0]), float(c[1]), float(c[2]), float(c[3]));
+            }
             if (t.color) {
                 in.Copy(t.color, hdr.data(), 8);
                 // Unexposed, as PostImage takes it: the tile's exposure out.

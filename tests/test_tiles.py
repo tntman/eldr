@@ -1,5 +1,5 @@
 """eldr:tileSize: usdrecord renders showcase/2026-11-02_01_tiles (bloom,
-depth of field, screen-space reflections, AO) at 1920x1080 in 512-pixel tiles
+depth of field, AO; SSR off) at 1920x1080 in 512-pixel tiles
 and whole; the images match within noise, with no seam along the tile edges.
 Run: usdenv.cmd python tests\\test_tiles.py"""
 import os
@@ -12,8 +12,16 @@ from PySide6.QtWidgets import QApplication
 
 app = QApplication(sys.argv)
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-scene = os.path.join(root, "showcase", "2026-11-02_01_tiles", "scene.usda")
 folder = tempfile.mkdtemp(prefix="eldr_tiles_")
+# Screen-space reflections see only a tile and its border (the chrome ball
+# would reflect the probe where the whole image's SSR finds the panel): off.
+scene = os.path.join(folder, "scene.usda")
+with open(scene, "w") as f:
+    f.write('#usda 1.0\n(\n    subLayers = [@%s@]\n)\nover "Render"\n{\n' %
+            os.path.join(root, "showcase", "2026-11-02_01_tiles", "scene.usda").replace("\\", "/"))
+    for prim in ("tiles", "whole"):
+        f.write('    over "%s"\n    {\n        custom bool eldr:ssr = 0\n    }\n' % prim)
+    f.write("}\n")
 W, H, TILE = 1920, 1080, 512
 failures = []
 
