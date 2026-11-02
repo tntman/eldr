@@ -118,14 +118,6 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
     _Destroy();
     _width = width;
     _height = height;
-    _raw = _dev.CreateImage(kRawFormat, width, height, 1, 1,
-                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-    _ao = _dev.CreateImage(kAoFormat, width, height, 1, 1,
-                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
-                               VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                           VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
-
     const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pci.maxSets = 2;
@@ -153,8 +145,25 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
     }
     vkUpdateDescriptorSets(_dev.device, 2, noiseWrites, 0, nullptr);
     _depth = depth;
+    if (_ssgiOn) {
+        _CreateSsgi();
+    } else {
+        _CreateAo();
+    }
+}
+
+// AO's images (SSGI's replace them).
+void Gtao::_CreateAo()
+{
+    _raw = _dev.CreateImage(kRawFormat, _width, _height, 1, 1,
+                            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    _ao = _dev.CreateImage(kAoFormat, _width, _height, 1, 1,
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                           VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     const VkDescriptorImageInfo images[2] = {
-        {_sampler, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+        {_sampler, _depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
         {_sampler, _raw.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}};
     VkWriteDescriptorSet writes[2] = {};
     for (uint32_t i = 0; i < 2; ++i) {
@@ -166,9 +175,6 @@ void Gtao::Resize(uint32_t width, uint32_t height, VkImageView depth)
         writes[i].pImageInfo = &images[i];
     }
     vkUpdateDescriptorSets(_dev.device, 2, writes, 0, nullptr);
-    if (_ssgiOn) {
-        _CreateSsgi();
-    }
 }
 
 void Gtao::SetSsgi(bool on, uint32_t scale)
@@ -180,11 +186,15 @@ void Gtao::SetSsgi(bool on, uint32_t scale)
     }
     _ssgiOn = on;
     _scale = scale;
-    _dev.Destroy(_ssgiRaw);
-    _dev.Destroy(_ssgi[0]);
-    _dev.Destroy(_ssgi[1]);
-    if (on && _pool) {
-        _CreateSsgi();
+    for (Image *img : {&_ssgiRaw, &_ssgi[0], &_ssgi[1], &_raw, &_ao}) {
+        _dev.Destroy(*img);
+    }
+    if (_pool) {
+        if (on) {
+            _CreateSsgi();
+        } else {
+            _CreateAo();
+        }
     }
 }
 

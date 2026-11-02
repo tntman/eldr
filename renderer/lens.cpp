@@ -89,6 +89,11 @@ Lens::~Lens()
     vkDestroySampler(d, _linear, nullptr);
 }
 
+void Lens::DropScratch()
+{
+    _dev.Destroy(_scratch);
+}
+
 void Lens::_Destroy()
 {
     vkDestroyDescriptorPool(_dev.device, _pool, nullptr);
@@ -110,9 +115,6 @@ void Lens::Resize(uint32_t width, uint32_t height, uint32_t outWidth, uint32_t o
     _colorView = colorView;
     _resolved = resolved;
     _resolvedView = resolvedView;
-    _scratch = _dev.CreateImage(kFormat, width, height, 1, 1,
-                                VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-                                VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
     _tiles = _dev.CreateImage(kFormat, (width + kTile - 1) / kTile, (height + kTile - 1) / kTile, 1, 1,
                               VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT,
                               VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
@@ -142,7 +144,7 @@ void Lens::Resize(uint32_t width, uint32_t height, uint32_t outWidth, uint32_t o
     VkDescriptorImageInfo images[10];
     VkWriteDescriptorSet writes[10] = {};
     for (uint32_t s = 0; s < 2; ++s) {
-        images[s * 5 + 0] = {_linear, s == 0 ? _scratch.view : history, ro};
+        images[s * 5 + 0] = {_linear, history, ro};  // depth of field's: its copy once made (_RecordOnColor)
         images[s * 5 + 1] = {_nearest, depth, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
         images[s * 5 + 2] = {_nearest, velocity, ro};
         images[s * 5 + 3] = {_nearest, _tiles.view, VK_IMAGE_LAYOUT_GENERAL};
@@ -195,6 +197,19 @@ void Lens::RecordResidualMotionBlur(VkCommandBuffer cmd, Params params)
 void Lens::_RecordOnColor(VkCommandBuffer cmd, Params params, VkPipeline pipeline)
 {
     _Fill(&params);
+    if (!_scratch.image) {  // first use at this size; the set isn't bound yet this frame
+        _scratch = _dev.CreateImage(kFormat, _width, _height, 1, 1,
+                                    VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                    VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_VIEW_TYPE_2D);
+        const VkDescriptorImageInfo image{_linear, _scratch.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w.dstSet = _dofSet;
+        w.dstBinding = 0;
+        w.descriptorCount = 1;
+        w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w.pImageInfo = &image;
+        vkUpdateDescriptorSets(_dev.device, 1, &w, 0, nullptr);
+    }
     // The pass reads a copy of the colour and writes the colour itself.
     ImageBarrier(cmd, _color, Color(),
                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,

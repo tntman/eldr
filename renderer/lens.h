@@ -49,6 +49,8 @@ public:
     // stratum of the shutter: params.shutter is a stratum's (the residual
     // blur between motion time samples, motion_residual.frag).
     void RecordResidualMotionBlur(VkCommandBuffer cmd, Params params);
+    // Frames with neither: the colour copy they read goes (made again on use).
+    void DropScratch();
     // Blurs TAA's resolve (SHADER_READ_ONLY_OPTIMAL, left so) along each
     // pixel's motion over the shutter.
     void RecordMotionBlur(VkCommandBuffer cmd, Params params);

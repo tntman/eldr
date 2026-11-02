@@ -28,6 +28,9 @@ public:
     Transparency &operator=(const Transparency &) = delete;
 
     void Resize(uint32_t width, uint32_t height);
+    // Accum and Revealage exist only while `on` (frames that accumulate):
+    // made or freed here, per frame before recording (the GPU is idle).
+    void EnsureAccumulation(bool on);
 
     // Accum and Revealage to COLOR_ATTACHMENT_OPTIMAL (the accumulation
     // pass clears them: 0 and 1).
@@ -45,6 +48,7 @@ public:
     // idle there), then waiting in SHADER_READ_ONLY_OPTIMAL. Called every
     // frame that refracts, before recording.
     VkImageView EnsureBackground();
+    void DropBackground();  // frames without refraction, before recording
     uint32_t BackgroundLevels() const { return _backgroundLevels; }
     // `color` (premultiplied, in COLOR_ATTACHMENT_OPTIMAL after the opaque
     // pass) into the background and its mips; `color` stays a colour
