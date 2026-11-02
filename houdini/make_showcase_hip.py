@@ -63,7 +63,8 @@ FINAL = [
     ("eldr:denoise", "bool", True),
     ("eldr:filmSamples", "int", 256),
 ]
-OIDN = '["denoise",{"engine":"oidn","use_n_input":true,"use_albedo_input":true}]'
+# what the Karma Render Settings LOP's Denoiser menu writes for OIDN, so scene.usda and the hip agree
+OIDN = '[["denoise", {"engine": "oidn", "use_albedo_input": true, "use_n_input": true, "forcecpu": false, "aovs": ["C"]}]]'
 # Karma's twin of an Eldr render setting (same meaning), for the karma prim and node.
 KARMA_TWINS = {
     "eldr:filmSamples": "karma:global:pathtracedsamples",
@@ -242,6 +243,17 @@ def split_scene(folder):
     flat = stage.Flatten()
     flat.documentation = ""  # "Generated from ... <absolute path>"
     del stage
+    # Flattening an already flat scene makes new instance prototypes: drop the ones nothing references
+    used = set()
+
+    def refs(path):
+        spec = flat.GetPrimAtPath(path) if path.IsPrimPath() else None
+        if spec:
+            used.update(str(r.primPath) for r in spec.referenceList.GetAddedOrExplicitItems())
+    flat.Traverse(Sdf.Path.absoluteRootPath, refs)
+    for child in list(flat.pseudoRoot.nameChildren):
+        if child.name.startswith("Flattened_Prototype") and str(child.path) not in used:
+            del flat.pseudoRoot.nameChildren[child.name]
     nodes = [p.GetPath() for p in node_prims(Usd.Stage.Open(flat))]
     _relative_assets(flat, folder)
 
@@ -346,7 +358,7 @@ def set_karma(node, attr, value):
 
 def settings_node(net, inp, prim, camera, res):
     """A Render Settings LOP (Eldr's tab) or Karma Render Settings LOP for one prim."""
-    path = "/Render/" + prim["name"]
+    path = prim.get("path", "/Render/" + prim["name"])  # a settings prim may live outside /Render
     camera = (prim.get("camera") or [camera])[0]
     res = prim.get("resolution") or res
     karma = prim.get("node", "karma" if prim["renderer"] == KARMA else "eldr") == "karma"
@@ -373,7 +385,7 @@ def settings_node(net, inp, prim, camera, res):
 def rop_node(net, inp, prim, out_dir="$HIP/render"):
     r = net.createNode("usdrender_rop", "render_" + prim["name"])
     r.setInput(0, inp)
-    set_parm(r, "rendersettings", "/Render/" + prim["name"])
+    set_parm(r, "rendersettings", prim.get("path", "/Render/" + prim["name"]))
     set_parm(r, "renderer", prim["renderer"])
     if prim["renderer"] == ELDR:  # husk with deferred skinning (crowds); Karma can't skin deferred
         set_parm(r, "rendercommand", "$ELDR_HUSK")
@@ -818,10 +830,10 @@ def compare_stages(ref, out):
     (scene.usda) and `out` (the hip's stage)."""
     problems = []
     for root in node_prims(ref):
-        if root.GetTypeName() == "RenderSettings":  # settings_node's own territory (Karma's node authors its defaults)
-            continue
         for prim in Usd.PrimRange(root):
-            problems += [d[2] for d in prim_diffs(prim, out.GetPrimAtPath(prim.GetPath()))]
+            # ponytail: the Karma node makes its own beauty product, not the scene's AOV products (see settings_node)
+            problems += [d[2] for d in prim_diffs(prim, out.GetPrimAtPath(prim.GetPath()))
+                         if not (prim.GetName() == "karma" and d[1] == "products")]
     return problems
 
 

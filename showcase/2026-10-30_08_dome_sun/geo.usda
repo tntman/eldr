@@ -4,21 +4,6 @@
     upAxis = "Y"
 )
 
-over "Flattened_Prototype_2"
-{
-    def Cylinder "shaft" (
-        apiSchemas = ["MaterialBindingAPI"]
-    )
-    {
-        uniform token axis = "Y"
-        double height = 3
-        rel material:binding = </mtl/stone>
-        double radius = 0.3
-        double3 xformOp:translate = (0, 1.5, 0)
-        uniform token[] xformOpOrder = ["xformOp:translate"]
-    }
-}
-
 over "Flattened_Prototype_1"
 {
     def Cylinder "shaft" (
@@ -114,7 +99,7 @@ def Xform "pillars"
 {
     def Xform "a" (
         instanceable = true
-        add references = </Flattened_Prototype_2>
+        add references = </Flattened_Prototype_1>
     )
     {
         double3 xformOp:translate = (-4, 0, -4.5)
@@ -123,7 +108,7 @@ def Xform "pillars"
 
     def Xform "b" (
         instanceable = true
-        add references = </Flattened_Prototype_2>
+        add references = </Flattened_Prototype_1>
     )
     {
         double3 xformOp:translate = (0, 0, -4.5)
@@ -132,7 +117,7 @@ def Xform "pillars"
 
     def Xform "c" (
         instanceable = true
-        add references = </Flattened_Prototype_2>
+        add references = </Flattened_Prototype_1>
     )
     {
         double3 xformOp:translate = (4, 0, -4.5)

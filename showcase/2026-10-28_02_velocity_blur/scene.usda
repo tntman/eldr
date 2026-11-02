@@ -122,7 +122,7 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (480, 270)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
