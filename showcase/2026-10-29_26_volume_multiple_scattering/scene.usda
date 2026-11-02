@@ -11,6 +11,7 @@
 # Multiple scattering in volumes, set with Karma's Volume Limit
 # (karma:object:volumelimit): tests/scenes/volume.usda's smoke clouds get
 # brighter with more bounces, fitted to Karma's gain over single scattering.
+# The ball has its own limit 16 (geo.usda); the others take the settings'.
 
 def Camera "cam"
 {

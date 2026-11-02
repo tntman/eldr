@@ -59,6 +59,7 @@ def Volume "fire"
 def Volume "ball"
 {
     rel field:density = </ball/density>
+    int primvars:karma:object:volumelimit = 16
     double3 xformOp:translate = (0.4, -1.4, 2)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 

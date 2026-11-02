@@ -116,7 +116,7 @@ Groups follow topics. The switches people change most come first, in open groups
 |---|---|---|---|
 | Volumetric Fog<br>`eldr:fog` | off | Height fog lit by all lights, with light shafts. Set it up under Fog and volumes. | 0.19 ms on crowd; shading +0.5 ms |
 | Volumes<br>`eldr:volumes` | on | Renders OpenVDB volumes (smoke, clouds, fire). Needs a USD build with OpenVDB. | See Fog and volumes |
-| Volume Multiple Scattering<br>`eldr:volumeMultipleScattering` | off | Light bounces more than once inside volumes, brightening thick clouds, like Karma's Volume Limit 16. A Volume Limit above 0 (`eldr:` or `karma:object:volumelimit`) sets the amount per volume. Off: one bounce, Karma's default. | Within 9% of Karma at limits 1, 4, 16 (backlit sun-only up to 23% too bright) |
+| Volume Limit<br>`eldr:object:volumelimit` | int -1 (unset: Karma's, else 0) | Karma's Volume Limit (`karma:object:volumelimit`) for volumes without their own: above 0, light bounces up to this many times inside, brightening thick clouds. 0: one bounce, Karma's default. A volume's Render Geometry Settings value wins. | 0: none. 16: volume pass 12.1 to 13.0 ms (29_26, 960x704). Within 9% of Karma at limits 1, 4, 16 (backlit sun-only up to 23% too bright) |
 
 ## Viewport
 

@@ -17,7 +17,7 @@ struct Volume {
     vec4 scattering;       // rgb: sigma_s per unit of density; w: Henyey-Greenstein g
     vec4 absorption;       // rgb: sigma_a per unit of density
     vec4 medium;           // x: mean extinction per unit of density, y: 1 = scattering.w is the g,
-                           // z: 1 = no volume material
+                           // z: 1 = no volume material, w: Volume Limit (below 0: params.volumeLimit)
     vec4 emission;         // rgb: radiance per unit length per unit of density
     vec4 fieldEmission;    // rgb: times the emission field
     uvec4 factorMasks;     // which factors multiply scattering, absorption, emission (bit k: factor k,

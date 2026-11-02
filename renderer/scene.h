@@ -744,15 +744,6 @@ public:
     // changed since the last commit (no material, light, visibility or
     // tag edit), so a commit with no dirty mesh returns at once.
     void Commit(bool keepMotion = false, bool unchanged = false);
-    // The largest Volume Limit of the visible volumes (Volume::volumeLimit).
-    float MaxVolumeLimit() const
-    {
-        float limit = 0.0f;
-        for (const auto &v : _volumes) {
-            limit = v->visible ? std::max(limit, v->volumeLimit) : limit;
-        }
-        return limit;
-    }
     // Levels of detail are still building (a later Commit adds them).
     bool LodsPending() const { return !_pendingLods.empty(); }
     // Blocks until the levels of detail being built are done (the next

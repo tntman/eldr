@@ -64,7 +64,7 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 | | Width Scale | `float primvars:eldr:object:width_scale` | Multiplies curve and point widths |
 | | Hair Shading | `bool primvars:eldr:hair` | Eldr only |
 | Reflections | Reflection Probe, Planar Reflection | `bool primvars:eldr:reflectionProbe`, `primvars:eldr:planarReflection` | Eldr only |
-| Volumes | Volume Limit | `float primvars:eldr:object:volumelimit` | Above 0, the volume scatters more than once, fitted to Karma at that limit |
+| Volumes | Volume Limit | `int primvars:eldr:object:volumelimit` | Above 0, the volume scatters more than once, fitted to Karma at that limit. Unset: the render settings' Volume Limit |
 | | Volume Velocity Blur Scale | `float primvars:eldr:object:volumevblurscale` | Multiplies the blur along `vel` of a volume with Velocity Blur on (default 1) |
 
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are read too (they win over the styles) but have no control: Render Curves As and Render Points As cover them.

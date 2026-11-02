@@ -49,8 +49,7 @@ struct VolumeParams {  // mirror of the push block in volume.frag
     uint32_t originX, originY;
     uint32_t mutual;  // Settings::mutualShadows
     uint32_t defaultFields;  // Settings::defaultFields
-    uint32_t octaves;        // multiple scattering (Settings::volumeLimit): 1 single scattering
-    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    float volumeLimit;       // Settings::volumeLimit: volumes without their own (GpuVolume::medium[3])
     int32_t shadowLink;      // volume_shadow.frag: the light's shadow link bit (-1: every volume casts)
     uint32_t localShadowStride;      // Settings::localShadowStride
     uint32_t gridSize, gridLights;   // the shadow grid's (VolumePass::EnsureShadowGrid), 0: none
@@ -131,18 +130,7 @@ VolumeParams Params(const VolumePass::Settings &s, uint32_t count)
     p.mutual = s.mutualShadows;
     p.defaultFields = s.defaultFields;
     p.localShadowStride = std::clamp(s.localShadowStride, 1u, 16u);
-    // Octaves for Karma's Volume Limit (its bounces), fitted to Karma's
-    // gain over single scattering at limits 1, 4 and 16 (within 9% on
-    // volume.usda's and fog.usda's clouds, front and back lit, sun and dome;
-    // docs/features.md). Less directional octaves lost the backlit clouds'
-    // gain: the phase stays.
-    const float limit = s.volumeLimit > 0.0f ? s.volumeLimit
-                      : s.multipleScattering ? VolumePass::Settings::kDefaultVolumeLimit : 0.0f;
-    p.octaves = limit > 0.0f ? uint32_t(std::min(2.0f * std::ceil(limit), 6.0f)) : 1;
-    const float early = std::clamp((limit - 1.0f) / 3.0f, 0.0f, 1.0f);  // limit 1 .. 4
-    const float late = std::clamp((limit - 4.0f) / 12.0f, 0.0f, 1.0f);   // limit 4 .. 16
-    p.octaveLight = 0.6f - 0.1f * early + 0.15f * late;
-    p.octaveDepth = 0.4f + 0.15f * late;
+    p.volumeLimit = std::max(s.volumeLimit, 0.0f);
     return p;
 }
 
@@ -765,6 +753,7 @@ void Scene::_CommitVolumes()
         g.medium[0] = extinction * s.densityScale;
         g.medium[1] = anisotropy ? 1.0f : 0.0f;
         g.medium[2] = s.material ? 0.0f : 1.0f;
+        g.medium[3] = d.volume->volumeLimit;
         for (int c = 0; c < 3; ++c) {
             g.fieldEmission[c] = s.emissionScale * s.emissionTint[c];
         }

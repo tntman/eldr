@@ -510,7 +510,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t2.localVolumeShadows, &frame.localVolumeShadows},
                                 {t2.volumeMutualShadows, &frame.volume.mutualShadows},
                                 {t2.volumeDefaultFields, &frame.volume.defaultFields},
-                                {t2.volumeMultipleScattering, &frame.volume.multipleScattering},
                                 {t2.lightShapesVisible, &frame.lightShapesVisible},
                                 {t2.domeCameraVisible, &frame.showEnvironment},
                                 {t2.multiScatter, &frame.multiScatter},
@@ -546,11 +545,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         frame.denoise = (!toggle.IsEmpty() && toggle.UncheckedGet<bool>()) ||
                         (!filter.IsEmpty() && filter.UncheckedGet<std::string>().find("\"denoise\"") != std::string::npos);
     }
-    // Volume Limit, the largest on a volume (HdVkVolume::Sync) or in the
-    // render settings (eldr:object:volumelimit set before
-    // karma:object:volumelimit): above 0 volumes scatter more than once.
+    // Volume Limit of the volumes without their own (HdVkVolume::Sync):
+    // eldr:object:volumelimit (-1: not set), else karma:object:volumelimit,
+    // else 0. Above 0 volumes scatter more than once.
     {
-        static const TfToken eldrLimit("eldr:object:volumelimit"), karmaLimit("karma:object:volumelimit");
+        static const TfToken karmaLimit("karma:object:volumelimit");
         auto number = [](const VtValue &v) {
             return v.IsHolding<float>() ? double(v.UncheckedGet<float>()) : v.IsHolding<double>() ? v.UncheckedGet<double>()
                  : v.IsHolding<int>() ? double(v.UncheckedGet<int>()) : -1.0;
@@ -567,11 +566,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
             return v;
         };
-        double limit = number(setting(eldrLimit));
+        double limit = number(setting(t2.object__volumelimit));
         if (limit < 0.0) {
             limit = number(setting(karmaLimit));
         }
-        frame.volume.volumeLimit = std::max(float(limit), _scene.MaxVolumeLimit());
+        frame.volume.volumeLimit = std::max(float(limit), 0.0f);
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&

@@ -86,9 +86,9 @@ struct Volume {
     std::vector<float> transforms = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
     bool visible = true;
     // Karma's Volume Limit on this volume (primvars:eldr:object:volumelimit,
-    // else karma:object:volumelimit): above 0 the frame scatters more than
-    // once, as Settings::volumeLimit (the largest of the frame's).
-    float volumeLimit = 0.0f;
+    // else karma:object:volumelimit): above 0 it scatters more than once
+    // (VolumePass::Settings). Below 0: not set, the settings' volumeLimit.
+    float volumeLimit = -1.0f;
     // Velocity blur (Karma's Volume Velocity Blur, its Lookup Offset mode):
     // in motion blur time samples the fields are read at p - vel * t, t
     // the sample's offset from this frame in frames. Object units per frame
@@ -115,7 +115,8 @@ struct GpuVolume {
     float scattering[4];        // rgb: sigma_s per unit of density field; w: Henyey-Greenstein g
     float absorption[4];        // rgb: sigma_a per unit of density field
     float medium[4];            // x: extinction (mean sigma_t) per unit of density field; y: 1 = scattering.w
-                                // is the material's g (else the setting); z: 1 = no volume material
+                                // is the material's g (else the setting); z: 1 = no volume material;
+                                // w: Volume::volumeLimit (below 0: the settings')
     float emission[4];          // rgb: radiance per unit length per unit of density field
     float fieldEmission[4];     // rgb: times the emission field (scale times tint)
     uint32_t factorMasks[4];    // VolumeShading's masks (scattering, absorption, emission); w: roles read
@@ -173,10 +174,8 @@ public:
         // by octaves of weaker, less attenuated and less directional single
         // scattering (Wrenninge 2015), calibrated against Karma's Volume
         // Limit: volumeLimit bounces (0: single scattering, as Karma's
-        // default); multipleScattering alone stands for kDefaultVolumeLimit.
-        bool multipleScattering = false;
+        // default) for volumes without their own (Volume::volumeLimit).
         float volumeLimit = 0.0f;
-        static constexpr float kDefaultVolumeLimit = 16.0f;
         // Local lights' shadows (atlas tap, other volumes) every this many
         // march steps; the steps between scale the unshadowed light by the
         // last tap's shadowed fraction. 1: every step.

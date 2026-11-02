@@ -35,8 +35,8 @@ layout(push_constant) uniform Params {  // as volume.frag's (VolumeParams)
     uint mapSize;    // texels per side
     uint originX;    // part 1: the tile's first texel
     uint originY;
-    uint mutual, defaultFields, octaves;
-    float octaveLight, octaveDepth;
+    uint mutual, defaultFields;
+    float volumeLimit;
     int shadowLink;  // the light's shadow link bit (-1: every volume casts)
 } params;
 

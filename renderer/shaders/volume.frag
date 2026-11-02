@@ -16,10 +16,13 @@
 // (VolumeShading: scattering and absorption per unit of density, phase,
 // emission), the settings multiply it. Henyey-Greenstein phase. At scale 2
 // each invocation marches a 2 x 2 block's middle into a half resolution
-// target (volume_upsample.frag). With params.octaves above 1, multiple
-// scattering of the distant lights and the dome is approximated by octaves
-// of ever weaker and less attenuated single scattering (Wrenninge 2015),
-// fitted to Karma's Volume Limit (VolumePass::Settings::volumeLimit). Each pixel starts at a
+// target (volume_upsample.frag). With a Volume Limit above 0 (each volume's
+// own, else params.volumeLimit), multiple scattering of the distant lights
+// and the dome is approximated by octaves of ever weaker and less
+// attenuated single scattering (Wrenninge 2015), fitted to Karma's Volume
+// Limit (SetOctaves). A ray through overlapping volumes scatters each
+// volume's light with that volume's limit; the others only attenuate it
+// (their optical depth goes into its octaves). Each pixel starts at a
 // different fraction of a step every frame, which TAA averages. Steps skip
 // tiles (and the background) of zero density.
 // Volumes shadow each other (params.mutual): the light towards each step
@@ -85,8 +88,7 @@ layout(push_constant) uniform Params {
     uint cascade, mapSize, originX, originY;  // volume_shadow.frag's
     uint mutual;        // 1: volumes shadow each other
     uint defaultFields; // 1: volumes without a material read temperature, colour and emission fields
-    uint octaves;       // multiple scattering: octaves of distant lights and the dome (1: single scattering)
-    float octaveLight, octaveDepth;  // each octave's light and optical depth times the last's
+    float volumeLimit;  // Karma's Volume Limit of volumes without their own (medium.w below 0)
     int shadowLink;     // volume_shadow.frag's
     uint localShadowStride;  // local lights' shadows every this many steps (1: each)
     uint gridSize;      // shadowGrid's cells per axis (0: march every shadow ray)
@@ -343,17 +345,38 @@ vec3 Factor(uint i, uint k, vec3 p, float rho, uvec4 types, inout pnanovdb_reada
     return Lut(volumes[i].lutOffsets[k], volumes[i].lutLow[k], volumes[i].lutScale[k], v);
 }
 
+// Multiple scattering of the volume March is on (SetOctaves): octaves of
+// distant lights and the dome (1: single scattering), each octave's light
+// and optical depth times the last's.
+uint octaves = 1u;
+float octaveLight, octaveDepth;
+
+// Octaves for volume i's Volume Limit (its own, else params.volumeLimit:
+// Karma's bounces), fitted to Karma's gain over single scattering at limits
+// 1, 4 and 16 (within 9% on volume.usda's and fog.usda's clouds, front and
+// back lit, sun and dome; docs/features.md). Less directional octaves lost
+// the backlit clouds' gain: the phase stays.
+void SetOctaves(uint i)
+{
+    float limit = volumes[i].medium.w >= 0.0 ? volumes[i].medium.w : params.volumeLimit;
+    octaves = limit > 0.0 ? uint(min(2.0 * ceil(limit), 6.0)) : 1u;
+    float early = clamp((limit - 1.0) / 3.0, 0.0, 1.0);  // limit 1 .. 4
+    float late = clamp((limit - 4.0) / 12.0, 0.0, 1.0);  // limit 4 .. 16
+    octaveLight = 0.6 - 0.1 * early + 0.15 * late;
+    octaveDepth = 0.4 + 0.15 * late;
+}
+
 // Light through optical depth `depth` with multiple scattering: octave o
-// weighs params.octaveLight^o and sees the depth times params.octaveDepth^o
-// (Wrenninge 2015, the phase function kept); one octave: exp(-depth).
+// weighs octaveLight^o and sees the depth times octaveDepth^o (Wrenninge
+// 2015, the phase function kept); one octave: exp(-depth).
 vec3 Octaves(vec3 depth)
 {
     vec3 sum = vec3(0.0);
     float a = 1.0, b = 1.0;
-    for (uint o = 0u; o < params.octaves; ++o) {
+    for (uint o = 0u; o < octaves; ++o) {
         sum += a * exp(-b * depth);
-        a *= params.octaveLight;
-        b *= params.octaveDepth;
+        a *= octaveLight;
+        b *= octaveDepth;
     }
     return sum;
 }
@@ -392,6 +415,7 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
     vec3 absorption = volumes[i].absorption.rgb * params.density;
     float g = volumes[i].medium.y > 0.0 ? volumes[i].scattering.w : params.anisotropy;
     vec3 dome = frame.envRadiance.w > 0.0 ? DomeScatterUpper(dir, g) : vec3(0.0);
+    SetOctaves(i);
 
     // Steps of stepSize voxels; a box that would need more than maxSteps
     // gets longer ones.

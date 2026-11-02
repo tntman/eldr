@@ -6,10 +6,13 @@ Light bounces more than once inside smoke, set with Karma's Volume Limit.
 
 Smoke clouds with no material under a sun and dome. More bounces make them brighter and softer.
 
+The small ball at the front has its own Volume Limit 16 (`primvars:karma:object:volumelimit` in `geo.usda`, what Render Geometry Settings writes), so it stays bright in every render. The two big clouds take the render settings' Volume Limit.
+
+- **eldr_default**: render settings limit 0: the big clouds single scattering, the ball at 16.
 - **volumeLimit1**: one bounce.
 - **volumeLimit4**: up to four bounces.
-- **volumeLimit16**: up to sixteen bounces.
-- **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
+- **volumeLimit16**: up to sixteen bounces: the big clouds as bright as the ball.
+- **eldr_final / karma**: Eldr's final settings, Karma to compare.
 
 ## Open
 
