@@ -12,6 +12,8 @@ cmake -S . -B build-h22 -G Ninja -DCMAKE_BUILD_TYPE=Release -DHDVK_HOUDINI=ON ^
 cmake --build build-h22 --target hdVk
 ```
 
+If `sccache` is on `PATH` (or in `C:/dev/sccache`), CMake uses it as the compiler launcher and builds with `/Z7` so rebuilds hit the cache; `-DHDVK_SCCACHE=OFF` turns it off.
+
 | Difference from the normal build | Detail |
 |---|---|
 | Targets | `houdini/houdini.cmake` maps Houdini's `Houdini::Dep::pxr_*` targets to the usual names; garch, hgi, hio are linked by path |

@@ -1,6 +1,23 @@
 cmake_minimum_required(VERSION 3.24)
 project(hdvk LANGUAGES CXX)
 
+# Compiler cache: used when found (HDVK_SCCACHE=OFF disables). MSVC needs /Z7 instead of /Zi so
+# the debug info lives in the object file and can be cached.
+option(HDVK_SCCACHE "Use sccache as compiler launcher when found" ON)
+if(HDVK_SCCACHE)
+    find_program(HDVK_SCCACHE_EXE sccache HINTS C:/dev/sccache/sccache-v0.10.0-x86_64-pc-windows-msvc)
+    if(HDVK_SCCACHE_EXE)
+        set(CMAKE_C_COMPILER_LAUNCHER ${HDVK_SCCACHE_EXE})
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${HDVK_SCCACHE_EXE})
+        if(MSVC)
+            foreach(v CMAKE_C_FLAGS_DEBUG CMAKE_C_FLAGS_RELWITHDEBINFO CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+                string(REPLACE "/Zi" "/Z7" ${v} "${${v}}")
+            endforeach()
+        endif()
+        message(STATUS "sccache: ${HDVK_SCCACHE_EXE}")
+    endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
