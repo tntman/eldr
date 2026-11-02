@@ -159,7 +159,7 @@ void Blend(int effect, ivec2 p, int layer, float alpha)
 void main()
 {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
-    size = imageSize(rtReflectionImage);
+    size = textureSize(sceneDepth, 0);  // the traced images' (the reflections' is 1 x 1 without them)
     if (any(greaterThanEqual(p, size))) {
         return;
     }

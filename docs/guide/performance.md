@@ -66,6 +66,7 @@ Hair and fur (BasisCurves) render as 6-sided tubes with hair shading; **Curves a
 - Identical meshes (a crowd's agents) share one copy of their data on the GPU.
 - Mesh arrays are freed on the CPU once uploaded.
 - **Texture Compression** cuts 8-bit texture memory to a quarter (off by default, as Karma never compresses).
+- Screen-size images grow with the resolution: about 105 bytes of GPU memory per pixel with default settings, 130 with GI and SSGI, and about 50 more while extra AOVs such as normal and st render (a 6000x3000 image with Houdini's viewport AOVs: about 2.8 GB). An effect's images exist only while it is on and the scene uses it (transparency, refraction, depth of field, motion blur, ray-traced shadows and reflections), and readback buffers hold only the outputs the app reads.
 - The render stats (Houdini's stats panel, usdview's **Eldr > Render Statistics**) show GPU memory by kind: textures, vertices, volumes, ray-tracing structures.
 
 ![Houdini: render stats panel showing Eldr's GPU memory and time donuts](../images/houdini/render_stats_panel.png)
