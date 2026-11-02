@@ -19,10 +19,10 @@
 def Camera "cam"
 {
     float focalLength = 22
+    float focusDistance = 4.1
+    float fStop = 4
     float horizontalAperture = 20.955
     float verticalAperture = 11.7872
-    float fStop = 4
-    float focusDistance = 4.1
     double3 xformOp:translate = (0, 1, 4.4)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
@@ -176,3 +176,4 @@ def Scope "Render"
         uniform int2 resolution = (1920, 1080)
     }
 }
+
