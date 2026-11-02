@@ -1,61 +1,95 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/motion_blur.usda@]
-    startTimeCode = 24
     endTimeCode = 24
+    renderSettingsPrimPath = "/Render/eldr_default"
+    startTimeCode = 24
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Velocity blur needs vblur > 0. eldr: names win over karma: ones.
-over "mesh_velocitiesOnly"
+
+def Camera "cam"
 {
-    over "mesh"
-    {
-        int primvars:eldr:object:vblur = 1
-    }
+    float2 clippingRange = (0.1, 1000)
+    float focalLength = 24
+    double shutter:close = 0.25
+    double shutter:open = -0.25
+    double3 xformOp:translate = (0, 0, 22)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
-over "mesh_velocitiesAccelerations"
+def Camera "camMoving"
 {
-    over "mesh"
-    {
-        int primvars:eldr:object:vblur = 2
+    float2 clippingRange = (0.1, 1000)
+    float focalLength = 24
+    double shutter:close = 0.25
+    double shutter:open = -0.25
+    double3 xformOp:translate.timeSamples = {
+        0: (-12, 0, 22),
+        1: (-11.5, 0, 22),
+        2: (-11, 0, 22),
+        3: (-10.5, 0, 22),
+        4: (-10, 0, 22),
+        5: (-9.5, 0, 22),
+        6: (-9, 0, 22),
+        7: (-8.5, 0, 22),
+        8: (-8, 0, 22),
+        9: (-7.5, 0, 22),
+        10: (-7, 0, 22),
+        11: (-6.5, 0, 22),
+        12: (-6, 0, 22),
+        13: (-5.5, 0, 22),
+        14: (-5, 0, 22),
+        15: (-4.5, 0, 22),
+        16: (-4, 0, 22),
+        17: (-3.5, 0, 22),
+        18: (-3, 0, 22),
+        19: (-2.5, 0, 22),
+        20: (-2, 0, 22),
+        21: (-1.5, 0, 22),
+        22: (-1, 0, 22),
+        23: (-0.5, 0, 22),
+        24: (0, 0, 22),
+        25: (0.5, 0, 22),
+        26: (1, 0, 22),
+        27: (1.5, 0, 22),
+        28: (2, 0, 22),
+        29: (2.5, 0, 22),
+        30: (3, 0, 22),
+        31: (3.5, 0, 22),
+        32: (4, 0, 22),
+        33: (4.5, 0, 22),
+        34: (5, 0, 22),
+        35: (5.5, 0, 22),
+        36: (6, 0, 22),
+        37: (6.5, 0, 22),
+        38: (7, 0, 22),
+        39: (7.5, 0, 22),
+        40: (8, 0, 22),
+        41: (8.5, 0, 22),
+        42: (9, 0, 22),
+        43: (9.5, 0, 22),
+        44: (10, 0, 22),
+        45: (10.5, 0, 22),
+        46: (11, 0, 22),
+        47: (11.5, 0, 22),
+        48: (12, 0, 22),
     }
+    uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
-# karma only: Eldr reads it too
-over "pointsVelocities"
+def DistantLight "sun"
 {
-    over "points"
-    {
-        int primvars:karma:object:vblur = 1
-    }
+    float inputs:intensity = 8
+    float3 xformOp:rotateXYZ = (-20, 15, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
 }
 
-# both: eldr (0, no velocity blur) wins over karma (1)
-over "curvesVelocities"
+def DomeLight "sky"
 {
-    over "curves"
-    {
-        int primvars:karma:object:vblur = 1
-        int primvars:eldr:object:vblur = 0
-    }
-}
-
-over "inst_velocities"
-{
-    over "instancer"
-    {
-        int primvars:eldr:object:instance_vblur = 1
-    }
-}
-
-over "inst_angularVelocities"
-{
-    over "instancer"
-    {
-        int primvars:karma:object:instance_vblur = 1
-    }
+    float inputs:intensity = 1
 }
 
 def Scope "Render"
@@ -88,44 +122,45 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (480, 270)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "blurOn"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:motionBlur = 1
+        uniform int2 resolution = (480, 270)
     }
 
     def RenderSettings "blurOff"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:motionBlur = 0
+        uniform int2 resolution = (480, 270)
     }
 
     def RenderSettings "blurFinal"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:motionBlurTimeSamples = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:motionBlurTimeSamples = 1
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (480, 270)
     }
 
     def RenderSettings "cameraBlur"
     {
         rel camera = </camMoving>
-        int2 resolution = (480, 270)
         custom bool eldr:motionBlur = 1
+        uniform int2 resolution = (480, 270)
     }
 }
+

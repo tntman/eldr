@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 0.01
-    subLayers = [@../../tests/scenes/lens.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Depth of field (eldr:depthOfField): tests/scenes/lens.usda, an 85 mm lens
@@ -12,6 +14,28 @@
 # /Render/lens (the default): only the green sphere at 5 m is sharp; the
 # film moves the camera across the aperture every sample (true bokeh).
 # /Render/dofOff: eldr:depthOfField off: everything sharp.
+
+def Camera "cam"
+{
+    float2 clippingRange = (10, 100000)
+    float focalLength = 85
+    float focusDistance = 500
+    float fStop = 1.4
+    float horizontalAperture = 36
+    double shutter:close = 0.25
+    double shutter:open = -0.25
+    float verticalAperture = 24
+    double3 xformOp:translate = (0, 60, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
 
 def Scope "Render"
 {
@@ -43,21 +67,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "lens"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "dofOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:depthOfField = 0
+        uniform int2 resolution = (960, 540)
     }
-
 }
+

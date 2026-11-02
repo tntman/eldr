@@ -1,7 +1,9 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/emissive.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Traced light sampling and gather roulette: the Cornell box lit by its
@@ -10,6 +12,105 @@
 # and /Render/everyLight (eldr:rtLightSampling and
 # eldr:finalGatherRoulette off) converge to the same image; the first is
 # cheaper per sample.
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:height = 0.5
+    float inputs:intensity = 0
+    float inputs:width = 0.5
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (0, 1.98, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "panel"
+    {
+        token outputs:surface.connect = </mtl/panel/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (40, 40, 38)
+            token outputs:surface
+        }
+    }
+
+    def Material "bulb"
+    {
+        token outputs:surface.connect = </mtl/bulb/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (60, 30, 8)
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -41,45 +142,46 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 64
     }
     # --- end standard settings ---
     def RenderSettings "sampled"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom bool eldr:filmRestart = 1
-        custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
-        custom int eldr:rtShadowLights = 16
         custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:rtShadows = 1
-        custom bool eldr:rtReflections = 1
+        custom bool eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
         custom int eldr:filmSamples = 64
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "everyLight"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom bool eldr:filmRestart = 1
-        custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
-        custom int eldr:rtShadowLights = 16
         custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:rtShadows = 1
-        custom bool eldr:rtReflections = 1
+        custom bool eldr:caustics = 1
+        custom bool eldr:filmRestart = 1
         custom int eldr:filmSamples = 64
-        custom bool eldr:rtLightSampling = 0
+        custom bool eldr:finalGather = 1
         custom bool eldr:finalGatherRoulette = 0
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtLightSampling = 0
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom bool eldr:rtShadows = 1
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

@@ -1,0 +1,71 @@
+#usda 1.0
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/polished>
+    point3f[] points = [(-8, 0, -8), (-8, 0, 14), (8, 0, 14), (8, 0, -8)]
+}
+
+def Mesh "backWall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/red>
+    point3f[] points = [(-8, 0, 14), (-8, 6, 14), (8, 6, 14), (8, 0, 14)]
+}
+
+def PointInstancer "columns"
+{
+    point3f[] positions = [(-4, 2.5, -4), (4, 2.5, -4), (-4, 2.5, 2), (4, 2.5, 2)]
+    int[] protoIndices = [0, 0, 0, 0]
+    rel prototypes = </columns/proto>
+
+    def Cylinder "proto" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Y"
+        double height = 5
+        rel material:binding = </mtl/stone>
+        double radius = 0.4
+    }
+}
+
+def Cube "arch" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/stone>
+    double size = 1
+    float3 xformOp:scale = (9, 0.6, 1)
+    double3 xformOp:translate = (0, 5.3, -4)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+}
+
+def Sphere "ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/chrome>
+    double radius = 1
+    double3 xformOp:translate = (0, 1, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "tile"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(2, 0.01, 4), (2, 0.01, 5), (3, 0.01, 5), (3, 0.01, 4)]
+    color3f[] primvars:displayColor = [(0.1, 0.2, 0.6)]
+    bool primvars:eldr:planarReflection = 0 (
+        interpolation = "constant"
+    )
+}
+

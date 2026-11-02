@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/sunangle.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Shadow modes: tests/scenes/sunangle.usda (a 4 degree sun over two posts,
@@ -18,6 +20,29 @@
 # /Render/hard: eldr:softShadows and eldr:softSunShadows off: 3x3 PCF,
 # hard edges everywhere.
 # /Render/traced: ray-traced shadows (eldr:rtShadows), soft from light size.
+
+def Camera "cam"
+{
+    float focalLength = 24
+    float xformOp:rotateX = -22
+    double3 xformOp:translate = (0, 5, 12)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:angle = 4
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-55, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.5, 0.65, 1)
+    float inputs:intensity = 0.3
+}
 
 def SphereLight "lamp"
 {
@@ -58,36 +83,37 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "maps"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "pcss"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:shadowJitter = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "hard"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:shadowJitter = 0
         custom bool eldr:softShadows = 0
         custom bool eldr:softSunShadows = 0
-        custom bool eldr:shadowJitter = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "traced"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:rtShadows = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

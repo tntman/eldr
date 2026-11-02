@@ -1,13 +1,88 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/cornell.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Per-AOV sample filters on the Cornell box: render vars asking for min,
 # max, closest, farthest, nearest, box and a narrower Gaussian, by Eldr's
 # driver:parameters:aov:eldr:filter or Karma's ...:karma:filter (Render Var
 # "Sample Blending"). See README.md.
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:height = 0.5
+    float inputs:intensity = 40
+    float inputs:width = 0.5
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (0, 1.98, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -42,178 +117,210 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (480, 480)
         rel products = [</Render/filters>]
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "default"
     {
         rel camera = </cam>
-        int2 resolution = (480, 480)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
         rel products = </Render/filters>
+        uniform int2 resolution = (480, 480)
     }
+
     def RenderSettings "max"
     {
         rel camera = </cam>
-        int2 resolution = (480, 480)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
         rel products = </Render/filtersMax>
+        uniform int2 resolution = (480, 480)
     }
-    # The same vars as default with eldr:aovFilters off: every AOV at its
-    # default (colour like the beauty, data nearest).
+
     def RenderSettings "off"
     {
         rel camera = </cam>
-        int2 resolution = (480, 480)
+        custom bool eldr:aovFilters = 0
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:aovFilters = 0
+        custom int eldr:rtShadowSamples = 1
         rel products = </Render/filtersOff>
+        uniform int2 resolution = (480, 480)
     }
+
     def RenderProduct "filters"
     {
-        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_min>, </Render/Vars/Pcam_closest>, </Render/Vars/camdepth_farthest>, </Render/Vars/N_box>, </Render/Vars/albedo_nearest>, </Render/Vars/directdiffuse>, </Render/Vars/indirectdiffuse_gauss>, </Render/Vars/primid>]
-        token productName = "aovFilters.exr"
         rel camera = </cam>
+        rel orderedVars = [
+            </Render/Vars/C>,
+            </Render/Vars/depth_min>,
+            </Render/Vars/Pcam_closest>,
+            </Render/Vars/camdepth_farthest>,
+            </Render/Vars/N_box>,
+            </Render/Vars/albedo_nearest>,
+            </Render/Vars/directdiffuse>,
+            </Render/Vars/indirectdiffuse_gauss>,
+            </Render/Vars/primid>,
+        ]
+        token productName = "aovFilters.exr"
     }
+
     def RenderProduct "filtersMax"
     {
-        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_max>, </Render/Vars/N>, </Render/Vars/albedo>]
-        token productName = "aovFiltersMax.exr"
         rel camera = </cam>
+        rel orderedVars = [
+            </Render/Vars/C>,
+            </Render/Vars/depth_max>,
+            </Render/Vars/N>,
+            </Render/Vars/albedo>,
+        ]
+        token productName = "aovFiltersMax.exr"
     }
+
     def RenderProduct "filtersOff"
     {
-        rel orderedVars = [</Render/Vars/C>, </Render/Vars/depth_min>, </Render/Vars/Pcam_closest>, </Render/Vars/camdepth_farthest>, </Render/Vars/N_box>, </Render/Vars/albedo_nearest>, </Render/Vars/directdiffuse>, </Render/Vars/indirectdiffuse_gauss>, </Render/Vars/primid>]
-        token productName = "aovFiltersOff.exr"
         rel camera = </cam>
+        rel orderedVars = [
+            </Render/Vars/C>,
+            </Render/Vars/depth_min>,
+            </Render/Vars/Pcam_closest>,
+            </Render/Vars/camdepth_farthest>,
+            </Render/Vars/N_box>,
+            </Render/Vars/albedo_nearest>,
+            </Render/Vars/directdiffuse>,
+            </Render/Vars/indirectdiffuse_gauss>,
+            </Render/Vars/primid>,
+        ]
+        token productName = "aovFiltersOff.exr"
     }
+
     def Scope "Vars"
     {
         def RenderVar "C"
         {
-            string driver:parameters:aov:husk:name = "C"
             uniform token dataType = "color4f"
+            string driver:parameters:aov:husk:name = "C"
             uniform string sourceName = "C.*[LO]"
             uniform token sourceType = "lpe"
         }
-        # Depth (Karma's ray:hitPz): the least of the pixel's samples.
+
         def RenderVar "depth_min"
         {
-            string driver:parameters:aov:husk:name = "depth_min"
             uniform token dataType = "float"
+            string driver:parameters:aov:eldr:filter = "min"
+            string driver:parameters:aov:husk:name = "depth_min"
             uniform string sourceName = "ray:hitPz"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:eldr:filter = "min"
         }
+
         def RenderVar "depth_max"
         {
-            string driver:parameters:aov:husk:name = "depth_max"
             uniform token dataType = "float"
+            string driver:parameters:aov:husk:name = "depth_max"
+            string driver:parameters:aov:karma:filter = '["minmax",{"mode":"max"}]'
             uniform string sourceName = "ray:hitPz"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:karma:filter = "[\"minmax\",{\"mode\":\"max\"}]"
         }
-        # Camera-space position of the closest sample (Karma's "Sample: Closest").
+
         def RenderVar "Pcam_closest"
         {
-            string driver:parameters:aov:husk:name = "Pcam_closest"
             uniform token dataType = "vector3f"
+            string driver:parameters:aov:husk:name = "Pcam_closest"
+            string driver:parameters:aov:karma:filter = '["minmax",{"mode":"zmin"}]'
             uniform string sourceName = "ray:hitP_camera"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:karma:filter = "[\"minmax\",{\"mode\":\"zmin\"}]"
         }
-        # Hydra's cameraDepth (negative) of the farthest sample.
+
         def RenderVar "camdepth_farthest"
         {
-            string driver:parameters:aov:husk:name = "camdepth_farthest"
             uniform token dataType = "float"
+            string driver:parameters:aov:eldr:filter = "farthest"
+            string driver:parameters:aov:husk:name = "camdepth_farthest"
             uniform string sourceName = "cameraDepth"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:eldr:filter = "farthest"
         }
-        # Normals averaged over a 3 x 3 pixel box (radius 1).
+
         def RenderVar "N_box"
         {
-            string driver:parameters:aov:husk:name = "N_box"
             uniform token dataType = "normal3f"
+            string driver:parameters:aov:eldr:filter = "box 1"
+            string driver:parameters:aov:husk:name = "N_box"
             uniform string sourceName = "ray:hitN"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:eldr:filter = "box 1"
         }
+
         def RenderVar "N"
         {
-            string driver:parameters:aov:husk:name = "N"
             uniform token dataType = "normal3f"
+            string driver:parameters:aov:husk:name = "N"
             uniform string sourceName = "ray:hitN"
             uniform token sourceType = "raw"
         }
-        # Base colour of the sample nearest the pixel centre: hard edges.
+
         def RenderVar "albedo_nearest"
         {
-            string driver:parameters:aov:husk:name = "albedo_nearest"
             uniform token dataType = "color3f"
+            string driver:parameters:aov:eldr:filter = "nearest"
+            string driver:parameters:aov:husk:name = "albedo_nearest"
             uniform string sourceName = "export_basecolor"
             uniform token sourceType = "raw"
-            string driver:parameters:aov:eldr:filter = "nearest"
         }
+
         def RenderVar "albedo"
         {
-            string driver:parameters:aov:husk:name = "albedo"
             uniform token dataType = "color3f"
+            string driver:parameters:aov:husk:name = "albedo"
             uniform string sourceName = "export_basecolor"
             uniform token sourceType = "raw"
         }
-        # Karma's default ("ubox", what Houdini authors): like the beauty, sums.
+
         def RenderVar "directdiffuse"
         {
-            string driver:parameters:aov:husk:name = "directdiffuse"
             uniform token dataType = "color3f"
+            string driver:parameters:aov:husk:name = "directdiffuse"
+            string driver:parameters:aov:karma:filter = '["ubox",{}]'
             uniform string sourceName = "C<RD>L"
             uniform token sourceType = "lpe"
-            string driver:parameters:aov:karma:filter = "[\"ubox\",{}]"
         }
-        # A narrower Gaussian than the beauty's: sharper, and Eldr warns that
-        # this split no longer adds up to the beauty.
+
         def RenderVar "indirectdiffuse_gauss"
         {
-            string driver:parameters:aov:husk:name = "indirectdiffuse_gauss"
             uniform token dataType = "color3f"
+            string driver:parameters:aov:eldr:filter = "gauss 0.6"
+            string driver:parameters:aov:husk:name = "indirectdiffuse_gauss"
             uniform string sourceName = "C<RD>.+L"
             uniform token sourceType = "lpe"
-            string driver:parameters:aov:eldr:filter = "gauss 0.6"
         }
-        # Hydra's primId: always the nearest sample (ids are never blended).
+
         def RenderVar "primid"
         {
-            string driver:parameters:aov:husk:name = "primid"
             uniform token dataType = "int"
+            string driver:parameters:aov:husk:name = "primid"
             uniform string sourceName = "primId"
             uniform token sourceType = "raw"
         }
     }
 }
+

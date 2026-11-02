@@ -1,12 +1,62 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/caustics.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # A glass ball (a caustic caster: primvars:karma:object:causticsenable) on a
 # white floor, backlit by the sun: the ball focuses it into a bright patch
 # in front of it.
+
+def Camera "cam"
+{
+    float focalLength = 35
+    float xformOp:rotateX = -30
+    double3 xformOp:translate = (0, 4.5, 7.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DistantLight "sun"
+{
+    float inputs:angle = 1
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 180, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.8, 0.8)
+            float inputs:roughness = 1
+            float inputs:specular = 0
+            token outputs:surface
+        }
+    }
+
+    def Material "glass"
+    {
+        token outputs:mtlx:surface.connect = </mtl/glass/surface.outputs:out>
+
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:specular_IOR = 1.5
+            float inputs:specular_roughness = 0
+            float inputs:transmission = 1
+            token outputs:out
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -41,105 +91,113 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (960, 540)
         rel products = [</Render/Products/causticsExr>]
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "caustics"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        rel products = </Render/Products/causticsExr>
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:caustics = 1
-        custom int eldr:filmSamples = 256
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
+        rel products = </Render/Products/causticsExr>
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "noCaustics"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 0
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:caustics = 0
-        custom int eldr:filmSamples = 256
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "caustics8"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 8
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:caustics = 1
-        custom int eldr:filmSamples = 8
-        custom bool eldr:autoExposure = 0
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "causticsFewPhotons"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        custom bool eldr:filmRestart = 1
-        custom bool eldr:rtReflections = 1
-        custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:rtShadowSamples = 1
-        custom int eldr:rtShadowLights = 16
+        custom bool eldr:autoExposure = 0
         custom bool eldr:caustics = 1
         custom int eldr:causticsPhotons = 16384
+        custom bool eldr:filmRestart = 1
         custom int eldr:filmSamples = 256
-        custom bool eldr:autoExposure = 0
+        custom bool eldr:finalGather = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def Scope "Products"
     {
         def RenderProduct "causticsExr"
         {
-            uniform token productName = "caustics.exr"
             rel camera = </cam>
-            int2 resolution = (960, 540)
-            rel orderedVars = [</Render/Products/C>, </Render/Products/caustics>, </Render/Products/indirectdiffuse>]
+            rel orderedVars = [
+                </Render/Products/C>,
+                </Render/Products/caustics>,
+                </Render/Products/indirectdiffuse>,
+            ]
+            token productName = "caustics.exr"
+            uniform int2 resolution = (960, 540)
         }
+
         def RenderVar "C"
         {
+            uniform token dataType = "color4f"
             string driver:parameters:aov:husk:name = "C"
             uniform string sourceName = "C.*[LO]"
             uniform token sourceType = "lpe"
-            uniform token dataType = "color4f"
         }
+
         def RenderVar "caustics"
         {
+            uniform token dataType = "color3f"
             string driver:parameters:aov:husk:name = "caustics"
             uniform string sourceName = "C<RD>.+<TS>L"
             uniform token sourceType = "lpe"
-            uniform token dataType = "color3f"
         }
+
         def RenderVar "indirectdiffuse"
         {
+            uniform token dataType = "color3f"
             string driver:parameters:aov:husk:name = "indirectdiffuse"
             uniform string sourceName = "C<RD>.+L"
             uniform token sourceType = "lpe"
-            uniform token dataType = "color3f"
         }
     }
 }
+

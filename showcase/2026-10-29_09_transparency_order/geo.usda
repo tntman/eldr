@@ -1,0 +1,215 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+class Mesh "Quad"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/grey>
+    point3f[] points = [(-9, -1.6, 4), (9, -1.6, 4), (9, -1.6, -4), (-9, -1.6, -4)]
+    uniform token subdivisionScheme = "none"
+}
+
+def Mesh "wall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/grey>
+    point3f[] points = [(-9, -1.6, -4), (9, -1.6, -4), (9, 5, -4), (-9, 5, -4)]
+    uniform token subdivisionScheme = "none"
+}
+
+def Xform "order"
+{
+    def Mesh "redFront" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/red>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        double3 xformOp:translate = (-3.6, 0.6, 1.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "glassBehind" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/blueGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        double3 xformOp:translate = (-3, 0.6, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "glassFront" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/blueGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        double3 xformOp:translate = (-1.2, 0.6, 1.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "redBehind" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/red>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.6, 1.4, 1)
+        double3 xformOp:translate = (-0.6, 0.6, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+
+def Volume "ballBehind"
+{
+    rel field:density = </ballBehind/density>
+    float3 xformOp:scale = (1.2, 1.2, 1.2)
+    double3 xformOp:translate = (1, -0.8, -1)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        int fieldIndex = 1
+        token fieldName = "density"
+        asset filePath = @../../tests/scenes/volume.vdb@
+    }
+}
+
+def Volume "ballBetween"
+{
+    rel field:density = </ballBetween/density>
+    float3 xformOp:scale = (1.2, 1.2, 1.2)
+    double3 xformOp:translate = (3.2, -0.8, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+
+    def OpenVDBAsset "density"
+    {
+        int fieldIndex = 1
+        token fieldName = "density"
+        asset filePath = @../../tests/scenes/volume.vdb@
+    }
+}
+
+def Xform "panes"
+{
+    def Mesh "near1" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/greenGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.2, 1.8, 1)
+        double3 xformOp:translate = (0.1, -1.6, 1.6)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "near2" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/greenGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.2, 1.8, 1)
+        double3 xformOp:translate = (0.7, -1.6, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "front" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/greenGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.6, 1.8, 1)
+        double3 xformOp:translate = (2, -1.6, 1.6)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "back" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/greenGlass>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1.8, 2.6, 1)
+        double3 xformOp:translate = (2.4, -1.6, -2)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+
+def Xform "oitPair"
+{
+    def Mesh "yellowBack" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/yellow>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1, 0.8, 1)
+        double3 xformOp:translate = (-2.6, -0.9, 3)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+
+    def Mesh "cyanFront" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        rel material:binding = </mtl/cyan>
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)]
+        uniform token subdivisionScheme = "none"
+        float3 xformOp:scale = (1, 0.8, 1)
+        double3 xformOp:translate = (-1.8, -0.9, 4)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+    }
+}
+

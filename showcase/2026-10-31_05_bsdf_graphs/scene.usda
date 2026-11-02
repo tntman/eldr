@@ -1,8 +1,11 @@
 #usda 1.0
 (
-    upAxis = "Y"
     metersPerUnit = 1
     renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # MaterialX BSDF graphs (pbrlib `surface` of mixed, layered and added BSDFs)
@@ -24,8 +27,8 @@ def Camera "cam"
 
 def DistantLight "sun"
 {
-    float inputs:intensity = 2.5
     float inputs:angle = 2
+    float inputs:intensity = 2.5
     double3 xformOp:rotateXYZ = (-35, 30, 0)
     uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
 }
@@ -36,21 +39,12 @@ def DomeLight "sky"
     float inputs:intensity = 0.6
 }
 
-def Mesh "floor" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-9, -2.6, 4), (9, -2.6, 4), (9, -2.6, -4), (-9, -2.6, -4)]
-    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
-    uniform token subdivisionScheme = "none"
-    rel material:binding = </mtl/floor>
-}
-
 def Scope "mtl"
 {
     def Material "floor"
     {
         token outputs:mtlx:surface.connect = </mtl/floor/surface.outputs:out>
+
         def Shader "surface"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
@@ -63,26 +57,30 @@ def Scope "mtl"
     def Material "mixDiffuse"
     {
         token outputs:mtlx:surface.connect = </mtl/mixDiffuse/surface.outputs:out>
+
         def Shader "red"
         {
             uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
             color3f inputs:color = (0.8, 0.1, 0.1)
             token outputs:out
         }
+
         def Shader "green"
         {
             uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
             color3f inputs:color = (0.1, 0.6, 0.1)
             token outputs:out
         }
+
         def Shader "mix"
         {
             uniform token info:id = "ND_mix_bsdf"
-            token inputs:fg.connect = </mtl/mixDiffuse/red.outputs:out>
             token inputs:bg.connect = </mtl/mixDiffuse/green.outputs:out>
+            token inputs:fg.connect = </mtl/mixDiffuse/red.outputs:out>
             float inputs:mix = 0.5
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -94,6 +92,7 @@ def Scope "mtl"
     def Material "plastic"
     {
         token outputs:mtlx:surface.connect = </mtl/plastic/surface.outputs:out>
+
         def Shader "spec"
         {
             uniform token info:id = "ND_dielectric_bsdf"
@@ -101,19 +100,22 @@ def Scope "mtl"
             float2 inputs:roughness = (0.02, 0.02)
             token outputs:out
         }
+
         def Shader "diffuse"
         {
             uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
             color3f inputs:color = (0.1, 0.2, 0.7)
             token outputs:out
         }
+
         def Shader "layer"
         {
             uniform token info:id = "ND_layer_bsdf"
-            token inputs:top.connect = </mtl/plastic/spec.outputs:out>
             token inputs:base.connect = </mtl/plastic/diffuse.outputs:out>
+            token inputs:top.connect = </mtl/plastic/spec.outputs:out>
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -125,6 +127,7 @@ def Scope "mtl"
     def Material "coatedGold"
     {
         token outputs:mtlx:surface.connect = </mtl/coatedGold/surface.outputs:out>
+
         def Shader "coat"
         {
             uniform token info:id = "ND_dielectric_bsdf"
@@ -132,21 +135,24 @@ def Scope "mtl"
             float2 inputs:roughness = (0.001, 0.001)
             token outputs:out
         }
+
         def Shader "metal"
         {
             uniform token info:id = "ND_conductor_bsdf"
-            float2 inputs:roughness = (0.12, 0.12)
+            color3f inputs:extinction = (3.424, 2.346, 1.77)
             color3f inputs:ior = (0.183, 0.421, 1.373)
-            color3f inputs:extinction = (3.424, 2.346, 1.770)
+            float2 inputs:roughness = (0.12, 0.12)
             token outputs:out
         }
+
         def Shader "layer"
         {
             uniform token info:id = "ND_layer_bsdf"
-            token inputs:top.connect = </mtl/coatedGold/coat.outputs:out>
             token inputs:base.connect = </mtl/coatedGold/metal.outputs:out>
+            token inputs:top.connect = </mtl/coatedGold/coat.outputs:out>
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -158,14 +164,16 @@ def Scope "mtl"
     def Material "maskedMetal"
     {
         token outputs:mtlx:surface.connect = </mtl/maskedMetal/surface.outputs:out>
+
         def Shader "metal"
         {
             uniform token info:id = "ND_conductor_bsdf"
-            float2 inputs:roughness = (0.04, 0.04)
+            color3f inputs:extinction = (3.424, 2.346, 1.77)
             color3f inputs:ior = (0.183, 0.421, 1.373)
-            color3f inputs:extinction = (3.424, 2.346, 1.770)
+            float2 inputs:roughness = (0.04, 0.04)
             token outputs:out
         }
+
         def Shader "spec"
         {
             uniform token info:id = "ND_dielectric_bsdf"
@@ -173,32 +181,37 @@ def Scope "mtl"
             float2 inputs:roughness = (0.09, 0.09)
             token outputs:out
         }
+
         def Shader "paint"
         {
             uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
             color3f inputs:color = (0.6, 0.05, 0.05)
             token outputs:out
         }
+
         def Shader "painted"
         {
             uniform token info:id = "ND_layer_bsdf"
-            token inputs:top.connect = </mtl/maskedMetal/spec.outputs:out>
             token inputs:base.connect = </mtl/maskedMetal/paint.outputs:out>
+            token inputs:top.connect = </mtl/maskedMetal/spec.outputs:out>
             token outputs:out
         }
+
         def Shader "pos"
         {
             uniform token info:id = "ND_position_vector3"
             string inputs:space = "object"
             vector3f outputs:out
         }
+
         def Shader "x"
         {
             uniform token info:id = "ND_extract_vector3"
-            int inputs:index = 0
             vector3f inputs:in.connect = </mtl/maskedMetal/pos.outputs:out>
+            int inputs:index = 0
             float outputs:out
         }
+
         def Shader "steep"
         {
             uniform token info:id = "ND_multiply_float"
@@ -206,20 +219,23 @@ def Scope "mtl"
             float inputs:in2 = 4
             float outputs:out
         }
+
         def Shader "mask"
         {
             uniform token info:id = "ND_clamp_float"
             float inputs:in.connect = </mtl/maskedMetal/steep.outputs:out>
             float outputs:out
         }
+
         def Shader "mix"
         {
             uniform token info:id = "ND_mix_bsdf"
-            token inputs:fg.connect = </mtl/maskedMetal/metal.outputs:out>
             token inputs:bg.connect = </mtl/maskedMetal/painted.outputs:out>
+            token inputs:fg.connect = </mtl/maskedMetal/metal.outputs:out>
             float inputs:mix.connect = </mtl/maskedMetal/mask.outputs:out>
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -231,13 +247,15 @@ def Scope "mtl"
     def Material "sheenCloth"
     {
         token outputs:mtlx:surface.connect = </mtl/sheenCloth/surface.outputs:out>
+
         def Shader "sheen"
         {
             uniform token info:id = "ND_sheen_bsdf"
-            color3f inputs:color = (0.9, 0.8, 1.0)
+            color3f inputs:color = (0.9, 0.8, 1)
             float inputs:roughness = 0.4
             token outputs:out
         }
+
         def Shader "diffuse"
         {
             uniform token info:id = "ND_oren_nayar_diffuse_bsdf"
@@ -245,13 +263,15 @@ def Scope "mtl"
             float inputs:roughness = 0.5
             token outputs:out
         }
+
         def Shader "layer"
         {
             uniform token info:id = "ND_layer_bsdf"
-            token inputs:top.connect = </mtl/sheenCloth/sheen.outputs:out>
             token inputs:base.connect = </mtl/sheenCloth/diffuse.outputs:out>
+            token inputs:top.connect = </mtl/sheenCloth/sheen.outputs:out>
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -263,15 +283,17 @@ def Scope "mtl"
     def Material "glass"
     {
         token outputs:mtlx:surface.connect = </mtl/glass/surface.outputs:out>
+
         def Shader "glass"
         {
             uniform token info:id = "ND_dielectric_bsdf"
             float inputs:ior = 1.5
-            color3f inputs:tint = (0.7, 0.9, 1.0)
-            float2 inputs:roughness = (0.0, 0.0)
+            float2 inputs:roughness = (0, 0)
             string inputs:scatter_mode = "RT"
+            color3f inputs:tint = (0.7, 0.9, 1)
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -283,6 +305,7 @@ def Scope "mtl"
     def Material "subsurface"
     {
         token outputs:mtlx:surface.connect = </mtl/subsurface/surface.outputs:out>
+
         def Shader "sss"
         {
             uniform token info:id = "ND_subsurface_bsdf"
@@ -290,6 +313,7 @@ def Scope "mtl"
             color3f inputs:radius = (0.4, 0.15, 0.08)
             token outputs:out
         }
+
         def Shader "spec"
         {
             uniform token info:id = "ND_dielectric_bsdf"
@@ -297,13 +321,15 @@ def Scope "mtl"
             float2 inputs:roughness = (0.1, 0.1)
             token outputs:out
         }
+
         def Shader "layer"
         {
             uniform token info:id = "ND_layer_bsdf"
-            token inputs:top.connect = </mtl/subsurface/spec.outputs:out>
             token inputs:base.connect = </mtl/subsurface/sss.outputs:out>
+            token inputs:top.connect = </mtl/subsurface/spec.outputs:out>
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -315,25 +341,29 @@ def Scope "mtl"
     def Material "emissive"
     {
         token outputs:mtlx:surface.connect = </mtl/emissive/surface.outputs:out>
+
         def Shader "diffuse"
         {
             uniform token info:id = "ND_burley_diffuse_bsdf"
             color3f inputs:color = (0.05, 0.05, 0.05)
             token outputs:out
         }
+
         def Shader "glow"
         {
             uniform token info:id = "ND_uniform_edf"
-            color3f inputs:color = (1.0, 0.45, 0.1)
+            color3f inputs:color = (1, 0.45, 0.1)
             token outputs:out
         }
+
         def Shader "dim"
         {
             uniform token info:id = "ND_multiply_edfF"
             token inputs:in1.connect = </mtl/emissive/glow.outputs:out>
-            float inputs:in2 = 2.0
+            float inputs:in2 = 2
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -346,14 +376,16 @@ def Scope "mtl"
     def Material "lamaCoatedCopper"
     {
         token outputs:mtlx:surface.connect = </mtl/lamaCoatedCopper/surface.outputs:out>
+
         def Shader "copper"
         {
             uniform token info:id = "ND_lama_conductor"
+            color3f inputs:edgeColor = (1, 0.9, 0.8)
             color3f inputs:reflectivity = (0.95, 0.64, 0.54)
-            color3f inputs:edgeColor = (1.0, 0.9, 0.8)
             float inputs:roughness = 0.3
             token outputs:out
         }
+
         def Shader "coat"
         {
             uniform token info:id = "ND_lama_dielectric"
@@ -361,14 +393,16 @@ def Scope "mtl"
             float inputs:roughness = 0.02
             token outputs:out
         }
+
         def Shader "layer"
         {
             uniform token info:id = "ND_lama_layer_bsdf"
-            token inputs:materialTop.connect = </mtl/lamaCoatedCopper/coat.outputs:out>
             token inputs:materialBase.connect = </mtl/lamaCoatedCopper/copper.outputs:out>
-            float inputs:topMix = 1.0
+            token inputs:materialTop.connect = </mtl/lamaCoatedCopper/coat.outputs:out>
+            float inputs:topMix = 1
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -380,27 +414,31 @@ def Scope "mtl"
     def Material "lamaMix"
     {
         token outputs:mtlx:surface.connect = </mtl/lamaMix/surface.outputs:out>
+
         def Shader "diffuse"
         {
             uniform token info:id = "ND_lama_diffuse"
             color3f inputs:color = (0.7, 0.6, 0.2)
             token outputs:out
         }
+
         def Shader "sheen"
         {
             uniform token info:id = "ND_lama_sheen"
             color3f inputs:color = (1, 1, 1)
             token outputs:out
         }
+
         def Shader "add"
         {
             uniform token info:id = "ND_lama_add_bsdf"
             token inputs:material1.connect = </mtl/lamaMix/diffuse.outputs:out>
             token inputs:material2.connect = </mtl/lamaMix/sheen.outputs:out>
-            float inputs:weight1 = 1.0
+            float inputs:weight1 = 1
             float inputs:weight2 = 0.5
             token outputs:out
         }
+
         def Shader "surface"
         {
             uniform token info:id = "ND_surface"
@@ -412,14 +450,15 @@ def Scope "mtl"
     def Material "gltfIridescent"
     {
         token outputs:mtlx:surface.connect = </mtl/gltfIridescent/surface.outputs:out>
+
         def Shader "surface"
         {
             uniform token info:id = "ND_gltf_pbr_surfaceshader"
             color3f inputs:base_color = (0.05, 0.05, 0.08)
+            float inputs:iridescence = 1
+            float inputs:iridescence_thickness = 400
             float inputs:metallic = 0
             float inputs:roughness = 0.2
-            float inputs:iridescence = 1.0
-            float inputs:iridescence_thickness = 400.0
             token outputs:out
         }
     }
@@ -427,113 +466,17 @@ def Scope "mtl"
     def Material "gltfBrushed"
     {
         token outputs:mtlx:surface.connect = </mtl/gltfBrushed/surface.outputs:out>
+
         def Shader "surface"
         {
             uniform token info:id = "ND_gltf_pbr_surfaceshader"
+            float inputs:anisotropy_strength = 0.8
             color3f inputs:base_color = (0.9, 0.9, 0.92)
             float inputs:metallic = 1
             float inputs:roughness = 0.35
-            float inputs:anisotropy_strength = 0.8
             token outputs:out
         }
     }
-
-}
-
-def Sphere "s_mixDiffuse" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-6, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/mixDiffuse>
-}
-
-def Sphere "s_plastic" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-3.6, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/plastic>
-}
-
-def Sphere "s_coatedGold" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-1.2, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/coatedGold>
-}
-
-def Sphere "s_maskedMetal" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (1.2, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/maskedMetal>
-}
-
-def Sphere "s_sheenCloth" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (3.6, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/sheenCloth>
-}
-
-def Sphere "s_glass" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (6, 1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/glass>
-}
-
-def Sphere "s_subsurface" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-6, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/subsurface>
-}
-
-def Sphere "s_emissive" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-3.6, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/emissive>
-}
-
-def Sphere "s_lamaCoatedCopper" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (-1.2, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/lamaCoatedCopper>
-}
-
-def Sphere "s_lamaMix" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (1.2, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/lamaMix>
-}
-
-def Sphere "s_gltfIridescent" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (3.6, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/gltfIridescent>
-}
-
-def Sphere "s_gltfBrushed" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    double radius = 1
-    double3 xformOp:translate = (6, -1.2, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/gltfBrushed>
 }
 
 def Scope "Render"
@@ -566,20 +509,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (1280, 640)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "graphsOn"
     {
         rel camera = </cam>
-        int2 resolution = (1280, 640)
+        uniform int2 resolution = (1280, 640)
     }
 
     def RenderSettings "graphsOff"
     {
         rel camera = </cam>
-        int2 resolution = (1280, 640)
         custom bool eldr:materialGraphs = 0
+        uniform int2 resolution = (1280, 640)
     }
 }
+

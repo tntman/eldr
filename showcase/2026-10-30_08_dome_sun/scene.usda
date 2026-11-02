@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/step4.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Dome sun extraction: tests/scenes/step4.usda (chrome, gold and matte
@@ -19,9 +21,96 @@
 # resolver's search path (husk: set PXR_AR_DEFAULT_SEARCH_PATH to
 # <USD>\lib\usd\hdx\resources\textures).
 
-over "sun"
+def Camera "cam"
+{
+    float focalLength = 28
+    float xformOp:rotateX = -12
+    double3 xformOp:translate = (0, 3, 11)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def DomeLight "env"
+{
+    float inputs:intensity = 1
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+def DistantLight "sun"
 {
     float inputs:intensity = 0
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 35, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "ground"
+    {
+        token outputs:surface.connect = </mtl/ground/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            float inputs:roughness = 0.9
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.08
+            token outputs:surface
+        }
+    }
+
+    def Material "gold"
+    {
+        token outputs:surface.connect = </mtl/gold/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (1, 0.78, 0.34)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.45
+            token outputs:surface
+        }
+    }
+
+    def Material "plastic"
+    {
+        token outputs:surface.connect = </mtl/plastic/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.35, 0.8)
+            float inputs:roughness = 0.35
+            token outputs:surface
+        }
+    }
+
+    def Material "stone"
+    {
+        token outputs:surface.connect = </mtl/stone/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.75, 0.7, 0.62)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
 }
 
 def Scope "Render"
@@ -54,20 +143,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "domeSun"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "domeSunOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:domeSun = 0
+        uniform int2 resolution = (960, 540)
     }
 }
+

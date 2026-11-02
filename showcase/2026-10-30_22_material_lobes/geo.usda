@@ -1,0 +1,203 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Sphere "specularWorkflow" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/specularWorkflow>
+    double3 xformOp:translate = (-6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "clearcoat" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/clearcoat>
+    double3 xformOp:translate = (-3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "carPaint" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/carPaint>
+    double3 xformOp:translate = (-1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "amberCoat" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/amberCoat>
+    double3 xformOp:translate = (1.2, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "velvet" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/velvet>
+    double3 xformOp:translate = (3.6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "fuzz" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/fuzz>
+    double3 xformOp:translate = (6, 1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "oilSlick" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/oilSlick>
+    double3 xformOp:translate = (-6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "anodized" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/anodized>
+    double3 xformOp:translate = (-3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "brushedSteel" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/brushedSteel>
+    double3 xformOp:translate = (-1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "brushedGold" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/brushedGold>
+    double3 xformOp:translate = (1.2, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "toon" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/toon>
+    double3 xformOp:translate = (3.6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "plain" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/plain>
+    double3 xformOp:translate = (6, -1.2, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def BasisCurves "hair"
+{
+    uniform token basis = "bspline"
+    int[] curveVertexCounts = [6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6]
+    point3f[] points = [(-0.91, 0.9, 0.027), (-0.865, 0.54, 0.039), (-0.836, 0.18, 0.075), (-0.833, -0.18, 0.135), (-0.856, -0.54, 0.219), (-0.899, -0.9, 0.327), (-0.792, 0.9, 0.062), (-0.779, 0.54, 0.074), (-0.794, 0.18, 0.11), (-0.832, -0.18, 0.17), (-0.879, -0.54, 0.254), (-0.92, -0.9, 0.362), (-0.73, 0.9, -0.261), (-0.761, 0.54, -0.249), (-0.807, 0.18, -0.213), (-0.852, -0.18, -0.153), (-0.879, -0.54, -0.069), (-0.879, -0.9, 0.039), (-0.77, 0.9, 0.202), (-0.816, 0.54, 0.214), (-0.851, 0.18, 0.25), (-0.861, -0.18, 0.31), (-0.843, -0.54, 0.394), (-0.803, -0.9, 0.502), (-0.786, 0.9, -0.159), (-0.805, 0.54, -0.147), (-0.796, 0.18, -0.111), (-0.762, -0.18, -0.051), (-0.716, -0.54, 0.033), (-0.672, -0.9, 0.141), (-0.726, 0.9, -0.018), (-0.7, 0.54, -0.006), (-0.656, 0.18, 0.03), (-0.61, -0.18, 0.09), (-0.578, -0.54, 0.174), (-0.57, -0.9, 0.282), (-0.632, 0.9, -0.014), (-0.585, 0.54, -0.002), (-0.546, 0.18, 0.034), (-0.53, -0.18, 0.094), (-0.541, -0.54, 0.178), (-0.577, -0.9, 0.286), (-0.519, 0.9, -0.21), (-0.494, 0.54, -0.198), (-0.496, 0.18, -0.162), (-0.525, -0.18, -0.102), (-0.569, -0.54, -0.018), (-0.615, -0.9, 0.09), (-0.446, 0.9, 0.221), (-0.467, 0.54, 0.233), (-0.508, 0.18, 0.269), (-0.555, -0.18, 0.329), (-0.592, -0.54, 0.413), (-0.605, -0.9, 0.521), (-0.451, 0.9, 0.145), (-0.498, 0.54, 0.157), (-0.54, 0.18, 0.193), (-0.562, -0.18, 0.253), (-0.557, -0.54, 0.337), (-0.527, -0.9, 0.445), (-0.475, 0.9, -0.262), (-0.505, 0.54, -0.25), (-0.51, 0.18, -0.214), (-0.487, -0.18, -0.154), (-0.445, -0.54, -0.07), (-0.398, -0.9, 0.038), (-0.462, 0.9, 0.055), (-0.448, 0.54, 0.067), (-0.411, 0.18, 0.103), (-0.363, -0.18, 0.163), (-0.323, -0.54, 0.247), (-0.303, -0.9, 0.355), (-0.397, 0.9, -0.281), (-0.351, 0.54, -0.269), (-0.307, 0.18, -0.233), (-0.279, -0.18, -0.173), (-0.277, -0.54, -0.089), (-0.302, -0.9, 0.019), (-0.252, 0.9, -0.016), (-0.217, 0.54, -0.004), (-0.206, 0.18, 0.032), (-0.222, -0.18, 0.092), (-0.261, -0.54, 0.176), (-0.308, -0.9, 0.284), (-0.166, 0.9, 0.227), (-0.174, 0.54, 0.239), (-0.206, 0.18, 0.275), (-0.252, -0.18, 0.335), (-0.296, -0.54, 0.419), (-0.322, -0.9, 0.527), (-0.147, 0.9, 0.253), (-0.191, 0.54, 0.265), (-0.237, 0.18, 0.301), (-0.27, -0.18, 0.361), (-0.279, -0.54, 0.445), (-0.259, -0.9, 0.553), (-0.189, 0.9, 0.181), (-0.228, 0.54, 0.193), (-0.245, 0.18, 0.229), (-0.235, -0.18, 0.289), (-0.201, -0.54, 0.373), (-0.154, -0.9, 0.481), (-0.195, 0.9, 0.261), (-0.194, 0.54, 0.273), (-0.166, 0.18, 0.309), (-0.122, -0.18, 0.369), (-0.076, -0.54, 0.453), (-0.045, -0.9, 0.561), (-0.114, 0.9, -0.242), (-0.074, 0.54, -0.23), (-0.027, 0.18, -0.194), (0.011, -0.18, -0.134), (0.026, -0.54, -0.05), (0.013, -0.9, 0.058), (-0.026, 0.9, -0.17), (0.017, 0.54, -0.158), (0.04, 0.18, -0.122), (0.037, -0.18, -0.062), (0.007, -0.54, 0.022), (-0.038, -0.9, 0.13), (0.115, 0.9, -0.038), (0.12, 0.54, -0.026), (0.099, 0.18, 0.01), (0.057, -0.18, 0.07), (0.01, -0.54, 0.154), (-0.026, -0.9, 0.262), (0.141, 0.9, -0.119), (0.105, 0.54, -0.107), (0.058, 0.18, -0.071), (0.016, -0.18, -0.011), (-0.005, -0.54, 0.073), (0.002, -0.9, 0.181), (0.115, 0.9, -0.068), (0.07, 0.54, -0.056), (0.041, 0.18, -0.02), (0.038, -0.18, 0.04), (0.062, -0.54, 0.124), (0.105, -0.9, 0.232), (0.088, 0.9, 0.051), (0.076, 0.54, 0.063), (0.091, 0.18, 0.099), (0.129, -0.18, 0.159), (0.177, -0.54, 0.243), (0.217, -0.9, 0.351), (0.139, 0.9, 0.243), (0.17, 0.54, 0.255), (0.216, 0.18, 0.291), (0.261, -0.18, 0.351), (0.287, -0.54, 0.435), (0.288, -0.9, 0.543), (0.251, 0.9, 0.257), (0.297, 0.54, 0.269), (0.331, 0.18, 0.305), (0.341, -0.18, 0.365), (0.322, -0.54, 0.449), (0.283, -0.9, 0.557), (0.375, 0.9, 0.295), (0.394, 0.54, 0.307), (0.385, 0.18, 0.343), (0.351, -0.18, 0.403), (0.304, -0.54, 0.487), (0.261, -0.9, 0.595), (0.43, 0.9, -0.202), (0.403, 0.54, -0.19), (0.359, 0.18, -0.154), (0.313, -0.18, -0.094), (0.281, -0.54, -0.01), (0.274, -0.9, 0.098), (0.428, 0.9, 0.279), (0.381, 0.54, 0.291), (0.343, 0.18, 0.327), (0.327, -0.18, 0.387), (0.339, -0.54, 0.471), (0.374, -0.9, 0.579), (0.402, 0.9, 0.041), (0.377, 0.54, 0.053), (0.38, 0.18, 0.089), (0.408, -0.18, 0.149), (0.453, -0.54, 0.233), (0.499, -0.9, 0.341), (0.414, 0.9, -0.173), (0.435, 0.54, -0.161), (0.476, 0.18, -0.125), (0.523, -0.18, -0.065), (0.56, -0.54, 0.019), (0.573, -0.9, 0.127), (0.512, 0.9, 0.044), (0.559, 0.54, 0.056), (0.601, 0.18, 0.092), (0.623, -0.18, 0.152), (0.617, -0.54, 0.236), (0.586, -0.9, 0.344), (0.612, 0.9, -0.262), (0.642, 0.54, -0.25), (0.647, 0.18, -0.214), (0.623, -0.18, -0.154), (0.581, -0.54, -0.07), (0.534, -0.9, 0.038), (0.717, 0.9, 0.294), (0.703, 0.54, 0.306), (0.665, 0.18, 0.342), (0.618, -0.18, 0.402), (0.578, -0.54, 0.486), (0.558, -0.9, 0.594), (0.695, 0.9, 0.18), (0.649, 0.54, 0.192), (0.605, 0.18, 0.228), (0.577, -0.18, 0.288), (0.576, -0.54, 0.372), (0.601, -0.9, 0.48), (0.678, 0.9, -0.21), (0.643, 0.54, -0.198), (0.632, 0.18, -0.162), (0.649, -0.18, -0.102), (0.688, -0.54, -0.018), (0.736, -0.9, 0.09), (0.674, 0.9, 0.161), (0.682, 0.54, 0.173), (0.715, 0.18, 0.209), (0.761, -0.18, 0.269), (0.805, -0.54, 0.353), (0.83, -0.9, 0.461), (0.771, 0.9, -0.273), (0.815, 0.54, -0.261), (0.861, 0.18, -0.225), (0.894, -0.18, -0.165), (0.902, -0.54, -0.081), (0.882, -0.9, 0.027), (0.882, 0.9, -0.273), (0.921, 0.54, -0.261), (0.938, 0.18, -0.225), (0.927, -0.18, -0.165), (0.893, -0.54, -0.081), (0.846, -0.9, 0.027), (0.986, 0.9, -0.101), (0.984, 0.54, -0.089), (0.957, 0.18, -0.053), (0.912, -0.18, 0.007), (0.866, -0.54, 0.091), (0.835, -0.9, 0.199)]
+    color3f[] primvars:displayColor = [(0.35, 0.17, 0.06)] (
+        interpolation = "constant"
+    )
+    uniform token type = "cubic"
+    float[] widths = [0.03] (
+        interpolation = "constant"
+    )
+    double3 xformOp:translate = (-6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedSpecular" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/texturedSpecular>
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "faceVarying"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (-3.6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedFilm" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/texturedFilm>
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "faceVarying"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (-1.2, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedTransmission" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/texturedTransmission>
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "faceVarying"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (1.2, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Mesh "texturedDepth" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    rel material:binding = </mtl/texturedDepth>
+    point3f[] points = [(-0.9, -0.9, 0), (0.9, -0.9, 0), (0.9, 0.9, 0), (-0.9, 0.9, 0)]
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "faceVarying"
+    )
+    uniform token subdivisionScheme = "none"
+    double3 xformOp:translate = (6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "previewAmber" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/previewAmber>
+    double3 xformOp:translate = (3.6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+

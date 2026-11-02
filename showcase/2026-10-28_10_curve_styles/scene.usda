@@ -1,7 +1,9 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/curves.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Per-object curve and point styles: width scale, tubes or ribbons, sphere
@@ -10,28 +12,20 @@
 # eldr_default and karma pictures differ where both are set.
 
 # width_scale: eldr 0.4 wins over karma 3
-over "bezier"
+
+def Camera "cam"
 {
-    float primvars:karma:object:width_scale = 3
-    float primvars:eldr:object:width_scale = 0.4
+    float focalLength = 24
+    double3 xformOp:translate = (0, 0, 14)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
 }
 
-# karma only: Eldr reads it too
-over "bspline"
+def DistantLight "sun"
 {
-    float primvars:karma:object:width_scale = 2.5
-}
-
-# curve_style: eldr 1 (tubes) wins over karma 0 (ribbons)
-over "catmullRom"
-{
-    int primvars:karma:object:curve_style = 0
-    int primvars:eldr:object:curve_style = 1
-}
-
-over "points"
-{
-    int primvars:eldr:object:point_style = 1
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-30, 25, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
 }
 
 def Scope "Render"
@@ -64,22 +58,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (480, 270)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "styles"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
+        uniform int2 resolution = (480, 270)
     }
 
-    # Every curve without its own curve_style as ribbons: catmullRom keeps
-    # its eldr curve_style 1 (tubes).
     def RenderSettings "ribbons"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:curveRibbons = 1
+        uniform int2 resolution = (480, 270)
     }
 }
+

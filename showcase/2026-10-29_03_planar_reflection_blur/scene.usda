@@ -1,28 +1,89 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/reflections.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # A wet floor: rougher than the test scene's polished one, so the blur shows.
-over "mtl"
+
+def Camera "cam"
 {
-    over "polished"
-    {
-        over "pbr"
-        {
-            float inputs:roughness = 0.4
-        }
-    }
+    float focalLength = 22
+    float xformOp:rotateX = -10
+    double3 xformOp:translate = (0, 2.2, 9)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }
 
-# Rougher than the 0.3 a floor needs to be picked as the mirror on its own:
-# flag it.
-over "floor"
+def DomeLight "sky"
 {
-    bool primvars:eldr:planarReflection = 1 (
-        interpolation = "constant"
-    )
+    color3f inputs:color = (0.55, 0.65, 0.9)
+    float inputs:intensity = 0.4
+}
+
+def DistantLight "sun"
+{
+    float inputs:intensity = 2.5
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "polished"
+    {
+        token outputs:surface.connect = </mtl/polished/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.08, 0.08, 0.09)
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "stone"
+    {
+        token outputs:surface.connect = </mtl/stone/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.66, 0.6)
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            float inputs:roughness = 0.7
+            token outputs:surface
+        }
+    }
 }
 
 def Scope "Render"
@@ -55,24 +116,26 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (480, 270)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "sharp"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
-        custom bool eldr:planarReflections = 1
         custom float eldr:planarBlur = 0
+        custom bool eldr:planarReflections = 1
         custom bool eldr:rtReflections = 0
+        uniform int2 resolution = (480, 270)
     }
+
     def RenderSettings "blurred"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
-        custom bool eldr:planarReflections = 1
         custom float eldr:planarBlur = 1
+        custom bool eldr:planarReflections = 1
         custom bool eldr:rtReflections = 0
+        uniform int2 resolution = (480, 270)
     }
 }
+

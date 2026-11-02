@@ -1,11 +1,112 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/emissive.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # The Cornell box lit by its glowing panel and bulb, with GI and final
 # gather: noisy at few samples, so the denoiser and adaptive sampling show.
+
+def Camera "cam"
+{
+    float focalLength = 22
+    double3 xformOp:translate = (0, 1, 4.4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def RectLight "light"
+{
+    float inputs:height = 0.5
+    float inputs:intensity = 0
+    float inputs:width = 0.5
+    float xformOp:rotateX = -90
+    double3 xformOp:translate = (0, 1.98, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
+}
+
+def Scope "mtl"
+{
+    def Material "white"
+    {
+        token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.73, 0.73, 0.73)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "red"
+    {
+        token outputs:surface.connect = </mtl/red/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.65, 0.05, 0.05)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "green"
+    {
+        token outputs:surface.connect = </mtl/green/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.12, 0.45, 0.15)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "chrome"
+    {
+        token outputs:surface.connect = </mtl/chrome/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            float inputs:metallic = 1
+            float inputs:roughness = 0.05
+            token outputs:surface
+        }
+    }
+
+    def Material "panel"
+    {
+        token outputs:surface.connect = </mtl/panel/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (40, 40, 38)
+            token outputs:surface
+        }
+    }
+
+    def Material "bulb"
+    {
+        token outputs:surface.connect = </mtl/bulb/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (60, 30, 8)
+            token outputs:surface
+        }
+    }
+}
 
 def Scope "Render"
 {
@@ -40,106 +141,110 @@ def Scope "Render"
         rel camera = </cam>
         int2 resolution = (960, 540)
         rel products = [</Render/Products/beautyAndRaw>]
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 16
     }
     # --- end standard settings ---
     def RenderSettings "raw16"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 16
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:filmSamples = 16
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "denoise16"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
-        rel products = </Render/Products/beautyAndRaw>
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 16
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:filmSamples = 16
-        custom bool eldr:denoise = 1
+        custom int eldr:rtShadowSamples = 1
+        rel products = </Render/Products/beautyAndRaw>
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "karmaImageFilter16"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 16
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:filmSamples = 16
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom int eldr:rtShadowSamples = 1
+        custom string karma:global:imagefilter = '["denoise",{"engine":"oidn","use_n_input":true,"use_albedo_input":true}]'
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "raw64"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        custom bool eldr:autoExposure = 0
+        custom bool eldr:caustics = 1
         custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 64
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
         custom bool eldr:rtReflections = 1
         custom bool eldr:rtRefraction = 1
-        custom bool eldr:rtHitShadows = 1
-        custom bool eldr:caustics = 1
-        custom int eldr:rtShadowSamples = 1
         custom int eldr:rtShadowLights = 16
-        custom bool eldr:autoExposure = 0
-        custom bool eldr:gi = 1
-        custom bool eldr:finalGather = 1
-        custom int eldr:filmSamples = 64
+        custom int eldr:rtShadowSamples = 1
+        uniform int2 resolution = (960, 540)
     }
 
     def Scope "Products"
     {
         def RenderProduct "beautyAndRaw"
         {
+            rel orderedVars = [
+                </Render/Products/Vars/C>,
+                </Render/Products/Vars/raw>,
+            ]
             token productName = "denoise16.exr"
-            rel orderedVars = [</Render/Products/Vars/C>, </Render/Products/Vars/raw>]
         }
 
         def Scope "Vars"
         {
             def RenderVar "C"
             {
-                string driver:parameters:aov:husk:name = "C"
                 uniform token dataType = "color4f"
+                string driver:parameters:aov:husk:name = "C"
                 uniform string sourceName = "C.*[LO]"
                 uniform token sourceType = "lpe"
             }
 
             def RenderVar "raw"
             {
-                string driver:parameters:aov:husk:name = "raw"
                 uniform token dataType = "color4f"
+                string driver:parameters:aov:husk:name = "raw"
                 uniform string sourceName = "eldr:beautyRaw"
                 uniform token sourceType = "raw"
             }
         }
     }
 }
+

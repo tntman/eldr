@@ -1,0 +1,127 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+over "Flattened_Prototype_1"
+{
+    def Cylinder "shaft" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Y"
+        double height = 3
+        rel material:binding = </mtl/stone>
+        double radius = 0.3
+        double3 xformOp:translate = (0, 1.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def Plane "ground" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    uniform token axis = "Y"
+    double length = 30
+    rel material:binding = </mtl/ground>
+    double width = 30
+}
+
+def Sphere "chromeBall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/chrome>
+    double radius = 0.9
+    double3 xformOp:translate = (-1.6, 0.9, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def Sphere "goldBall" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/gold>
+    double radius = 0.9
+    double3 xformOp:translate = (1.6, 0.9, 2)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+def PointInstancer "scatter"
+{
+    quath[] orientations = [(1, 0, 0, 0), (0.923828, 0, 0.383057, 0), (1, 0, 0, 0), (0.96582, 0, 0.259033, 0), (1, 0, 0, 0), (0.707031, 0, 0.707031, 0), (0.96582, 0.259033, 0, 0), (1, 0, 0, 0), (0.923828, 0, 0.383057, 0), (1, 0, 0, 0), (0.96582, 0, -0.259033, 0), (1, 0, 0, 0)]
+    point3f[] positions = [(-5, 0.35, -1.5), (-3, 0.35, -1.5), (-1, 0.35, -1.5), (1, 0.35, -1.5), (3, 0.35, -1.5), (5, 0.35, -1.5), (-5, 0.35, 0.2), (-3, 0.35, 0.2), (-1, 0.35, 0.2), (1, 0.35, 0.2), (3, 0.35, 0.2), (5, 0.35, 0.2)]
+    int[] protoIndices = [0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0]
+    rel prototypes = [
+        </scatter/protos/ball>,
+        </scatter/protos/box>,
+    ]
+    float3[] scales = [(1, 1, 1), (1, 1, 1), (0.8, 0.8, 0.8), (1, 1.6, 1), (1.2, 1.2, 1.2), (1, 1, 1), (1, 1, 1), (0.6, 0.6, 0.6), (1, 1, 1), (1, 1, 1), (1, 0.5, 1), (1, 1, 1)]
+
+    def Scope "protos"
+    {
+        def Sphere "ball" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </mtl/plastic>
+            double radius = 0.35
+        }
+
+        def Cube "box" (
+            apiSchemas = ["MaterialBindingAPI"]
+        )
+        {
+            rel material:binding = </mtl/stone>
+            double size = 0.6
+        }
+    }
+}
+
+class Xform "_pillar"
+{
+    def Cylinder "shaft" (
+        apiSchemas = ["MaterialBindingAPI"]
+    )
+    {
+        uniform token axis = "Y"
+        double height = 3
+        rel material:binding = </mtl/stone>
+        double radius = 0.3
+        double3 xformOp:translate = (0, 1.5, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+
+def Xform "pillars"
+{
+    def Xform "a" (
+        instanceable = true
+        add references = </Flattened_Prototype_1>
+    )
+    {
+        double3 xformOp:translate = (-4, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "b" (
+        instanceable = true
+        add references = </Flattened_Prototype_1>
+    )
+    {
+        double3 xformOp:translate = (0, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+
+    def Xform "c" (
+        instanceable = true
+        add references = </Flattened_Prototype_1>
+    )
+    {
+        double3 xformOp:translate = (4, 0, -4.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}
+

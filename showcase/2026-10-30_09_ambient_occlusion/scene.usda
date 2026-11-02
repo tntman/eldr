@@ -1,8 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Ambient light: a corner (floor and two walls), stacked boxes and a ball
@@ -17,8 +20,8 @@
 def Camera "cam"
 {
     float focalLength = 28
-    double3 xformOp:translate = (2.5, 2.2, 6.5)
     float3 xformOp:rotateXYZ = (-14, 18, 0)
+    double3 xformOp:translate = (2.5, 2.2, 6.5)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
 }
 
@@ -33,6 +36,7 @@ def Scope "mtl"
     def Material "white"
     {
         token outputs:surface.connect = </mtl/white/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -41,78 +45,6 @@ def Scope "mtl"
             token outputs:surface
         }
     }
-}
-
-def Mesh "floor" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-3, 0, -3), (-3, 0, 4), (5, 0, 4), (5, 0, -3)]
-    rel material:binding = </mtl/white>
-}
-
-def Mesh "backWall" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-3, 0, -3), (5, 0, -3), (5, 4, -3), (-3, 4, -3)]
-    rel material:binding = </mtl/white>
-}
-
-def Mesh "sideWall" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-3, 0, -3), (-3, 4, -3), (-3, 4, 4), (-3, 0, 4)]
-    rel material:binding = </mtl/white>
-}
-
-def Cube "boxLow" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    double size = 1.2
-    double3 xformOp:translate = (-1.8, 0.6, -1.8)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/white>
-}
-
-def Cube "boxHigh" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    double size = 0.8
-    double3 xformOp:translate = (-1.9, 1.6, -1.9)
-    float xformOp:rotateY = 25
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
-    rel material:binding = </mtl/white>
-}
-
-def Cube "boxSide" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    double size = 0.7
-    double3 xformOp:translate = (-0.75, 0.35, -2.3)
-    float xformOp:rotateY = 10
-    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateY"]
-    rel material:binding = </mtl/white>
-}
-
-def Sphere "ball" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    double radius = 0.6
-    double3 xformOp:translate = (1.2, 0.6, -2.3)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    rel material:binding = </mtl/white>
 }
 
 def Scope "Render"
@@ -145,27 +77,28 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "ambient"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "aoOff"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:ambientOcclusion = 0
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "aoWide"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom float eldr:aoRadius = 2
+        uniform int2 resolution = (960, 540)
     }
 }
+

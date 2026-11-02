@@ -1,23 +1,85 @@
 #usda 1.0
 (
     renderSettingsPrimPath = "/Render/eldr_default"
-    subLayers = [@../../tests/scenes/holdout.usda@]
+    subLayers = [
+        @./geo.usda@
+    ]
 )
 
 # Holdouts (mattes) and phantom objects, set per object. Eldr's
 # primvars:eldr:object:* names win over primvars:karma:object:*.
 # holdout.usda: /ball has karma holdoutmode 2 (matte), /box karma 1.
 # /box: eldr 0 wins over karma 1, so it renders normally.
-over "box"
+
+def Camera "cam"
 {
-    int primvars:eldr:object:holdoutmode = 0
+    float focalLength = 30
+    float xformOp:rotateX = -8
+    double3 xformOp:translate = (0, 1.2, 6)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }
 
-# /front: eldr phantom (-primary): unseen, still shadows. Karma says "*".
-over "front"
+def DistantLight "sun"
 {
-    string primvars:karma:object:rendervisibility = "*"
-    string primvars:eldr:object:rendervisibility = "-primary"
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-50, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    float inputs:intensity = 0.5
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+def Scope "passes"
+{
+    def RenderPass "holdouts" (
+        apiSchemas = ["CollectionAPI:matte"]
+    )
+    {
+        rel collection:matte:includes = </cone>
+        rel renderSource = </passes/settings>
+    }
+
+    def RenderSettings "settings"
+    {
+        rel camera = </cam>
+    }
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/floor/tex.outputs:rgb>
+            float inputs:roughness = 0.8
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/udim.1001.png@
+            float2 inputs:st.connect = </mtl/floor/st.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
 }
 
 def Scope "Render"
@@ -50,21 +112,22 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (480, 270)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "holdoutScene"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:holdouts = 1
+        uniform int2 resolution = (480, 270)
     }
 
     def RenderSettings "holdoutsOff"
     {
         rel camera = </cam>
-        int2 resolution = (480, 270)
         custom bool eldr:holdouts = 0
+        uniform int2 resolution = (480, 270)
     }
 }
+

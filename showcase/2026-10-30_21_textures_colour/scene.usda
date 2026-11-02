@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/colorspace.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Textures, UDIMs and colour spaces.
@@ -20,14 +22,94 @@
 # /Render/aniso1: eldr:anisotropy 1 (trilinear only): the far floor blurs
 # to a grey-brown smear.
 
-over "cam"
+def Camera "cam"
 {
-    double3 xformOp:translate = (1.2, 1.2, 11)
+    float focalLength = 28
     float xformOp:rotateX = -10
+    double3 xformOp:translate = (1.2, 1.2, 11)
     uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }
 
-# Lights the floor, which the sun (straight down -Z) only grazes.
+def DistantLight "sun"
+{
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+}
+
+def Scope "mtl"
+{
+    def Material "constantAp1"
+    {
+        token outputs:surface.connect = </mtl/constantAp1/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.3, 0.2) (
+                colorSpace = "lin_ap1_scene"
+            )
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "constantRec709"
+    {
+        token outputs:surface.connect = </mtl/constantRec709/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.64934, 0.275, 0.1799)
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+    }
+
+    def Material "textureAp1"
+    {
+        token outputs:surface.connect = </mtl/textureAp1/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/textureAp1/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/acescg.png@ (
+                colorSpace = "lin_ap1_scene"
+            )
+            float3 outputs:rgb
+        }
+    }
+
+    def Material "textureRec709"
+    {
+        token outputs:surface.connect = </mtl/textureRec709/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </mtl/textureRec709/tex.outputs:rgb>
+            float inputs:roughness = 1
+            token outputs:surface
+        }
+
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../../tests/scenes/textures/rec709.png@
+            token inputs:sourceColorSpace = "raw"
+            float3 outputs:rgb
+        }
+    }
+}
+
 def DomeLight "sky"
 {
     float inputs:intensity = 0.5
@@ -38,6 +120,7 @@ def Scope "mtl69"
     def Material "udim"
     {
         token outputs:mtlx:surface.connect = </mtl69/udim/surface.outputs:out>
+
         def Shader "surface"
         {
             uniform token info:id = "ND_standard_surface_surfaceshader"
@@ -46,10 +129,13 @@ def Scope "mtl69"
             float inputs:specular_roughness = 0.6
             token outputs:out
         }
+
         def Shader "image"
         {
             uniform token info:id = "ND_image_color3"
-            asset inputs:file = @../../tests/scenes/textures/udim.<UDIM>.png@ (colorSpace = "srgb_texture")
+            asset inputs:file = @../../tests/scenes/textures/udim.<UDIM>.png@ (
+                colorSpace = "srgb_texture"
+            )
             color3f outputs:out
         }
     }
@@ -57,6 +143,7 @@ def Scope "mtl69"
     def Material "tiles"
     {
         token outputs:surface.connect = </mtl69/tiles/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -64,16 +151,18 @@ def Scope "mtl69"
             float inputs:roughness = 0.9
             token outputs:surface
         }
+
         def Shader "tex"
         {
             uniform token info:id = "UsdUVTexture"
             asset inputs:file = @../../tests/scenes/textures/quadrants.png@
             token inputs:sourceColorSpace = "sRGB"
+            float2 inputs:st.connect = </mtl69/tiles/st.outputs:result>
             token inputs:wrapS = "repeat"
             token inputs:wrapT = "repeat"
-            float2 inputs:st.connect = </mtl69/tiles/st.outputs:result>
             float3 outputs:rgb
         }
+
         def Shader "st"
         {
             uniform token info:id = "UsdPrimvarReader_float2"
@@ -81,28 +170,6 @@ def Scope "mtl69"
             float2 outputs:result
         }
     }
-}
-
-def Mesh "udimQuad" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
-    texCoord2f[] primvars:st = [(0, 0), (2, 0), (2, 2), (0, 2)] (interpolation = "vertex")
-    uniform token subdivisionScheme = "none"
-    rel material:binding = </mtl69/udim>
-    double3 xformOp:translate = (3.6, 0, 0)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-}
-
-def Mesh "tileFloor" (prepend apiSchemas = ["MaterialBindingAPI"])
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-20, -2.4, 8), (20, -2.4, 8), (20, -2.4, -72), (-20, -2.4, -72)]
-    texCoord2f[] primvars:st = [(0, 0), (20, 0), (20, 40), (0, 40)] (interpolation = "vertex")
-    uniform token subdivisionScheme = "none"
-    rel material:binding = </mtl69/tiles>
 }
 
 def Scope "Render"
@@ -135,20 +202,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "textures"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "aniso1"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom int eldr:anisotropy = 1
+        uniform int2 resolution = (960, 540)
     }
 }
+

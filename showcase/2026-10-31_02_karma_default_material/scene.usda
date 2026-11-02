@@ -1,9 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
-    subLayers = [@../../tests/scenes/sunangle.usda@]
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Prims without a material: tests/scenes/sunangle.usda (a ground of
@@ -15,21 +17,27 @@
 # /Render/lambertDefault (eldr:defaultMaterialKarma off): displayColor at
 # full strength, about 2.3x as bright, and both balls opaque.
 
-def Sphere "redBall"
+def Camera "cam"
 {
-    double radius = 0.5
-    double3 xformOp:translate = (-1.4, 0.5, 2.5)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    color3f[] primvars:displayColor = [(0.8, 0.2, 0.1)]
+    float focalLength = 24
+    float xformOp:rotateX = -22
+    double3 xformOp:translate = (0, 5, 12)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateX"]
 }
 
-def Sphere "halfBall"
+def DistantLight "sun"
 {
-    double radius = 0.5
-    double3 xformOp:translate = (1.4, 0.5, 2.5)
-    uniform token[] xformOpOrder = ["xformOp:translate"]
-    color3f[] primvars:displayColor = [(0.1, 0.3, 0.8)]
-    float[] primvars:displayOpacity = [0.5]
+    float inputs:angle = 4
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-55, 30, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.5, 0.65, 1)
+    float inputs:intensity = 0.3
 }
 
 def Scope "Render"
@@ -62,20 +70,21 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (960, 540)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "karmaDefault"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
+        uniform int2 resolution = (960, 540)
     }
 
     def RenderSettings "lambertDefault"
     {
         rel camera = </cam>
-        int2 resolution = (960, 540)
         custom bool eldr:defaultMaterialKarma = 0
+        uniform int2 resolution = (960, 540)
     }
 }
+

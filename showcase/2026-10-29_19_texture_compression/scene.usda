@@ -1,8 +1,11 @@
 #usda 1.0
 (
-    renderSettingsPrimPath = "/Render/eldr_default"
-    upAxis = "Y"
     metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
 )
 
 # Texture compression A/B: two quads show their texture as emission (no
@@ -41,24 +44,24 @@ def Scope "Render"
     {
         rel camera = </cam>
         int2 resolution = (1024, 512)
-        custom string karma:global:imagefilter = "[\"denoise\",{\"engine\":\"oidn\",\"use_n_input\":true,\"use_albedo_input\":true}]"
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
         custom int karma:global:pathtracedsamples = 256
     }
     # --- end standard settings ---
     def RenderSettings "compressed"
     {
         rel camera = </cam>
-        int2 resolution = (1024, 512)
         custom bool eldr:postProcess = 0
         custom bool eldr:textureCompression = 1
+        uniform int2 resolution = (1024, 512)
     }
 
     def RenderSettings "exact"
     {
         rel camera = </cam>
-        int2 resolution = (1024, 512)
         custom bool eldr:postProcess = 0
         custom bool eldr:textureCompression = 0
+        uniform int2 resolution = (1024, 512)
     }
 }
 
@@ -76,6 +79,7 @@ def Scope "mtl"
     def Material "detail"
     {
         token outputs:surface.connect = </mtl/detail/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -85,6 +89,7 @@ def Scope "mtl"
             float inputs:specular = 0
             token outputs:surface
         }
+
         def Shader "tex"
         {
             uniform token info:id = "UsdUVTexture"
@@ -93,6 +98,7 @@ def Scope "mtl"
             float2 inputs:st.connect = </mtl/detail/reader.outputs:result>
             float3 outputs:rgb
         }
+
         def Shader "reader"
         {
             uniform token info:id = "UsdPrimvarReader_float2"
@@ -104,6 +110,7 @@ def Scope "mtl"
     def Material "rings"
     {
         token outputs:surface.connect = </mtl/rings/pbr.outputs:surface>
+
         def Shader "pbr"
         {
             uniform token info:id = "UsdPreviewSurface"
@@ -113,6 +120,7 @@ def Scope "mtl"
             float inputs:specular = 0
             token outputs:surface
         }
+
         def Shader "tex"
         {
             uniform token info:id = "UsdUVTexture"
@@ -121,6 +129,7 @@ def Scope "mtl"
             float2 inputs:st.connect = </mtl/rings/reader.outputs:result>
             float3 outputs:rgb
         }
+
         def Shader "reader"
         {
             uniform token info:id = "UsdPrimvarReader_float2"
@@ -130,24 +139,3 @@ def Scope "mtl"
     }
 }
 
-def Mesh "left" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(-1, -0.5, 0), (0, -0.5, 0), (0, 0.5, 0), (-1, 0.5, 0)]
-    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
-    rel material:binding = </mtl/detail>
-}
-
-def Mesh "right" (
-    prepend apiSchemas = ["MaterialBindingAPI"]
-)
-{
-    int[] faceVertexCounts = [4]
-    int[] faceVertexIndices = [0, 1, 2, 3]
-    point3f[] points = [(0, -0.5, 0), (1, -0.5, 0), (1, 0.5, 0), (0, 0.5, 0)]
-    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
-    rel material:binding = </mtl/rings>
-}

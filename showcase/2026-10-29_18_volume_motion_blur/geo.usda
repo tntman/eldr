@@ -1,0 +1,74 @@
+#usda 1.0
+(
+    endTimeCode = 1
+    metersPerUnit = 1
+    startTimeCode = 1
+    timeCodesPerSecond = 24
+    upAxis = "Y"
+)
+
+def Volume "vector"
+{
+    rel field:density = </vector/density>
+    rel field:vel = </vector/vel>
+    int primvars:karma:object:vblur = 1
+    double3 xformOp:translate = (-1.2, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        token fieldName = "density"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+
+    def OpenVDBAsset "vel"
+    {
+        token fieldName = "vel"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+}
+
+def Volume "components"
+{
+    rel field:density = </components/density>
+    rel field:vel_x = </components/vel_x>
+    rel field:vel_y = </components/vel_y>
+    rel field:vel_z = </components/vel_z>
+    int primvars:karma:object:vblur = 1
+    float primvars:karma:object:volumevblurscale = 2
+    double3 xformOp:translate = (1.2, 0.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def OpenVDBAsset "density"
+    {
+        token fieldName = "density"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+
+    def OpenVDBAsset "vel_x"
+    {
+        token fieldName = "vel.x"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+
+    def OpenVDBAsset "vel_y"
+    {
+        token fieldName = "vel.y"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+
+    def OpenVDBAsset "vel_z"
+    {
+        token fieldName = "vel.z"
+        asset filePath = @../../tests/scenes/volume_moving.vdb@
+    }
+}
+
+def Mesh "ground"
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0, -6), (-6, 0, 6), (6, 0, 6), (6, 0, -6)]
+    color3f[] primvars:displayColor = [(0.5, 0.5, 0.5)]
+}
+
