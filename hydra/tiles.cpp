@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -179,7 +180,26 @@ void HdVkRenderTiles(vkr::Renderer &renderer, const vkr::Scene &scene, const vkr
         if (!sinks[s].color && !sinks[s].linearColor) {
             continue;
         }
-        if (frame.postProcess) {
+        if (frame.postProcess && !sinks[s].color && !frame.post.autoExposure) {
+            // Only the linear beauty (husk): tonemap.frag's exposure-only
+            // path on the host, without the GPU's whole-image copies.
+            const float scale = std::exp2(std::clamp(frame.post.exposureCompensation, -16.0f, 16.0f));
+            const float *bg = frame.clearColor;
+            GfHalf *dst = static_cast<GfHalf *>(sinks[s].linearColor);
+            WorkParallelForN(pixels, [&](size_t begin, size_t end) {
+                for (size_t i = begin; i < end; ++i) {
+                    const GfHalf *p = hdr.data() + i * 4;
+                    const float coverage = std::clamp(float(p[3]), 0.0f, 1.0f);
+                    const float glow[3] = {std::max(float(p[0]), 0.0f), std::max(float(p[1]), 0.0f),
+                                           std::max(float(p[2]), 0.0f)};
+                    const bool empty = coverage <= 0.0f && std::max({glow[0], glow[1], glow[2]}) <= 0.0f;
+                    for (int c = 0; c < 4; ++c) {
+                        const float v = c == 3 ? coverage : glow[c] * scale;
+                        dst[i * 4 + c] = GfHalf(empty ? bg[c] : v + bg[c] * (1.0f - coverage));
+                    }
+                }
+            });
+        } else if (frame.postProcess) {
             renderer.PostImage(frame, hdr.data(), width, height, sinks[s].color, sinks[s].linearColor);
         } else {  // raw HDR: as it rendered
             for (void *dst : {sinks[s].color, sinks[s].linearColor}) {
