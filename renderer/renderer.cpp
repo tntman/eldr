@@ -2176,7 +2176,10 @@ bool Renderer::_SetupFog(const Scene::Gpu &gpu, const Frame &frame, FrameData *d
         }
         depth = std::max(depth, 1e-3f);
     }
-    const uint32_t x = std::clamp(frame.fogGridSize, 16u, 512u);
+    uint32_t x = std::clamp(frame.fogGridSize, 16u, 512u);
+    if (frame.tile[2]) {  // a tile: froxels of the whole image's size
+        x = std::max(1u, uint32_t(std::lround(float(x) * float(_width) / float(frame.tile[2]))));
+    }
     const uint32_t y = std::max(1u, uint32_t(std::lround(float(x) * float(_height) / float(_width))));
     constexpr uint32_t kSlices = 64;
     const bool orthographic = std::abs(frame.viewProj[3]) + std::abs(frame.viewProj[7]) + std::abs(frame.viewProj[11]) < 1e-9f;
@@ -2988,6 +2991,44 @@ void Renderer::_RenderSubsurface(const Scene::Gpu &gpu, const Frame &frame, cons
                      std::max(frame.directIntensity, 0.0f), std::max(frame.indirectIntensity, 0.0f));
 }
 
+void Renderer::CropToTile(const Frame &frame, float *viewProj, float *invViewProj, bool undo)
+{
+    if (frame.tile[2] == 0) {
+        return;
+    }
+    // NDC x of the window = x * sx + ox (y likewise): the image's pixel
+    // px is at (px + 0.5) * 2 / W - 1, the window's at (px - x0 + 0.5) * 2 / w - 1.
+    const float w = float(frame.width), h = float(frame.height);
+    float sx = float(frame.tile[2]) / w, sy = float(frame.tile[3]) / h;
+    float ox = (float(frame.tile[2]) - 2.0f * float(frame.tile[0]) - w) / w;
+    float oy = (float(frame.tile[3]) - 2.0f * float(frame.tile[1]) - h) / h;
+    if (undo) {
+        ox = -ox / sx;
+        oy = -oy / sy;
+        sx = 1.0f / sx;
+        sy = 1.0f / sy;
+    }
+    for (int r = 0; viewProj && r < 4; ++r) {  // clip.xy = clip.xy * s + o * clip.w
+        float *row = viewProj + 4 * r;
+        row[0] = row[0] * sx + row[3] * ox;
+        row[1] = row[1] * sy + row[3] * oy;
+    }
+    for (int c = 0; invViewProj && c < 4; ++c) {  // the crop's inverse first: rows x, y and w
+        const float x = invViewProj[c], y = invViewProj[4 + c];
+        invViewProj[c] = x / sx;
+        invViewProj[4 + c] = y / sy;
+        invViewProj[12 + c] -= ox * x / sx + oy * y / sy;
+    }
+}
+
+void Renderer::PostImage(const Frame &frame, const void *hdr, uint32_t width, uint32_t height, void *color,
+                         void *linear)
+{
+    std::lock_guard<std::mutex> lock(_frameMutex);
+    _WaitInFlight();
+    PostProcess::Apply(_dev, frame.post, frame.clearColor, hdr, width, height, color, linear);
+}
+
 bool Renderer::IsConverged() const
 {
     return !_deferredOutputs && _denoiseState != 1 && (!_adapting || _post.ExposureConverged()) && _taaConverged &&
@@ -3044,6 +3085,12 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);
+    }
+    // Another tile (Frame::tile): the screen's history is another window's.
+    if (std::memcmp(frame.tile, _lastTile, sizeof(_lastTile)) != 0) {
+        std::memcpy(_lastTile, frame.tile, sizeof(_lastTile));
+        _taaValid = _historyValid = _rtViewProjValid = _ssrHistory = false;
+        _fogDepth = 0.0f;
     }
     const Scene::Gpu &gpu = scene.GetGpu();
     // Upscaling (TAAU, Frame::renderScale): while TAA resolves, the scene
@@ -3431,6 +3478,15 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         lensed.cameraPos[2] = eye.z + d.z;
         std::memcpy(fd.invViewProj, frame.invViewProj, sizeof(fd.invViewProj));
     }
+    // A tile (Frame::tile): this sample's camera over the whole image, for
+    // what must match across tiles (shadows, cluster and fog depth, culling's
+    // screen size).
+    Frame wholeFrame;
+    if (frame.tile[2]) {
+        wholeFrame = frame;
+        CropToTile(frame, wholeFrame.viewProj, wholeFrame.invViewProj, true);
+    }
+    const Frame &whole = frame.tile[2] ? wholeFrame : frame;
     // Planar mirrors: rendered with this sample's camera (its shutter time,
     // its lens point), which shading looks them up by, and under time
     // samples with the scene at its time (Frame::planarMotionBlur).
@@ -3502,7 +3558,9 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const size_t local = frame.localShadows && frame.localLights ? gpu.shadowCasters.size() : 0;
         const size_t lights = std::min<size_t>(local + (gpu.shadowLight != kNone ? 1 : 0), kMaxRtShadowLights);
         const uint32_t skinCap = std::min(frame.rtSkinnedInstances, kMaxRtSkinned);
-        return lights > 0 && double(gpu.triangleCount) >= kAutoTriangles * double(_width) * _height * double(lights) &&
+        // A tile weighs the whole image's pixels, so every tile decides alike.
+        const double pixels = frame.tile[2] ? double(frame.tile[2]) * frame.tile[3] : double(_width) * _height;
+        return lights > 0 && double(gpu.triangleCount) >= kAutoTriangles * pixels * double(lights) &&
                scene.LargestSkinned(frame.cameraPos, skinCap + 1).size() <= skinCap;
     };
     const bool tracedShadows =
@@ -3672,7 +3730,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                               (frame.translucency && !gpu.translucent.empty()) ||
                               (frame.subsurface && !gpu.subsurface.empty());
     const bool shadows = frame.shadows && (!rtSun || cascadeUsers) && gpu.drawCount > 0 && gpu.instanceCapacity > 0 &&
-                         _FitCascades(gpu, frame, toSun, &fd);
+                         _FitCascades(gpu, whole, toSun, &fd);
     const uint32_t cascades = shadows ? std::clamp(frame.shadowCascades, 1u, kCascades) : 0;
     const uint32_t localLights = frame.localLights ? gpu.localLightCount : 0;
     fd.counts[0] = gpu.lightCount;
@@ -3693,7 +3751,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         ScrambledSobol(sobolIndex, kSeedSsrGgx, fd.sampleDims[2], 2);
     }
     if (localLights > 0) {
-        _FitClusters(gpu, frame, &fd);
+        _FitClusters(gpu, whole, &fd);
     }
     const uint32_t rtSlots = rt.shadows && tracedShadows ? std::clamp(frame.rtShadowLights, 1u, kMaxRtShadowLights) : 0;
     // Further suns' atlas tiles: one orthographic map over the view each
@@ -3706,14 +3764,14 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const Scene::Gpu::ExtraSun &sun = gpu.extraSuns[i];
         FrameData fit{};
         constexpr uint32_t kSunTile = kShadowAtlasSize / 2;
-        if (_FitCascades(gpu, frame, sun.direction, &fit, 1, kSunTile)) {
+        if (_FitCascades(gpu, whole, sun.direction, &fit, 1, kSunTile)) {
             SunTile t{sun.light, {}, fit.cascadeTexel[0], sun.shadowLinkBit};
             std::memcpy(t.viewProj, fit.cascadeViewProj[0], sizeof(t.viewProj));
             sunTiles.push_back(t);
         }
     }
     const std::vector<ShadowTile> shadowTiles =
-        _PlanLocalShadows(gpu, frame, fd.clusters[3], rt.shadowLights + rtSuns, rtSlots - std::min(rtSuns, rtSlots),
+        _PlanLocalShadows(gpu, whole, fd.clusters[3], rt.shadowLights + rtSuns, rtSlots - std::min(rtSuns, rtSlots),
                           cascadeUsers, shapeJitter ? shapeSample : nullptr, sunTiles);
     rt.shadows = rt.shadows && rt.shadowLights[0] != kNone;
     fd.features[0] |= (rt.shadows ? kFeatureRtShadows : 0) | (rt.reflections ? kFeatureRtReflections : 0) |
@@ -3742,7 +3800,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     _filmFroxels = film && frame.fogFilmJitter;
-    const bool fog = _SetupFog(gpu, frame, &fd);
+    const bool fog = _SetupFog(gpu, whole, &fd);
     if (_reflections && !_reflections->Probes().empty()) {
         fd.features[0] |= kFeatureProbe;
         const auto &probes = _reflections->Probes();
@@ -4192,7 +4250,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         cull.drawCount = gpu.drawCount;
         // Screen size of an instance: its world radius over the size of a
         // pixel at its depth (which grows linearly with depth unless ortho).
-        const Mat4 inv = ToMat4(frame.invViewProj);
+        // A tile measures it as the whole image does (the same levels of detail).
+        const Mat4 inv = ToMat4(whole.invViewProj);
         const Vec3 eye{frame.cameraPos[0], frame.cameraPos[1], frame.cameraPos[2]};
         const Vec3 nearCenter = TransformPoint(inv, {0, 0, -1}), mid = TransformPoint(inv, {0, 0, 0});
         const Vec3 forward = Normalize(mid - nearCenter);
@@ -4202,7 +4261,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         // an oblique near plane (planar mirrors) tilts NDC z = 0, so the
         // unmoved point lies at another depth (a 32-pixel mirror render
         // dropped everything as too small).
-        const Vec3 up = TransformPoint(inv, {0, 2.0f / float(_height), 0});
+        const Vec3 up = TransformPoint(inv, {0, 2.0f / float(frame.tile[2] ? frame.tile[3] : _height), 0});
         const Vec3 level = cull.orthographic > 0 ? up - forward * Dot(up - mid, forward)
                                                  : eye + (up - eye) * (Dot(mid - eye, forward) /
                                                                        Dot(up - eye, forward));
@@ -4649,6 +4708,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // ponytail: filmSamples not a power of two leaves the strata uneven.
     const bool residualBlur = timeSample && film && frame.motionBlurResidual && shutterT > 1e-3f;
     Lens::Params lens{};
+    const float imageWidth = float(frame.tile[2] ? frame.tile[2] : frame.width);  // a tile's: the whole image's
     if (dof || postBlur || residualBlur) {
         const Mat4 back = postBlur       ? ToMat4(appFrame.invViewProj) * ToMat4(motionViewProj)
                           : residualBlur ? shutterInvViewProj * ToMat4(shutterViewProj)
@@ -4662,7 +4722,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             lens.focusDistance = frame.focusDistance;
         }
         // Blurs reach at most a tile (32 pixels) beyond the 3x3 tiles' max.
-        lens.maxRadius = std::min(0.04f * float(frame.width) * scale, 32.0f);
+        lens.maxRadius = std::min(0.04f * imageWidth * scale, 32.0f);
         lens.frame = float(_haltonIndex % 64);
         lens.shutter = postBlur       ? frame.shutter
                        : residualBlur ? frame.shutter / (float(std::max(frame.filmSamples, 1u)) * shutterT)
@@ -4670,7 +4730,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         const float stratum = shutterU * float(std::max(frame.filmSamples, 1u));
         lens.window[0] = std::floor(stratum) - stratum;
         lens.window[1] = lens.window[0] + 1.0f;
-        lens.maxHalfBlur = std::min(0.025f * float(frame.width) * scale, 32.0f);
+        lens.maxHalfBlur = std::min(0.025f * imageWidth * scale, 32.0f);
         _lens.RecordTiles(_cmd, lens);
     }
     if (dof) {

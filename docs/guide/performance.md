@@ -67,6 +67,7 @@ Hair and fur (BasisCurves) render as 6-sided tubes with hair shading; **Curves a
 - Mesh arrays are freed on the CPU once uploaded.
 - **Texture Compression** cuts 8-bit texture memory to a quarter (off by default, as Karma never compresses).
 - The render stats (Houdini's stats panel, usdview's **Eldr > Render Statistics**) show GPU memory by kind: textures, vertices, volumes, ray-tracing structures.
+- **Very large images:** the screen-size buffers take about 200 bytes of GPU memory per pixel, so a 6000x3000 frame needs about 3.6 GB on top of the scene. Set **Tile Size** (`eldr:tileSize`, e.g. 2048) on the render settings: husk and usdrecord then render the image tile by tile, and GPU memory follows the tile instead of the image. TILEGUIDE
 
 ![Houdini: render stats panel showing Eldr's GPU memory and time donuts](../images/houdini/render_stats_panel.png)
 

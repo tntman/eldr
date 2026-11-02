@@ -73,11 +73,14 @@ public:
     bool Needs(vkr::Aovs::Kind kind) const { return _need[kind]; }
     // Whether a product has a beauty var (Prepare's).
     bool HasBeauty() const { return _beauty; }
+    bool Empty() const { return _products.empty(); }
     // After Render: writes the products once `renderer` converged on what
     // `frame` (its scene version and camera) shows. `linear`: the beauty is
-    // the frame's linear one (Frame::linearColor).
+    // the frame's linear one (Frame::linearColor). `host`: the frame's
+    // colour (linearColor with `linear`), depth and ids in host memory
+    // (tiled renders), else read from `renderer`.
     void Write(vkr::Renderer &renderer, const vkr::Renderer::Frame &frame, const std::string &objectManifest,
-               const std::string &materialManifest, bool linear,
+               const std::string &materialManifest, bool linear, const vkr::Renderer::Targets *host,
                const std::function<std::string()> &statsJson = {});
 
 private:

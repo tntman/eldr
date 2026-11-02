@@ -7,6 +7,7 @@
 #include "renderBuffer.h"
 #include "renderDelegate.h"
 #include "renderer.h"
+#include "tiles.h"
 #include "timing.h"
 
 #include "pxr/base/gf/half.h"
@@ -989,10 +990,38 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
         }
     }
 
+    // eldr:tileSize (tiles.h): an offline frame larger than a tile renders
+    // in tiles, whole in one execute. Not with lens distortion (it warps the
+    // finished frame). An app asking again for the frame it has gets its
+    // buffers as they are.
+    const uint32_t tileSize = HdVkTileSize(delegate->GetRenderSetting<int>(t2.tileSize, 0));
+    const bool tiled = offline && tileSize > 0 && (frame.width > tileSize || frame.height > tileSize) &&
+                       !(frame.lensDistortion && frame.distortion.Active());
+    uint64_t tiledKey = 0;
+    if (tiled) {
+        tiledKey = 1469598103934665603ull;
+        auto mix = [&](const void *data, size_t size) {
+            for (size_t i = 0; i < size; ++i) {
+                tiledKey = (tiledKey ^ static_cast<const unsigned char *>(data)[i]) * 1099511628211ull;
+            }
+        };
+        mix(&frame.sceneVersion, sizeof(frame.sceneVersion));
+        mix(frame.viewProj, sizeof(frame.viewProj));
+        mix(&frame.width, sizeof(frame.width));
+        mix(&frame.height, sizeof(frame.height));
+        mix(&tileSize, sizeof(tileSize));
+        for (const HdRenderPassAovBinding &b : state->GetAovBindings()) {
+            mix(&b.renderBuffer, sizeof(b.renderBuffer));
+        }
+        if (tiledKey == _tiledKey && IsConverged()) {
+            return;
+        }
+    }
+
     // The four come back with the frame if the app read them last frame
     // (`read`), else only once it maps them: Houdini's viewport binds the
     // ids for picking but needn't read them each frame. GPU sharing: colour
-    // and depth also go to the app's OpenGL as textures.
+    // and depth also go to the app's OpenGL as textures. Tiled: all of them.
     auto *vkDelegate = static_cast<HdVkRenderDelegate *>(delegate);
     HdVkGLInterop *interop = frame.shareFrame && color && !productSized ? vkDelegate->GLInterop() : nullptr;
     const bool lazy = interop != nullptr;
@@ -1036,7 +1065,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             buffers[i]->Detach();
             continue;
         }
-        mapped[i] = buffers[i] && (productSized || read.count(buffers[i])) ? buffers[i]->Map() : nullptr;
+        mapped[i] = buffers[i] && (productSized || tiled || read.count(buffers[i])) ? buffers[i]->Map() : nullptr;
         if (productSized && mapped[i]) {
             productTargets[i].resize(size_t(frame.width) * frame.height * kTargetBytes[i]);
         }
@@ -1213,7 +1242,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     // ~100 ms a sample) and every sample's readback go. Viewports keep one
     // sample per execute.
     const float batchSeconds = offline ? delegate->GetRenderSetting<float>(t2.offlineBatchSeconds, 1.0f) : 0.0f;
-    out.inPlace = frame.inPlaceReadback && !productSized && colorHalf.empty() && huskIds.empty() && batchSeconds <= 0.0f;
+    out.inPlace = frame.inPlaceReadback && !productSized && !tiled && colorHalf.empty() && huskIds.empty() &&
+                  batchSeconds <= 0.0f;
     auto readBuffer = [&](int i) { return uintptr_t(mapped[i] || (staleIds && i >= 2) ? buffers[i] : nullptr); };
     const std::array<uintptr_t, 6> readback = {readBuffer(0), readBuffer(1), readBuffer(2), readBuffer(3), frame.width,
                                                frame.height};
@@ -1225,6 +1255,25 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                           std::none_of(out.aovs, out.aovs + vkr::Aovs::kCount, [](float *a) { return a; });
     bool collected = false;
     bool shared = false;
+    // Tiled with render products: their colour, depth and ids, whole (the
+    // renderer holds only the last tile's).
+    vkr::Renderer::Targets productHost;
+    std::vector<GfHalf> productColor, productLinear;
+    std::vector<float> productDepth;
+    std::vector<int32_t> productIds[2];
+    if (tiled && !_products.Empty()) {
+        const size_t pixels = size_t(frame.width) * frame.height;
+        productColor.resize(pixels * 4);
+        productLinear.resize(frame.linearColor ? pixels * 4 : 0);
+        productDepth.resize(pixels);
+        productIds[0].resize(pixels);
+        productIds[1].resize(pixels);
+        productHost.color = productColor.data();
+        productHost.linearColor = productLinear.empty() ? nullptr : productLinear.data();
+        productHost.depth = productDepth.data();
+        productHost.primId = productIds[0].data();
+        productHost.instanceId = productIds[1].data();
+    }
     _failed = false;
     try {
         tCollect = FrameTiming::Clock::now();
@@ -1244,7 +1293,21 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             _scene.Commit(true);
         }
         tRender = FrameTiming::Clock::now();
-        if (batchSeconds > 0.0f && !frame.deferReadback) {
+        if (tiled) {
+            // husk's colour gets the linear beauty (huskLinear, below).
+            vkr::Renderer::Targets sinks[2] = {out, productHost};
+            if (huskLinear) {
+                sinks[0].linearColor = sinks[0].color;
+                sinks[0].color = nullptr;
+            }
+            HdVkRenderTiles(*_renderer, _scene, frame, tileSize, sinks, productHost.depth ? 2 : 1,
+                            HdVkCamera::IsViewportCamera(cameraId), [&](bool more) {
+                                vkDelegate->NoteFrame();
+                                if (more) {  // as the app's commit between executes
+                                    vkDelegate->CommitResources(nullptr);
+                                }
+                            });
+        } else if (batchSeconds > 0.0f && !frame.deferReadback) {
             vkr::Renderer::Targets sample = out;
             sample.readback = false;
             const auto until = tRender + std::chrono::duration_cast<FrameTiming::Clock::duration>(
@@ -1290,7 +1353,8 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             }
         }
     }
-    if (huskLinear) {
+    _tiledKey = tiled && !_failed ? tiledKey : 0;
+    if (huskLinear && !tiled) {
         try {  // the linear image over the display one Render read
             vkr::Renderer::Targets linear;
             linear.linearColor = colorHalf.data();
@@ -1396,6 +1460,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     try {
         if (!_failed) {  // its AOVs were never read back: the products would hold zeros
             _products.Write(*_renderer, frame, objects, materials, frame.linearColor,
+                            productHost.depth ? &productHost : nullptr,
                             [vkDelegate] { return vkDelegate->RenderStatsJson(); });
         }
     } catch (const std::exception &e) {

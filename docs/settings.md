@@ -68,6 +68,7 @@ Groups follow topics. The switches people change most come first, in open groups
 | Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:global:light_sampling_quality`: multiplies the traced shadow rays per light. Shadow maps don't change. | Linear in the traced shadows |
 | Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:sssquality`: multiplies `eldr:subsurfaceSamples`. | Linear in the subsurface blur |
 | Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:volumequality`: multiplies `eldr:volumeShadowSteps`. | Linear in the volume lighting |
+| Tile Size<br>`eldr:tileSize` | int 0 (off) | husk and usdrecord render the image in square tiles of this many pixels (rounded up to 64), one after another, so GPU memory follows the tile, not the image. For very large images. 0: the whole image at once. Viewports ignore it. | TILECOST |
 
 ## Ray Tracing
 

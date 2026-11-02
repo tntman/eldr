@@ -605,7 +605,21 @@ public:
         // blur, with true occlusion; the post DOF is skipped then. TAA
         // frames keep the post DOF.
         bool dofJitter = true;
+        // Tiled renders (the Hydra layer's eldr:tileSize): this frame is the
+        // width x height window at pixel (tile[0], tile[1]) (from the bottom
+        // left) of a tile[2] x tile[3] image; its matrices are that window's
+        // crop of the image's camera (CropToTile). Another window starts the
+        // screen's history over, as a resize does. The sun's cascades, local
+        // shadows, the depth the clusters and fog slice along, and the screen
+        // size that culls and picks levels of detail follow the whole image's
+        // camera, so tiles meet without seams. tile[2] 0: untiled.
+        uint32_t tile[4] = {0, 0, 0, 0};
     };
+
+    // Frame::tile's window of the whole image's camera: viewProj (row-vector
+    // order, either may be null) times the crop, and invViewProj the crop's
+    // inverse times it. `undo`: back from the window's to the whole image's.
+    static void CropToTile(const Frame &frame, float *viewProj, float *invViewProj, bool undo = false);
 
     // Still frames before the film takes over from TAA (EEVEE's 3).
     static constexpr uint32_t kFilmStillFrames = 3;
@@ -751,6 +765,11 @@ public:
     // sample another renderer's.
     VkImage HdrColorImage() const { return _color.image; }
     VkImageView HdrColorView() const { return _color.view; }
+    // Tiled renders: `frame`'s bloom, exposure and tonemapping over a whole
+    // image in host memory (RGBA16F, bottom row first, the scene unexposed,
+    // premultiplied by coverage), into `color` (as Targets::color) and
+    // `linear` (Targets::linearColor); either may be null.
+    void PostImage(const Frame &frame, const void *hdr, uint32_t width, uint32_t height, void *color, void *linear);
 
 private:
     void _CreateDescriptors();
@@ -1000,6 +1019,7 @@ private:
     float _prevCameraPos[3] = {};   // with _prevViewProj
     float _rtPrevViewProj[16] = {};  // the last frame's jittered camera (RayTracing::Work::prevViewProj)
     bool _rtViewProjValid = false;
+    uint32_t _lastTile[4] = {};  // the last frame's Frame::tile
     Aovs _aovs{_dev};  // extra AOVs
     // Frame::denoise and the raw beauty AOV: the final film run wants them
     // (_denoiseRun); its state: 0 accumulating, 1 converged (the next frame

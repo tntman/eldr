@@ -29,6 +29,7 @@ HDVK_SETTING(refractQuality, "Refraction Quality", -1.0f)
 HDVK_SETTING(lightQuality, "Light Quality", -1.0f)
 HDVK_SETTING(sssQuality, "Subsurface Quality", -1.0f)
 HDVK_SETTING(volumeQuality, "Volume Quality", -1.0f)
+HDVK_SETTING(tileSize, "Tile Size (pixels)", 0)
 
 HDVK_GROUP("Ray Tracing", true)
 HDVK_SETTING(rtShadows, "Ray-Traced Shadows", frame.rtShadows)

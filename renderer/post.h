@@ -43,6 +43,13 @@ public:
     VkImage LinearOutput() const { return _exr.image; }
     VkImageView LinearOutputView() const { return _exr.view; }
 
+    // Every pass over an image in host memory (RGBA16F, `hdr` as Resize's),
+    // the exposure at once (no adaptation): Output()'s pixels into `color`,
+    // LinearOutput()'s into `linear` (either may be null). Tiled renders'
+    // whole image (Renderer::PostImage).
+    static void Apply(Device &device, const Settings &settings, const float background[4], const void *hdr,
+                      uint32_t width, uint32_t height, void *color, void *linear);
+
     // After the frame's fence: true once the adapted exposure reached its target.
     bool ExposureConverged() const;
     // Multiplier the last frame's tonemap applied to scene radiance.
