@@ -292,6 +292,9 @@ struct Material {
     // metallic is ignored.
     bool specularWorkflow = false;
     float specularColor[3] = {0, 0, 0};
+    // UsdPreviewSurface model only: the dielectric's reflectance stays F0 at
+    // every angle (no Fresnel rise), as Karma's default material.
+    bool flatFresnel = false;
     // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
     // coatColor and loses what the coat reflects. Weight 0: none.
     float coat = 0;

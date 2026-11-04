@@ -22,7 +22,7 @@ struct Material {
     uvec4 program;   // first op, ops, first constant, first image (program.glsl)
     vec4 specular;   // specular colour, w: weight (brdf.glsl's SetupBase)
     // Lobes (brdf.glsl).
-    vec4 specularColor;  // specular workflow F0, w = 1 when used
+    vec4 specularColor;  // specular workflow F0, w = 1 when used; w < 0: flat dielectric Fresnel (F90 = F0)
     vec4 coat;           // weight (0: none), roughness, F0
     vec4 coatColor;      // tints the base beneath
     vec4 sheen;          // weight (0: none), roughness
