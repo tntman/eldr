@@ -28,7 +28,7 @@ struct Material {
     vec4 sheen;          // weight (0: none), roughness
     vec4 sheenColor;
     vec4 thinFilm;       // weight (0: none), thickness (nm), ior
-    vec4 anisotropy;     // amount (0: none), rotation (turns), 1: OpenPBR's roughness mapping
+    vec4 anisotropy;     // amount (0: none), rotation (turns), roughness mapping (0 standard_surface, 1 OpenPBR, 2 glTF)
     vec4 toon;           // bands (0: none), softness
     vec4 transmission;  // tint (transmission colour), weight (transparency.glsl)
     vec4 refraction;    // ior, thin walled, transmission depth, opacity refracts

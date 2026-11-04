@@ -2225,7 +2225,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.thinFilm[2] = m.thinFilmIor;
             g.anisotropy[0] = m.anisotropy;
             g.anisotropy[1] = m.anisotropyRotation;
-            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
+            g.anisotropy[2] = float(m.anisotropyMapping);
             g.toon[0] = m.toonBands;
             g.toon[1] = m.toonSoftness;
             std::copy(m.transmissionColor, m.transmissionColor + 3, g.transmission);

@@ -298,7 +298,7 @@ Eldr shades each surface model by its spec: the USD spec for UsdPreviewSurface, 
 | Coat | dielectric of the coat's IOR (UsdPreviewSurface: Schlick, white), coat colour on the base, albedo scaling; standard_surface `coat_affect_color`, `coat_affect_roughness`; OpenPBR roughening and `coat_darkening`; emission under the coat | Exact for lights; image lights Schlick's albedo. No `coat_normal`, coat anisotropy or coat rotation (the base's normal) |
 | Sheen (standard_surface) | Imageworks microfiber over the diffuse, under the specular | Exact; image lights through MaterialX's albedo fit |
 | Fuzz (OpenPBR) | Zeltner's LTC sheen over the coat and base | Exact (MaterialX's fits) |
-| Anisotropy | `mx_roughness_anisotropy`, OpenPBR's mapping | Exact; tangent from the uv set's u direction (no tangent primvars) |
+| Anisotropy | `mx_roughness_anisotropy`, OpenPBR's and glTF's (`anisotropy_strength`) mappings | Exact; tangent from the uv set's u direction (no tangent primvars) |
 | Thin film | Airy reflectance with polarization, per light | Approximated: unpolarized, at the view angle, standing in for F0; on transmitting surfaces what the film reflects does not get through (a soap bubble's colours) |
 | Transmission | dielectric BTDF under the coat (its colour and reflection attenuate it), absorption by `transmission_color` over `transmission_depth` | Approximated: refraction of the screen (or traced), Schlick at the interface, roughness as blur, path length through the ellipsoid that fills the object's bounds (exact for a ball; flat meshes: the depth behind, capped by their size) |
 | Subsurface | random walk | Approximated: separable screen-space blur of the diffuse light |
