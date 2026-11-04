@@ -635,12 +635,19 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
     return normalize(mix(n, stretched, layers.anisotropy * clamp(5.0 * perceptual, 0.0, 1.0)));
 }
 
+// The coat's GGX alpha (0: no coat): mesh.frag finds the coat's own
+// representative point on a light at it.
+float CoatAlpha()
+{
+    return layers.coat > 0.0 ? layers.coatPerceptual * layers.coatPerceptual : 0.0;
+}
+
 // The lobes' reflection of light from direction l, times cos, per unit of
-// the light's specular radiance. `regionArea`: the light's area in
-// half-vector space / pi (mesh.frag's LightRegion); the coat normalizes its
-// own lobe for it as for a disc of that area.
-// ponytail: the coat shares the base's representative point.
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
+// the light's specular radiance. The coat's lobe is taken towards lc, the
+// light's representative point for the coat's own roughness (mesh.frag's
+// LightRegion at CoatAlpha()), times coatNorm, that point's normalization,
+// so a smooth coat over a rough base shows the light's sharp shape.
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
 {
     vec3 c = vec3(0.0);
     float NoL = clamp(dot(n, l), 0.0, 1.0);
@@ -649,9 +656,11 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
     gCoatLight = 0.0;
     if (layers.coat > 0.0) {
         float a = layers.coatPerceptual * layers.coatPerceptual;
-        float F = CoatFresnel(max(dot(l, h), 0.0));
-        gCoatLight = layers.coat * D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F *
-                     (1.0 + F * layers.coatMsK) * NoL * (a * a) / (a * a + regionArea);
+        float NoLc = clamp(dot(n, lc), 0.0, 1.0);
+        vec3 hc = normalize(v + lc);
+        float F = CoatFresnel(max(dot(lc, hc), 0.0));
+        gCoatLight = layers.coat * D_GGX(max(dot(n, hc), 0.0), a) * V_SmithGGXCorrelated(NoV, max(NoLc, 1e-4), a) *
+                     F * (1.0 + F * layers.coatMsK) * NoLc * coatNorm;
         c += gCoatLight;
     }
     if (layers.sheen != vec3(0.0)) {
@@ -704,7 +713,12 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
     return n;
 }
 
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
+float CoatAlpha()
+{
+    return 0.0;
+}
+
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
 {
     return vec3(0.0);
 }
