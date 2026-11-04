@@ -24,7 +24,10 @@ void main()
         vec2 ndc = gl_FragCoord.xy / frame.viewport.xy * 2.0 - 1.0;
         vec4 nearP = frame.invViewProj * vec4(ndc, -1.0, 1.0);
         vec4 farP = frame.invViewProj * vec4(ndc, 1.0, 1.0);
-        vec3 dir = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);  // works for ortho too
+        // Far minus near times both w (ortho too): an oblique near plane
+        // (planar mirrors) puts NDC z = 1 behind the eye (w < 0), where the
+        // divided difference points backwards.
+        vec3 dir = normalize(farP.xyz * nearP.w - nearP.xyz * farP.w);
         vec3 local = normalize(mat3(frame.envWorldToLocal) * dir);
         c = vec4(textureLod(textures[nonuniformEXT(frame.counts.w)], LatlongUv(local), 0.0).rgb * frame.envRadiance.rgb,
                  1.0);
