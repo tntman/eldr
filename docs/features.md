@@ -264,7 +264,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 
 ## Materials
 
-Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged.
+Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged. An untagged texture in a UsdUVTexture or a MaterialX colour `image` reads as Karma reads it: 8-bit as sRGB, half and float as linear; MaterialX float and vector images are linear data.
 
 | Surface | Notes |
 |---|---|

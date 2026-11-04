@@ -680,10 +680,10 @@ void ReadWrap(HdMaterialNode2 const &node, bool preview, vkr::TextureRef *ref)
 }
 
 // A texture node's file into ref (UDIMs as tiles) with its wrap modes. A
-// MaterialX file without a colour space is in the document's working space,
-// linear (as MaterialX and Storm's MaterialX path read it); a UsdUVTexture's
-// is "auto". `space`: the node's own colour space (empty: auto) instead.
-// False without a file.
+// file without a colour space is "auto" (8-bit sRGB, float linear) for a
+// UsdUVTexture and a MaterialX colour image, as Karma reads them; a
+// MaterialX float or vector image is linear data. `space`: the node's own
+// colour space (empty: auto) instead. False without a file.
 bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textures, vkr::TextureRef *ref,
               std::optional<TfToken> space = std::nullopt)
 {
@@ -693,7 +693,10 @@ bool LoadFile(HdMaterialNode2 const &node, bool preview, HdVkTextureCache *textu
         return false;
     }
     TfToken colorSpace = space ? *space : ParameterColorSpace(node.parameters, _tokens->file);
-    if (colorSpace.IsEmpty() && !preview && !space) {
+    const std::string &type = node.nodeTypeId.GetString();
+    const bool colour = type.size() > 7 && (type.compare(type.size() - 7, 7, "_color3") == 0 ||
+                                            type.compare(type.size() - 7, 7, "_color4") == 0);
+    if (colorSpace.IsEmpty() && !preview && !space && !colour) {
         colorSpace = GfColorSpaceNames->LinearRec709;
     }
     const bool compress = textures->compress;
