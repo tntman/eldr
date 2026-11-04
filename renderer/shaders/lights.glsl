@@ -79,11 +79,9 @@ vec3 EdgeFormFactor(vec3 a, vec3 b)
     return len > 1e-8 ? acos(clamp(dot(v0, v1), -1.0, 1.0)) * c / len : vec3(0.0);
 }
 
-// Lambert's form factor of the rect toLight +- hw +- hh clipped to the
-// horizon of n: exact (irradiance / (pi L)), where the sphere approximation
-// of the clipped form factor ((f^2 + F.n) / (f + 1)) was up to 4% bright on
-// a rect above the horizon (Karma integrates it exactly).
-float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
+// The form factor vector (times 2 pi) of the rect toLight +- hw +- hh
+// clipped to the horizon of n.
+vec3 RectFormFactorVectorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
 {
     vec3 corners[4] = vec3[4](toLight + hw + hh, toLight - hw + hh, toLight - hw - hh, toLight + hw - hh);
     vec3 poly[5];
@@ -98,11 +96,20 @@ float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
             poly[count++] = a + (b - a) * (da / (da - db));
         }
     }
-    float sum = 0.0;
+    vec3 sum = vec3(0.0);
     for (int i = 0; i < count; ++i) {
-        sum += dot(EdgeFormFactor(poly[i], poly[(i + 1) % count]), n);
+        sum += EdgeFormFactor(poly[i], poly[(i + 1) % count]);
     }
-    return abs(sum) / (2.0 * PI);
+    return sum;
+}
+
+// Lambert's form factor of the rect toLight +- hw +- hh clipped to the
+// horizon of n: exact (irradiance / (pi L)), where the sphere approximation
+// of the clipped form factor ((f^2 + F.n) / (f + 1)) was up to 4% bright on
+// a rect above the horizon (Karma integrates it exactly).
+float RectFormFactorClipped(vec3 toLight, vec3 hw, vec3 hh, vec3 n)
+{
+    return abs(dot(RectFormFactorVectorClipped(toLight, hw, hh, n), n)) / (2.0 * PI);
 }
 
 // Light linking (UsdLux collection:lightLink): whether the light lights a
@@ -176,12 +183,40 @@ float LightIes(Light light, vec3 p)
     return sum / 32.0;
 }
 
-// A textured rect/disk light's colour as seen from p: the texel above p's
-// foot on the light's plane, at the mip of the light seen from its height
-// (mesh.frag's diffuseTint). White for other lights or with light textures
-// off; times its IES profile (LightIes). Shared by the paths that treat
-// the light as a point (traced hits, probes, fog, volumes).
-// ponytail: one tap, no filtered polygon integral; mesh.frag has the same.
+// A textured rect/disk light's texture (index tex) as diffuse light at a
+// point (toLight: to the light's centre) with normal n sees it: the texture
+// where the light's mean direction (its form factor vector, the part above
+// n's horizon) meets the light, at the mip of the footprint twice that
+// distance wide, so it blends smoothly from a sharp foot under the light to
+// the whole light's average far away or at grazing angles. Disks use the
+// square of their area. s = 0 at +X as UsdLux says; the image's top row at
+// +Y, as Karma (rows are stored bottom-up).
+// ponytail: one tap at the mean direction, no filtered polygon integral
+// (Heitz's textured LTCs): sharp patterns blur more than an exact integral.
+vec3 LightTextureDiffuse(Light light, int tex, vec3 toLight, vec3 n)
+{
+    bool rect = uint(light.position.w) == kLightRect;
+    vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
+    vec3 f = RectFormFactorVectorClipped(toLight, rect ? hw : hw * 0.8862269, rect ? hh : hh * 0.8862269, n);
+    f = dot(f, toLight) < 0.0 ? -f : f;  // the loop's winding gives either sign
+    vec3 axis = light.axis.xyz;
+    float fa = dot(f, axis), ta = dot(toLight, axis);
+    vec3 dir = fa < -1e-6 * length(f) ? f / -fa : -toLight / ta;  // to the light's plane, per unit height
+    vec3 hit = dir * -ta - toLight;  // from the light's centre
+    vec2 uv = vec2(dot(hit, hw) / dot(hw, hw), dot(hit, hh) / dot(hh, hh));
+    uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
+    ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
+    float texels = float(max(size.x, size.y));
+    float extent = length(hw) + length(hh);
+    float lod = log2(texels * clamp(2.0 * length(dir) * abs(ta) / extent, 1.0 / texels, 1.0));
+    return textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + uv * vec2(-0.5, 0.5), lod).rgb;
+}
+
+// A textured rect/disk light's colour as seen from p as a point
+// (LightTextureDiffuse facing the light). White for other lights or with
+// light textures off; times its IES profile (LightIes). Shared by the
+// paths that treat the light as a point (traced hits, probes, fog,
+// volumes).
 vec3 LightTint(Light light, vec3 p)
 {
     int tex = int(light.focusTint.w);
@@ -190,15 +225,11 @@ vec3 LightTint(Light light, vec3 p)
     if (tex < 0 || (frame.reflections.z & kLightTextures) == 0u || (type != kLightRect && type != kLightDisk)) {
         return vec3(ies);
     }
-    vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz, toLight = light.position.xyz - p;
-    vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
-    foot = type == kLightRect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
-    ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
-    float texels = float(max(size.x, size.y));
-    float extent = length(hw) + length(hh);
-    float height = abs(dot(toLight, light.axis.xyz));
-    float lod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
-    return ies * textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + foot * vec2(-0.5, 0.5), lod).rgb;
+    vec3 toLight = light.position.xyz - p;
+    if (dot(toLight, light.axis.xyz) >= 0.0) {
+        return vec3(ies);  // behind the emitting side: unlit anyway
+    }
+    return ies * LightTextureDiffuse(light, tex, toLight, -light.axis.xyz);
 }
 
 uint ClusterIndex(vec2 fragCoord, float viewDepth)

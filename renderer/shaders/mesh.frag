@@ -640,12 +640,12 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         norm = LightRegion(n, v, a, toLight, d, hw, hh, uv, rect, specularE, l, regionArea);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
-            // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
-            // above p (its foot on the plane) for diffuse, each at the mip
-            // of what it gathers: the lobe's footprint at the light (its
-            // radius in light directions, 2 a, stretched as LightRegion
-            // stretched it), and the light seen from its height over the
-            // plane.
+            // The texture (s = 0 at +X as UsdLux says; the image's top row
+            // at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where
+            // the specular representative point is, at the mip of the
+            // lobe's footprint at the light (its radius in light
+            // directions, 2 a, stretched as LightRegion stretched it); for
+            // diffuse along the light's mean direction (LightTextureDiffuse).
             // ponytail: two taps; no prefiltered form factor (Heitz's
             // filtered polygon lights would get the wide lobes right).
             float extent = length(hw) + length(hh);
@@ -654,11 +654,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             float aLobe = min(2.0 * a * max(regionStretch.x, regionStretch.y), 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
             specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
-            vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
-            foot = rect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
-            float height = abs(dot(toLight, light.axis.xyz));
-            float footLod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
-            diffuseTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + foot * vec2(-0.5, 0.5), footLod).rgb;
+            diffuseTint = LightTextureDiffuse(light, tex, toLight, n);
         }
     }
     // The diffuse lobe (Oren-Nayar) towards the light's centre.

@@ -129,7 +129,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 |---|---|
 | DistantLight | The sun; `inputs:angle` gives soft penumbrae. The first shadow-casting one gets the cascades. |
 | SphereLight | Energy-conserving representative-point specular, horizon-clipped diffuse, `treatAsPoint` |
-| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures their light and their visible shape (Karma orientation: left edge at +X, top row at +Y) |
+| RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures their light and their visible shape (Karma orientation: left edge at +X, top row at +Y); diffuse light takes the texture along the light's mean direction, blurred by distance, so its colours blend smoothly across the room |
 | CylinderLight | Side only; `treatAsLine` |
 | DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube. Without a texture the dome is uniform: its colour times intensity, behind everything as in Karma |
 | Shaping | Cone angle, softness, focus, focus tint; IES profiles (`shaping:ies:file`, `angleScale`, `normalize`) |
