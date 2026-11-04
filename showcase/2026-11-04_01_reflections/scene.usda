@@ -147,8 +147,8 @@ def Scope "Render"
     def RenderSettings "karmaReflectLimit1"
     {
         rel camera = </cam>
-        custom int karma:global:reflectlimit = 1
         custom bool eldr:rtReflections = 1
+        custom int karma:global:reflectlimit = 1
         uniform int2 resolution = (640, 360)
     }
 
@@ -159,3 +159,4 @@ def Scope "Render"
         uniform int2 resolution = (640, 360)
     }
 }
+
