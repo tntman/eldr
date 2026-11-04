@@ -3805,8 +3805,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::memcpy(fd.envRadiance, gpu.environmentRadiance, sizeof(gpu.environmentRadiance));
         fd.envRadiance[3] = 1.0f;
     }
-    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentCameraVisible && gpu.environmentLatlong != kNone;
-    fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
+    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentCameraVisible;
+    // The dome the sky pass shows: its latlong texture, or kNone - 1 for an
+    // untextured dome (its colour x intensity, uniform).
+    fd.counts[3] = !sky ? kNone : gpu.environmentLatlong != kNone ? gpu.environmentLatlong : kNone - 1;
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     _filmFroxels = film && frame.fogFilmJitter;

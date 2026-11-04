@@ -131,7 +131,7 @@ Lights are UsdLux: radiance = `color * intensity * 2^exposure`, times blackbody 
 | SphereLight | Energy-conserving representative-point specular, horizon-clipped diffuse, `treatAsPoint` |
 | RectLight, DiskLight | Exact polygon form factor (rect) or illuminance (disk); emit from -Z; `inputs:texture:file` textures their light and their visible shape (Karma orientation: left edge at +X, top row at +Y) |
 | CylinderLight | Side only; `treatAsLine` |
-| DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube |
+| DomeLight | Latlong `inputs:texture:file`, rotation; diffuse SH9 and GGX-prefiltered cube. Without a texture the dome is uniform: its colour times intensity, behind everything as in Karma |
 | Shaping | Cone angle, softness, focus, focus tint; IES profiles (`shaping:ies:file`, `angleScale`, `normalize`) |
 
 - **Highlights of sized lights** are energy-conserving: reflected power, peak and shape match a brute-force GGX integral within 5% (and Karma) for sphere, rect, disk, sun and cylinder. Textured lights are read at the lobe's mip.
