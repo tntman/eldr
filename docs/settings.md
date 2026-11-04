@@ -266,7 +266,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Clearcoat<br>`eldr:clearcoat` | on | A glossy coat over the base material, as on car paint: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. Off: no coat. | Only materials that use it pay |
 | Sheen<br>`eldr:sheen` | on | A soft, velvet-like shine at grazing angles, as on cloth: standard_surface `sheen`, OpenPBR `fuzz_*`. Off: no sheen. | Same |
 | Thin Film Iridescence<br>`eldr:thinFilm` | on | Soap-bubble and oil-slick colours: standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. Off: no thin film. | Same |
-| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). Off: round highlights. | Same |
+| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`, glTF `anisotropy_strength`). Off: round highlights. | Same |
 | Multiple Scattering<br>`eldr:multiScatter` | on | Keeps rough metals (standard_surface) and OpenPBR materials from darkening as roughness grows, as MaterialX and Karma do. Other specular stays single scattering, as Karma. Off: single scattering everywhere. | |
 | Hair Shading<br>`eldr:hairShading` | on | Curves shade as hair, with hair highlights and no screen-space reflections. `primvars:eldr:hair = 0` opts a prim out. Off: curves shade as plain surfaces. | |
 | Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` shade in flat cartoon bands of light. Off: they shade normally. | |
@@ -305,7 +305,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Displacement Scale<br>`eldr:displacementScale` | float 1 | Multiplies every material's displacement amount. 0: none; 1: as authored. | Rebuilds displaced ray-tracing data |
 | Displacement Graphs<br>`eldr:displacementGraphs` | on | Allows displacement driven by shading networks (math, noise, several textures, primvars). Off: such materials don't displace. | Graph-displaced surfaces shade with flat facet normals; ray tracing builds extra data per mesh or instance |
 | Curves as Camera-Facing Ribbons<br>`eldr:curveRibbons` | off | Draws curves without normals as flat ribbons facing the camera instead of round tubes: faster for grass and fur. `primvars:eldr:ribbons` (bool) overrides it per curve. | 2 triangles per step instead of 12; 100k blades 14.9 to 9.6 ms. Ray tracing sees lines. |
-| Points as Camera-Facing Discs<br>`eldr:pointSprites` | off | Draws points as shaded discs facing the camera instead of small spheres: faster for large particle sets. `primvars:eldr:sprites` (bool) overrides it per prim. | 8 triangles per point instead of 20. Ray tracing sees points. |
+| Points as Camera-Facing Discs<br>`eldr:pointSprites` | off | Draws points as shaded discs facing the camera instead of small spheres: faster for large particle sets. `primvars:eldr:sprites` (bool) overrides it per prim. | 8 triangles per point instead of a sphere's 20 to 1280 (round as about a million triangles per prim allow). Ray tracing sees points. |
 
 ### Volumes and Fog
 

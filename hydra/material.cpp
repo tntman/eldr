@@ -2110,7 +2110,7 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
         m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
-        m->openPbrAnisotropy = true;
+        m->anisotropyMapping = 1;  // OpenPBR's
         program(_tokens->coat_weight, P::kCoat);
         program(_tokens->coat_roughness, P::kCoatRoughness);
         program(_tokens->coat_color, P::kCoatColor);
@@ -2160,6 +2160,7 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         m->thinFilmThickness = ReadOr(p, TfToken("iridescence_thickness"), 100.0f);
         m->anisotropy = ReadOr(p, TfToken("anisotropy_strength"), 0.0f);
         m->anisotropyRotation = -ReadOr(p, TfToken("anisotropy_rotation"), 0.0f) / 6.2831853f;  // radians, turns
+        m->anisotropyMapping = 2;  // glTF's
         m->transmission = std::clamp(ReadOr(p, _tokens->transmission, 0.0f), 0.0f, 1.0f);
         m->thinWalled = ReadOr(p, TfToken("thickness"), 0.0f) <= 0.0f;
         float distance = 0.0f;

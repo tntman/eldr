@@ -125,17 +125,17 @@ if not ribbons * 3 < tubes or not ribbons < oneTube < tubes:
     failures.append("triangles")
     print("FAIL: ribbons should draw far fewer triangles, and the primvar keep a tube")
 # Points as camera-facing discs (eldr:pointSprites): the point is as wide
-# (the picks above), 8 triangles instead of a sphere's 20; a point's
-# primvars:eldr:sprites = false keeps its sphere.
+# (the picks above), 8 triangles instead of a lone point's 1280-triangle
+# sphere; a point's primvars:eldr:sprites = false keeps its sphere.
 sprites = start(curveRibbons=True, pointSprites=True)
 expectAll()
 UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/points")).CreatePrimvar(
     "eldr:sprites", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
 sphere = start(curveRibbons=True, pointSprites=True)
 print(f"triangles: sphere {oneTube}, disc {sprites}, sprite primvar off {sphere}")
-if sprites != oneTube - 12 or sphere != oneTube:
+if sprites != oneTube - 1272 or sphere != oneTube:
     failures.append("sprites")
-    print("FAIL: a disc should draw 8 triangles for a sphere's 20, and the primvar keep the sphere")
+    print("FAIL: a disc should draw 8 triangles for a sphere's 1280, and the primvar keep the sphere")
 # Karma's Render Curves As (1: rounded) turns a ribbon back into a tube;
 # Render Points As (0: discs) loses to the eldr:sprites primvar above;
 # Width Scale doubles the point's radius.
