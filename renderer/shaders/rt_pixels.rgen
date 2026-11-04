@@ -302,35 +302,44 @@ void main()
                 // its specular albedo; the last one reflects the dome.
                 vec3 o = reflectOrigin, through = vec3(1.0);
                 float r = perceptual, cone = a;
+                Surface glass;
+                vec3 glassWeight = vec3(0.0), glassPosition = vec3(0.0);  // a glass hit's, traced after the loop
                 for (uint bounce = 1u; bounce <= 16u; ++bounce) {
                     TraceMask(o, l, cone, kRtMaskSurfaces | kRtMaskTranslucent);
                     if (hit.t < 0.0) {
                         reflection.rgb += through * Dome(l, r * float(frame.counts.z - 1u));
                         break;
                     }
-                    if ((hit.flags & kHitTranslucent) != 0u) {
-                        // Glass: its surface (Fresnel, highlights, the
-                        // diffuse share it doesn't transmit) and the light
-                        // through it (RefractedPath, rt.refraction.x
-                        // interfaces); the path ends there.
-                        Surface g = Evaluate(l, cone);
-                        float transmitted = g.refracted + g.straight;
-                        bool thin = g.m.refraction.y > 0.0;
-                        vec3 tint = thin || (!g.backface && g.m.refraction.z <= 0.0) ? g.m.transmission.rgb : vec3(1.0);
-                        hit.baseColor *= 1.0 - transmitted;
-                        vec3 surfaceLight = ShadeHit(l, seed + uvec3(0u, 0u, bounce * 104729u), true,
-                                                     (rt.shadowInfo.w & 1u) != 0u, true, true);
-                        vec3 f = gHitSpecular;
-                        vec4 path = RefractedPath(g, l, cone, rt.refraction.x, seed + uvec3(0u, 0u, bounce * 7919u), s);
-                        reflection.rgb += through * (surfaceLight + transmitted * (1.0 - f) * tint * path.rgb);
-                        break;
+                    // Glass: its surface (Fresnel, highlights, the
+                    // diffuse share it doesn't transmit) and the light
+                    // through it (RefractedPath, rt.refraction.x
+                    // interfaces, after the loop); the path ends there.
+                    // One Evaluate and one ShadeHit call (glslc's optimizer
+                    // ran out of ids with more inlined copies).
+                    bool glassHit = (hit.flags & kHitTranslucent) != 0u;
+                    uint material = draws[hit.slot].material;
+                    float transmitted = 0.0;
+                    vec3 tint = vec3(1.0);
+                    if (glassHit || (material != kNoMaterial && materials[material].program.y > 0u &&
+                                     (frame.features.x & kFeatureMaterialGraphs) != 0u)) {
+                        Surface g = Evaluate(l, cone);  // EvaluateHit's, and the glass's
+                        if (glassHit) {
+                            glass = g;
+                            transmitted = g.refracted + g.straight;
+                            bool thin = g.m.refraction.y > 0.0;
+                            tint = thin || (!g.backface && g.m.refraction.z <= 0.0) ? g.m.transmission.rgb : vec3(1.0);
+                            hit.baseColor *= 1.0 - transmitted;
+                        }
                     }
-                    EvaluateHit(l, cone);
-                    bool more = bounce < rt.skinned.z && hit.roughness < kMaxRoughness;
+                    bool more = !glassHit && bounce < rt.skinned.z && hit.roughness < kMaxRoughness;
                     vec3 hn = hit.normal, hg = hit.geometric, hp = hit.position;  // the shadow rays overwrite hit
                     r = hit.roughness;
                     reflection.rgb += through * ShadeHit(l, seed + uvec3(0u, 0u, bounce * 104729u), true,
                                                          (rt.shadowInfo.w & 1u) != 0u, true, !more);
+                    if (glassHit) {
+                        glassWeight = through * transmitted * (1.0 - gHitSpecular) * tint;
+                        glassPosition = hp;
+                    }
                     if (!more) {
                         break;
                     }
@@ -344,6 +353,10 @@ void main()
                     l = dot(next, hg) > 0.0 ? next : reflect(l, hn);
                     o = OffsetRay(hp, hg);
                     cone += r * r;
+                }
+                if (max(glassWeight.r, max(glassWeight.g, glassWeight.b)) > 0.0) {
+                    hit.position = glassPosition;
+                    reflection.rgb += glassWeight * RefractedPath(glass, l, cone, rt.refraction.x, seed + uvec3(0u, 0u, 7919u), s).rgb;
                 }
             }
             reflection.rgb /= float(samples);
