@@ -310,7 +310,7 @@ struct Material {
     // by the rotation (in turns). 0: isotropic.
     float anisotropy = 0;
     float anisotropyRotation = 0;
-    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    int anisotropyMapping = 0;  // its roughness mapping: 0 standard_surface's, 1 OpenPBR's, 2 glTF's
     // NPR toon: the lit result's intensity quantized into this many flat
     // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
     // `toonSoftness` of a band wide.

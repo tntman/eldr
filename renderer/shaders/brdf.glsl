@@ -314,7 +314,7 @@ struct Layers {
     bool fuzz;             // OpenPBR's fuzz (Zeltner's LTC sheen, over the coat), else Imageworks' sheen
     vec3 under;            // what the layers above (coat, fuzz) let through to the base: its transmission too
     float anisotropy;      // 0: isotropic base specular
-    bool openPbrAnisotropy;  // OpenPBR's roughness mapping, else standard_surface's
+    int anisotropyMapping;  // roughness mapping: 0 standard_surface's, 1 OpenPBR's, 2 glTF's
     vec3 tangent;          // the stretch direction, with the bitangent across it
     vec3 bitangent;
     float toonBands;       // the material's own (0: the frame's)
@@ -466,7 +466,7 @@ void CoatRoughening(inout float roughness)
 // diffuse colour and emission as they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, false, vec3(0.0),
+    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, 0, vec3(0.0),
                     vec3(0.0), 0.0, 0.0, BaseToonAlbedo(), false, diffuseColor);
     // Hair (curves, whose uvs run along each curve, unless their
     // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
@@ -555,7 +555,7 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
     // derivative frame.
     if (m.anisotropy.x > 0.0 && (frame.features.x & kFeatureAnisotropy) != 0u && !layers.hair) {
         layers.anisotropy = clamp(m.anisotropy.x, 0.0, 1.0);
-        layers.openPbrAnisotropy = m.anisotropy.z > 0.0;
+        layers.anisotropyMapping = int(m.anisotropy.z + 0.5);
         vec3 t = UvTangent(n);
         float angle = 2.0 * PI * m.anisotropy.y;
         layers.tangent = cos(angle) * t + sin(angle) * cross(n, t);
@@ -569,7 +569,11 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
 vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
     float at, ab;
-    if (layers.openPbrAnisotropy) {
+    if (layers.anisotropyMapping == 2) {
+        // glTF (KHR_materials_anisotropy, MaterialX's gltf_pbr): alpha_t = mix(a, 1, anisotropy^2), alpha_b = a.
+        at = mix(a, 1.0, layers.anisotropy * layers.anisotropy);
+        ab = max(a, 1e-4);
+    } else if (layers.anisotropyMapping == 1) {
         // OpenPBR: alpha_t = a sqrt(2 / (1 + (1 - anisotropy)^2)), alpha_b = (1 - anisotropy) alpha_t.
         float k = 1.0 - layers.anisotropy;
         at = a * sqrt(2.0 / (1.0 + k * k));

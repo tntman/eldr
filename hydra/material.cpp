@@ -1004,7 +1004,9 @@ public:
 
     // Compiles input `name` of `node`, times `weight`, into output `target`.
     // False, with nothing kept, if a node on the way isn't supported.
-    bool Output(HdMaterialNode2 const &node, TfToken const &name, P::Input target, float weight, int channel = -1)
+    // `weightInput`: an input of `node` (a connected weight) to multiply by too.
+    bool Output(HdMaterialNode2 const &node, TfToken const &name, P::Input target, float weight, int channel = -1,
+                TfToken const &weightInput = TfToken())
     {
         const size_t ops = _ops.size(), constants = _p.constants.size(), images = _p.images.size(),
                      primvars = _p.primvars.size();
@@ -1036,6 +1038,10 @@ public:
         }
         if (v && weight != 1.0f) {
             v = _Emit(P::kMultiply, {*v, _Const(GfVec4f(weight))});
+        }
+        if (v && !weightInput.IsEmpty()) {
+            const std::optional<Value> w = _Input(node, weightInput, 0);
+            v = w ? std::optional<Value>(_Emit(P::kMultiply, {*v, *w})) : std::nullopt;
         }
         if (!v) {
             _ops.resize(ops);
@@ -2110,7 +2116,7 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         m->thinFilmThickness = 1000.0f * ReadOr(p, _tokens->thin_film_thickness, 0.5f);  // micrometres
         m->thinFilmIor = ReadOr(p, _tokens->thin_film_ior, 1.4f);
         m->anisotropy = ReadOr(p, _tokens->specular_roughness_anisotropy, 0.0f);
-        m->openPbrAnisotropy = true;
+        m->anisotropyMapping = 1;  // OpenPBR's
         program(_tokens->coat_weight, P::kCoat);
         program(_tokens->coat_roughness, P::kCoatRoughness);
         program(_tokens->coat_color, P::kCoatColor);
@@ -2160,6 +2166,7 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
         m->thinFilmThickness = ReadOr(p, TfToken("iridescence_thickness"), 100.0f);
         m->anisotropy = ReadOr(p, TfToken("anisotropy_strength"), 0.0f);
         m->anisotropyRotation = -ReadOr(p, TfToken("anisotropy_rotation"), 0.0f) / 6.2831853f;  // radians, turns
+        m->anisotropyMapping = 2;  // glTF's
         m->transmission = std::clamp(ReadOr(p, _tokens->transmission, 0.0f), 0.0f, 1.0f);
         m->thinWalled = ReadOr(p, TfToken("thickness"), 0.0f) <= 0.0f;
         float distance = 0.0f;
@@ -2884,10 +2891,14 @@ void ReadSurface(HdMaterialNetwork2 const &net, HdVkTextureCache *textures, vkr:
         if (ref->texture && primvar != *uvPrimvar) {
             std::swap(otherUvSet, *ref);
         }
+        // A connected weight (e.g. emission) multiplies in the program.
         const auto c = surface.inputConnections.find(name);
-        if (!ref->texture && c != surface.inputConnections.end() && !c->second.empty() &&
+        const auto cw = weightName.IsEmpty() ? surface.inputConnections.end() : surface.inputConnections.find(weightName);
+        const bool weighted = cw != surface.inputConnections.end() && !cw->second.empty();
+        if (!ref->texture && ((c != surface.inputConnections.end() && !c->second.empty()) || weighted) &&
             !(ref == &m->baseColorTex && m->baseColorFromDisplayColor) &&
-            !graph.Output(surface, name, target, size == 3 ? weight : 1.0f) && otherUvSet.texture) {
+            !graph.Output(surface, name, target, size == 3 ? weight : 1.0f, -1, weighted ? weightName : TfToken()) &&
+            otherUvSet.texture) {
             std::swap(otherUvSet, *ref);
             TF_WARN("HdVk: a material reads uv sets '%s' and '%s' but can't run a graph for '%s'; its "
                     "textures read '%s'", uvPrimvar->GetText(), primvar.GetText(), name.GetText(),
