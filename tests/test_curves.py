@@ -66,7 +66,8 @@ def start(**settings):
     global engine
     engine = UsdImagingGL.Engine()
     assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
-    for name, value in settings.items():
+    # Levels of detail off: they build on other threads and would make the counts vary.
+    for name, value in {"lod": False, **settings}.items():
         engine.SetRendererSetting("eldr:" + name, value)
     engine.SetRenderViewport(Gf.Vec4d(0, 0, SIZE, SIZE))
     engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
@@ -121,7 +122,8 @@ UsdGeom.PrimvarsAPI(stage.GetPrimAtPath("/bspline")).CreatePrimvar(
     "eldr:ribbons", Sdf.ValueTypeNames.Bool, UsdGeom.Tokens.constant).Set(False)
 oneTube = start(curveRibbons=True)
 print(f"triangles: tubes {tubes}, ribbons {ribbons}, ribbons but one tube {oneTube}")
-if not ribbons * 3 < tubes or not ribbons < oneTube < tubes:
+SPHERE = 1280  # the point's triangles in each count
+if not (ribbons - SPHERE) * 3 < tubes - SPHERE or not ribbons < oneTube < tubes:
     failures.append("triangles")
     print("FAIL: ribbons should draw far fewer triangles, and the primvar keep a tube")
 # Points as camera-facing discs (eldr:pointSprites): the point is as wide

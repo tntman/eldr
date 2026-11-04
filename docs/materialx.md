@@ -78,7 +78,7 @@ Where Karma and Storm agree, Eldr follows them. The graph compiler (`hydra/mater
 
 The TestSuite's `image_addressing` constant cases (`uborder_color`, `vborder_color`) show the `default` colour outside [0, 1], as the MaterialX spec says; Storm renders it black and Karma grey, so their dE against Eldr is 20+. The other addressing cases (clamp, mirror, decal) match Storm (dE 0.1-0.3); Karma is darker there.
 
-Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `splittb` follows the formula (Karma swaps top and bottom; Storm reads uv 0 there).
+Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `ramptb` and `splittb` follow the formula, `valueb` at v = 0 (Karma swaps top and bottom, though Houdini's own MaterialX library doesn't; Storm reads uv 0 there).
 
 ## Where Karma differs from MaterialX
 

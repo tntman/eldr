@@ -466,7 +466,7 @@ void CoatRoughening(inout float roughness)
 // diffuse colour and emission as they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, false, vec3(0.0),
+    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, 0, vec3(0.0),
                     vec3(0.0), 0.0, 0.0, BaseToonAlbedo(), false, diffuseColor);
     // Hair (curves, whose uvs run along each curve, unless their
     // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
