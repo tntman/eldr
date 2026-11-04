@@ -645,7 +645,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             // the specular representative point is, at the mip of the
             // lobe's footprint at the light (its radius in light
             // directions, 2 a, stretched as LightRegion stretched it); for
-            // diffuse along the light's mean direction (LightTextureDiffuse).
+            // diffuse from 4 x 4 cells of the light (LightTextureDiffuse).
             // ponytail: two taps; no prefiltered form factor (Heitz's
             // filtered polygon lights would get the wide lobes right).
             float extent = length(hw) + length(hh);
@@ -654,7 +654,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             float aLobe = min(2.0 * a * max(regionStretch.x, regionStretch.y), 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
             specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
-            diffuseTint = LightTextureDiffuse(light, tex, toLight, n);
+            diffuseTint = LightTextureDiffuse(light, tex, toLight, n, 4);
         }
     }
     // The diffuse lobe (Oren-Nayar) towards the light's centre.

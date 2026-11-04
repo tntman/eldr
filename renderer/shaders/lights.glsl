@@ -183,37 +183,41 @@ float LightIes(Light light, vec3 p)
     return sum / 32.0;
 }
 
-// A textured rect/disk light's texture (index tex) as diffuse light at a
-// point (toLight: to the light's centre) with normal n sees it: the texture
-// where the light's mean direction (its form factor vector, the part above
-// n's horizon) meets the light, at the mip of the footprint twice that
-// distance wide, so it blends smoothly from a sharp foot under the light to
-// the whole light's average far away or at grazing angles. Disks use the
-// square of their area. s = 0 at +X as UsdLux says; the image's top row at
-// +Y, as Karma (rows are stored bottom-up).
-// ponytail: one tap at the mean direction, no filtered polygon integral
-// (Heitz's textured LTCs): sharp patterns blur more than an exact integral.
-vec3 LightTextureDiffuse(Light light, int tex, vec3 toLight, vec3 n)
+// A textured rect/disk light's texture (index tex) as the diffuse light a
+// point (toLight: to the light's centre) with normal n receives from it:
+// the light split into cells x cells cells, each the texture's average over
+// it (the mip with `cells` texels across) weighted by its exact form factor
+// above n's horizon. Smooth where a point moves (the weights are), coloured
+// by where the light's parts are. Disks use the square of their area. s = 0
+// at +X as UsdLux says; the image's top row at +Y, as Karma (rows are
+// stored bottom-up).
+// ponytail: detail finer than a cell is averaged away; more cells cost a
+// form factor each.
+vec3 LightTextureDiffuse(Light light, int tex, vec3 toLight, vec3 n, int cells)
 {
-    bool rect = uint(light.position.w) == kLightRect;
-    vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz;
-    vec3 f = RectFormFactorVectorClipped(toLight, rect ? hw : hw * 0.8862269, rect ? hh : hh * 0.8862269, n);
-    f = dot(f, toLight) < 0.0 ? -f : f;  // the loop's winding gives either sign
-    vec3 axis = light.axis.xyz;
-    float fa = dot(f, axis), ta = dot(toLight, axis);
-    vec3 dir = fa < -1e-6 * length(f) ? f / -fa : -toLight / ta;  // to the light's plane, per unit height
-    vec3 hit = dir * -ta - toLight;  // from the light's centre
-    vec2 uv = vec2(dot(hit, hw) / dot(hw, hw), dot(hit, hh) / dot(hh, hh));
-    uv = rect ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
+    float side = uint(light.position.w) == kLightRect ? 1.0 : 0.8862269;
+    float inv = 1.0 / float(cells);
+    vec3 hw = light.halfWidth.xyz * side, hh = light.halfHeight.xyz * side;
     ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
     float texels = float(max(size.x, size.y));
-    float extent = length(hw) + length(hh);
-    float lod = log2(texels * clamp(2.0 * length(dir) * abs(ta) / extent, 1.0 / texels, 1.0));
-    return textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + uv * vec2(-0.5, 0.5), lod).rgb;
+    float lod = log2(max(texels * inv, 1.0));
+    vec3 sum = vec3(0.0);
+    float total = 0.0;
+    for (int j = 0; j < cells; ++j) {
+        for (int i = 0; i < cells; ++i) {
+            vec2 c = (vec2(i, j) + 0.5) * (2.0 * inv) - 1.0;  // the cell's centre, -1..1
+            float w = abs(dot(RectFormFactorVectorClipped(toLight + hw * c.x + hh * c.y, hw * inv, hh * inv, n), n));
+            if (w > 0.0) {
+                sum += w * textureLod(textures[nonuniformEXT(tex)], vec2(0.5) + c * side * vec2(-0.5, 0.5), lod).rgb;
+                total += w;
+            }
+        }
+    }
+    return total > 0.0 ? sum / total : textureLod(textures[nonuniformEXT(tex)], vec2(0.5), log2(texels)).rgb;
 }
 
 // A textured rect/disk light's colour as seen from p as a point
-// (LightTextureDiffuse facing the light). White for other lights or with
+// (LightTextureDiffuse facing the light, 2 x 2 cells). White for other lights or with
 // light textures off; times its IES profile (LightIes). Shared by the
 // paths that treat the light as a point (traced hits, probes, fog,
 // volumes).
@@ -229,7 +233,7 @@ vec3 LightTint(Light light, vec3 p)
     if (dot(toLight, light.axis.xyz) >= 0.0) {
         return vec3(ies);  // behind the emitting side: unlit anyway
     }
-    return ies * LightTextureDiffuse(light, tex, toLight, -light.axis.xyz);
+    return ies * LightTextureDiffuse(light, tex, toLight, normalize(toLight), 2);
 }
 
 uint ClusterIndex(vec2 fragCoord, float viewDepth)
