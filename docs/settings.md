@@ -194,7 +194,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | SSGI Visibility Bitmask<br>`eldr:ssgiBitmask` | off | Lets bounced light pass behind thin objects instead of treating them as solid walls. Use it for poles, railings and foliage. | Cornell 0.20 vs 0.14 ms |
 | SSGI Bitmask Object Thickness<br>`eldr:ssgiBitmaskThickness` | float 0.25 | How thick SSGI assumes objects are, as a fraction of SSGI Radius (needs SSGI Visibility Bitmask). Thicker blocks more light. | Free |
 | Screen-Space Thickness Estimator<br>`eldr:ssgiThickness` | on | Estimates how thick objects are, so SSGI and SSR rays pass behind thin ones and handle grazing surfaces. Off: every surface counts as the same fixed thickness. | Noise |
-| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray that hits the back of a surface keeps only Back-Face Hit Scale of its light, so less light leaks through objects. | SSR 0.27 ms on crowd; SSGI 0.60 to 0.76 ms |
+| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray that hits the back of a surface keeps only Back-Face Hit Scale of its light, so less light leaks through objects. In SSR the rest shows the reflection probe or dome. | SSR 0.27 ms on crowd; SSGI 0.60 to 0.76 ms |
 | Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | How much light a back-face hit keeps (0-1): 0 treats surfaces as one-sided, 1 as two-sided. | Free |
 
 ### Lights

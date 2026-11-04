@@ -1123,6 +1123,16 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         // the footprint reaches past it.
         vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
         prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
+        if (lod > 1.0) {
+            // A coarse mip's texel is a square: a bright hit (the sun's
+            // highlight on a ball) showed as a block. A point jittered over
+            // the footprint's disc at a mip four times finer instead: the
+            // samples average to a round blur.
+            float angle = 6.2831853 * SampleNoise(kDimSsrDenoise, gl_FragCoord.xy, frame.ssr.y);
+            float radius = sqrt(SampleNoise(kDimSsgiJitter, gl_FragCoord.xy, frame.ssr.y)) * exp2(lod - 1.0);
+            prevUv += vec2(cos(angle), sin(angle)) * radius / vec2(textureSize(previousColor, 0));
+            lod = max(lod - 2.0, 0.0);
+        }
     }
     hit = textureLod(previousColor, prevUv, lod);
     if (frame.ssr.w > 0.0) {
@@ -1144,10 +1154,11 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // (Frame::screenBackface).
     // A small tolerance: grazing hits (normal from depth across
     // the ray, rounding either way) count as front faces.
-    if (lost) {
-        hit *= frame.screenTrace.y;  // its coverage too: the probe or dome shows through
-    } else if (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
-        hit.rgb *= frame.screenTrace.y;
+    // Both scale the coverage: the probe or dome shows through, a guess at
+    // the light on the hidden side (a metal ball's back in a mirror behind
+    // it reflects the surroundings, not black).
+    if (lost || (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3)) {
+        hit *= frame.screenTrace.y;
     }
     // Fade towards the screen edges, beyond which the ray is blind.
     vec2 edge = 1.0 - abs(ndc);
@@ -1415,7 +1426,9 @@ void main()
         domeKept *= 1.0 - ssrWeight;  // ponytail: the denoised rays' misses aren't in the splits
     } else if (ssrWeight > 0.0) {
         vec4 hit;
-        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), a, hit);  // the lobe's width
+        // The lobe's width: reflected directions spread about twice its
+        // half-vectors' alpha (roughness 0.2 was sharper than Karma's).
+        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), 2.0 * a, hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
         domeKept *= 1.0 - ssrWeight * hit.a;
     }
