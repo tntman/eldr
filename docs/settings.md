@@ -145,72 +145,72 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Sample Dimensions<br>`eldr:sampleDimensions` | on | Gives each random effect its own well-spread sample pattern, so noise has no visible patterns and converges faster. | None |
-| Adaptive Sampling Noise Threshold<br>`eldr:adaptiveThreshold` | float 0 (off) | [film] Pixels whose noise falls under this stop sampling early. Try 0.002 for large flat areas. Not used with motion blur time samples. | Off is bit-identical |
-| Adaptive Sampling Converged Pixel Fraction<br>`eldr:adaptivePixelFraction` | float 0.999 | [film] The frame is done once this fraction of pixels has stopped. 1 waits for all. | Cornell at 0.01: 27 samples at 0.9, 58 at 0.95 |
-| Adaptive Sampling Min Samples<br>`eldr:adaptiveMinSamples` | int 16 | [film] Samples every pixel takes before it may stop. | |
-| Adaptive Sampling Skips Stopped Tiles<br>`eldr:adaptiveTiles` | on | [film] Blocks of pixels that have all stopped skip their work, so later samples are cheaper. The image is the same. Not used where refraction, subsurface or post depth of field is in view. | Kitchen 1080p, threshold 0.01: 17.4 to 12.8 s |
-| Effect Denoise Fade<br>`eldr:effectDenoiseSamples` | int 64 | [film] The final gather, traced shadow and reflection blurs fade out over this many samples, so the converged image stays sharp. 0: blur every sample (slightly soft). Off with `eldr:denoise`. | At 4/16/64 samples, RMSE raw vs blurred: emissive.usda 0.027/0.023/0.012 vs 0.009/0.008/0.008 |
-| Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps a pixel's direct light brightness, keeping hue. Firefly killer; costs energy. | |
-| Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Karma's indirect colour limit (0 = off): caps bounce light (SSGI, SSR, traced hits, GI rays), the emission they see, and emissive-mesh lights (radiance x albedo, as Karma). Wins over `eldr:colorLimit` and Karma's. Not the dome. | |
-| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Karma's `karma:global:colorlimit` (this wins): caps emission the camera sees, hue kept (40 shows as 20, as Karma), and the indirect clamp unless `eldr:colorLimitShared` is off. Full HDR: 0, with `eldr:indirectClamp` 20. Karma's 0 is black (ignored): use 1e6. | |
-| Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | 0 off, 1 on. Off: the indirect clamp comes from `karma:global:colorlimitindirect` rather than the color limit. Without it set, Karma's `colorlimitindlinked` decides. | |
+| Sample Dimensions<br>`eldr:sampleDimensions` | on | Gives each random effect (lens, shadows, rays) its own well-spread sample pattern, so noise shows no patterns and clears faster. Off only to compare. | None |
+| Adaptive Sampling Noise Threshold<br>`eldr:adaptiveThreshold` | float 0 (off) | Lets pixels stop sampling early once their noise falls under this value, so clean areas finish sooner. Try 0.002 for large flat areas. 0: off, every pixel takes all Film Samples. Not used with Motion Blur Time Samples. [film] | Off is bit-identical |
+| Adaptive Sampling Converged Pixel Fraction<br>`eldr:adaptivePixelFraction` | float 0.999 | With adaptive sampling, the image counts as finished once this fraction (0-1) of its pixels has stopped. 1: waits for every pixel. [film] | Cornell at 0.01: 27 samples at 0.9, 58 at 0.95 |
+| Adaptive Sampling Min Samples<br>`eldr:adaptiveMinSamples` | int 16 | With adaptive sampling, the samples every pixel takes before it may stop. Raise it if small bright details stop too early and stay noisy. [film] | |
+| Adaptive Sampling Skips Stopped Tiles<br>`eldr:adaptiveTiles` | on | With adaptive sampling, blocks of pixels that have all stopped skip their work, so later samples are cheaper. The image is the same. Not used where refraction, subsurface or post depth of field is in view. [film] | Kitchen 1080p, threshold 0.01: 17.4 to 12.8 s |
+| Effect Denoise Fade<br>`eldr:effectDenoiseSamples` | int 64 | Blurs the noise of final gather and ray-traced shadows and reflections on the first samples, fading out over this many: early frames look clean, the finished image stays sharp. 0: blur always (slightly soft). Off with Denoise. [film] | At 4/16/64 samples, RMSE raw vs blurred: emissive.usda 0.027/0.023/0.012 vs 0.009/0.008/0.008 |
+| Direct Light Clamp<br>`eldr:directClamp` | float 0 (off) | Caps how bright direct light can make a pixel, keeping its hue, to remove fireflies. Costs some energy, so highlights get dimmer. 0: off. | |
+| Indirect Light Clamp<br>`eldr:indirectClamp` | float -1 (unset: 20) | Caps bounced light (SSGI, SSR, ray-traced hits, GI rays), the emission it sees and emissive-mesh lights, to remove fireflies; the dome is never capped. As Karma's Indirect Color Limit. 0: off. Unset (-1): from Color Limit, else 20. | |
+| Color Limit<br>`eldr:colorLimit` | float -1 (unset: Karma's, else 20) | Caps the brightness of emission the camera sees, keeping its hue (40 shows as 20), as Karma's Color Limit; also sets the bounced-light cap (see Indirect Clamp Shared). Unset (-1): Karma's, else 20. 0: no cap. Karma's 0 is ignored. | |
+| Indirect Clamp Shared with Color Limit<br>`eldr:colorLimitShared` | int -1 (unset) | Whether Indirect Light Clamp follows Color Limit: 1 yes; 0 no, it uses Karma's `karma:global:colorlimitindirect` (else Color Limit). Unset (-1): Karma's `colorlimitindlinked` decides (default yes). Indirect Light Clamp, when set, wins. | |
 
 ### Ray Tracing
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Ray-Traced Light Sampling<br>`eldr:rtLightSampling` | on | [RT] Traced rays sample one light at a time, chosen by brightness, and skip lights that can't reach a pixel. Same converged image with many lights, faster. | 1080p, ms per sample: emissive 147 to 78, Kitchen 195 to 158, crowd 542 to 478; noise unchanged |
-| Ray-Traced Skinned Instances<br>`eldr:rtSkinnedInstances` | int 16 | [RT] How many of the largest skinned characters (0-256) block rays in ray-traced effects. | Kitchen 0.45 ms (16), 0.69 ms (90); crowd 0.68 ms (16), 2.7 ms (256) |
-| Ray Tracing Sees Displacement<br>`eldr:rtDisplacement` | on | [RT] Ray-traced effects see displaced surfaces. | Rebuilds when the displacement changes |
-| Ray Tracing Compacts Static BLASes<br>`eldr:rtCompaction` | on | [RT] Shrinks the ray-tracing data of static meshes after it is built. Off: about twice the memory. | Applies to data built after the change |
-| Final Gather Distance<br>`eldr:finalGatherDistance` | float 0 | 0: final gather rays travel until they hit. Above 0: their length in scene units, after which the GI probes supply the light. Faster but less exact. | emissive.usda 960x540, 256 samples: 5.2 s at 0, 3.9 s at 0.5 |
-| Final Gather Rays per Pixel<br>`eldr:finalGatherRays` | int 1 | Gather rays per pixel and sample (1-16). With Final Gather Denoise, more than 1 gains little. | 1080p, 64 samples: emissive.usda 2.7 s at 1, 5.3 s at 2, 10.4 s at 4 |
-| Final Gather Denoise<br>`eldr:finalGatherDenoise` | float 1 | Strength (0-1) of an edge-aware blur on the gathered light during the first `eldr:effectDenoiseSamples` samples. Textures stay sharp. 0: raw. | About 1 ms per sample at 1080p while active |
-| Final Gather Roulette<br>`eldr:finalGatherRoulette` | off | [RT] From the second sample, each 8x8 block gathers on every other sample, weighted to match. Same converged image, but about 1.5x the noise at 64 samples. | 1080p, ms per sample: emissive 78 to 64, Kitchen 158 to 132, crowd 478 to 388 |
-| Caustic Photons per Light and Sample<br>`eldr:causticsPhotons` | int 65536 | Photons each light sends towards caustic casters per sample (1024 to 4M). More means less noise per sample. | 7.4 ms per sample at 65536, 28 ms at 262144 (one sun) |
-| Caustic Gather Radius<br>`eldr:causticsRadius` | float 0 (auto) | World units the first sample gathers photons over; later samples shrink it (progressive photon mapping, alpha 2/3). 0: 2% of the casters' bounding radius. Larger is smoother but blurrier at first. | |
-| Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
-| Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced shape (with `eldr:rtDisplacement`). Off: it refracts as flat glass. | Displaced glass only |
-| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] Traces refraction only from pixels that show glass. The image is the same; off is for comparison. | glass.usda 1080p: 41.7 to 37.5 ms per sample |
+| Ray-Traced Light Sampling<br>`eldr:rtLightSampling` | on | Ray-traced rays sample one light at a time, picked by brightness, and skip lights that can't reach a pixel. The same finished image, much faster with many lights. Off only to compare. [RT] | 1080p, ms per sample: emissive 147 to 78, Kitchen 195 to 158, crowd 542 to 478; noise unchanged |
+| Ray-Traced Skinned Instances<br>`eldr:rtSkinnedInstances` | int 16 | How many of the largest skinned characters (0-256) appear in ray-traced shadows, reflections and GI. Raise it for crowds whose far characters should block rays; costs memory and time. [RT] | Kitchen 0.45 ms (16), 0.69 ms (90); crowd 0.68 ms (16), 2.7 ms (256) |
+| Ray Tracing Sees Displacement<br>`eldr:rtDisplacement` | on | Ray-traced shadows, reflections and GI see displaced surfaces. Off: rays see the undisplaced shape, which is faster to update when displacement animates. [RT] | Rebuilds when the displacement changes |
+| Ray Tracing Compacts Static BLASes<br>`eldr:rtCompaction` | on | Shrinks the ray-tracing data of static meshes after it is built, about halving its memory. The image is the same. Off only to compare. [RT] | Applies to data built after the change |
+| Final Gather Distance<br>`eldr:finalGatherDistance` | float 0 | How far final gather rays travel, in scene units; past it the GI probes supply the light. Faster, but less exact in large spaces. 0: rays travel until they hit something. [RT] | emissive.usda 960x540, 256 samples: 5.2 s at 0, 3.9 s at 0.5 |
+| Final Gather Rays per Pixel<br>`eldr:finalGatherRays` | int 1 | Final gather rays per pixel and sample (1-16): more give cleaner bounced light per sample. With Final Gather Denoise on, more than 1 gains little. [RT] | 1080p, 64 samples: emissive.usda 2.7 s at 1, 5.3 s at 2, 10.4 s at 4 |
+| Final Gather Denoise<br>`eldr:finalGatherDenoise` | float 1 | Strength (0-1) of an edge-aware blur on the gathered bounced light during the first Effect Denoise Fade samples; textures stay sharp. 0: raw rays. [RT] | About 1 ms per sample at 1080p while active |
+| Final Gather Roulette<br>`eldr:finalGatherRoulette` | off | From the second sample, each 8x8 pixel block gathers on every other sample, weighted to match: faster samples, about 1.5x the noise at 64 samples. The finished image is the same. [RT] | 1080p, ms per sample: emissive 78 to 64, Kitchen 158 to 132, crowd 478 to 388 |
+| Caustic Photons per Light and Sample<br>`eldr:causticsPhotons` | int 65536 | Photons each light sends towards caustic-casting objects per sample (1024 to 4M). More: less caustic noise per sample, but slower. [RT] | 7.4 ms per sample at 65536, 28 ms at 262144 (one sun) |
+| Caustic Gather Radius<br>`eldr:causticsRadius` | float 0 (auto) | Radius, in scene units, over which the first sample gathers photons; later samples shrink it, so caustics sharpen as the image refines. Larger: smoother but blurrier at first. 0: 2% of the casting objects' size. [RT] | |
+| Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | How many glass surfaces a ray may pass (1-16): 2 for one ball, 4 for a ball behind a pane. Raise it if glass behind glass turns black. Like Karma's Refraction Limit. [RT] | |
+| Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | Displaced glass bends rays by its displaced shape (needs Ray Tracing Sees Displacement). Off: it refracts as if flat. [RT] | Displaced glass only |
+| Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | Traces refraction only from pixels that show glass, which is faster. The image is the same; off only to compare. [RT] | glass.usda 1080p: 41.7 to 37.5 ms per sample |
 
 ### Global Illumination
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| GI Probes along the Scene<br>`eldr:giProbes` | int 16 | Probes along the scene's longest side (2-64, at most 16384 in all). More catch smaller detail. | Linear in probes |
-| GI Rays per Probe per Frame<br>`eldr:giRaysPerProbe` | int 128 | Rays each probe traces per frame (16-512). More converges faster and cleaner. | Linear |
-| GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | History weight (0-0.99). Higher is smoother, slower to react. Little effect on stills. | |
-| GI Preconverge<br>`eldr:giPreconverge` | on | [film] Waits for fresh probes to settle before the film starts averaging. | Cornell: RMSE 0.0128 to 0.0047 |
-| GI Probe Relocation<br>`eldr:giRelocation` | on | Moves probes that sit inside or just behind walls out into open space, so light near walls stays right. | emissive.usda (4096 probes) 2.50 to 3.04 ms |
-| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 0.5 | World-space scan radius. Match scene scale. | |
-| Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Directions per pixel (1-8). 3 is enough with the film. | Linear |
-| SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps per direction and side (1-32). | |
-| SSGI Radius<br>`eldr:ssgiRadius` | float 1 | World-space gather radius; use a fraction of the room size. | |
-| SSGI Resolution Divisor<br>`eldr:ssgiResolution` | int 2 | 1 = full resolution, 2 = half (denoised and upsampled). | Full is about 2x |
-| SSGI Tile Order<br>`eldr:ssgiTileOrder` | on | At half resolution, traces a different pixel of each 2x2 block every frame. Off: always the same one. | Free |
-| SSGI Visibility Bitmask<br>`eldr:ssgiBitmask` | off | Lets light pass behind thin objects. Use it for poles, railings and foliage. | Cornell 0.20 vs 0.14 ms |
-| SSGI Bitmask Object Thickness<br>`eldr:ssgiBitmaskThickness` | float 0.25 | Assumed object thickness, as a fraction of `eldr:ssgiRadius`; thicker blocks more light. | Free |
-| Screen-Space Thickness Estimator<br>`eldr:ssgiThickness` | on | Lets SSGI and SSR rays pass behind thin objects and handle grazing surfaces. Off: every surface counts as a fixed thickness. | Noise |
-| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray that hits the back of a surface keeps only `eldr:screenBackfaceScale` of its light, so less light leaks through objects. | SSR 0.27 ms on crowd; SSGI 0.60 to 0.76 ms |
-| Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | Light kept from a back-face hit (0-1): 0 treats surfaces as one-sided, 1 as two-sided. | Free |
+| GI Probes along the Scene<br>`eldr:giProbes` | int 16 | GI probes along the scene's longest side (2-64, at most 16384 in all). More: catches smaller rooms and details, but costs time. [RT] | Linear in probes |
+| GI Rays per Probe per Frame<br>`eldr:giRaysPerProbe` | int 128 | Rays each GI probe traces per frame (16-512). More: the bounced light settles faster and flickers less. [RT] | Linear |
+| GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | How much each GI probe keeps of its earlier light per frame (0-0.99). Higher: smoother, slower to react to moving lights and objects. Little effect on stills. [RT] | |
+| GI Preconverge<br>`eldr:giPreconverge` | on | Waits for new GI probes to settle before the image starts refining, so the first samples don't bake in dark, unsettled light. [film] [RT] | Cornell: RMSE 0.0128 to 0.0047 |
+| GI Probe Relocation<br>`eldr:giRelocation` | on | Moves GI probes stuck inside or just behind walls out into open space, so light near walls doesn't leak or go dark. [RT] | emissive.usda (4096 probes) 2.50 to 3.04 ms |
+| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 0.5 | How far Ambient Occlusion looks for nearby surfaces, in scene units. Match it to the scene's scale: larger darkens wider areas. | |
+| Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Directions Ambient Occlusion checks per pixel (1-8). More: less noise per frame; 3 is enough once the image refines. | Linear |
+| SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps SSGI takes along each direction (1-32). More: finds thinner and farther surfaces, but slower. | |
+| SSGI Radius<br>`eldr:ssgiRadius` | float 1 | How far SSGI gathers bounced light, in scene units. Use a fraction of the room size: larger spreads light farther but gets noisier. | |
+| SSGI Resolution Divisor<br>`eldr:ssgiResolution` | int 2 | SSGI's resolution: 1 full, 2 half (denoised and upsampled, about twice as fast). | Full is about 2x |
+| SSGI Tile Order<br>`eldr:ssgiTileOrder` | on | At half resolution, traces a different pixel of each 2x2 block every frame, so detail fills in over time. Off: always the same pixel. | Free |
+| SSGI Visibility Bitmask<br>`eldr:ssgiBitmask` | off | Lets bounced light pass behind thin objects instead of treating them as solid walls. Use it for poles, railings and foliage. | Cornell 0.20 vs 0.14 ms |
+| SSGI Bitmask Object Thickness<br>`eldr:ssgiBitmaskThickness` | float 0.25 | How thick SSGI assumes objects are, as a fraction of SSGI Radius (needs SSGI Visibility Bitmask). Thicker blocks more light. | Free |
+| Screen-Space Thickness Estimator<br>`eldr:ssgiThickness` | on | Estimates how thick objects are, so SSGI and SSR rays pass behind thin ones and handle grazing surfaces. Off: every surface counts as the same fixed thickness. | Noise |
+| Screen-Space Back-Face Hits<br>`eldr:screenBackface` | on | An SSR or SSGI ray that hits the back of a surface keeps only Back-Face Hit Scale of its light, so less light leaks through objects. | SSR 0.27 ms on crowd; SSGI 0.60 to 0.76 ms |
+| Screen-Space Back-Face Hit Scale<br>`eldr:screenBackfaceScale` | float 0.25 | How much light a back-face hit keeps (0-1): 0 treats surfaces as one-sided, 1 as two-sided. | Free |
 
 ### Lights
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Local Lights<br>`eldr:localLights` | on | Sphere, rect, disk, cylinder lights. | |
-| Clustered Local Lights<br>`eldr:clusteredLights` | on | 16x9x24 cluster grid, up to 255 lights per cluster (more: that cluster shades all lights). Off loops all lights per pixel. | |
-| Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights multiply radiance by `inputs:texture:file` (Karma orientation), in the light they cast and on their visible shape. | |
+| Local Lights<br>`eldr:localLights` | on | Lights the scene with sphere, rect, disk and cylinder lights (spot lights included). Off: only distant and dome lights, for comparisons. | |
+| Clustered Local Lights<br>`eldr:clusteredLights` | on | Sorts local lights into a 16x9x24 grid over the view, so each pixel shades only nearby lights (up to 255 per cell); much faster with many lights. Off: every pixel shades every light. | |
+| Light Textures<br>`eldr:lightTextures` | on | Rect and disk lights take their colour from their texture (`inputs:texture:file`), both in the light they cast and on their visible shape, oriented as in Karma. | |
 | Light Linking<br>`eldr:lightLinking` | on | Honours light and shadow links (`collection:lightLink`, `collection:shadowLink`, Houdini's Light Linker), up to 32 linked collections. Domes and fog ignore links. Off: every light lights and shadows everything. | Shadow-linked lights trace slower shadow rays |
-| IES Profiles<br>`eldr:lightIes` | on | Shapes local lights with an IES file (`inputs:shaping:ies:file`, with `angleScale` and `normalize`), oriented as in Karma. | One texture read per light and pixel |
-| Light Shapes Visible<br>`eldr:lightShapesVisible` | on | Shows light shapes to the camera. A light shows its shape only when its Render Light Geometry (`inputs:karma:light:renderlightgeo` or `inputs:eldr:light:renderlightgeo`) is on, as in Karma. Needs `eldr:localLights`. | 0.12 ms |
-| Dome in the Camera<br>`eldr:domeCameraVisible` | on | Draws the dome's texture behind the scene. Off: the clear colour (with its alpha) shows; lighting and reflections still use the dome. `bool inputs:karma:light:renderlightgeo = 0` hides one dome; Hydra's `domeLightCameraVisibility` also applies. | |
-| Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small bright constant emitters also become rect or sphere lights with shadows (max 32). Others light via GI only. | |
-| Emissive Light Threshold<br>`eldr:emissiveLightThreshold` | float 4 | Brightest-channel radiance above which an emitter becomes a light. | |
-| Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | Luminance counting as sun. Lower if the sun is missed. | |
-| Direct Light Intensity<br>`eldr:directIntensity` | float 1 | Scales direct light in the final image only; bounced light and AOVs are unchanged. | None at 1. Other values add the light-split pass: crowd shading 14.8-16.5 vs 12.2-12.5 ms |
-| Indirect Light Intensity<br>`eldr:indirectIntensity` | float 1 | Scales bounced light and reflections in the final image only. 0 leaves direct light only. | As above |
+| IES Profiles<br>`eldr:lightIes` | on | Shapes local lights with an IES profile (`inputs:shaping:ies:file`, with `angleScale` and `normalize`), oriented as in Karma. Off: lights shine evenly. | One texture read per light and pixel |
+| Light Shapes Visible<br>`eldr:lightShapesVisible` | on | Shows light shapes to the camera, but only for lights with Render Light Geometry on (`inputs:karma:light:renderlightgeo` or `inputs:eldr:light:renderlightgeo`), as Karma. Needs Local Lights. | 0.12 ms |
+| Dome in the Camera<br>`eldr:domeCameraVisible` | on | Shows the dome's image behind the scene. Off: the background is the clear colour (with its alpha), while the dome still lights and reflects. A dome's `inputs:karma:light:renderlightgeo = 0` and Hydra's `domeLightCameraVisibility` hide it too. | |
+| Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small, bright, constant-coloured glowing objects also act as real lights (up to 32) that light their surroundings and cast shadows. Other glowing objects light the scene through GI only. | |
+| Emissive Light Threshold<br>`eldr:emissiveLightThreshold` | float 4 | How bright a glowing object's emission must be (its brightest channel) to become a light. Lower it if a lamp shade lights nothing. | |
+| Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | How bright a spot in the dome image must be to count as the sun. Lower it if Dome Sun Extraction misses the sun. | |
+| Direct Light Intensity<br>`eldr:directIntensity` | float 1 | Scales direct light in the final image only, as a look tweak; bounced light and AOVs are unchanged. 1: as rendered. | None at 1. Other values add the light-split pass: crowd shading 14.8-16.5 vs 12.2-12.5 ms |
+| Indirect Light Intensity<br>`eldr:indirectIntensity` | float 1 | Scales bounced light and reflections in the final image only, as a look tweak. 0: direct light only. 1: as rendered. | As above |
 
 ### Shadows
 
