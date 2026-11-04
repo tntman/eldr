@@ -1316,7 +1316,10 @@ void main()
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
                                  finalGather ? Lavg * occlusion : Lavg * diffuseAO + SsgiDiffuse());
     }
-    float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
+    // Never below the diffuse occlusion: on smooth surfaces at grazing
+    // angles the formula goes black where the hidden reflection (an
+    // object's underside) is only darker, blotting object bases.
+    float specularAO = max(clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0), diffuseAO);
     specular *= MultiBounce(specularAO, f0);
     // The mirror's planar reflection, elsewhere screen-space reflections:
     // they replace the dome (or probe) where they hit something; where the
