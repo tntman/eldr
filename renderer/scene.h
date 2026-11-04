@@ -839,9 +839,11 @@ public:
         // beyond the metallic base, Material::Layered, or Mesh::hair; shading
         // pass only), kDisplaced (a displacing material; every pass): kind >>
         // 2 picks the renderer's pipeline variant. Chunks also end where it
-        // changes.
+        // changes. kTints: opaque, but with tinted shadows on its shadow is
+        // a tint caster's (a thin-walled subsurface material lets its
+        // colour through: tintCasters), not in the opaque shadow maps.
         enum : uint8_t {
-            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
+            kOpaque, kCutout, kTranslucent, kTints, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
             kDisplaced = 128
         };
         std::vector<uint8_t> chunkKind;
@@ -858,6 +860,10 @@ public:
         enum : uint8_t { kRefracts = 1, kHoldout = 2, kThin = 4 };  // kThin: thin-walled, no inside to draw
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
+        // The kTints meshes' commands and pipeline variants (the tint maps
+        // draw them with the translucent ones).
+        std::vector<uint32_t> tintCasters;
+        std::vector<uint8_t> tintCasterVariant;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
@@ -940,6 +946,7 @@ public:
             bool displaced = false;  // its material displaces (Gpu::kDisplaced)
             bool translucent = false;  // blended: only traced shadows that tint see it
             uint32_t firstInstance = 0;  // its first instance slot (a displacement graph's instance inputs)
+            bool tints = false;  // kTints: traced shadows take its tint, other rays see it opaque
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

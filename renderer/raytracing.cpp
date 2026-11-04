@@ -70,7 +70,7 @@ constexpr int kIrradianceTexels = 6, kVisibilityTexels = 14;  // tile interiors,
 
 
 // RtSlot::flags (shaders/rt.glsl, tlas.comp).
-constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2, kSlotTranslucent = 4;
+constexpr uint32_t kSlotEmitter = 1, kSlotCutout = 2, kSlotTranslucent = 4, kSlotTints = 8;
 
 // BLASes are placed in 16 MB blocks at the required 256-byte alignment.
 constexpr VkDeviceSize kUnit = 256;
@@ -1158,7 +1158,7 @@ void RayTracing::_PrepareTlas(const Scene::Gpu &gpu)
         words[s * 4 + 1] = uint32_t(address >> 32);
         words[s * 4 + 2] = g.firstIndex;
         words[s * 4 + 3] = (g.cutout ? kSlotCutout : 0) | (g.emitter ? kSlotEmitter : 0) |
-                           (g.translucent ? kSlotTranslucent : 0);
+                           (g.translucent ? kSlotTranslucent : 0) | (g.tints ? kSlotTints : 0);
     }
     if (words != _slotWords) {
         _dev.Reserve(_slots, words.size() * sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);

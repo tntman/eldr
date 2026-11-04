@@ -7,7 +7,8 @@ eldr_rt prim). Not pixel equality with Karma, only what must hold either way:
 - furnace_grey (uniform white dome of 1): white diffuse, rough white metal, clear glass and
   coated white read about 1, grey 0.5 reads 0.5, the background 1 (energy neither made nor
   lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug;
-- sun_on_chrome: the colour limit caps the chrome sun highlights (every camera sample, as Karma).
+- sun_on_chrome: the colour limit caps the chrome sun highlights (every camera sample, as Karma);
+- subsurface_translucent: the thin translucent leaf's shadow is green.
 Needs a GPU with ray tracing for the traced half.
 Run: usdenv.cmd python tests\\test_scenarios.py"""
 import os
@@ -132,6 +133,14 @@ for traced in (False, True):
     full = Shot("sun_on_chrome", traced, {"eldr:colorLimit": 0.0}).peak()
     print("  sun_on_chrome peak: limit 0.5 %.3f, off %.3f" % (limited, full))
     expect(limited <= 0.52 and full > 0.7, "%s: the colour limit caps the chrome highlights" % mode)
+
+# The back-lit thin translucent leaf casts a green shadow, not an opaque grey one: the
+# floor where the sun's ray through the leaf's (2.1, 0.6, 0) lands.
+for traced in (False, True):
+    mode = "traced" if traced else "default"
+    c = Shot("subsurface_translucent", traced).mean((1.66, 0.0, 1.21), 2)
+    print("  leaf shadow %s" % fmt(c))
+    expect(c[1] > 1.15 * c[0] and c[1] > 1.15 * c[2], "%s: the leaf's shadow is green" % mode)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
