@@ -60,6 +60,7 @@ def Scope "Render"
         custom int eldr:rtShadowLights = 16
         custom int eldr:rtShadowSamples = 1
         custom bool eldr:rtShadows = 1
+        custom float karma:object:volumelimit = 4.0
     }
     def RenderSettings "karma"
     {

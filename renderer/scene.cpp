@@ -511,10 +511,10 @@ bool Scene::SetDefaultMaterial(bool karma)
 // 0-75 degrees) and a white dome: diffuse 0.4 x displayColor (white without
 // one), within 1%, plus an untinted lobe of directional albedo 0.033 at any
 // view angle (no Fresnel rise), Beckmann-like of width 0.29. Here: GGX of
-// alpha 0.29 (roughness 0.54) and F0 0.034 (ior 1.45); the diffuse weight
-// makes up for the 3.5% the specular takes from it.
+// alpha 0.29 (roughness 0.54) and F0 0.034 (ior 1.45) without a Fresnel
+// rise; the diffuse weight makes up for the 3.5% the specular takes from it.
 // ponytail: GGX's longer tail is 2x Karma's lobe 30 degrees off the mirror
-// direction (0.002 against 0.001 of the light); Schlick rises at grazing.
+// direction (0.002 against 0.001 of the light).
 const Material *Scene::_MaterialOf(const Mesh &mesh)
 {
     if (mesh.material || !_karmaDefault) {
@@ -529,6 +529,7 @@ const Material *Scene::_MaterialOf(const Mesh &mesh)
         m->displayColorWeight = (mesh.colorAuthored ? 0.4f : 0.8f) / (1.0f - 0.035f);
         m->roughness = 0.54f;
         m->ior = 1.45f;
+        m->flatFresnel = true;
         m->opacity = opacity;
         m->opacityPresence = true;  // Karma's Of: the whole response
     }
@@ -2236,7 +2237,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.surface[2] = m.coatAffectColor;
             g.surface[3] = m.coatAffectRoughness;
             std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
-            g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.specularColor[3] = m.specularWorkflow ? 1.0f : m.flatFresnel ? -1.0f : 0.0f;
             g.coat[0] = m.coat;
             g.coat[1] = m.coatRoughness;
             g.coat[2] = m.coatF0;
@@ -2249,7 +2250,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.thinFilm[2] = m.thinFilmIor;
             g.anisotropy[0] = m.anisotropy;
             g.anisotropy[1] = m.anisotropyRotation;
-            g.anisotropy[2] = m.openPbrAnisotropy ? 1.0f : 0.0f;
+            g.anisotropy[2] = float(m.anisotropyMapping);
             g.toon[0] = m.toonBands;
             g.toon[1] = m.toonSoftness;
             std::copy(m.transmissionColor, m.transmissionColor + 3, g.transmission);

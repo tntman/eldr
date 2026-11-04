@@ -129,6 +129,9 @@ def read_scene(usda):
 def standard_prims(main):
     """The standard prims (name, renderer, attrs, products) built from the scene's main prim."""
     final = {a: (t, v) for a, t, v in FINAL}
+    # The feature's own Karma settings (Eldr reads karma: twins), so
+    # eldr_final and karma render the same scene (Volume Limit, say).
+    final.update((a, tv) for a, tv in main["attrs"].items() if a.startswith("karma:") and a not in final)
     products = main.get("products", [])
     return [
         {"name": "eldr_default", "renderer": ELDR, "attrs": {}, "products": products},

@@ -292,6 +292,9 @@ struct Material {
     // metallic is ignored.
     bool specularWorkflow = false;
     float specularColor[3] = {0, 0, 0};
+    // UsdPreviewSurface model only: the dielectric's reflectance stays F0 at
+    // every angle (no Fresnel rise), as Karma's default material.
+    bool flatFresnel = false;
     // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
     // coatColor and loses what the coat reflects. Weight 0: none.
     float coat = 0;
@@ -310,7 +313,7 @@ struct Material {
     // by the rotation (in turns). 0: isotropic.
     float anisotropy = 0;
     float anisotropyRotation = 0;
-    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    int anisotropyMapping = 0;  // its roughness mapping: 0 standard_surface's, 1 OpenPBR's, 2 glTF's
     // NPR toon: the lit result's intensity quantized into this many flat
     // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
     // `toonSoftness` of a band wide.

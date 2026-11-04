@@ -187,11 +187,12 @@ vec3 VolumeOpticalDepth(vec3 origin, vec3 dir, uint count, float stepSize, float
 // The density (without a table) or the extinction table's value
 // (ExtinctionTable) integrated from density index p towards a distant
 // light (index-space direction dl per world unit) to the edge of the box,
-// in `steps` steps (volume.frag's march, volume_grid.comp's cells).
+// in `steps` steps (volume.frag's march, volume_grid.comp's cells); at
+// most tMax along dl (a local light's distance).
 float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo,
-                  vec3 hi, float noise, uint steps)
+                  vec3 hi, float noise, uint steps, float tMax)
 {
-    float far = Slabs(p, dl, lo, hi).y;
+    float far = min(Slabs(p, dl, lo, hi).y, tMax);
     if (!(far > 0.0) || steps == 0u) {
         return 0.0;
     }
@@ -202,6 +203,12 @@ float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccesso
         tau += table == kNone ? rho : ExtinctionTable(table, low, scale, rho);
     }
     return tau * dt;
+}
+
+float ShadowMarch(uint table, float low, float scale, inout pnanovdb_readaccessor_t acc, vec3 p, vec3 dl, vec3 lo,
+                  vec3 hi, float noise, uint steps)
+{
+    return ShadowMarch(table, low, scale, acc, p, dl, lo, hi, noise, steps, 3.0e38);
 }
 
 // Optical depth per channel of the first `count` volumes but `self` along
