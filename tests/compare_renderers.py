@@ -66,22 +66,27 @@ def settings_prims(stage):
     return {p.GetName(): str(p.GetPath()) for p in stage.Traverse() if p.GetTypeName() == "RenderSettings"}
 
 
-def karma_layer(stage, usd, path):
-    """A layer over `usd` that shows its domes to Karma's camera, as Eldr and EEVEE do, unless
-    the scene authors Render Light Geometry. Karma's schema default hides them (a black
-    background). Returns `usd` when there is nothing to change."""
+def karma_layer(stage, usd, path, show_domes, settings, samples):
+    """A layer over `usd` for Karma: shows its domes to the camera, as Eldr and EEVEE do, unless
+    the scene authors Render Light Geometry (Karma's schema default hides them: a black
+    background), renders the beauty only and sets the samples."""
     from pxr import Sdf
-    domes = [p for p in stage.Traverse() if p.GetTypeName() in ("DomeLight", "DomeLight_1")
+    domes = [p for p in stage.Traverse() if show_domes and p.GetTypeName() in ("DomeLight", "DomeLight_1")
              and not any(p.GetAttribute("inputs:%s:light:renderlightgeo" % ns).HasAuthoredValue()
                          for ns in ("eldr", "karma"))]
-    if not domes:
-        return usd
     layer = Sdf.Layer.CreateAnonymous(".usda")
     layer.subLayerPaths.append(usd.replace("\\", "/"))
     for d in domes:
         spec = Sdf.CreatePrimInLayer(layer, d.GetPath())
         spec.specifier = Sdf.SpecifierOver
         Sdf.AttributeSpec(spec, "inputs:karma:light:renderlightgeo", Sdf.ValueTypeNames.Bool).default = True
+    # Beauty only: a scene's own products may carry render vars Karma can't make (a black image).
+    spec = Sdf.CreatePrimInLayer(layer, settings)
+    spec.specifier = Sdf.SpecifierOver
+    Sdf.RelationshipSpec(spec, "products", custom=False).targetPathList.ClearEditsAndMakeExplicit()
+    if samples:  # Karma reads pathtracedsamples only in Path Traced mode (its default is Variance)
+        Sdf.AttributeSpec(spec, "karma:global:convergence_mode", Sdf.ValueTypeNames.Token).default = "Path Traced"
+        Sdf.AttributeSpec(spec, "karma:global:pathtracedsamples", Sdf.ValueTypeNames.Int).default = samples
     layer.Export(path)
     return path
 
@@ -107,6 +112,7 @@ def main():
     p.add_argument("--size")
     p.add_argument("--build", default=os.path.join(REPO, "build-h22l"))
     p.add_argument("--force", action="store_true")
+    p.add_argument("--karma-samples", type=int, help="Karma's path-traced samples (noisy emissive scenes)")
     p.add_argument("--karma-dome-hidden", action="store_true", help="keep Karma's default: domes hidden from the camera")
     a = p.parse_args()
     usd = os.path.abspath(a.usd)
@@ -117,7 +123,10 @@ def main():
     if not prims:
         sys.exit("no RenderSettings prim in %s" % usd)
     karma = prims.get(a.karma) or next(iter(prims.values()))
-    kusd = usd if a.karma_dome_hidden else karma_layer(stage, usd, os.path.join(os.path.abspath(a.outdir), "karma_layer.usda"))
+    # The stage's start frame, as Houdini's ROPs render it.
+    frame = "%g" % (stage.GetStartTimeCode() if stage.HasAuthoredTimeCodeRange() else 1)
+    kusd = karma_layer(stage, usd, os.path.join(os.path.abspath(a.outdir), "karma_layer.usda"),
+                       not a.karma_dome_hidden, karma, a.karma_samples)
     res = ["--res", *a.size.split("x")] if a.size else []
 
     env = dict(os.environ, MSYS_NO_PATHCONV="1", HOUDINI_PACKAGE_DIR=os.path.join(a.build, "houdini"),
@@ -131,7 +140,7 @@ def main():
     for name, args, scene in jobs:
         out = os.path.join(a.outdir, name + ".exr")
         if a.force or not os.path.exists(out):
-            code, sec = run([HUSK, *args, *res, "-f", "1", "-n", "1", "-o", out, scene], out[:-4] + ".log", env)
+            code, sec = run([HUSK, *args, *res, "-f", frame, "-n", "1", "-o", out, scene], out[:-4] + ".log", env)
             print("%s: %s %.1f s" % (name, "ok" if os.path.exists(out) else "FAILED (%d)" % code, sec), flush=True)
         images.append((name, out))
     for rt in a.eevee.split(","):
@@ -142,7 +151,7 @@ def main():
         if a.force or not os.path.exists(out):
             size = ["--size", a.size] if a.size else []
             code, sec = run([BLENDER, "-b", "--factory-startup", "-P", os.path.join(HERE, "eevee_render.py"), "--",
-                             usd, out, "--settings", karma, "--rt", rt, *size], out[:-4] + ".log", blender_env)
+                             usd, out, "--settings", karma, "--frame", frame, "--rt", rt, *size], out[:-4] + ".log", blender_env)
             print("%s: %s %.1f s" % (name, "ok" if os.path.exists(out) else "FAILED (%d)" % code, sec), flush=True)
         images.append((name, out))
 
@@ -167,15 +176,10 @@ def main():
         cols = min(3, n)
         rows = (n + cols - 1) // cols
         while n < cols * rows:  # pad the last row with black
-            sheet += ["--pattern", "black", oiio_size(images[0][1]), "3"]
+            sheet += [ref, "--ch", "R,G,B", "--mulc", "0,0,0"]
             n += 1
         oiio(*sheet, "--mosaic", "%dx%d" % (cols, rows), "--clamp:min=0:max=1", "-d", "uint8",
              "-o", os.path.join(a.outdir, "sheet.png"))
-
-
-def oiio_size(path):
-    m = re.search(r"(\d+) x (\d+)", oiio("--info", path))
-    return "%sx%s" % m.groups() if m else "640x360"
 
 
 if __name__ == "__main__":

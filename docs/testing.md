@@ -144,8 +144,11 @@ the stage:
   not), sphere, rect, disk and dome lights.
 - The dome as the world, in UsdLux's latlong orientation and the dome's transform; bindings and
   smoothing on shape prims (Sphere, Cube); the camera's apertures and offsets.
-- `--probes auto` (default) puts a plane probe on each flat glossy mesh. EEVEE uses plane probes in
-  its screen tracing only: with ray tracing off it reflects the world, not nearby objects.
+- With ray tracing off EEVEE reflects only the world, not nearby objects. `--probes auto` puts a
+  plane probe on each flat glossy mesh, but in background renders of Blender 5.2 it hides the
+  screen-traced reflection and misplaces its own, so it is off by default.
+- The camera's exposure scales every light and the world; prims without a material get Karma's
+  default material (0.4 x displayColor); a scene with a time range renders its start frame.
 
 Effects EEVEE has no equivalent for (thin film, anisotropy, toon bands, Eldr AOVs, volumes from
 VDB) show as differences that are the harness's, not Eldr's.

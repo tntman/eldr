@@ -5,9 +5,10 @@ Run: blender -b --factory-startup -P tests/eevee_render.py -- scene.usda out.exr
      [--rt on|off] [--probes auto|none]
 --settings takes the camera and resolution from a RenderSettings prim (--camera and --size
 override them). --rt on: EEVEE's screen-space ray tracing (reflections, refraction, fast GI);
-off: light probes and the world only (EEVEE's raster fallback). --probes auto (default) adds
-a plane probe (planar reflection) on each flat glossy mesh, as an EEVEE artist would (EEVEE
-uses them in its screen tracing only).
+off: light probes and the world only (EEVEE's raster fallback). --probes auto adds
+a plane probe (planar reflection) on each flat glossy mesh. Off by default: in background
+renders of EEVEE 5.2 a plane probe hides the screen-traced reflection (rt on) and adds a
+misplaced one with rt off.
 Blender's importer reads UsdPreviewSurface only and converts lights in its own units, so this
 script sets from the stage: MaterialX standard_surface / open_pbr / ND_UsdPreviewSurface
 materials (Principled BSDF), bindings on shape prims (Sphere, Cube, ...) and their smoothness,
@@ -30,14 +31,15 @@ parser.add_argument("--camera")
 parser.add_argument("--size")
 parser.add_argument("--samples", type=int, default=64)
 parser.add_argument("--rt", default="on")
-parser.add_argument("--probes", default="auto")
+parser.add_argument("--probes", default="none")
+parser.add_argument("--frame", type=float, default=1.0)
 args = parser.parse_args(argv)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
 bpy.ops.wm.usd_import(filepath=os.path.abspath(args.usd), import_usd_preview=True, import_all_materials=True,
                       create_world_material=False, apply_unit_conversion_scale=False,
-                      import_textures_mode="IMPORT_NONE")
+                      import_textures_mode="IMPORT_NONE", import_subdivision=True)
 HFS = os.environ.get("HFS", "C:/Program Files/Side Effects Software/Houdini 22.0.466")
 HOIIO = os.path.join(HFS, "bin", "hoiiotool.exe")
 # Where husk's resolver finds bare file names such as StinsonBeach.hdr (Hydra's hdx textures).
@@ -169,6 +171,13 @@ def build_material(mat, shader, table):
         if not bsdf.inputs["Base Color"].is_linked:
             c = bsdf.inputs["Base Color"].default_value
             bsdf.inputs["Base Color"].default_value = (c[0] * b, c[1] * b, c[2] * b, 1)
+        # Subsurface takes its colour from subsurface_color; the Principled BSDF from Base Color.
+        sss = shader.GetInput("subsurface")
+        w = sss.Get() if sss and sss.Get() is not None else 0.0
+        sc = shader.GetInput("subsurface_color")
+        if w > 0 and sc and sc.Get() is not None and not bsdf.inputs["Base Color"].is_linked:
+            c, s = bsdf.inputs["Base Color"].default_value, sc.Get()
+            bsdf.inputs["Base Color"].default_value = (*(c[i] * (1 - w) + s[i] * w for i in range(3)), 1)
         spec = shader.GetInput("specular")
         bsdf.inputs["Specular IOR Level"].default_value = 0.5 * (spec.Get() if spec and spec.Get() is not None else 1.0)
     if table is PREVIEW:
@@ -192,7 +201,7 @@ for prim in stage.Traverse():
     build_material(mat, shader, table)
 
 for prim in stage.Traverse():
-    # Bindings on shape prims (Sphere, Cube, ...), which the importer drops; smooth them.
+    # Bindings on shape prims (Sphere, Cube, ...), which the importer drops; smooth the curved ones.
     obj = objects.get(prim.GetName())
     if obj is None or obj.type != "MESH" or not prim.IsA(UsdGeom.Gprim) or prim.IsA(UsdGeom.Mesh):
         continue
@@ -201,10 +210,27 @@ for prim in stage.Traverse():
     if mat is not None:
         obj.data.materials.clear()
         obj.data.materials.append(mat)
+    if prim.IsA(UsdGeom.Cube) or prim.IsA(getattr(UsdGeom, "Plane", UsdGeom.Cube)):
+        continue  # flat faces
     obj.modifiers.new("smooth", "SUBSURF").levels = obj.modifiers["smooth"].render_levels = 3
     for poly in obj.data.polygons:
         poly.use_smooth = True
 
+
+# Prims without a material: Karma's default material, 0.4 x displayColor (docs/testing.md).
+defaults = {}
+for o in [o for o in scene.objects if o.type == "MESH" and not any(o.data.materials)]:
+    attr = o.data.color_attributes.get("displayColor")
+    c = tuple(round(v, 4) for v in attr.data[0].color[:3]) if attr and len(attr.data) else (1.0, 1.0, 1.0)
+    if c not in defaults:
+        m = defaults[c] = bpy.data.materials.new("karmaDefault")
+        m.use_nodes = True
+        b = m.node_tree.nodes["Principled BSDF"]
+        b.inputs["Base Color"].default_value = (0.4 * c[0], 0.4 * c[1], 0.4 * c[2], 1)
+        b.inputs["Roughness"].default_value = 0.54
+        b.inputs["Specular IOR Level"].default_value = 0.42  # F0 0.034
+    o.data.materials.clear()
+    o.data.materials.append(defaults[c])
 
 # --- Lights ---------------------------------------------------------------------------------
 def light_radiance(light):
@@ -373,6 +399,15 @@ if usdcam:
     fit = gc.verticalAperture if wide else gc.horizontalAperture
     cd.shift_x = gc.horizontalApertureOffset / fit
     cd.shift_y = gc.verticalApertureOffset / fit
+    # The camera's exposure (2^exposure, ISO, f-stop, time) as Karma applies it: every light
+    # and the world scaled.
+    ucam = UsdGeom.Camera(usdcam)
+    scale = (ucam.ComputeLinearExposureScale() if hasattr(ucam, "ComputeLinearExposureScale")
+             else 2.0 ** (usdcam.GetAttribute("exposure").Get() or 0.0))
+    if scale != 1.0:
+        for o in [o for o in scene.objects if o.type == "LIGHT"]:
+            o.data.energy *= scale
+        bg.inputs["Strength"].default_value *= scale
 
 scene.render.engine = "BLENDER_EEVEE"
 scene.render.resolution_x, scene.render.resolution_y = W, H
@@ -393,5 +428,6 @@ if eevee.use_raytracing:
 scene.render.image_settings.file_format = "OPEN_EXR"
 scene.render.image_settings.color_depth = "32"
 scene.render.filepath = os.path.abspath(args.out)
+scene.frame_set(int(args.frame))
 bpy.ops.render.render(write_still=True)
 print("eevee_render: wrote %s (rt %s, camera %s, %dx%d)" % (args.out, args.rt, scene.camera.name, W, H))
