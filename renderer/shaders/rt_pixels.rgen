@@ -303,12 +303,29 @@ void main()
                 vec3 o = reflectOrigin, through = vec3(1.0);
                 float r = perceptual, cone = a;
                 for (uint bounce = 1u; bounce <= 16u; ++bounce) {
-                    Trace(o, l, cone);
-                    EvaluateHit(l, cone);
+                    TraceMask(o, l, cone, kRtMaskSurfaces | kRtMaskTranslucent);
                     if (hit.t < 0.0) {
                         reflection.rgb += through * Dome(l, r * float(frame.counts.z - 1u));
                         break;
                     }
+                    if ((hit.flags & kHitTranslucent) != 0u) {
+                        // Glass: its surface (Fresnel, highlights, the
+                        // diffuse share it doesn't transmit) and the light
+                        // through it (RefractedPath, rt.refraction.x
+                        // interfaces); the path ends there.
+                        Surface g = Evaluate(l, cone);
+                        float transmitted = g.refracted + g.straight;
+                        bool thin = g.m.refraction.y > 0.0;
+                        vec3 tint = thin || (!g.backface && g.m.refraction.z <= 0.0) ? g.m.transmission.rgb : vec3(1.0);
+                        hit.baseColor *= 1.0 - transmitted;
+                        vec3 surfaceLight = ShadeHit(l, seed + uvec3(0u, 0u, bounce * 104729u), true,
+                                                     (rt.shadowInfo.w & 1u) != 0u, true, true);
+                        vec3 f = gHitSpecular;
+                        vec4 path = RefractedPath(g, l, cone, rt.refraction.x, seed + uvec3(0u, 0u, bounce * 7919u), s);
+                        reflection.rgb += through * (surfaceLight + transmitted * (1.0 - f) * tint * path.rgb);
+                        break;
+                    }
+                    EvaluateHit(l, cone);
                     bool more = bounce < rt.skinned.z && hit.roughness < kMaxRoughness;
                     vec3 hn = hit.normal, hg = hit.geometric, hp = hit.position;  // the shadow rays overwrite hit
                     r = hit.roughness;
