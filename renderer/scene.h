@@ -292,6 +292,9 @@ struct Material {
     // metallic is ignored.
     bool specularWorkflow = false;
     float specularColor[3] = {0, 0, 0};
+    // UsdPreviewSurface model only: the dielectric's reflectance stays F0 at
+    // every angle (no Fresnel rise), as Karma's default material.
+    bool flatFresnel = false;
     // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
     // coatColor and loses what the coat reflects. Weight 0: none.
     float coat = 0;
@@ -310,7 +313,7 @@ struct Material {
     // by the rotation (in turns). 0: isotropic.
     float anisotropy = 0;
     float anisotropyRotation = 0;
-    bool openPbrAnisotropy = false;  // OpenPBR's roughness mapping, else standard_surface's
+    int anisotropyMapping = 0;  // its roughness mapping: 0 standard_surface's, 1 OpenPBR's, 2 glTF's
     // NPR toon: the lit result's intensity quantized into this many flat
     // bands per unit (0: none, or Renderer::Frame::toonBands), their edges
     // `toonSoftness` of a band wide.
@@ -505,6 +508,7 @@ private:
     bool _flat = false;
     float _flatTriangle[9] = {};
     float _uvSpacing = 0;  // DrawInfo::uvSpacing
+    uint32_t _shape = 0;   // DrawInfo::shape
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -666,7 +670,7 @@ struct DrawInfo {
     uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
     uint32_t caustics;         // 1: Mesh::causticsCast, 2: receives (Mesh::causticsReceive)
     float causticsRoughness;   // Mesh::causticsRoughness
-    uint32_t pad;
+    uint32_t shape;            // 1: a ball (points on its bounds' ellipsoid), 2: a box (triangles on its bounds); transparency.glsl
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).

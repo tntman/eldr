@@ -61,7 +61,7 @@ struct DrawInfo {
     uint velocities;       // its first vec4 of point velocities (mesh.vert), kFreeSlot: none
     uint caustics;         // kCausticsCast, kCausticsReceive (caustics.glsl)
     float causticsRoughness;  // the casters' least roughness for photons
-    uint pad0;
+    uint shape;            // 1: a ball, 2: a box (Scene's DrawInfo::shape; transparency.glsl)
 };
 
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).

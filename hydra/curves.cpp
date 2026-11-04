@@ -13,7 +13,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <type_traits>
+#include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
 
@@ -304,6 +306,41 @@ constexpr int kIcosahedronFaces[20][3] = {{0, 11, 5}, {0, 5, 1},  {0, 1, 7},   {
                                           {3, 9, 4},  {3, 4, 2},  {3, 2, 6},   {3, 6, 8},  {3, 8, 9},
                                           {4, 9, 5},  {2, 4, 11}, {6, 2, 10},  {8, 6, 7},  {9, 8, 1}};
 
+// A unit geodesic sphere: the icosahedron's faces split in four `level`
+// times, new vertices pushed out onto the sphere (also the normals).
+struct Geodesic {
+    std::vector<GfVec3f> vertices;
+    std::vector<uint32_t> indices;
+};
+
+Geodesic MakeGeodesic(int level)
+{
+    Geodesic g;
+    g.vertices.assign(std::begin(kIcosahedron), std::end(kIcosahedron));
+    for (const auto &f : kIcosahedronFaces) {
+        g.indices.insert(g.indices.end(), {uint32_t(f[0]), uint32_t(f[1]), uint32_t(f[2])});
+    }
+    for (int l = 0; l < level; ++l) {
+        std::map<std::pair<uint32_t, uint32_t>, uint32_t> mid;
+        auto midpoint = [&](uint32_t a, uint32_t b) {
+            const auto key = std::minmax(a, b);
+            const auto [it, added] = mid.try_emplace(key, uint32_t(g.vertices.size()));
+            if (added) {
+                g.vertices.push_back((g.vertices[a] + g.vertices[b]).GetNormalized());
+            }
+            return it->second;
+        };
+        std::vector<uint32_t> split;
+        for (size_t t = 0; t < g.indices.size(); t += 3) {
+            const uint32_t a = g.indices[t], b = g.indices[t + 1], c = g.indices[t + 2];
+            const uint32_t ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a);
+            split.insert(split.end(), {a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca});
+        }
+        g.indices = std::move(split);
+    }
+    return g;
+}
+
 // Each point as a sphere `widths` across, or `facing` a camera-facing disc
 // (vkr::Mesh::facing): an octagon of 8 triangles around a centre vertex,
 // all on the point, their normals the offsets within the disc.
@@ -313,6 +350,14 @@ void Spheres(VtVec3fArray const &points, VtVec3fArray const &velocities, Primvar
     auto at = [](auto const &pv, size_t i, auto const &fallback) {
         return pv.At(pv.interp == HdInterpolationConstant ? 0 : i, fallback);
     };
+    // Spheres as round as about a million triangles per prim allow: 1280
+    // each for a few points, 320, 80, down to the icosahedron's 20.
+    static const Geodesic kLevels[] = {MakeGeodesic(0), MakeGeodesic(1), MakeGeodesic(2), MakeGeodesic(3)};
+    int level = 3;
+    while (level > 0 && points.size() * kLevels[level].indices.size() / 3 > (size_t(1) << 20)) {
+        --level;
+    }
+    const Geodesic &sphere = kLevels[level];
     for (size_t i = 0; i < points.size(); ++i) {
         out.velocity = i < velocities.size() ? velocities[i] : GfVec3f(0.0f);
         const float r = 0.5f * at(widths, i, 1.0f);
@@ -329,11 +374,11 @@ void Spheres(VtVec3fArray const &points, VtVec3fArray const &velocities, Primvar
             }
             continue;
         }
-        for (const GfVec3f &v : kIcosahedron) {
+        for (const GfVec3f &v : sphere.vertices) {
             out.Vertex(points[i] + r * v, v, c);
         }
-        for (const auto &f : kIcosahedronFaces) {
-            out.Triangle(first + f[0], first + f[1], first + f[2]);
+        for (size_t t = 0; t < sphere.indices.size(); t += 3) {
+            out.Triangle(first + sphere.indices[t], first + sphere.indices[t + 1], first + sphere.indices[t + 2]);
         }
     }
 }

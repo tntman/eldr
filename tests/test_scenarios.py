@@ -6,7 +6,7 @@ eldr_rt prim). Not pixel equality with Karma, only what must hold either way:
 - glass_solid_and_thin: the glass ball, slab and thin pane aren't black;
 - furnace_grey (uniform white dome of 1): white diffuse, rough white metal, clear glass and
   coated white read about 1, grey 0.5 reads 0.5, the background 1 (energy neither made nor
-  lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug.
+  lost), and the constant (untextured) dome shows behind the scene at 1;
 - coloured_glass: the 0.9 m blue block is much bluer than the 0.1 m one, which is visibly blue
   (Beer-Lambert over the path through a scaled cube); the closed thin-walled amber pane tints
   twice (front and back wall);
@@ -124,7 +124,7 @@ for traced in (False, True):
         print("  %s %.3f" % (name, v))
         expect(lo <= v <= hi, "%s: furnace %s reads %.2f-%.2f" % (mode, name, lo, hi))
     v = sum(shot.mean((0, 1.6, 0), 2)) / 3
-    known(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
+    expect(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
 
     shot = Shot("coloured_glass", traced)
     ratios = []

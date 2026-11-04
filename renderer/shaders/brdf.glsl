@@ -43,7 +43,8 @@ Material ShadingMaterial()
 struct Base {
     vec3 metalF0, metalF90, metalA;  // metal Fresnel: Schlick F0..F90 minus Hoffman's a mu (1 - mu)^6 (F82)
     vec3 metalW;                     // its weight: metallic (and what the layers above leave)
-    vec3 dielF0;                     // dielectric Fresnel: F0 (F90 white)
+    vec3 dielF0;                     // dielectric Fresnel: F0
+    float dielF90;                   // its F90 (Schlick's): 1, or F0 for a flat Fresnel (Karma's default material)
     float dielEta;                   // > 0: the exact Fresnel of this relative index, else Schlick's
     vec3 dielW;                      // its weight times tint: 1 - metallic, specular colour, layers above
     float msK;                       // multiple scattering (Turquin 2019): (1 - Ess) / Ess, 0: single
@@ -111,7 +112,7 @@ vec3 DielectricFresnel(float mu)
         return vec3(FresnelDielectric(mu, base.dielEta));
     }
     float m = 1.0 - mu;
-    return base.dielF0 + (1.0 - base.dielF0) * (m * m * m * m * m);
+    return base.dielF0 + (base.dielF90 - base.dielF0) * (m * m * m * m * m);
 }
 
 // The base's Fresnel at cos mu between the light (or view) and the half
@@ -128,7 +129,7 @@ vec3 BaseFresnel(float mu)
 // for the dielectric Schlick's albedo at its F0, as MaterialX).
 vec3 DielectricAlbedo(float NoV, vec3 dfg)
 {
-    return (base.dielF0 * dfg.x + dfg.y) * (1.0 + DielectricFresnel(NoV) * base.dielMsK);
+    return (base.dielF0 * dfg.x + base.dielF90 * dfg.y) * (1.0 + DielectricFresnel(NoV) * base.dielMsK);
 }
 
 vec3 BaseAlbedo(float NoV, vec3 dfg)
@@ -210,7 +211,7 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
     base.diffuseRoughness = 0.0;
     vec3 specColor = vec3(1.0), specularF0 = vec3(0.0);
     float specWeight = 1.0, ior = 1.5, coat = 0.0, coatIor = 1.5, affect = 0.0;
-    bool specularWorkflow = false;
+    bool specularWorkflow = false, flatFresnel = false;
     if (inMaterial != kNoMaterial) {
         Material m = ShadingMaterial();
         base.model = uint(m.surface.x + 0.5);
@@ -220,6 +221,7 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
         ior = m.refraction.x;
         specularWorkflow = m.specularColor.w > 0.0 && (frame.features.x & kFeatureSpecularWorkflow) != 0u;
         specularF0 = max(m.specularColor.rgb, 0.0);
+        flatFresnel = m.specularColor.w < 0.0;
         if (m.coat.x > 0.0 && (frame.features.x & kFeatureClearcoat) != 0u) {
             coat = clamp(m.coat.x, 0.0, 1.0);
             float s = sqrt(clamp(m.coat.z, 0.0, 0.99));
@@ -234,11 +236,13 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
     base.metalF90 = vec3(1.0);
     base.metalA = vec3(0.0);
     base.dielEta = 0.0;
+    base.dielF90 = 1.0;
     float throughputWeight = 1.0;
     vec3 diffuse = baseColor;
     if (base.model == 0u) {
         float r = (ior - 1.0) / (ior + 1.0);
         base.dielF0 = specularWorkflow ? specularF0 : vec3(r * r);
+        base.dielF90 = flatFresnel ? r * r : 1.0;
         metallic = specularWorkflow ? 0.0 : metallic;
         base.metalF0 = baseColor;
         base.metalF90 = baseColor;
@@ -314,7 +318,7 @@ struct Layers {
     bool fuzz;             // OpenPBR's fuzz (Zeltner's LTC sheen, over the coat), else Imageworks' sheen
     vec3 under;            // what the layers above (coat, fuzz) let through to the base: its transmission too
     float anisotropy;      // 0: isotropic base specular
-    bool openPbrAnisotropy;  // OpenPBR's roughness mapping, else standard_surface's
+    int anisotropyMapping;  // roughness mapping: 0 standard_surface's, 1 OpenPBR's, 2 glTF's
     vec3 tangent;          // the stretch direction, with the bitangent across it
     vec3 bitangent;
     float toonBands;       // the material's own (0: the frame's)
@@ -466,7 +470,7 @@ void CoatRoughening(inout float roughness)
 // diffuse colour and emission as they change them.
 void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissive)
 {
-    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, false, vec3(0.0),
+    layers = Layers(0.0, 1.0, 0.0, 0.0, 0.0, 0.0, vec3(0.0), 1.0, 0.0, false, vec3(1.0), 0.0, 0, vec3(0.0),
                     vec3(0.0), 0.0, 0.0, BaseToonAlbedo(), false, diffuseColor);
     // Hair (curves, whose uvs run along each curve, unless their
     // primvars:eldr:hair is false; hydra/curves.cpp): strands along the
@@ -555,7 +559,7 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
     // derivative frame.
     if (m.anisotropy.x > 0.0 && (frame.features.x & kFeatureAnisotropy) != 0u && !layers.hair) {
         layers.anisotropy = clamp(m.anisotropy.x, 0.0, 1.0);
-        layers.openPbrAnisotropy = m.anisotropy.z > 0.0;
+        layers.anisotropyMapping = int(m.anisotropy.z + 0.5);
         vec3 t = UvTangent(n);
         float angle = 2.0 * PI * m.anisotropy.y;
         layers.tangent = cos(angle) * t + sin(angle) * cross(n, t);
@@ -569,7 +573,11 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
 vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
 {
     float at, ab;
-    if (layers.openPbrAnisotropy) {
+    if (layers.anisotropyMapping == 2) {
+        // glTF (KHR_materials_anisotropy, MaterialX's gltf_pbr): alpha_t = mix(a, 1, anisotropy^2), alpha_b = a.
+        at = mix(a, 1.0, layers.anisotropy * layers.anisotropy);
+        ab = max(a, 1e-4);
+    } else if (layers.anisotropyMapping == 1) {
         // OpenPBR: alpha_t = a sqrt(2 / (1 + (1 - anisotropy)^2)), alpha_b = (1 - anisotropy) alpha_t.
         float k = 1.0 - layers.anisotropy;
         at = a * sqrt(2.0 / (1.0 + k * k));

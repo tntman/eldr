@@ -29,6 +29,14 @@ vec3 Unproject(vec3 ndc)
     return p.xyz / p.w;
 }
 
+// The pixel's ray direction; undivided, as an oblique near plane (planar
+// mirrors) puts NDC z = 1 behind the eye (sky.frag).
+vec3 RayDirection(vec2 ndc)
+{
+    vec4 n = frame.invViewProj * vec4(ndc, -1.0, 1.0), f = frame.invViewProj * vec4(ndc, 1.0, 1.0);
+    return normalize(f.xyz * n.w - n.xyz * f.w);
+}
+
 // Nearest hit of the ray (o, d) with the light's shape in front of t0, or t0.
 float Hit(Light light, vec3 o, vec3 d, float t0)
 {
@@ -77,7 +85,7 @@ void main()
     vec2 ndc = gl_FragCoord.xy / frame.viewport.xy * 2.0 - 1.0;
     float depth = texelFetch(sceneDepth, ivec2(gl_FragCoord.xy), 0).r;
     vec3 o = Unproject(vec3(ndc, -1.0));
-    vec3 d = normalize(Unproject(vec3(ndc, 1.0)) - o);
+    vec3 d = RayDirection(ndc);
     float tScene = depth < 1.0 ? length(Unproject(vec3(ndc, depth * 2.0 - 1.0)) - o) : 3.0e38;
     float t = tScene;
     vec3 radiance = vec3(0.0);
@@ -104,7 +112,7 @@ void main()
         vec3 hw = light.halfWidth.xyz, hh = light.halfHeight.xyz, p = o + d * t - light.position.xyz;
         vec2 uv = vec2(dot(p, hw) / dot(hw, hw), dot(p, hh) / dot(hh, hh));
         // Mip: one pixel's footprint on the light's plane, in texels.
-        vec3 dx = normalize(Unproject(vec3(ndc.x + 2.0 / frame.viewport.x, ndc.y, 1.0)) - o);
+        vec3 dx = RayDirection(vec2(ndc.x + 2.0 / frame.viewport.x, ndc.y));
         float footprint = t * length(dx - d) / max(abs(dot(d, light.axis.xyz)), 1e-3);
         ivec2 size = textureSize(textures[nonuniformEXT(tex)], 0);
         float lod = log2(max(footprint * float(max(size.x, size.y)) / (2.0 * min(length(hw), length(hh))), 1.0));

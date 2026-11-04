@@ -19,7 +19,7 @@ Every light has a size, and the size shows in its highlights: a tube light gives
 | Sphere | **Treat as Point** for a point light. With a cone (Shaping tab), a spot light. |
 | Rect, disk | Light from one side (-Z). A texture on a rect or disk light colours it. |
 | Cylinder | Lights from its side only. |
-| Dome | An HDRI (lat-long). Lights diffuse and reflections; its sun can become a real shadowed light (below). |
+| Dome | An HDRI (lat-long), or one colour without a texture. Lights diffuse and reflections; its sun can become a real shadowed light (below). |
 
 **A light shows its shape to the camera** only when its **Render Light Geometry** is on, as in Karma; unauthored is hidden. **Light Shapes Visible** is the master switch (on by default); turn it off to hide every shape. The dome is drawn in the background unless its Render Light Geometry is off.
 

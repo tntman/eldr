@@ -41,7 +41,7 @@ public:
         bool postProcess = true;      // false: color is the raw linear HDR scene
         bool taa = true;              // with postProcess: jittered + temporally resolved
         bool ambientOcclusion = true; // GTAO on the dome (image-based) lighting
-        float aoRadius = 0.5f;        // world units
+        float aoRadius = 1.0f;        // world units
         bool ssr = true;              // screen-space reflections (needs postProcess)
         bool shadows = true;          // the distant light's shadow cascades
         bool localShadows = true;     // local lights' shadow atlas
