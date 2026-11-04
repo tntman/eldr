@@ -3584,6 +3584,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     rt.refraction = rtScene && frame.depthPrepass && frame.translucency && frame.refraction && gpu.refraction &&
                     frame.rtRefraction;
     rt.refractionBounces = frame.rtRefractionBounces;
+    rt.reflectionBounces = frame.rtReflectionBounces;
     rt.hitShadows = frame.rtHitShadows;
     rt.refractionDisplacement = frame.rtRefractionDisplacement;
     rt.refractionClip = frame.rtRefractionClip;

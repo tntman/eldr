@@ -7,8 +7,8 @@ import os
 import re
 
 MAX = 260  # characters; longer rows get shortened in the docs
-MARKS = {"[film]": "(film only)", "[interactive]": "(interactive only)",
-         "[RT]": "(needs ray tracing)", "[prepass]": "(needs depth prepass)"}
+MARKS = {"[film]": "(still camera and final renders)", "[interactive]": "(while moving only)",
+         "[RT]": "(needs ray tracing)", "[prepass]": "(needs Depth Prepass)"}
 
 
 def Find(here=None, name="settings.md", source="docs"):

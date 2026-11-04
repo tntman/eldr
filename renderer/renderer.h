@@ -254,6 +254,9 @@ public:
         // Traced reflections (needs Device::rayTracing).
         bool rtReflections = false;
         uint32_t rtReflectionSamples = 1;  // rays per pixel (1..16)
+        // Rays along a reflection path (1..16; Karma's reflectlimit): glossy
+        // hits reflect again (rt_pixels.rgen), the last one the dome.
+        uint32_t rtReflectionBounces = 4;
         // Traced reflections' denoise (gi.glsl's RtAround): rough ones
         // averaged over up to 12 pixels in their plane, the radius fading
         // out over the film (effectDenoiseSamples).

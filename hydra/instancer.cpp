@@ -426,15 +426,27 @@ void HdVkSetTransforms(HdSceneDelegate *delegate, SdfPath const &id, SdfPath con
         m.shutterMotion = true;
         return;
     }
+    // Moved at the same frame: an edit (a prim dragged in the viewport),
+    // which Karma doesn't blur either.
+    const bool edit = !vk->SceneFrameChanged(delegate->GetRenderIndex());
     float open, close;
     if (!vk->SampledMotionShutter(&open, &close)) {
-        return;
+        if (edit) {
+            m.prevTransforms = m.transforms;
+        }
+        return;  // the motion is since the last frame's transforms
     }
     const HdVkShutterTime atOpen{open, open, close}, atClose{close, open, close};
     const std::vector<float> a = HdVkWorldTransforms(delegate, id, instancerId, &atOpen);
     const std::vector<float> b = HdVkWorldTransforms(delegate, id, instancerId, &atClose);
     if (a == b || a.size() != m.transforms.size() || b.size() != a.size()) {
-        return;  // still through the shutter: the motion is since the last transforms
+        // Still through the shutter: no motion, as Karma (without samples
+        // across it, the last frame's transforms are the motion).
+        if (edit || a == b) {
+            m.prevTransforms = m.transforms;
+            m.shutterMotion = true;
+        }
+        return;
     }
     // Deforming points have their velocities (HdVkShutterVelocities),
     // skinned meshes their joints' shutter pose (HdVkMesh::_SampleShutterPose).

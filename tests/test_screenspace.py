@@ -264,11 +264,14 @@ off = mean(render(stage, {**lit, "eldr:screenBackface": False}, frames=8), *floo
 print("SSGI back-face hits: the floor %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
 expect(none < one - 0.2, "SSGI: back-face hits at scale 0 take no light")
 expect(abs(one - off) < 0.05, "SSGI: back-face hits at scale 1 are as without the option")
+# SSR without the thickness estimator: with it, rays passing close behind
+# the sphere miss it (a ball on a mirror floor reflects as a ball).
 stage = Usd.Stage.Open(os.path.join(os.path.dirname(__file__), "scenes", "reflections.usda"))
 sphere = (150, 80, 250, 240)  # the sphere and its reflection
-one = mean(render(stage, {**bright, "eldr:screenBackfaceScale": 1.0}), *sphere)
-none = mean(render(stage, {**bright, "eldr:screenBackfaceScale": 0.0}), *sphere)
-off = mean(render(stage, {**bright, "eldr:screenBackface": False}), *sphere)
+fixed = {**bright, "eldr:ssgiThickness": False}
+one = mean(render(stage, {**fixed, "eldr:screenBackfaceScale": 1.0}), *sphere)
+none = mean(render(stage, {**fixed, "eldr:screenBackfaceScale": 0.0}), *sphere)
+off = mean(render(stage, {**fixed, "eldr:screenBackface": False}), *sphere)
 print("SSR back-face hits: the sphere %.2f at scale 1, %.2f at 0, %.2f off" % (one, none, off))
 expect(none < one - 0.1, "SSR: back-face hits at scale 0 take no light")
 expect(abs(one - off) < 0.05, "SSR: back-face hits at scale 1 are as without the option")
