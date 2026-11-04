@@ -169,7 +169,9 @@ def edge(image):
     rows = [y / 20 for y in range(-6, 7)]
     xs = [px / SIZE * 4 - 2 for px in range(SIZE)]
     profile = [sum(pixel(image, x, y)[1] for y in rows) / len(rows) for x in xs]
-    inside = [i for i, x in enumerate(xs) if -0.9 < x < 0.9]
+    # From x = -0.6: left of it the slab's side face guides light along the
+    # slab by total internal reflection, out onto the black half (dark).
+    inside = [i for i, x in enumerate(xs) if -0.6 < x < 0.9]
     high = max(profile[i] for i in inside)
     for i in inside:
         if profile[i] < 0.5 * high:

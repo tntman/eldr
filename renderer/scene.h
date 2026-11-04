@@ -853,13 +853,14 @@ public:
         // their commands), whose crossfade needs the alpha-tested prepass.
         std::vector<uint8_t> chunkLevels;
         // The translucent meshes' commands (with their pipeline variants)
-        // and their world bounds' centres (xyz).
+        // and their world bounds' centres and radii (xyz, w).
         std::vector<uint32_t> translucent;
         std::vector<uint8_t> translucentVariant;
         // Per translucent slot: kRefracts (a material that refracts or
         // tints what's behind it, see refraction).
-        // kHoldout: Mesh::holdout.
-        enum : uint8_t { kRefracts = 1, kHoldout = 2 };
+        // kHoldout: Mesh::holdout. kShaped: a solid ball or box
+        // (DrawInfo::shape), whose back faces seen from outside draw nothing.
+        enum : uint8_t { kRefracts = 1, kHoldout = 2, kShaped = 4 };
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;

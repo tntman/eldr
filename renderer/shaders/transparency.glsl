@@ -113,8 +113,8 @@ vec3 DomeAlong(vec3 dir, float lod)
 // mirrored ray) instead of letting light out.
 // With traced refraction (frame.rtRefraction.x) the front surface the
 // ray tracing pass found at this pixel takes its light from there instead
-// (the path through the glass, absorption inside included), and back
-// faces there draw nothing; other refracting fragments stay screen space.
+// (the path through the glass, absorption inside included), and
+// refracting fragments behind it there draw nothing; other refracting fragments stay screen space.
 // A ball or a box (DrawInfo::shape: a ball's points on its bounds'
 // ellipsoid, a box's triangles on its bounds' sides: a glass slab, a block
 // of water) seen from outside refracts twice at its front face: in, across
@@ -209,6 +209,9 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
             discard;  // the traced path went through this back face
         }
         float camera = length(inWorldPos - frame.cameraPos.xyz);
+        if (traced.a != 0.0 && camera > 1.01 * abs(traced.a)) {
+            discard;  // behind the traced surface: on its path (a tumbler's far inner wall, the liquid)
+        }
         if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
             vec3 transmitted = through * over * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;

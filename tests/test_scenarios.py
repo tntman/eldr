@@ -138,8 +138,8 @@ for traced in (False, True):
     print("  amber pane %s" % fmt(c))
     expect(c[1] < 0.5 * c[0], "%s: the closed thin amber pane tints twice (green under half the red)" % mode)
 
-    shot = Shot("glass_behind_glass", traced)
     lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    shot = Shot("glass_behind_glass", traced)
     ball, above = shot.mean((0.1, 0.7, -0.6), 6), shot.mean((0.1, 1.65, -0.6), 6)  # both through the pane
     print("  green ball %s, wall above it %s" % (fmt(ball), fmt(above)))
     expect(lum(ball) < 0.8 * lum(above), "%s: the green ball shows through the clear pane" % mode)
