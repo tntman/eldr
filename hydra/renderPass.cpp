@@ -571,6 +571,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             limit = number(setting(karmaLimit));
         }
         frame.volume.volumeLimit = std::max(float(limit), 0.0f);
+        // Traced reflection bounces and refraction interfaces:
+        // eldr:rtReflectionBounces / eldr:rtRefractionBounces (-1: not set),
+        // else karma:global:reflectlimit / refractlimit, else 4.
+        auto rayLimit = [&](const TfToken &eldr, const char *karma) {
+            double v = number(setting(eldr));
+            if (v < 0.0) {
+                v = number(setting(TfToken(karma)));
+            }
+            return v < 0.0 ? 4u : uint32_t(std::clamp(v, 1.0, 16.0));
+        };
+        frame.rtReflectionBounces = rayLimit(t2.rtReflectionBounces, "karma:global:reflectlimit");
+        frame.rtRefractionBounces = rayLimit(t2.rtRefractionBounces, "karma:global:refractlimit");
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
@@ -676,7 +688,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeLocalShadowStride, &frame.volume.localShadowStride},
                                 {t.volumeResolution, &frame.volume.resolution},
                                 {t2.planarCount, &frame.planarCount},
-                                {t2.rtRefractionBounces, &frame.rtRefractionBounces},
                                 {t.filmSamples, &frame.filmSamples},
                                 {t.interactiveSamples, &frame.interactiveSamples},
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {

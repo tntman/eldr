@@ -1,0 +1,162 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @./geo.usda@
+    ]
+    upAxis = "Y"
+)
+
+# Reflections on a mirror floor: a glossy purple ball (roughness 0.2) on
+# an orange glass-like floor (roughness 0, IOR 1.5), lit by
+# StinsonBeach.hdr and a sun.
+# /Render/rtOff: screen-space reflections; the ball reflects as a ball
+#   where the screen shows it, its hidden underside comes from the dome.
+# /Render/rtOn: traced reflections: the reflected ball has the sun's
+#   highlight and its own reflection of the floor (4 bounces).
+# /Render/reflectLimit1: one bounce: the reflected ball reflects the dome.
+# /Render/reflectLimit4: four bounces, eldr:rtReflectionBounces.
+# /Render/karmaReflectLimit1: Karma's karma:global:reflectlimit 1, read
+#   when eldr:rtReflectionBounces is unset.
+# /Render/planar: planar reflections: the floor mirrors a rendered view.
+# StinsonBeach.hdr ships with USD: usdenv.cmd puts its folder on the
+# resolver's search path (husk: set PXR_AR_DEFAULT_SEARCH_PATH to
+# <USD>\lib\usd\hdx\resources\textures).
+
+def Camera "cam"
+{
+    float2 clippingRange = (1, 1000)
+    float focalLength = 50
+    float horizontalAperture = 20.955
+    float verticalAperture = 11.787
+    float3 xformOp:rotateXYZ = (-15.582683, 38.756935, 0)
+    double3 xformOp:translate = (21.167591, 10.385499, 26.745111)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+}
+
+def DomeLight "env"
+{
+    float inputs:intensity = 1
+    asset inputs:texture:file = @StinsonBeach.hdr@
+}
+
+def DistantLight "sun"
+{
+    float inputs:angle = 0.53
+    float inputs:intensity = 1
+    float3 xformOp:rotateXYZ = (-108.12763, 59.171524, -64.31553)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Scope "mtl"
+{
+    def Material "floor"
+    {
+        token outputs:surface.connect = </mtl/floor/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.5, 0.25, 0)
+            float inputs:ior = 1.5
+            float inputs:roughness = 0
+            token outputs:surface
+        }
+    }
+
+    def Material "ball"
+    {
+        token outputs:surface.connect = </mtl/ball/pbr.outputs:surface>
+
+        def Shader "pbr"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1673, 0.0318, 0.801)
+            float inputs:ior = 1.5
+            float inputs:roughness = 0.2
+            token outputs:surface
+        }
+    }
+}
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    # main settings prim: /Render/rtOn
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        int2 resolution = (640, 360)
+    }
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        int2 resolution = (640, 360)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        int2 resolution = (640, 360)
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom int karma:global:pathtracedsamples = 256
+    }
+    # --- end standard settings ---
+    def RenderSettings "rtOff"
+    {
+        rel camera = </cam>
+        custom bool eldr:rtReflections = 0
+        uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "rtOn"
+    {
+        rel camera = </cam>
+        custom bool eldr:rtReflections = 1
+        uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "reflectLimit1"
+    {
+        rel camera = </cam>
+        custom int eldr:rtReflectionBounces = 1
+        custom bool eldr:rtReflections = 1
+        uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "reflectLimit4"
+    {
+        rel camera = </cam>
+        custom int eldr:rtReflectionBounces = 4
+        custom bool eldr:rtReflections = 1
+        uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "karmaReflectLimit1"
+    {
+        rel camera = </cam>
+        custom bool eldr:rtReflections = 1
+        custom int karma:global:reflectlimit = 1
+        uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "planar"
+    {
+        rel camera = </cam>
+        custom bool eldr:planarReflections = 1
+        uniform int2 resolution = (640, 360)
+    }
+}
+
