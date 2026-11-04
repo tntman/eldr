@@ -107,5 +107,48 @@ With the light off the two paths give the same image (same settings, camera, exp
 smoke then matches Karma at lum 0.9999. Always pass `--disableCameraLight` when comparing a usdrecord
 render with Karma or husk.
 
+## Side by side with Karma and Blender EEVEE
+
+`tests/compare_renderers.py` renders one scene with Eldr, Karma and Blender EEVEE (the raster
+reference: what a good rasterizer reaches with and without its ray tracing) and writes a labelled
+mosaic plus numbers:
+
+```
+hython tests\compare_renderers.py showcase\<folder>\scene.usda <outdir>
+```
+
+- Eldr renders the `eldr_default` and `eldr_final` RenderSettings prims (`--eldr a,b` for others)
+  through husk with the Houdini build (`--build`, default `build-h22l`); Karma renders the `karma`
+  prim (`BRAY_HdKarma`); EEVEE renders through `tests/eevee_render.py` with its screen-space ray
+  tracing on and off, with the Karma prim's camera and resolution.
+- `<outdir>/sheet.png` shows them three per row, each labelled with its mean luminance against
+  Karma (`x1.00` is Karma's exposure) and its mean absolute difference to Karma as rendered and
+  exposure-matched (`d0.12/0.10`, relative to Karma's mean). `stats.txt` has the same numbers.
+  EXRs already in `<outdir>` are reused; `--force` renders again.
+- Karma hides a dome from the camera unless its Render Light Geometry is on, while Eldr and
+  EEVEE show it. The script gives Karma a layer that turns it on for domes that don't author it
+  (`--karma-dome-hidden` keeps Karma's default).
+- Karma's default diffuse limit is one bounce; Eldr's GI is every bounce. Karma decodes a float
+  `.tx` dome texture as sRGB (darker, more saturated); the same pixels as an EXR read as linear in
+  all three renderers.
+
+`tests/eevee_render.py` runs on its own too (`blender -b --factory-startup -P
+tests/eevee_render.py -- scene.usda out.exr --settings /Render/karma --rt on|off`). Blender's USD
+importer reads only UsdPreviewSurface and converts lights in its own units, so the script sets from
+the stage:
+
+- MaterialX `standard_surface`, `open_pbr_surface` and `ND_UsdPreviewSurface` materials as a
+  Principled BSDF (base, metalness, roughness, IOR, specular, transmission, coat, sheen,
+  subsurface, emission, opacity; image inputs a few nodes up become image textures).
+- Light power in Karma's units: within 0.5% of Karma on a grey plane for distant (normalized or
+  not), sphere, rect, disk and dome lights.
+- The dome as the world, in UsdLux's latlong orientation and the dome's transform; bindings and
+  smoothing on shape prims (Sphere, Cube); the camera's apertures and offsets.
+- `--probes auto` (default) puts a plane probe on each flat glossy mesh. EEVEE uses plane probes in
+  its screen tracing only: with ray tracing off it reflects the world, not nearby objects.
+
+Effects EEVEE has no equivalent for (thin film, anisotropy, toon bands, Eldr AOVs, volumes from
+VDB) show as differences that are the harness's, not Eldr's.
+
 Other Karma comparisons: `tests/macbeth_compare.py` (ColorChecker colours, CIEDE2000; ctest `macbeth`
 runs its Eldr-only analytic check) and `tests/houdini_dome.py` (hython, dome texture and linear beauty).
