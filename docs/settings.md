@@ -27,8 +27,8 @@ Every setting is a Hydra render setting named `eldr:<name>`. A setting you don't
 | Mark | Meaning |
 |---|---|
 | flag, int, float, string | Type; values outside the range are clamped |
-| [film] | Acts only while the film accumulates (camera still) |
-| [interactive] | Acts only while the camera or scene moves |
+| [film] | Acts only while the film accumulates: camera still, and in final renders (tooltip: "still camera and final renders") |
+| [interactive] | Acts only while the camera or scene moves (tooltip: "while moving only") |
 | [RT] | Needs a GPU with ray tracing; ignored without one (`HDVK_NO_RAY_TRACING=1` pretends there is none) |
 | [prepass] | Needs `eldr:depthPrepass` |
 | Cost | GPU time, GTX 1080 Ti, 1280x720 unless stated. Crowd = 20,000 skinned agents (21 ms at defaults). Kitchen = Pixar's Kitchen_set. Under 1 ms is noise. "A to B" compares the two states the row describes. |
@@ -59,83 +59,83 @@ Groups follow topics. The switches people change most come first, in open groups
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Film Samples<br>`eldr:filmSamples` | int 64 | [film] Samples per pixel until the image is converged, in every host. Use 256 or more for noise-free finals. | Linear |
-| Film Restarts at Once<br>`eldr:filmRestart` | off | [film] Any change restarts the film from its first sample at once. Off: TAA while things move, and the film starts after a few still frames. | Interactive: no TAA upscaling, a fresh film per change |
-| Denoise<br>`eldr:denoise` | off | [film] Cleans the converged image with Intel Open Image Denoise on the CPU, guided by albedo and normals. Can smear fine detail. The eldr:beautyRaw AOV keeps the undenoised image. Karma's `karma:hydra:denoise` also turns it on. | 1080p: about 1.3 s once per frame (CPU); guide pass +10 ms per sample |
-| Diffuse Quality<br>`eldr:diffuseQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:diffusequality`: multiplies the rays used for bounced diffuse light (final gather, GI probes, AO, SSGI). Values below 1 skip some samples. | emissive.usda 960x540: 15 / 20 / 35 ms per sample at 0.5 / 1 / 2; 2 at 32 samples is as clean as 64 |
-| Reflection Quality<br>`eldr:reflectQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:reflectquality`: multiplies the traced reflection rays. Fractions spread over film samples. | Linear in the reflections |
-| Refraction Quality<br>`eldr:refractQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:refractquality`: multiplies the ray-traced refraction paths through rough glass (fractions spread over film samples) and the screen-space refraction blur taps (up to 16). | glass.usda 960x540, traced: 19.9 / 22.5 / 33.1 ms per sample at 1 / 2 / 4; 2 at 16 samples is as clean as 1 at 32. Screen space: 4.9 / 5.2 / 5.4 ms |
-| Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:global:light_sampling_quality`: multiplies the traced shadow rays per light. Shadow maps don't change. | Linear in the traced shadows |
-| Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:sssquality`: multiplies `eldr:subsurfaceSamples`. | Linear in the subsurface blur |
-| Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Karma's `karma:object:volumequality`: multiplies `eldr:volumeShadowSteps`. | Linear in the volume lighting |
-| Tile Size<br>`eldr:tileSize` | int 0 (off) | husk and usdrecord render the image in square tiles of this many pixels (rounded up to 64), one after another, so GPU memory follows the tile, not the image. For very large images. 0: the whole image at once. Viewports ignore it. | husk, stadium with 9k crowd, 6000x3000 at 2048: peak GPU 4.3 to 2.8 GB, 61 to 71 s; 12000x12000 at 2048: 6.2 GB, 155 s |
+| Film Samples<br>`eldr:filmSamples` | int 64 | Samples per pixel the image collects while the camera is still: more samples, less noise. The viewport and final renders use the same count. Use 256 or more for noise-free finals. Like Karma's Pixel Samples. [film] | Linear |
+| Film Restarts at Once<br>`eldr:filmRestart` | off | On: any change (camera, object, setting) restarts the image from its first sample, so the viewport shows exactly the frames a final render makes. Off: smooth TAA while things move, and the image starts refining after a few still frames. | Interactive: no TAA upscaling, a fresh film per change |
+| Denoise<br>`eldr:denoise` | off | Removes the remaining noise from the finished image with Intel Open Image Denoise (CPU, about 1 s per 1080p frame). Can smear fine detail; AOV eldr:beautyRaw keeps the noisy image. Karma's `karma:hydra:denoise` also turns it on. [film] | 1080p: about 1.3 s once per frame (CPU); guide pass +10 ms per sample |
+| Diffuse Quality<br>`eldr:diffuseQuality` | float -1 (unset: Karma's, else 1) | Multiplies the rays for bounced diffuse light (final gather, GI probes, AO, SSGI): raise it for cleaner indirect light, lower it for speed. As Karma's Diffuse Quality. Unset (-1): Karma's value if the scene has one, else 1. | emissive.usda 960x540: 15 / 20 / 35 ms per sample at 0.5 / 1 / 2; 2 at 32 samples is as clean as 64 |
+| Reflection Quality<br>`eldr:reflectQuality` | float -1 (unset: Karma's, else 1) | Multiplies the ray-traced reflection rays: raise it for cleaner glossy reflections, lower it for speed. As Karma's Reflection Quality. Unset (-1): Karma's value if the scene has one, else 1. | Linear in the reflections |
+| Refraction Quality<br>`eldr:refractQuality` | float -1 (unset: Karma's, else 1) | Multiplies the rays through rough glass (ray-traced) and the blur taps of screen-space refraction (up to 16): raise it for cleaner frosted glass. As Karma's Refraction Quality. Unset (-1): Karma's value if the scene has one, else 1. | glass.usda 960x540, traced: 19.9 / 22.5 / 33.1 ms per sample at 1 / 2 / 4; 2 at 16 samples is as clean as 1 at 32. Screen space: 4.9 / 5.2 / 5.4 ms |
+| Light Quality<br>`eldr:lightQuality` | float -1 (unset: Karma's, else 1) | Multiplies the ray-traced shadow rays per light: raise it for cleaner soft shadows. Shadow maps don't change. As Karma's Light Sampling Quality. Unset (-1): Karma's value if the scene has one, else 1. | Linear in the traced shadows |
+| Subsurface Quality<br>`eldr:sssQuality` | float -1 (unset: Karma's, else 1) | Multiplies the subsurface blur samples (Subsurface Samples): raise it if skin, wax or marble looks blotchy. As Karma's SSS Quality. Unset (-1): Karma's value if the scene has one, else 1. | Linear in the subsurface blur |
+| Volume Quality<br>`eldr:volumeQuality` | float -1 (unset: Karma's, else 1) | Multiplies the steps towards the light inside volumes (Volume Shadow Steps): raise it for more accurate self-shadowing in smoke and clouds. As Karma's Volume Quality. Unset (-1): Karma's value if the scene has one, else 1. | Linear in the volume lighting |
+| Tile Size<br>`eldr:tileSize` | int 0 (off) | Splits husk and usdrecord renders into square tiles of this many pixels (rounded up to 64), rendered one after another, so GPU memory depends on the tile, not the image. Use it for very large images. 0: the whole image at once. Viewports ignore it. | husk, stadium with 9k crowd, 6000x3000 at 2048: peak GPU 4.3 to 2.8 GB, 61 to 71 s; 12000x12000 at 2048: 6.2 GB, 155 s |
 
 ## Ray Tracing
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Ray-Traced Shadows<br>`eldr:rtShadows` | off | [RT][prepass] Traced shadows for the sun and the most important local lights (`eldr:rtShadowLights`), instead of shadow maps. Softness comes from the light's size; the film averages the noise. | Kitchen about 10 ms |
-| Ray-Traced Shadows when Cheaper<br>`eldr:rtShadowsAuto` | off | [RT] When `eldr:rtShadows` is off, traces shadows instead of using maps where that is likely cheaper: dense scenes (2+ triangles per pixel) whose skinned instances are all ray traced. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
-| Ray-Traced Reflections<br>`eldr:rtReflections` | off | [RT][prepass] Traced reflections up to roughness 0.7, replacing dome and screen-space reflections. They show off-screen objects. | Kitchen about 15 ms |
-| Ray-Traced Refraction<br>`eldr:rtRefraction` | off | [RT][prepass] Traces rays through glass: back faces, glass behind glass, total internal reflection and absorption, with off-screen objects visible. Rough glass blurs over film samples. | glass.usda 8.1-9.7 ms; crowd unchanged |
-| Ray-Traced Hit Shadows<br>`eldr:rtHitShadows` | off | [RT] Objects seen in traced reflections, refraction and final gather get shadows from all distant lights and up to 16 local lights. Off: only the sun's, so shadowed floors reflect as lit. | Up to one ray per light per hit |
-| Final Gather<br>`eldr:finalGather` | off | [RT][prepass] With GI on, traces one ray per pixel and sample for bounced diffuse light, replacing probes, AO and SSGI there. Gives contact shadows, dark corners and colour bleeding. | 1080p, 64 samples: emissive.usda +0.34 s, Cornell +0.15 s per frame; interactive +5.5 ms per frame |
-| Caustics<br>`eldr:caustics` | off | [RT] Light focused through glass or off mirrors onto diffuse surfaces (photon mapping), from sun, sphere, rect and disk lights. Only objects with Karma's Enable Caustics primvar cast them. Sharper every sample; AOV `caustics`. | caustics.usda 960x540: 5.9 ms per sample off, 13.3 ms on (65536 photons) |
+| Ray-Traced Shadows<br>`eldr:rtShadows` | off | Ray-traced shadows instead of shadow maps, for the sun and the most important local lights (Ray-Traced Shadow Lights). Exact contact shadows, softness from each light's size; noise averages out as the image refines. [RT] [prepass] | Kitchen about 10 ms |
+| Ray-Traced Shadows when Cheaper<br>`eldr:rtShadowsAuto` | off | While Ray-Traced Shadows is off, traces shadows anyway where that is likely faster than shadow maps: dense scenes (2 or more triangles per pixel and light) whose skinned characters all fit in ray tracing. [RT] | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
+| Ray-Traced Reflections<br>`eldr:rtReflections` | off | Reflections from ray tracing on surfaces up to roughness 0.7, instead of the dome and screen-space reflections, so objects off screen or hidden from the camera show in them. Use it for finals with glossy surfaces. [RT] [prepass] | Kitchen about 15 ms |
+| Ray-Traced Refraction<br>`eldr:rtRefraction` | off | Traces rays through glass and water, so back faces, glass behind glass, total internal reflection, absorption and off-screen objects all show. Rough glass blurs as the image refines. Off: screen-space refraction. [RT] [prepass] | glass.usda 8.1-9.7 ms; crowd unchanged |
+| Ray-Traced Hit Shadows<br>`eldr:rtHitShadows` | off | Objects seen in ray-traced reflections, refraction and final gather get shadows from all distant lights and up to 16 local lights. Off: only the sun shadows them, so a shadowed floor can look lit in a reflection. [RT] | Up to one ray per light per hit |
+| Final Gather<br>`eldr:finalGather` | off | Traces a ray per pixel and sample for bounced diffuse light, instead of the GI probes, AO and SSGI there. Gives accurate contact shadows, dark corners and colour bleeding. For finals. Needs Global Illumination on. [RT] [prepass] | 1080p, 64 samples: emissive.usda +0.34 s, Cornell +0.15 s per frame; interactive +5.5 ms per frame |
+| Caustics<br>`eldr:caustics` | off | Light focused through glass or off mirrors onto diffuse surfaces (photon mapping), from sun, sphere, rect and disk lights. Only objects with Karma's Enable Caustics primvar cast them. Sharpens as the image refines; AOV `caustics`. [RT] | caustics.usda 960x540: 5.9 ms per sample off, 13.3 ms on (65536 photons) |
 
 ## Global Illumination
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Global Illumination<br>`eldr:gi` | off | [RT] Bounced diffuse light from a grid of ray-traced probes. Use it for interiors and scenes lit by emissive surfaces. | Kitchen 2-3 ms (1728 probes x 128 rays); crowd 0.2 ms; plus ray-tracing memory |
-| Screen-Space GI<br>`eldr:ssgi` | off | [prepass] Short-range bounced light and colour bleeding gathered from the visible image. Needs no ray tracing; replaces AO. | Half res 0.67 ms, full 1.55 ms (Kitchen) |
-| Ambient Occlusion<br>`eldr:ambientOcclusion` | on | Darkens the dome's light in corners and contact areas. [prepass] SSGI replaces it when on. | 0.34 ms |
-| Dome Lighting<br>`eldr:imageBasedLighting` | on | Lights the scene with the dome light's image (diffuse and reflections). Off: direct lights only. Also needed by the reflection probe. | Small |
-| Dome Sun Extraction<br>`eldr:domeSun` | on | Turns the sun in an HDRI dome into a distant light that casts shadows. Off: the dome image only. | CPU work when the dome changes |
+| Global Illumination<br>`eldr:gi` | off | Bounced diffuse light from a grid of ray-traced probes, so light spills from lit areas into shadowed ones. Use it for interiors and scenes lit by emissive surfaces; add Final Gather for finals. [RT] | Kitchen 2-3 ms (1728 probes x 128 rays); crowd 0.2 ms; plus ray-tracing memory |
+| Screen-Space GI<br>`eldr:ssgi` | off | Short-range bounced light and colour bleeding taken from what is visible on screen. Works without ray tracing, but misses light from off-screen objects. Replaces Ambient Occlusion when on. [prepass] | Half res 0.67 ms, full 1.55 ms (Kitchen) |
+| Ambient Occlusion<br>`eldr:ambientOcclusion` | on | Darkens the dome's and GI probes' light in corners and where objects touch. SSGI replaces it when on; Final Gather, where it runs. Off: a flatter look. [prepass] | 0.34 ms |
+| Dome Lighting<br>`eldr:imageBasedLighting` | on | Lights the scene with the dome light's image, both diffuse light and reflections. Off: only the other lights light the scene. The Reflection Probe needs it on. | Small |
+| Dome Sun Extraction<br>`eldr:domeSun` | on | Finds the sun in an HDRI dome image and turns it into a distant light that casts sharp shadows. Off: the dome still lights the scene, but its sun casts no shadows. | CPU work when the dome changes |
 
 ## Camera
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Motion Blur<br>`eldr:motionBlur` | on | Blurs moving things while the camera's shutter is open (`shutter:open`, `shutter:close`). While moving, a fast post-process blur. | Post blur 0.2 ms |
-| Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | [film] Each film sample renders the whole scene at one time in the shutter, so shadows, reflections and refraction blur correctly. Off: post-process blur. | Crowd 1.7-2.1 ms per sample |
-| Depth of Field<br>`eldr:depthOfField` | on | Lens blur from the camera's `fStop`, `focalLength` and `focusDistance`. Perspective cameras only; not usdview's free camera. | Post DOF about 1.9 ms at 1080p |
-| Camera Exposure<br>`eldr:cameraExposure` | on | The USD camera's exposure (`exposure`, `exposure:iso`, `:time`, `:fStop`, `:responsivity`) scales the beauty and light AOVs, as Karma; data AOVs stay. EV on top of the exposure compensation; colour limits apply to exposed values. | |
+| Motion Blur<br>`eldr:motionBlur` | on | Blurs moving objects and camera motion over the camera's shutter (`shutter:open`, `shutter:close`), as Karma. While you move in the viewport, a fast post-process blur stands in. | Post blur 0.2 ms |
+| Motion Blur Time Samples<br>`eldr:motionBlurTimeSamples` | on | Renders each sample at its own time within the shutter, so shadows, reflections and refraction blur correctly too. Off: a post-process blur of the finished image, faster but less exact. [film] | Crowd 1.7-2.1 ms per sample |
+| Depth of Field<br>`eldr:depthOfField` | on | Lens blur from the camera's `fStop`, `focalLength` and `focusDistance`, as Karma. Perspective cameras only; usdview's free camera has none. | Post DOF about 1.9 ms at 1080p |
+| Camera Exposure<br>`eldr:cameraExposure` | on | Applies the USD camera's exposure (`exposure`, `exposure:iso`, `:time`, `:fStop`, `:responsivity`) to the beauty and light AOVs, as Karma; data AOVs stay unchanged. Exposure Compensation adds on top; colour limits apply after it. | |
 
 ## Image
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | EV added, always (also with Linear Beauty on); the fixed exposure when auto exposure is off. | |
-| Linear Beauty<br>`eldr:productLinear` | on | Houdini's viewport and husk get linear scene colour: no tonemapper, no bloom, no auto exposure unless the settings prim sets it. Off: Eldr's tonemapped image. | One extra pass |
-| Auto Exposure<br>`eldr:autoExposure` | off | Adjusts exposure over time from the image's brightness. Off: fixed exposure from `eldr:exposureCompensation`, as Karma. | 0.11 ms |
-| Tonemapper<br>`eldr:tonemapper` | string aces | `aces`, `agx`, `agxPunchy` or `none` (exposed linear, unclamped). Ignored while Linear Beauty is on (Houdini viewport, husk products): none there. | |
-| Bloom Intensity<br>`eldr:bloomIntensity` | float 0.04 | 0-1, share of the blurred image mixed in. Ignored while Linear Beauty is on (Houdini viewport, husk products). | |
+| Exposure Compensation<br>`eldr:exposureCompensation` | float 0 | Brightens (+) or darkens (-) the image in stops (EV): +1 doubles the brightness. Adds to the camera's exposure and applies also with Linear Beauty on. With Auto Exposure off it is the only extra exposure. | |
+| Linear Beauty<br>`eldr:productLinear` | on | Gives Houdini's viewport and husk the plain linear scene colour, as Karma: no tonemapper, bloom or auto exposure unless the render settings prim sets them. Keep on for EXRs and compositing. Off: Eldr's tonemapped display image. | One extra pass |
+| Auto Exposure<br>`eldr:autoExposure` | off | Adjusts brightness over time from the image's average, like a camera's auto exposure. Off: fixed exposure from Exposure Compensation, as Karma. | 0.11 ms |
+| Tonemapper<br>`eldr:tonemapper` | string aces | Maps bright HDR colour to the display: `aces` (filmic), `agx` (softer highlights), `agxPunchy` (more contrast and colour) or `none` (linear, unclamped). Ignored while Linear Beauty is on (Houdini viewport, husk products). | |
+| Bloom Intensity<br>`eldr:bloomIntensity` | float 0.04 | Glow around bright areas: the share (0-1) of a blurred copy mixed into the image. 0: none. Ignored while Linear Beauty is on (Houdini viewport, husk products). | |
 
 ## Volumes and Fog
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Volumetric Fog<br>`eldr:fog` | off | Height fog lit by all lights, with light shafts. Set it up under Fog and volumes. | 0.19 ms on crowd; shading +0.5 ms |
-| Volumes<br>`eldr:volumes` | on | Renders OpenVDB volumes (smoke, clouds, fire). Needs a USD build with OpenVDB. | See Fog and volumes |
-| Volume Limit<br>`eldr:object:volumelimit` | int -1 (unset: Karma's, else 0) | Karma's Volume Limit (`karma:object:volumelimit`) for volumes without their own: above 0, light bounces up to this many times inside, brightening thick clouds. 0: one bounce, Karma's default. A volume's Render Geometry Settings value wins. | 0: none. 16: volume pass 12.1 to 13.0 ms (29_26, 960x704). Within 9% of Karma at limits 1, 4, 16 (backlit sun-only up to 23% too bright) |
+| Volumetric Fog<br>`eldr:fog` | off | Height fog lit by all lights, with light shafts. Set its density, height and colour under Advanced: Volumes and Fog. | 0.19 ms on crowd; shading +0.5 ms |
+| Volumes<br>`eldr:volumes` | on | Renders OpenVDB volumes such as smoke, clouds and fire. Off: volumes are skipped. Needs a USD build with OpenVDB. | See Fog and volumes |
+| Volume Limit<br>`eldr:object:volumelimit` | int -1 (unset: Karma's, else 0) | How many times light may scatter inside a volume, as Karma's Volume Limit: higher brightens thick clouds and smoke. 0: once (Karma's default). Unset (-1): Karma's value, else 0. A volume's own Render Geometry Settings value wins. | 0: none. 16: volume pass 12.1 to 13.0 ms (29_26, 960x704). Within 9% of Karma at limits 1, 4, 16 (backlit sun-only up to 23% too bright) |
 
 ## Viewport
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Film when Still<br>`eldr:filmAccumulation` | on | After 3 still frames, switches from TAA to the film: an exact average of samples. Off: TAA only, also when still. | 0.23 ms |
-| TAA Samples<br>`eldr:taaSamples` | int 16 | Jitter cycle length; frames a still camera averages without the film; AOV averaging limit. | |
-| Still Delay<br>`eldr:stillDelay` | float 0.3 | [interactive] Seconds (0 to 30) a stopped camera still counts as moving, so short pauses don't jump to full quality and back. 0: the first still frame is full quality. Not used offline. | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
-| Render Scale<br>`eldr:renderScale` | float 1 | [interactive] Below 1 (min 0.25), renders smaller while moving and TAA upscales. The film and extra AOVs stay full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
-| Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | [interactive] While the camera or scene moves, renders at most at this scale, or starts from it when a frame budget is set. 1: off. | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below) |
-| Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | [interactive] Sample dimensions loop over this many samples (1-256) so TAA settles. | |
-| Ray-Traced Shadow Rays while Moving<br>`eldr:movingShadowRays` | int 1 | [interactive][RT] Traced shadow rays per light while moving; TAA smooths them. 0: as many as when still. | emissive 1080p moving: 11.7 to 5.1 ms (4 to 1 rays) |
-| Pause Settled GI Probes while the Camera Moves<br>`eldr:movingGiPause` | on | [interactive][RT] While only the camera moves, settled GI probes stop updating, since their light doesn't depend on the camera. | emissive giProbes 4.0 ms to 0 while moving |
-| Ray-Traced Temporal Reuse<br>`eldr:rtTemporalReuse` | off | [interactive][RT] While moving, traced shadows, rough reflections and final gather blend with earlier frames' at the same surface point: calmer penumbrae, but thin contact shadows soften. The film and offline renders never use it. | 1866x737 moving: 0.2-0.4 ms; RMS against the converged frame about the same as TAA alone (emissive, Kitchen) |
-| Ray-Traced History Frames<br>`eldr:rtTemporalFrames` | int 16 | [interactive][RT] The most frames Ray-Traced Temporal Reuse blends (1-64). More is smoother, slower to follow moving shadows and reflections. | |
-| Ramp to Full Quality<br>`eldr:rampFrames` | int 6 | [interactive] Frames over which quality steps back up after moving (render scale, shadow rays, GI probes) before the film starts. 0 or 1: at once. Not used offline. | Houdini 1866x737, emissive RT: worst frame after the stop 41.7 to 31.7 ms; full quality 0.33 to 0.47 s after the stop. Each step resizes the targets (about 3 ms CPU) |
-| Frame Budget while Moving<br>`eldr:movingFrameBudget` | float 33 | [interactive] Target GPU milliseconds per frame while moving: the render scale adapts (0.25-1), so light scenes stay full size and heavy ones shrink. 0: use Render Scale while Moving. Not used offline. | Moving, 1866x737: crowd_9k RT 80 to 36 ms (quarter size), Kitchen 9.4 to 17.6 ms (full size), emissive RT 11.5 to 27.6 ms |
-| Film Warm Start<br>`eldr:filmWarmStart` | float 4 | [interactive] The film starts from the last TAA image, counted as this many samples, so its first frames are already clean. 0: a clean start. Film Restarts at Once always starts clean. | None |
+| Film when Still<br>`eldr:filmAccumulation` | on | After 3 still frames, switches from TAA to the film: an exact average of samples that refines into the final image. Off: TAA only, also when still, which never fully refines. | 0.23 ms |
+| TAA Samples<br>`eldr:taaSamples` | int 16 | Length of TAA's camera jitter pattern. Without the film, a still camera averages this many frames, and AOVs average at most this many. Higher: smoother edges, slower to settle. | |
+| Still Delay<br>`eldr:stillDelay` | float 0.3 | Seconds (0-30) a stopped camera still counts as moving, so short pauses while you tumble don't flip to full quality and back. 0: full quality from the first still frame. Offline renders ignore it. [interactive] | crowd 9k / Kitchen / emissive RT: see docs/guide/viewport.md |
+| Render Scale<br>`eldr:renderScale` | float 1 | Renders smaller (0.25-1) whenever TAA runs instead of the film (while moving, or always with Film when Still off), and TAA upscales to full size: a faster viewport. The film, lens distortion and requested AOVs keep full size. | Crowd moving: 27.0 ms at 1.0, 23.0 at 0.75, 16.4 at 0.5 |
+| Render Scale while Moving<br>`eldr:movingRenderScale` | float 0.5 | While the camera or scene moves, renders at most at this scale (0.25-1) for a faster viewport; with a Frame Budget set, the scale it starts from. 1: full size. [interactive] | Moving, 1920x1080: Kitchen 21.6 to 8.6 ms, crowd_9k 37.4 to 26.7, emissive RT 64.2 to 12.5 (with the two below) |
+| Interactive Noise Loop<br>`eldr:interactiveSamples` | int 8 | While TAA runs, the random noise pattern repeats every this many frames (1-256), so TAA settles on a steady image instead of crawling noise. Lower: calmer; higher: more detail over time. [interactive] | |
+| Ray-Traced Shadow Rays while Moving<br>`eldr:movingShadowRays` | int 1 | Ray-traced shadow rays per light while moving; TAA smooths the extra noise. 0: as many as when still. Raise it if shadows crawl while you move. [interactive] [RT] | emissive 1080p moving: 11.7 to 5.1 ms (4 to 1 rays) |
+| Pause Settled GI Probes while the Camera Moves<br>`eldr:movingGiPause` | on | While only the camera moves, settled GI probes stop updating, since their light doesn't depend on the camera. Saves time while you tumble. [interactive] [RT] | emissive giProbes 4.0 ms to 0 while moving |
+| Ray-Traced Temporal Reuse<br>`eldr:rtTemporalReuse` | off | While moving, blends ray-traced shadows, rough reflections and final gather with earlier frames at the same surface point: calmer soft shadows, but thin contact shadows soften. The film and offline renders never use it. [interactive] [RT] | 1866x737 moving: 0.2-0.4 ms; RMS against the converged frame about the same as TAA alone (emissive, Kitchen) |
+| Ray-Traced History Frames<br>`eldr:rtTemporalFrames` | int 16 | The most frames Ray-Traced Temporal Reuse blends (1-64). Higher: smoother, but slower to follow moving shadows and reflections. [interactive] [RT] | |
+| Ramp to Full Quality<br>`eldr:rampFrames` | int 6 | Frames over which quality steps back up after moving (render scale, shadow rays, GI probes) before the film starts, so the view doesn't jump. 0 or 1: at once. Offline renders ignore it. [interactive] | Houdini 1866x737, emissive RT: worst frame after the stop 41.7 to 31.7 ms; full quality 0.33 to 0.47 s after the stop. Each step resizes the targets (about 3 ms CPU) |
+| Frame Budget while Moving<br>`eldr:movingFrameBudget` | float 33 | Target GPU milliseconds per frame while moving: the render scale adapts (0.25-1), so light scenes stay full size and heavy ones shrink. 0: use Render Scale while Moving instead. Offline renders ignore it. [interactive] | Moving, 1866x737: crowd_9k RT 80 to 36 ms (quarter size), Kitchen 9.4 to 17.6 ms (full size), emissive RT 11.5 to 27.6 ms |
+| Film Warm Start<br>`eldr:filmWarmStart` | float 4 | The film starts from the last TAA image, counted as this many samples, so its first frames are already clean. 0: a clean start. Film Restarts at Once always starts clean. [interactive] | None |
 
 ## Advanced
 
