@@ -40,6 +40,7 @@ struct Push {  // mirror of aov.comp's
     uint32_t film;
     uint32_t filter;  // aov.comp's kNearest..kFarthest
     float radius;     // its radius (pixels)
+    float colorLimit;  // the beauty sample's colour limit (0: off)
 };
 
 bool IsColour(uint32_t k)
@@ -158,17 +159,17 @@ Aovs::Aovs(Device &device)
     Check(vkCreateSampler(d, &sci, nullptr, &_nearest), "vkCreateSampler");
 
     // 0 depth, 1 primId, 2..4 the G-buffer; 5 Params, 6 the output.
-    // 7: the light splits; 8: the film sums; 9: the film's weights.
-    VkDescriptorSetLayoutBinding bindings[10] = {};
-    for (uint32_t i = 0; i < 10; ++i) {
+    // 7: the light splits; 8: the film sums; 9: the film's weights; 10: the beauty sample.
+    VkDescriptorSetLayoutBinding bindings[11] = {};
+    for (uint32_t i = 0; i < 11; ++i) {
         bindings[i] = {i,
-                       i < 5 || i == 7 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+                       i < 5 || i == 7 || i == 10 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
                        : i == 9        ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                        : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
                        1, VK_SHADER_STAGE_COMPUTE_BIT};
     }
     VkDescriptorSetLayoutCreateInfo slci{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    slci.bindingCount = 10;
+    slci.bindingCount = 11;
     slci.pBindings = bindings;
     Check(vkCreateDescriptorSetLayout(d, &slci, nullptr, &_setLayout), "vkCreateDescriptorSetLayout");
     const VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
@@ -385,7 +386,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
     _dev.Reserve(_readback, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
 
     const VkImageLayout ro = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    const VkDescriptorImageInfo images[10] = {{_nearest, depthView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
+    const VkDescriptorImageInfo images[11] = {{_nearest, depthView, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL},
                                              {_nearest, primIdView, ro},
                                              {_nearest, _normalSt.view, ro},
                                              {_nearest, _albedo.view, ro},
@@ -394,11 +395,12 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
                                              {},
                                              {_nearest, _splits.view, VK_IMAGE_LAYOUT_GENERAL},
                                              {},
-                                             {VK_NULL_HANDLE, p.filmWeights, VK_IMAGE_LAYOUT_GENERAL}};
+                                             {VK_NULL_HANDLE, p.filmWeights, VK_IMAGE_LAYOUT_GENERAL},
+                                             {_nearest, p.beauty ? p.beauty : _emission.view, ro}};
     const VkDescriptorBufferInfo buffers[4] = {{_params.buffer, 0, VK_WHOLE_SIZE}, {_output.buffer, 0, VK_WHOLE_SIZE}, {}, {_sums.buffer, 0, VK_WHOLE_SIZE}};
-    VkWriteDescriptorSet writes[10] = {};
-    for (uint32_t i = 0; i < 10; ++i) {
-        const bool image = i < 5 || i == 7 || i == 9;
+    VkWriteDescriptorSet writes[11] = {};
+    for (uint32_t i = 0; i < 11; ++i) {
+        const bool image = i < 5 || i == 7 || i >= 9;
         writes[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[i].dstSet = _set;
         writes[i].dstBinding = i;
@@ -408,7 +410,7 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
         writes[i].pImageInfo = image ? &images[i] : nullptr;
         writes[i].pBufferInfo = image ? nullptr : &buffers[i - 5];
     }
-    vkUpdateDescriptorSets(_dev.device, 10, writes, 0, nullptr);
+    vkUpdateDescriptorSets(_dev.device, 11, writes, 0, nullptr);
 
     // The average over still frames (as TAA's): this frame's weight; reset
     // when the camera, the scene, the size or the AOVs asked for change.
@@ -507,7 +509,8 @@ void Aovs::Record(VkCommandBuffer cmd, const Params &p, uint32_t width, uint32_t
             const Push push{k, uint32_t(_offsets[k]), _components[k], p.cryptomatteIds,
                             filtered ? 1.0f : IsCrypto(k) ? (p.film ? weight : 1.0f) : weight,
                             uint32_t(_sumsOffsets[k]), {p.filmOffset[0], p.filmOffset[1]}, p.filmRadius,
-                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u, filters[k], radii[k]};
+                            (p.film && (!IsCrypto(k) || crypto)) ? (reset ? 2u : 1u) : 0u, filters[k], radii[k],
+                            p.beauty ? p.colorLimit : 0.0f};
             vkCmdPushConstants(cmd, _layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
             vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
         }
