@@ -1,0 +1,484 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    upAxis = "Y"
+)
+
+# Three floor tiles of the same dark dielectric (IOR 1.5) at specular
+# roughness 0, 0.2 and 0.5, each under a red sphere and a blue box. Look at:
+# the reflection's shape and position (no smear or stretch), its sharpness
+# growing blur with roughness, Fresnel (stronger reflection towards the
+# horizon), and the sphere's highlight and dark rim inside the reflection.
+# Written by make_scenarios.py; edit that and run it again.
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.55, 0.62, 0.75)
+    float inputs:intensity = 1
+}
+
+def DistantLight "key"
+{
+    float inputs:angle = 0.53
+    float inputs:intensity = 3
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 35, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Camera "cam"
+{
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    float2 clippingRange = (0.1, 10000)
+    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.989415, -0.145114, 0), (0, 0.145114, 0.989415, 0), (0, 1.6, 7.5, 1))
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Mesh "tile0" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-4.7, 0, 3), (-1.7, 0, 3), (-1.7, 0, -3), (-4.7, 0, -3)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/floor0>
+}
+
+def Sphere "ball0" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.6
+    double3 xformOp:translate = (-3.6, 0.6, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/red0>
+}
+
+def Cube "box0" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double size = 1
+    double3 xformOp:translate = (-2.6, 0.35, 0.6)
+    float3 xformOp:rotateXYZ = (0, 30, 0)
+    float3 xformOp:scale = (0.7, 0.7, 0.7)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    rel material:binding = </mtl/blue0>
+}
+
+def Mesh "tile1" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1.5, 0, 3), (1.5, 0, 3), (1.5, 0, -3), (-1.5, 0, -3)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/floor1>
+}
+
+def Sphere "ball1" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.6
+    double3 xformOp:translate = (-0.4, 0.6, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/red1>
+}
+
+def Cube "box1" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double size = 1
+    double3 xformOp:translate = (0.6, 0.35, 0.6)
+    float3 xformOp:rotateXYZ = (0, 30, 0)
+    float3 xformOp:scale = (0.7, 0.7, 0.7)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    rel material:binding = </mtl/blue1>
+}
+
+def Mesh "tile2" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(1.7, 0, 3), (4.7, 0, 3), (4.7, 0, -3), (1.7, 0, -3)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/floor2>
+}
+
+def Sphere "ball2" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.6
+    double3 xformOp:translate = (2.8, 0.6, -0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/red2>
+}
+
+def Cube "box2" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double size = 1
+    double3 xformOp:translate = (3.8, 0.35, 0.6)
+    float3 xformOp:rotateXYZ = (0, 30, 0)
+    float3 xformOp:scale = (0.7, 0.7, 0.7)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+    rel material:binding = </mtl/blue2>
+}
+
+def Mesh "ground" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-20, -0.01, 20), (20, -0.01, 20), (20, -0.01, -20), (-20, -0.01, -20)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (20, 0), (20, 20), (0, 20)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/checker>
+}
+
+def Scope "mtl"
+{
+    def Material "checker"
+    {
+        token outputs:mtlx:surface.connect = </mtl/checker/surface.outputs:out>
+        token outputs:surface.connect = </mtl/checker/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.8, 0.8, 0.8)
+            float inputs:specular_roughness = 0.7
+            color3f inputs:base_color.connect = </mtl/checker/rgb.outputs:out>
+            token outputs:out
+        }
+        def Shader "image"
+        {
+            uniform token info:id = "ND_image_color4"
+            asset inputs:file = @../textures/quadrants.png@ (colorSpace = "srgb_texture")
+            color4f outputs:out
+        }
+        def Shader "rgb"
+        {
+            uniform token info:id = "ND_convert_color4_color3"
+            color4f inputs:in.connect = </mtl/checker/image.outputs:out>
+            color3f outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.7
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor.connect = </mtl/checker/tex.outputs:rgb>
+            token outputs:surface
+        }
+        def Shader "tex"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../textures/quadrants.png@
+            float2 inputs:st.connect = </mtl/checker/st.outputs:result>
+            token inputs:sourceColorSpace = "sRGB"
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+            float outputs:a
+        }
+        def Shader "st"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+    }
+    def Material "matte"
+    {
+        token outputs:mtlx:surface.connect = </mtl/matte/surface.outputs:out>
+        token outputs:surface.connect = </mtl/matte/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.5, 0.5, 0.5)
+            float inputs:specular_roughness = 0.8
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.8
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.5, 0.5, 0.5)
+            token outputs:surface
+        }
+    }
+    def Material "floor0"
+    {
+        token outputs:mtlx:surface.connect = </mtl/floor0/surface.outputs:out>
+        token outputs:surface.connect = </mtl/floor0/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.05, 0.05, 0.06)
+            float inputs:specular_roughness = 0
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.06)
+            token outputs:surface
+        }
+    }
+    def Material "red0"
+    {
+        token outputs:mtlx:surface.connect = </mtl/red0/surface.outputs:out>
+        token outputs:surface.connect = </mtl/red0/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.7, 0.08, 0.05)
+            float inputs:specular_roughness = 0.25
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.25
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            token outputs:surface
+        }
+    }
+    def Material "blue0"
+    {
+        token outputs:mtlx:surface.connect = </mtl/blue0/surface.outputs:out>
+        token outputs:surface.connect = </mtl/blue0/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.1, 0.2, 0.7)
+            float inputs:specular_roughness = 0.4
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.4
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.7)
+            token outputs:surface
+        }
+    }
+    def Material "floor1"
+    {
+        token outputs:mtlx:surface.connect = </mtl/floor1/surface.outputs:out>
+        token outputs:surface.connect = </mtl/floor1/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.05, 0.05, 0.06)
+            float inputs:specular_roughness = 0.2
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.2
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.06)
+            token outputs:surface
+        }
+    }
+    def Material "red1"
+    {
+        token outputs:mtlx:surface.connect = </mtl/red1/surface.outputs:out>
+        token outputs:surface.connect = </mtl/red1/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.7, 0.08, 0.05)
+            float inputs:specular_roughness = 0.25
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.25
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            token outputs:surface
+        }
+    }
+    def Material "blue1"
+    {
+        token outputs:mtlx:surface.connect = </mtl/blue1/surface.outputs:out>
+        token outputs:surface.connect = </mtl/blue1/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.1, 0.2, 0.7)
+            float inputs:specular_roughness = 0.4
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.4
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.7)
+            token outputs:surface
+        }
+    }
+    def Material "floor2"
+    {
+        token outputs:mtlx:surface.connect = </mtl/floor2/surface.outputs:out>
+        token outputs:surface.connect = </mtl/floor2/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.05, 0.05, 0.06)
+            float inputs:specular_roughness = 0.5
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.5
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.05, 0.05, 0.06)
+            token outputs:surface
+        }
+    }
+    def Material "red2"
+    {
+        token outputs:mtlx:surface.connect = </mtl/red2/surface.outputs:out>
+        token outputs:surface.connect = </mtl/red2/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.7, 0.08, 0.05)
+            float inputs:specular_roughness = 0.25
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.25
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.7, 0.08, 0.05)
+            token outputs:surface
+        }
+    }
+    def Material "blue2"
+    {
+        token outputs:mtlx:surface.connect = </mtl/blue2/surface.outputs:out>
+        token outputs:surface.connect = </mtl/blue2/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.1, 0.2, 0.7)
+            float inputs:specular_roughness = 0.4
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.4
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.1, 0.2, 0.7)
+            token outputs:surface
+        }
+    }
+}
+
+def Scope "Render"
+{
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_rt"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 64
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom token karma:global:convergence_mode = "Path Traced"
+        custom int karma:global:pathtracedsamples = 128
+    }
+}
