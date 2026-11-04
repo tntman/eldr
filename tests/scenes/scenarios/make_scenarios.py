@@ -299,6 +299,7 @@ def Scope "Render"
     {{
 {rs}
         custom string karma:global:imagefilter = "[[\\"denoise\\", {{\\"engine\\": \\"oidn\\", \\"use_albedo_input\\": true, \\"use_n_input\\": true, \\"forcecpu\\": false, \\"aovs\\": [\\"C\\"]}}]]"
+        custom token karma:global:convergence_mode = "Path Traced"
         custom int karma:global:pathtracedsamples = {karma_samples}
     }}
 }}
@@ -405,7 +406,7 @@ def scenes():
 # on the surface, strongest at grazing angles at the back (Fresnel); the
 # water isn't black, milky or opaque.""")
     common(s)
-    s.camera((0, 2.2, 5.5), (0, -0.3, 0), 35)
+    s.camera((0, 2.4, 3.6), (0, -0.6, -0.4), 30)
     s.material("tiles", tex="udim.1001.png", specular_roughness=0.4)
     W, D, top, bot = 3.0, 2.0, -0.05, -0.8
     s.quad("bottom", "tiles", [(-W, bot - 0.01, D), (W, bot - 0.01, D), (W, bot - 0.01, -D), (-W, bot - 0.01, -D)], 8, (0, 1, 0))
@@ -413,7 +414,9 @@ def scenes():
     s.quad("leftWall", "tiles", [(-W - 0.01, bot, D), (-W - 0.01, bot, -D), (-W - 0.01, 0.2, -D), (-W - 0.01, 0.2, D)], 4, (1, 0, 0))
     s.quad("rightWall", "tiles", [(W + 0.01, bot, -D), (W + 0.01, bot, D), (W + 0.01, 0.2, D), (W + 0.01, 0.2, -D)], 4, (-1, 0, 0))
     for nm, corners in (("deckFront", [(-6, 0.2, 6), (6, 0.2, 6), (6, 0.2, D), (-6, 0.2, D)]),
-                        ("deckBack", [(-6, 0.2, -D), (6, 0.2, -D), (6, 0.2, -6), (-6, 0.2, -6)])):
+                        ("deckBack", [(-6, 0.2, -D), (6, 0.2, -D), (6, 0.2, -6), (-6, 0.2, -6)]),
+                        ("deckLeft", [(-6, 0.2, D), (-W, 0.2, D), (-W, 0.2, -D), (-6, 0.2, -D)]),
+                        ("deckRight", [(W, 0.2, D), (6, 0.2, D), (6, 0.2, -D), (W, 0.2, -D)])):
         s.quad(nm, "matte", corners, 1, (0, 1, 0))
     water = s.material("water", transmission=1.0, specular_roughness=0.0, specular_IOR=1.33,
                        transmission_color=(0.8, 0.95, 0.93), transmission_depth=2.0)
@@ -560,7 +563,7 @@ def scenes():
 # repeated objects in each renderer (Eldr's traced reflections bounce once;
 # what fills the deeper copies: sky, black, or the last image?).""")
     common(s)
-    s.camera((0.8, 1.3, 2.8), (-1.5, 1.0, -0.6), 35)
+    s.camera((0.9, 1.4, 1.4), (-1.5, 0.8, -0.2), 24)
     s.floor("checker", 10, 0, 10)
     mirror = s.material("mirror", base_color=(0.95, 0.95, 0.95), metalness=1.0, specular_roughness=0.0)
     s.quad("mirrorL", mirror, [(-1.5, 0.2, 3), (-1.5, 0.2, -3), (-1.5, 2.6, -3), (-1.5, 2.6, 3)], 1, (1, 0, 0))
@@ -572,12 +575,13 @@ def scenes():
     s = Scene("offscreen_reflections", """
 # A mirror-like floor (roughness 0.02) with objects cut by the frame: a tall
 # column leaving the top of the image, a sphere half out of the left edge, a
-# box out of the right edge, and a red wall behind the camera. Look at:
-# reflections of the parts outside the frame (screen-space reflections can't
-# see them: they fade or go missing; traced ones and Karma show them), the
-# red wall in the floor near the bottom of the image.""")
+# box out of the right edge, a red wall behind the camera and a chrome ball.
+# Look at: reflections of the parts outside the frame (screen-space
+# reflections can't see them: they fade or go missing; traced ones and Karma
+# show them); the red wall behind the camera in the chrome ball.""")
     common(s)
     s.camera((0, 1.2, 5), (0, 0.4, 0), 35)
+    s.sphere("chrome", s.material("chrome", base_color=(0.95, 0.95, 0.95), metalness=1.0, specular_roughness=0.0), (-1.2, 0.45, 1.0), 0.45)
     s.floor(s.material("mirrorFloor", base_color=(0.04, 0.04, 0.05), specular_roughness=0.02), 12, 0, 1)
     s.quad("redWall", s.material("red", base_color=(0.7, 0.08, 0.05), specular_roughness=0.7),
            [(-6, 0, 8), (-6, 3, 8), (6, 3, 8), (6, 0, 8)], 1, (0, 0, -1))
@@ -651,7 +655,7 @@ def scenes():
 # 1). The background reads 1. Any sphere brighter than the background
 # makes energy; a dark rim on the white ones loses it.""")
     s.dome((1, 1, 1), 1.0)
-    s.camera((0, 0, 9), (0, 0, 0), 50)
+    s.camera((0, 0, 9), (0, 0, 0), 35)
     for i, (nm, kw) in enumerate((
             ("white", dict(base_color=(1, 1, 1), specular=0.0, specular_roughness=1.0)),
             ("grey", dict(base_color=(0.5, 0.5, 0.5), specular=0.0, specular_roughness=1.0)),
@@ -712,7 +716,7 @@ def scenes():
 # tile, the glass not black.""")
     s.dome()
     s.sun((-45, 35, 0), 3.0)
-    s.camera((0, 0.03, 0.12), (0, 0.004, 0), 50, (0.001, 10))
+    s.camera((0, 0.018, 0.06), (0, 0.003, 0), 50, (0.001, 10))
     s.material("checker", tex="quadrants.png", specular_roughness=0.7)
     s.floor("checker", 1, -0.0005, 40, "ground")
     s.quad("tile", s.material("gloss", base_color=(0.06, 0.06, 0.07), specular_roughness=0.05),
@@ -727,5 +731,7 @@ def scenes():
 
 if __name__ == "__main__":
     for s in scenes():
-        s.write()
+        # Karma needs more samples where glass, subsurface and emitter bounces stay grainy.
+        s.write(karma_samples=512 if s.name in ("liquid_in_glass", "subsurface_translucent", "emissive_reflected",
+                                                  "glass_solid_and_thin", "thin_cards") else 128)
         print("wrote", s.name + ".usda")

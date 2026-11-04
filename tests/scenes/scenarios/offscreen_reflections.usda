@@ -7,10 +7,10 @@
 
 # A mirror-like floor (roughness 0.02) with objects cut by the frame: a tall
 # column leaving the top of the image, a sphere half out of the left edge, a
-# box out of the right edge, and a red wall behind the camera. Look at:
-# reflections of the parts outside the frame (screen-space reflections can't
-# see them: they fade or go missing; traced ones and Karma show them), the
-# red wall in the floor near the bottom of the image.
+# box out of the right edge, a red wall behind the camera and a chrome ball.
+# Look at: reflections of the parts outside the frame (screen-space
+# reflections can't see them: they fade or go missing; traced ones and Karma
+# show them); the red wall behind the camera in the chrome ball.
 # Written by make_scenarios.py; edit that and run it again.
 
 def DomeLight "sky"
@@ -36,6 +36,16 @@ def Camera "cam"
     float2 clippingRange = (0.1, 10000)
     matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.987441, -0.157991, 0), (0, 0.157991, 0.987441, 0), (0, 1.2, 5, 1))
     uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Sphere "chrome" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.45
+    double3 xformOp:translate = (-1.2, 0.45, 1)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/chrome>
 }
 
 def Mesh "floor" (
@@ -184,6 +194,29 @@ def Scope "mtl"
             token outputs:surface
         }
     }
+    def Material "chrome"
+    {
+        token outputs:mtlx:surface.connect = </mtl/chrome/surface.outputs:out>
+        token outputs:surface.connect = </mtl/chrome/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.95, 0.95, 0.95)
+            float inputs:specular_roughness = 0
+            float inputs:metalness = 1
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0
+            float inputs:metallic = 1
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            token outputs:surface
+        }
+    }
     def Material "mirrorFloor"
     {
         token outputs:mtlx:surface.connect = </mtl/mirrorFloor/surface.outputs:out>
@@ -323,6 +356,7 @@ def Scope "Render"
         rel camera = </cam>
         uniform int2 resolution = (960, 540)
         custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom token karma:global:convergence_mode = "Path Traced"
         custom int karma:global:pathtracedsamples = 128
     }
 }

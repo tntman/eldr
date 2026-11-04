@@ -29,11 +29,11 @@ def DistantLight "key"
 
 def Camera "cam"
 {
-    float focalLength = 35
+    float focalLength = 30
     float horizontalAperture = 36
     float verticalAperture = 20.25
     float2 clippingRange = (0.1, 10000)
-    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.910366, -0.413803, 0), (0, 0.413803, 0.910366, 0), (0, 2.2, 5.5, 1))
+    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.8, -0.6, 0), (0, 0.6, 0.8, 0), (0, 2.4, 3.6, 1))
     uniform token[] xformOpOrder = ["xformOp:transform"]
 }
 
@@ -134,6 +134,42 @@ def Mesh "deckBack" (
     int[] faceVertexCounts = [4]
     int[] faceVertexIndices = [0, 1, 2, 3]
     point3f[] points = [(-6, 0.2, -2), (6, 0.2, -2), (6, 0.2, -6), (-6, 0.2, -6)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/matte>
+}
+
+def Mesh "deckLeft" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-6, 0.2, 2), (-3, 0.2, 2), (-3, 0.2, -2), (-6, 0.2, -2)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/matte>
+}
+
+def Mesh "deckRight" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(3, 0.2, 2), (6, 0.2, 2), (6, 0.2, -2), (3, 0.2, -2)]
     uniform token subdivisionScheme = "none"
     normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
         interpolation = "vertex"
@@ -344,6 +380,7 @@ def Scope "Render"
         rel camera = </cam>
         uniform int2 resolution = (960, 540)
         custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom token karma:global:convergence_mode = "Path Traced"
         custom int karma:global:pathtracedsamples = 128
     }
 }

@@ -32,4 +32,18 @@ Render one: `husk -R HdVkRendererPlugin -s /Render/eldr_rt tests/scenes/scenario
 | `furnace_grey` | Uniform white dome only: white, grey 0.5, rough white metal, clear glass, coated white | White ones read about 1 and vanish into the background, grey reads 0.5; nothing brighter than the background |
 | `sun_on_chrome` | Chrome balls at roughness 0, 0.05, 0.15 under a sharp sun and a small sphere light, glossy floor | Small hot highlights that grow and dim with roughness, and again in the floor's reflection; no fireflies |
 | `large_scale` | 120 m glossy plaza, tall blocks, 2 m chrome and glass balls 10 to 60 m away | Far reflections, far shadows, far glass not black, no acne or banding |
-| `tiny_scale` | Millimetre beads on a 20 cm tile, camera 12 cm away | Same look as at metre scale: no acne, no detached shadows, glass not black |
+| `tiny_scale` | Millimetre beads on a 20 cm tile, camera 6 cm away | Same look as at metre scale: no acne, no detached shadows, glass not black |
+
+`tests/test_scenarios.py` (ctest `scenarios`, label slow) renders three of them with Eldr, default and traced, and checks what must hold whatever the renderer: the ball's reflection sits where its mirror image projects with no smear beside it, glass isn't black, and the furnace spheres read their albedo.
+
+To compare with Karma and EEVEE: `hython tests/compare_renderers.py tests/scenes/scenarios/<name>.usda <outdir> --eldr eldr_default,eldr_rt --karma-dome-hidden` (the dome hidden from Karma's camera, as Eldr hides a constant dome).
+
+## Known differences
+
+Compared with Karma (husk, 640x360). Fix lanes remove an item when it's fixed.
+
+- A constant dome (no texture) isn't drawn behind the scene; it still lights and reflects. `test_scenarios` reports it as a known bug.
+- Karma clamps each camera sample, highlights included, at its colour limit (20); Eldr clamps only emitters seen directly, so sharp sun highlights on chrome reach thousands and raise the image mean.
+- Traced refraction: glass seen through glass loses the far glass's shape (`glass_behind_glass`), the liquid in a tumbler looks narrower than in Karma (`liquid_in_glass`), and Beer-Lambert absorption barely shows in the scaled glass blocks (`coloured_glass`).
+- A clear coat shows a rect light as a blurred streak where Karma shows the sharp softbox (`car_paint`).
+- Without ray tracing: refraction doesn't invert or bend the background through a glass ball, and water reads milky at grazing angles; screen-space reflections leave a grainy cone in the lower half of chrome balls.

@@ -33,7 +33,7 @@ def Camera "cam"
     float horizontalAperture = 36
     float verticalAperture = 20.25
     float2 clippingRange = (0.001, 10)
-    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.977323, -0.211753, 0), (0, 0.211753, 0.977323, 0), (0, 0.03, 0.12, 1))
+    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.970143, -0.242536, 0), (0, 0.242536, 0.970143, 0), (0, 0.018, 0.06, 1))
     uniform token[] xformOpOrder = ["xformOp:transform"]
 }
 
@@ -311,6 +311,7 @@ def Scope "Render"
         rel camera = </cam>
         uniform int2 resolution = (960, 540)
         custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom token karma:global:convergence_mode = "Path Traced"
         custom int karma:global:pathtracedsamples = 128
     }
 }
