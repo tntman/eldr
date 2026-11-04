@@ -168,6 +168,53 @@ for sampled in (True, False):
            "(mean difference %.3f of 255; motion blur vs none %.3f)" % (sampled, diff, blur))
     if sampled and not args.scene:
         expect(blur > 0.5, "the moving cube blurs (mean difference to motion blur off %.3f of 255)" % blur)
+
+# A prim moved by hand at the same frame (Houdini's viewport handle): an
+# edit, not motion, so its converged film shows no blur (as Karma).
+ball = UsdGeom.Sphere.Define(stage, "/editedBall")
+ball.CreateDisplayColorAttr([Gf.Vec3f(0.1, 0.1, 1)])
+ballMove = ball.AddTranslateOp()
+
+
+def edited(edit, sampled):
+    ballMove.Set(Gf.Vec3d(0, -2, 2) if edit else Gf.Vec3d(0, 0, 2))
+    engine = UsdImagingGL.Engine()
+    assert engine.SetRendererPlugin("HdVkRendererPlugin"), "HdVk not available"
+    for key, value in {"houdini:viewport": True, "eldr:autoExposure": False, "eldr:screenDicing": False,
+                       "eldr:sampledMotion": sampled}.items():
+        engine.SetRendererSetting(key, value)
+    engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
+    engine.SetCameraPath(scene.GetPath())
+    params = UsdImagingGL.RenderParams()
+    params.frame = Usd.TimeCode(1)  # the cube at its first key
+    params.gammaCorrectColors = False
+
+    def render():
+        GL.glClearColor(0, 0, 0, 0)
+        GL.glClear(GL.GL_COLOR_BUFFER_BIT | GL.GL_DEPTH_BUFFER_BIT)
+        engine.Render(stage.GetPseudoRoot(), params)
+
+    for _ in range(20 if edit else 0):
+        render()
+    ballMove.Set(Gf.Vec3d(0, 0, 2))
+    render()  # IsConverged answers for the frame before the edit
+    for _ in range(600):
+        render()
+        if engine.IsConverged():
+            break
+    image = colour()
+    del engine
+    return image
+
+
+if not args.scene:
+    for sampled in (True, False):
+        diff = float(np.abs(edited(True, sampled) - edited(False, sampled)).mean())
+        # Against a render with the ball there from the start (the cube blurs in
+        # both, its film noise up to about 0.5); smeared, the ball is near 3.
+        expect(diff < 1.0, "sampled motion %s: a prim moved at the same frame doesn't blur "
+               "(mean difference to it unmoved %.3f of 255)" % (sampled, diff))
+
 if failures:
     sys.exit(1)
 print("OK")

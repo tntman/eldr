@@ -253,12 +253,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     vkr::Renderer::Frame frame;
     // The scene's time (HdSceneGlobalsSchema; 0 without), for MaterialX's
     // frame and time nodes.
+    const double sceneFrame = HdVkSceneFrame(*GetRenderIndex());
+    static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->NoteSceneFrame(sceneFrame);
+    frame.sceneTime[0] = float(sceneFrame);
     if (HdSceneIndexBaseRefPtr si = GetRenderIndex()->GetTerminalSceneIndex()) {
-        const HdSceneGlobalsSchema globals = HdSceneGlobalsSchema::GetFromSceneIndex(si);
-        const HdDoubleDataSourceHandle current = globals.GetCurrentFrame(), fps = globals.GetTimeCodesPerSecond();
-        // NaN or -DBL_MAX: the default or earliest time code.
-        const float now = current ? float(current->GetTypedValue(0.0f)) : 0.0f;
-        frame.sceneTime[0] = std::isfinite(now) ? float(now) : 0.0f;
+        const HdDoubleDataSourceHandle fps = HdSceneGlobalsSchema::GetFromSceneIndex(si).GetTimeCodesPerSecond();
         const double rate = fps ? fps->GetTypedValue(0.0f) : 24.0;
         frame.sceneTime[1] = frame.sceneTime[0] / float(rate > 0.0 ? rate : 24.0);
     }
