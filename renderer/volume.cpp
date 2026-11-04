@@ -395,7 +395,7 @@ void VolumePass::EnsureShadowGrid(uint32_t count, uint32_t distant, uint32_t loc
                                   bool tables, uint64_t version)
 {
     const bool mutual = s.mutualShadows && count > 1;
-    const uint32_t lights = 1 + std::min(distant + (mutual ? local : 0), kGridMaxLights);
+    const uint32_t lights = 1 + std::min(distant + local, kGridMaxLights);
     const uint64_t slots = uint64_t(count) * lights;
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(_dev.physical, &props);

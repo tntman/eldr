@@ -181,8 +181,9 @@ public:
         // last tap's shadowed fraction. 1: every step.
         uint32_t localShadowStride = 2;
         // Shadow grids: each volume's optical depth towards the dome, each
-        // distant light and (with mutualShadows) each local light's other
-        // volumes, at this many points per axis over its box, built once
+        // distant light and each local light (its own density and, with
+        // mutualShadows, the other volumes'), at this many points per axis
+        // over its box, built once
         // per change (EnsureShadowGrid) and read trilinearly by the march
         // instead of a shadow ray per step and light. 0: march every ray.
         // Time samples of moving volumes (velocity blur) march.
