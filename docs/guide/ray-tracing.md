@@ -74,6 +74,12 @@ Eldr picks the best reflection for each pixel:
 
 **Ray-Traced Hit Shadows** shadows what a traced reflection sees (the floor in a chrome ball is shadowed too).
 
+Objects seen in a traced reflection show the lights' highlights and reflect again: **Ray-Traced Reflection Bounces** (Karma's Reflection Limit, 4 unless set) is how many rays one reflection path takes. 1 is cheapest: the reflected objects reflect only the dome.
+
+A ball on a mirror-like floor without ray tracing: SSR shows the ball where the screen sees it, and the dome where the ball's underside would be. **Planar Reflections** mirror the whole ball, underside included.
+
+> **Showcase:** open `showcase/2026-11-04_01_reflections/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `rtOff`, `rtOn`, `reflectLimit1` vs `reflectLimit4`, `karmaReflectLimit1` and `planar`.
+
 > **Showcase:** open `showcase/2026-10-28_09_traced_reflections/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `traced` vs `screenSpace` (`eldr:rtReflections` off), `tracedNoHitShadows` (`eldr:rtHitShadows` off).
 
 > **Showcase:** open `showcase/2026-10-30_11_screen_space_reflections/scene.hip`, compare `eldr_default` vs `eldr_final` vs `karma`, then `ssr` vs `ssrOff`.
