@@ -216,80 +216,80 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Sun Shadows<br>`eldr:shadows` | on | Cascaded shadow maps for the first shadow-casting distant light. | |
-| Sun Shadow Resolution<br>`eldr:shadowResolution` | int 2048 | Pixels per side of each cascade's map (256-8192). | Grows with the square |
-| Sun Shadow Cascades<br>`eldr:shadowCascades` | int 4 | Number of cascades (1-4). Fewer is faster but blurrier. | 1 cascade saves about 12 ms on crowd |
-| Further Sun Shadow Maps<br>`eldr:extraSunShadowMaps` | on | Up to 2 distant lights after the first, such as a dome's extracted sun, get one hard-edged shadow map each over the view; surfaces, glass, volumes and fog read it. Further ones stay unshadowed. Off: they cast none unless traced. | One shadow view per further sun, drawn once while the scene stands still; the 64 MB atlas if no local light has one. crowd_9k 2048x1080, 64 samples: 18 s either way, +60 MB |
-| Local Light Shadows<br>`eldr:localShadows` | on | Shadow maps for sphere, rect, disk and spot lights, nearest lights first; lights that don't fit stay unshadowed. | Cached while still |
-| Local Light Shadow Resolution<br>`eldr:localShadowResolution` | int 512 | Texels per tile (64-2048). Tiles halve (to 64) so every shadowed light fits. | |
-| Soft Shadows<br>`eldr:softShadows` | on | Contact-hardening penumbrae for local lights from their size. Off: 3x3 PCF. | |
-| Soft Sun Shadows<br>`eldr:softSunShadows` | on | The same for the sun, from its `inputs:angle`. | Crowd 1.27 ms |
-| Soft Shadow Samples<br>`eldr:softShadowSamples` | int 16 | Samples per soft shadow lookup (1-16). | Linear |
-| Jittered Light Shape per Sample<br>`eldr:shadowJitter` | on | [film] Each film sample renders shadow maps from a different point on the light, so soft shadows converge to the exact result. Needs soft shadows. | Sun error 0.016 vs 0.065 without; no frame-time change |
-| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted objects cast coloured shadows, also into fog. Volumes cast shadows the same way. | 0.04 ms; 32 MB per map at default sun size |
-| Translucent Shadow Resolution Divisor<br>`eldr:translucentShadowDivisor` | int 2 | Tint map size as 1/N of the shadow maps (1, 2, 4). Also sets volume shadow resolution. | |
-| Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Shadow rays per light, pixel and sample (1-16). 1 is enough for the film, which averages them. | Linear |
-| Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | [RT] How many lights `eldr:rtShadows` traces: the sun and the most important local lights (1-16). The rest use shadow maps. | Up to a ray per light and pixel |
-| Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | [RT] Blurs traced shadows across their soft edge only, so hard contact shadows stay hard. Fades out over `eldr:effectDenoiseSamples`. Off: raw rays. | One extra ray per light on shadowed pixels while active; no bias on the Kitchen |
-| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | [RT] Traced shadows pass through glass (taking its colour) and through volumes. Off: those objects cast no traced shadow. | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
-| Ray-Traced Shadows of Further Suns<br>`eldr:rtExtraSunShadows` | on | [RT] While ray tracing runs for another effect, distant lights after the first, such as a dome's extracted sun, cast traced shadows. Never starts ray tracing itself. Off: their shadow maps (`eldr:extraSunShadowMaps`). | volume.usda 720p: 3.4 ms on a GTX 1080 Ti |
+| Sun Shadows<br>`eldr:shadows` | on | Shadows from the sun (the first shadow-casting distant light), from a set of shadow maps that cover near to far (cascades). Off: the sun casts no shadow-map shadows. | |
+| Sun Shadow Resolution<br>`eldr:shadowResolution` | int 2048 | Pixels per side of each sun shadow map (256-8192). Higher: sharper, steadier sun shadows; memory grows with the square. | Grows with the square |
+| Sun Shadow Cascades<br>`eldr:shadowCascades` | int 4 | How many shadow maps split the sun's shadows from near to far (1-4). Fewer: faster, but blurrier shadows in the distance. | 1 cascade saves about 12 ms on crowd |
+| Further Sun Shadow Maps<br>`eldr:extraSunShadowMaps` | on | Up to 2 more distant lights, such as a dome's extracted sun, get one hard-edged shadow map each over the view; surfaces, glass, volumes and fog use it. Further ones stay unshadowed. Off: they cast no shadows unless ray traced. | One shadow view per further sun, drawn once while the scene stands still; the 64 MB atlas if no local light has one. crowd_9k 2048x1080, 64 samples: 18 s either way, +60 MB |
+| Local Light Shadows<br>`eldr:localShadows` | on | Shadow maps for sphere, rect, disk and spot lights, nearest lights first; lights that don't fit stay unshadowed. Off: local lights cast no shadow-map shadows. | Cached while still |
+| Local Light Shadow Resolution<br>`eldr:localShadowResolution` | int 512 | Pixels per side of each local light's shadow map (64-2048). With many lights, maps halve in size (down to 64) so every shadowed light fits. | |
+| Soft Shadows<br>`eldr:softShadows` | on | Soft shadow edges for local lights, from each light's size: sharp where objects touch, softer farther away. Off: a fixed, slight blur. | |
+| Soft Sun Shadows<br>`eldr:softSunShadows` | on | Soft sun shadow edges from the sun's angle (`inputs:angle`): sharp where objects touch, softer farther away. Off: a fixed, slight blur. | Crowd 1.27 ms |
+| Soft Shadow Samples<br>`eldr:softShadowSamples` | int 16 | Samples per soft shadow lookup (1-16). More: smoother soft edges per frame, but slower. | Linear |
+| Jittered Light Shape per Sample<br>`eldr:shadowJitter` | on | Each sample renders the shadow maps from a different point on the light, so soft shadows refine to the exact result. Needs Soft Shadows. [film] | Sun error 0.016 vs 0.065 without; no frame-time change |
+| Translucent Shadows<br>`eldr:translucentShadows` | on | Glass, water and tinted objects cast coloured, lighter shadows, also into fog; volumes cast shadows the same way. Off: no coloured shadows. | 0.04 ms; 32 MB per map at default sun size |
+| Translucent Shadow Resolution Divisor<br>`eldr:translucentShadowDivisor` | int 2 | Size of the coloured-shadow and volume-shadow maps as 1/N of the shadow maps (1, 2, 4). Higher: less memory, softer coloured shadows. | |
+| Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Ray-traced shadow rays per light, pixel and sample (1-16). More: smoother soft shadows per sample. 1 is enough for finals, as the samples average out. [RT] | Linear |
+| Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | How many lights Ray-Traced Shadows traces (1-16): the sun and the most important local lights. The others keep shadow maps. [RT] | Up to a ray per light and pixel |
+| Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | Blurs ray-traced shadows across their soft edges only, so hard contact shadows stay hard; fades out over Effect Denoise Fade samples. Off: raw, noisier shadows. [RT] | One extra ray per light on shadowed pixels while active; no bias on the Kitchen |
+| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | Ray-traced shadows pass through glass, taking its colour, and through volumes. Off: those objects cast no ray-traced shadow. [RT] | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
+| Ray-Traced Shadows of Further Suns<br>`eldr:rtExtraSunShadows` | on | While ray tracing runs for another effect, distant lights after the first, such as a dome's extracted sun, cast ray-traced shadows. Never starts ray tracing by itself. Off: they use Further Sun Shadow Maps. [RT] | volume.usda 720p: 3.4 ms on a GTX 1080 Ti |
 
 ### Reflections
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Screen-Space Reflections<br>`eldr:ssr` | on | Reflections of what is visible on screen. [prepass] Needs post processing. | 6 ms on crowd |
-| SSR Ray Steps<br>`eldr:ssrSteps` | int 32 | Steps per reflection ray (1-256). Raise it if long reflections break up. | Crowd shading 10.8 ms at 8, 11.7 ms at 32 |
-| Denoised Glossy SSR<br>`eldr:ssrDenoise` | off | Blurry reflections on rough surfaces up to roughness 0.8, filtered to remove noise. Off: sharp reflections that fade out with roughness. Not used with ray-traced reflections. | Crowd shading 11.7 to 20.4 ms |
-| SSR Hit Footprint Filter<br>`eldr:ssrHitFilter` | on | Rough reflections blur instead of sparkle, and fade out at the image edges. | 0.05 ms |
-| Ray-Traced Reflection Rays per Pixel<br>`eldr:rtReflectionSamples` | int 1 | Reflection rays per pixel and sample (1-16). 1 is enough with the film. | Linear |
-| Ray-Traced Reflection Denoise<br>`eldr:rtReflectionDenoise` | on | [RT] Blurs rough traced reflections slightly, fading out over `eldr:effectDenoiseSamples`. Off: raw rays. | About free |
-| Ray-Traced Reflection Roulette<br>`eldr:rtReflectionRoulette` | on | [RT] Skips reflection rays where they add little: none on surfaces with no specular, fewer on dim reflections, weighted so the converged image is the same. | 1080p final: crowd 249 to 146 ms per sample, Kitchen 49 to 34 |
-| Reflection Probe<br>`eldr:reflectionProbe` | off | Captures the scene once into a cube map and uses it for reflections instead of the dome. Good for interiors. Recaptured when the scene changes. Needs `eldr:imageBasedLighting`. | Capture: Kitchen 6.5 ms, crowd 122 ms; then about 1 ms |
-| Reflection Probe Resolution<br>`eldr:probeResolution` | int 128 | Size of each cube face (16-512, power of two). | CPU about 10 ms at 128 |
-| Reflection Probe Position<br>`eldr:probePosition` | string empty | "x y z" capture point; empty = scene bounds centre. | |
-| Authored Reflection Probes<br>`eldr:authoredProbes` | on | Meshes with `primvars:eldr:reflectionProbe` are probes (max 8, smallest first). Needs `eldr:reflectionProbe`. | |
-| Normalize Reflection Probes<br>`eldr:probeNormalize` | on | Scales a probe by local ambient light over captured ambient (GI or SSGI on), clamped 4x. | |
-| Planar Reflections<br>`eldr:planarReflections` | off | Flat glossy surfaces (`primvars:eldr:planarReflection`, else the largest flat glossy one) reflect a mirrored render of the scene. | One extra render per mirror in view |
-| Planar Reflection Scale<br>`eldr:planarScale` | float 0.5 | Mirror render size as a fraction of the frame (0.1-1). | |
-| Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | Mirrors per frame, largest first (up to 4). | One render each |
-| Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | How much rough mirrors blur their reflection; 0 = always sharp. | 12 taps on mirror pixels |
-| Planar Reflections at Time Samples<br>`eldr:planarMotionBlur` | on | [film] Mirrors render at each motion blur time sample, so reflections blur like the scene. Off: sharp reflections. | None |
+| Screen-Space Reflections<br>`eldr:ssr` | on | Reflections of what is visible on screen, for floors, water and glossy objects; objects off screen are missing. Needs Post Processing. [prepass] | 6 ms on crowd |
+| SSR Ray Steps<br>`eldr:ssrSteps` | int 32 | Steps per screen-space reflection ray (1-256). Raise it if long reflections break up. | Crowd shading 10.8 ms at 8, 11.7 ms at 32 |
+| Denoised Glossy SSR<br>`eldr:ssrDenoise` | off | Blurry screen-space reflections on rough surfaces (up to roughness 0.8), filtered to remove noise. Off: sharp reflections that fade out as roughness grows. Not used with Ray-Traced Reflections. | Crowd shading 11.7 to 20.4 ms |
+| SSR Hit Footprint Filter<br>`eldr:ssrHitFilter` | on | Rough screen-space reflections blur instead of sparkling, and fade out at the image edges. | 0.05 ms |
+| Ray-Traced Reflection Rays per Pixel<br>`eldr:rtReflectionSamples` | int 1 | Ray-traced reflection rays per pixel and sample (1-16). More: cleaner glossy reflections per sample; 1 is enough once the image refines. [RT] | Linear |
+| Ray-Traced Reflection Denoise<br>`eldr:rtReflectionDenoise` | on | Slightly blurs rough ray-traced reflections to hide noise, fading out over Effect Denoise Fade samples. Off: raw rays. [RT] | About free |
+| Ray-Traced Reflection Roulette<br>`eldr:rtReflectionRoulette` | on | Skips reflection rays where they add little (none on surfaces without specular, fewer on dim reflections), weighted so the finished image is the same. Faster. [RT] | 1080p final: crowd 249 to 146 ms per sample, Kitchen 49 to 34 |
+| Reflection Probe<br>`eldr:reflectionProbe` | off | Captures the scene from one point into a cube map and uses it for reflections instead of the dome, so interiors reflect their room. Recaptured when the scene changes. Needs Dome Lighting. | Capture: Kitchen 6.5 ms, crowd 122 ms; then about 1 ms |
+| Reflection Probe Resolution<br>`eldr:probeResolution` | int 128 | Size of each cube face of the Reflection Probe (16-512, power of two). Higher: sharper probe reflections. | CPU about 10 ms at 128 |
+| Reflection Probe Position<br>`eldr:probePosition` | string empty | Where the Reflection Probe captures from, as "x y z". Empty: the centre of the scene's bounds. | |
+| Authored Reflection Probes<br>`eldr:authoredProbes` | on | Meshes with `primvars:eldr:reflectionProbe` become reflection probes of their own (up to 8, smallest first), for several rooms. Needs Reflection Probe. | |
+| Normalize Reflection Probes<br>`eldr:probeNormalize` | on | Matches a reflection probe's brightness to the local ambient light (with GI or SSGI on), up to 4x, so dark corners don't reflect a bright room. | |
+| Planar Reflections<br>`eldr:planarReflections` | off | Flat glossy surfaces reflect a mirrored render of the scene: sharp, exact reflections for mirrors, floors and water. Marked by `primvars:eldr:planarReflection`, else the largest flat glossy surface. | One extra render per mirror in view |
+| Planar Reflection Scale<br>`eldr:planarScale` | float 0.5 | Size of each mirror render as a fraction of the frame (0.1-1). Higher: sharper reflections, slower. | |
+| Planar Reflection Mirrors<br>`eldr:planarCount` | int 4 | How many mirrors render per frame, largest first (up to 4). Each costs one extra render of the scene. | One render each |
+| Planar Reflection Blur<br>`eldr:planarBlur` | float 1 | How much rough mirrors blur their reflection. 0: always sharp. | 12 taps on mirror pixels |
+| Planar Reflections at Time Samples<br>`eldr:planarMotionBlur` | on | Mirrors render at each motion blur time sample, so reflections blur like the scene. Off: sharp reflections of moving things. [film] | None |
 
 ### Materials
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Karma Default Material<br>`eldr:defaultMaterialKarma` | on | Prims without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint untinted highlight, and `displayOpacity` as opacity. Off: `displayColor` at full strength, opaque, as Storm (about 2.3x as bright). | None measurable (a material like any other) |
-| Normal Maps<br>`eldr:normalMaps` | on | Applies normal maps. | |
-| Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface `useSpecularWorkflow = 1` uses F0 = `specularColor`. Off: 0.04. | |
-| Clearcoat<br>`eldr:clearcoat` | on | A glossy coat layer: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. | Only materials that use it pay |
-| Sheen<br>`eldr:sheen` | on | A soft velvet-like layer: standard_surface `sheen`, OpenPBR `fuzz_*`. | Same |
-| Thin Film Iridescence<br>`eldr:thinFilm` | on | Soap-bubble colours: standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. | Same |
-| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). | Same |
-| Multiple Scattering<br>`eldr:multiScatter` | on | GGX energy compensation (MaterialX's): standard_surface metals and OpenPBR. standard_surface's dielectric specular and UsdPreviewSurface are single scattering, as Karma. Off: single scattering everywhere. | |
-| Hair Shading<br>`eldr:hairShading` | on | BasisCurves shade as hair (Kajiya-Kay), no SSR. `primvars:eldr:hair = 0` opts a prim out. | |
-| Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` quantise lighting into flat bands. | |
-| Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Bands per unit of light for all materials. Whole-scene NPR look. | |
-| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specular and IOR inputs can be textures or shading networks. Off: constant values only. | Only such materials |
-| MaterialX Graphs<br>`eldr:materialGraphs` | on | Runs MaterialX and UsdShade shading networks behind material inputs. Off: plain values and textures only. | Full screen about 2.5 ms at 1080p; Houdini's CarPaintMetallic 38 ms |
-| Procedural Textures<br>`eldr:proceduralTextures` | on | MaterialX noise nodes. Off: noise reads 0. | fractal3d 0.74 ms, worleynoise3d 0.5 ms (full screen) |
-| Subsurface Scattering<br>`eldr:subsurface` | on | [prepass] Light spreading under the skin of skin, wax or marble, plus sun shining through thin parts. | About 0.3 ms, only with subsurface materials |
-| Subsurface Samples<br>`eldr:subsurfaceSamples` | int 15 | Taps per direction (1-64). | |
-| Texture Anisotropic Filtering<br>`eldr:anisotropy` | int 16 | Texture sharpness at grazing angles (1 = off, 16 = most). | Small |
-| Texture Compression<br>`eldr:textureCompression` | off | Compresses 8-bit material textures on the GPU (cached on disk) to save memory, with a small loss. 16-bit, float and light textures stay exact. Off: exact, as Karma. | 4x less texture memory (gray: 2x); crowd_9k 172 to 112 MB; 52 dB PSNR vs exact |
-| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | on | Transmission, colour, depth, thin walled, subsurface weight, colour, radius and scale may be textures or graphs. Off reads constants. | |
-| Translucent Objects<br>`eldr:translucency` | on | Draws materials with opacity below 1. Off: not drawn. | |
-| Order-Independent Transparency<br>`eldr:oit` | on | Blends overlapping transparent surfaces without sorting them. Off: sorts whole meshes back to front, which can misorder parts of one mesh. | 18 bytes per pixel, one pass |
-| OIT Depth Weight<br>`eldr:oitDepthWeight` | float 4 | Distance weight exponent (0 = plain average). Raise if far layers show through near ones. | |
-| Refraction<br>`eldr:refraction` | on | [prepass] Glass and water bend and tint what is behind them. Only what is visible on screen refracts. | Glass scene 0.2 ms |
-| Refraction Blur Samples<br>`eldr:refractionSamples` | int 8 | Taps for rough glass (1-16), screen-space refraction only. Ray-traced refraction (`eldr:rtRefraction`) blurs over film samples instead. | |
-| Refraction Back Faces<br>`eldr:refractionBackFaces` | on | Draws back faces (water from below, Snell's window, total internal reflection). Off discards them. | |
-| Refraction through Layers<br>`eldr:multiRefraction` | on | Glass behind glass refracts correctly. | 0.1 ms per layer |
-| Refraction Layers<br>`eldr:refractionLayers` | int 4 | Most glass layers handled per frame (1-16); further layers share the last. Volumes see up to 4. | Volumes under glass: 8 bytes per pixel per layer |
-| Holdouts<br>`eldr:holdouts` | on | Matte objects render black with zero alpha, but keep their depth, ids and shadows. | None |
-| Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A see-through holdout cuts colour and alpha by its opacity. | Small pass when present |
-| Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" fades the whole surface, highlights included, with no refraction; "transparent" keeps highlights. Off: both act as transparent. | Free |
+| Karma Default Material<br>`eldr:defaultMaterialKarma` | on | Objects without a material shade as in Karma: 0.4 x `displayColor` (white without one) with a faint highlight, and `displayOpacity` as opacity. Off: `displayColor` at full strength and opaque, as Storm (about 2.3x as bright). | None measurable (a material like any other) |
+| Normal Maps<br>`eldr:normalMaps` | on | Applies materials' normal maps for fine surface detail. Off: the mesh's own normals. | |
+| Specular Workflow<br>`eldr:specularWorkflow` | on | UsdPreviewSurface materials with `useSpecularWorkflow = 1` use their `specularColor` for reflection strength. Off: the standard 0.04 reflectance. | |
+| Clearcoat<br>`eldr:clearcoat` | on | A glossy coat over the base material, as on car paint: UsdPreviewSurface `clearcoat`, standard_surface `coat`, OpenPBR `coat_*`. Off: no coat. | Only materials that use it pay |
+| Sheen<br>`eldr:sheen` | on | A soft, velvet-like shine at grazing angles, as on cloth: standard_surface `sheen`, OpenPBR `fuzz_*`. Off: no sheen. | Same |
+| Thin Film Iridescence<br>`eldr:thinFilm` | on | Soap-bubble and oil-slick colours: standard_surface `thin_film_thickness`, OpenPBR `thin_film_*`. Off: no thin film. | Same |
+| Anisotropic Specular<br>`eldr:anisotropicSpecular` | on | Stretched highlights, as on brushed metal (`specular_anisotropy`, `specular_rotation`, OpenPBR `specular_roughness_anisotropy`). Off: round highlights. | Same |
+| Multiple Scattering<br>`eldr:multiScatter` | on | Keeps rough metals (standard_surface) and OpenPBR materials from darkening as roughness grows, as MaterialX and Karma do. Other specular stays single scattering, as Karma. Off: single scattering everywhere. | |
+| Hair Shading<br>`eldr:hairShading` | on | Curves shade as hair, with hair highlights and no screen-space reflections. `primvars:eldr:hair = 0` opts a prim out. Off: curves shade as plain surfaces. | |
+| Toon Shading<br>`eldr:toon` | on | Materials with `inputs:eldr:toonBands` shade in flat cartoon bands of light. Off: they shade normally. | |
+| Toon Bands for Every Material<br>`eldr:toonBands` | int 0 (off) | Gives every material a cartoon look: light falls into this many flat bands per unit of light. 0: off (only materials that set their own bands). | |
+| Textured Lobe Inputs<br>`eldr:texturedLobes` | on | Coat, sheen, anisotropy, thin film, specular and IOR inputs may be driven by textures or shading networks. Off: their constant values only. | Only such materials |
+| MaterialX Graphs<br>`eldr:materialGraphs` | on | Runs MaterialX and UsdShade shading networks connected to material inputs. Off: plain values and textures only, which is faster. | Full screen about 2.5 ms at 1080p; Houdini's CarPaintMetallic 38 ms |
+| Procedural Textures<br>`eldr:proceduralTextures` | on | Evaluates MaterialX noise nodes (noise, fractal, cell and Worley noise) in materials. Off: noise reads 0, which is faster. | fractal3d 0.74 ms, worleynoise3d 0.5 ms (full screen) |
+| Subsurface Scattering<br>`eldr:subsurface` | on | Light spreading under the surface of skin, wax or marble, softening it, plus light shining through thin parts such as ears. Off: such materials shade as opaque. [prepass] | About 0.3 ms, only with subsurface materials |
+| Subsurface Samples<br>`eldr:subsurfaceSamples` | int 15 | Samples of the subsurface blur per direction (1-64). Raise it if skin looks blotchy; Subsurface Quality multiplies it. | |
+| Texture Anisotropic Filtering<br>`eldr:anisotropy` | int 16 | Keeps textures sharp on surfaces seen at a grazing angle, such as floors: 1 off, 16 sharpest. | Small |
+| Texture Compression<br>`eldr:textureCompression` | off | Compresses 8-bit material textures on the GPU (cached on disk) to save memory, with a small quality loss. 16-bit, float and light textures stay exact. Off: exact textures, as Karma. | 4x less texture memory (gray: 2x); crowd_9k 172 to 112 MB; 52 dB PSNR vs exact |
+| Textured Transmission and Subsurface Inputs<br>`eldr:texturedTransmission` | on | Transmission (colour, depth, thin walled) and subsurface (weight, colour, radius, scale) inputs may be driven by textures or shading networks. Off: their constant values only. | |
+| Translucent Objects<br>`eldr:translucency` | on | Draws materials with opacity below 1 (glass, water, see-through objects). Off: such objects are not drawn. | |
+| Order-Independent Transparency<br>`eldr:oit` | on | Blends overlapping transparent surfaces without sorting them, so layers of one mesh show in the right order. Off: whole meshes sorted back to front, which can misorder parts of one mesh. | 18 bytes per pixel, one pass |
+| OIT Depth Weight<br>`eldr:oitDepthWeight` | float 4 | How strongly nearer transparent layers win over farther ones (0: plain average). Raise it if far layers show through near ones. | |
+| Refraction<br>`eldr:refraction` | on | Glass and water bend and tint what is behind them, using what is visible on screen. Off: glass shows its background unbent. [prepass] | Glass scene 0.2 ms |
+| Refraction Blur Samples<br>`eldr:refractionSamples` | int 8 | Blur samples for rough glass in screen-space refraction (1-16). Ray-traced refraction blurs as the image refines instead. | |
+| Refraction Back Faces<br>`eldr:refractionBackFaces` | on | Draws the inside faces of glass and water (water seen from below, Snell's window, total internal reflection). Off: only front faces. | |
+| Refraction through Layers<br>`eldr:multiRefraction` | on | Glass behind glass refracts correctly, layer by layer. Off: glass seen through other glass is missing from its refraction. | 0.1 ms per layer |
+| Refraction Layers<br>`eldr:refractionLayers` | int 4 | The most glass layers handled per frame (1-16); further layers share the last. Volumes behind glass see up to 4. | Volumes under glass: 8 bytes per pixel per layer |
+| Holdouts<br>`eldr:holdouts` | on | Matte (holdout) objects render black with zero alpha, so a plate can show through, but keep their depth, ids and shadows. Off: they render as normal objects. | None |
+| Translucent Holdouts Cut Alpha<br>`eldr:holdoutAlpha` | on | A see-through holdout cuts colour and alpha by its opacity, for soft mattes. Off: see-through holdouts leave the image uncut. | Small pass when present |
+| Opacity Mode Presence<br>`eldr:opacityMode` | on | UsdPreviewSurface `opacityMode` "presence" fades the whole surface, highlights included, with no refraction, as for cut-out leaves; "transparent" keeps highlights. Off: both act as transparent. | Free |
 
 ### Geometry
 
