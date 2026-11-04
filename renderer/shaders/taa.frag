@@ -16,7 +16,7 @@ layout(set = 0, binding = 3) uniform sampler2D velocity;    // object motion in 
 
 layout(push_constant) uniform TaaParams {
     mat4 reprojection;  // current jittered NDC -> previous clip (row-vector order)
-    vec4 params;        // blend weight of the current frame, 1/width, 1/height
+    vec4 params;        // blend weight of the current frame, 1/width, 1/height, colour limit (0: off)
 #ifdef UPSCALE
     // Upscaling (TAAU): xy where this frame's samples are from their input
     // pixels' centres (input pixels), zw input size / output size.
@@ -59,9 +59,15 @@ vec4 Clean(vec4 c)
     return any(isnan(c)) || any(isinf(c)) ? vec4(0.0) : max(c, vec4(0.0));
 }
 
+// Karma's colour limit on every camera sample: the peak channel capped, hue kept.
 vec4 Current(ivec2 p)
 {
-    return Clean(texelFetch(current, p, 0));
+    vec4 c = Clean(texelFetch(current, p, 0));
+    float peak = max(max(c.r, c.g), c.b);
+    if (pc.params.w > 0.0 && peak > pc.params.w) {
+        c.rgb *= pc.params.w / peak;
+    }
+    return c;
 }
 
 vec4 HistoryTap(vec2 uv)

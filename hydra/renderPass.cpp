@@ -738,7 +738,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                                                 : int(number(t2.colorLimitShared, -1.0f));
         const bool linked = sharedValue >= 0 ? sharedValue != 0 : delegate->GetRenderSetting<bool>(karmaLinked, true);
         frame.indirectClamp = set(t2.indirectClamp, linked ? shared : set(karmaIndirect, shared));
-        frame.colorLimit = shared;  // camera-seen emission, as Karma's colorlimit
+        frame.colorLimit = shared;  // every camera sample, as Karma's colorlimit
     }
     // Per-component quality (Karma's): eldr:*Quality, else Karma's on the
     // settings (husk) or the active settings prim (usdview), else 1. Rays

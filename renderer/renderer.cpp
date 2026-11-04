@@ -4841,7 +4841,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             _taa.RecordFilm(_cmd, filmOffset, filmRadius, filmMode, frame.filmWarmStart,
                             adaptiveThreshold, frame.adaptiveMinSamples,
                             frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation),
-                            _filmStamp);
+                            _filmStamp, fd.lightClamp[2]);
             if (_denoiseUpload) {  // the denoised image over the film's resolve (Frame::denoise)
                 const VkImage resolved = _taa.OutputImage();
                 ImageBarrier(_cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
@@ -4858,7 +4858,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             }
             pass("film");
         } else {
-            _taa.Record(_cmd, &reprojection.m[0][0], alpha, filmOffset);
+            _taa.Record(_cmd, &reprojection.m[0][0], alpha, filmOffset, fd.lightClamp[2]);
             pass("taa");
         }
         if (postBlur) {

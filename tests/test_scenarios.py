@@ -6,7 +6,8 @@ eldr_rt prim). Not pixel equality with Karma, only what must hold either way:
 - glass_solid_and_thin: the glass ball, slab and thin pane aren't black;
 - furnace_grey (uniform white dome of 1): white diffuse, rough white metal, clear glass and
   coated white read about 1, grey 0.5 reads 0.5, the background 1 (energy neither made nor
-  lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug.
+  lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug;
+- sun_on_chrome: the colour limit caps the chrome sun highlights (every camera sample, as Karma).
 Needs a GPU with ray tracing for the traced half.
 Run: usdenv.cmd python tests\\test_scenarios.py"""
 import os
@@ -35,7 +36,7 @@ fbo.bind()
 
 
 class Shot:
-    def __init__(self, name, traced):
+    def __init__(self, name, traced, settings={}):
         self.stage = Usd.Stage.Open(os.path.join(SCENES, name + ".usda"))
         camera = UsdGeom.Camera(self.stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default())
         CameraUtil.ConformWindow(camera, CameraUtil.Fit, W / H)
@@ -46,7 +47,7 @@ class Shot:
         # Linear radiance with the post steps (screen-space reflections) kept.
         for key, value in {"eldr:tonemapper": "none", "eldr:autoExposure": False, "eldr:bloomIntensity": 0.0}.items():
             engine.SetRendererSetting(key, value)
-        for key, value in (RT if traced else {}).items():
+        for key, value in dict(RT if traced else {}, **settings).items():
             engine.SetRendererSetting(key, value)
         engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
         engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
@@ -56,6 +57,11 @@ class Shot:
             engine.Render(self.stage.GetPseudoRoot(), params)
         self.image = fbo.toImage()
         del engine
+
+    def peak(self):
+        """The brightest channel anywhere in the image."""
+        return max(max(c.redF(), c.greenF(), c.blueF())
+                   for c in (self.image.pixelColor(x, y) for y in range(H) for x in range(W)))
 
     def pixel(self, point):
         p = self.toNdc.Transform(Gf.Vec3d(*point))
@@ -117,6 +123,15 @@ for traced in (False, True):
         expect(lo <= v <= hi, "%s: furnace %s reads %.2f-%.2f" % (mode, name, lo, hi))
     v = sum(shot.mean((0, 1.6, 0), 2)) / 3
     known(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
+
+# Karma's colour limit caps every camera sample (chrome sun highlights too), not only
+# directly seen emitters. A small limit keeps the check inside the image's range.
+for traced in (False, True):
+    mode = "traced" if traced else "default"
+    limited = Shot("sun_on_chrome", traced, {"eldr:colorLimit": 0.5}).peak()
+    full = Shot("sun_on_chrome", traced, {"eldr:colorLimit": 0.0}).peak()
+    print("  sun_on_chrome peak: limit 0.5 %.3f, off %.3f" % (limited, full))
+    expect(limited <= 0.52 and full > 0.7, "%s: the colour limit caps the chrome highlights" % mode)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

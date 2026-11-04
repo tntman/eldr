@@ -32,7 +32,7 @@ layout(push_constant) uniform FilmParams {
     // the history at `seed` times this sample's weight.
     vec4 params;
     vec4 seed;      // x: weight of the history a film starts from
-    vec4 adaptive;  // x: noise threshold (0: off), y: minimum samples, z: exposure
+    vec4 adaptive;  // x: noise threshold (0: off), y: minimum samples, z: exposure, w: colour limit (0: off)
     uvec4 tiles;    // x: this film frame's stamp (0: none), y: tiles across
 } pc;
 
@@ -40,6 +40,18 @@ layout(push_constant) uniform FilmParams {
 vec4 Clean(vec4 c)
 {
     return any(isnan(c)) || any(isinf(c)) ? vec4(0.0) : max(c, vec4(0.0));
+}
+
+// Karma's colour limit on every camera sample (before the pixel filter):
+// the peak channel capped, hue kept.
+vec4 Sample(ivec2 q)
+{
+    vec4 c = Clean(texelFetch(current, q, 0));
+    float peak = max(max(c.r, c.g), c.b);
+    if (pc.adaptive.w > 0.0 && peak > pc.adaptive.w) {
+        c.rgb *= pc.adaptive.w / peak;
+    }
+    return c;
 }
 
 void main()
@@ -79,7 +91,7 @@ void main()
             // The own sample always counts a little: a radius under the
             // jitter's reach (box filter) still gives every pixel a value.
             w = (x == 0 && y == 0) ? max(w, 1e-6) : w;
-            sum += Clean(texelFetch(current, q, 0)) * w;
+            sum += Sample(q) * w;
             weight += w;
         }
     }
