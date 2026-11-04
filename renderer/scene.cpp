@@ -933,7 +933,7 @@ void Scene::_UploadGeometry(Mesh &m)
         m._flat = s._flat;
         std::copy_n(s._flatTriangle, 9, m._flatTriangle);
         m._uvSpacing = s._uvSpacing;
-        m._round = s._round;
+        m._shape = s._shape;
         m._vertexOffset = s._vertexOffset, m._vertexCount = s._vertexCount;
         m._firstIndex = s._firstIndex, m._indexCount = s._indexCount;
         m._skinOffset = s._skinOffset, m._skinCount = s._skinCount, m._skinStride = s._skinStride;
@@ -1182,18 +1182,30 @@ void Scene::_UploadGeometry(Mesh &m)
         uvLength += std::hypot(double(b[0]) - a[0], double(b[1]) - a[1]);
     }
     m._uvSpacing = corners > 0 ? float(uvLength / double(corners)) : 0.0f;
-    // Round: every point on the ellipsoid that fills its bounds (a ball),
-    // which screen-space refraction then follows through (transparency.glsl).
-    m._round = !vertices.empty() && m.facing == Mesh::kNotFacing;
-    for (size_t i = 0; m._round && i < vertices.size(); ++i) {
-        float r2 = 0.0f;
-        for (int k = 0; k < 3; ++k) {
-            const float h = 0.5f * (m._boundsMax[k] - m._boundsMin[k]);
-            const float o = h > 0.0f ? (vertices[i].position[k] - 0.5f * (m._boundsMin[k] + m._boundsMax[k])) / h : 2.0f;
-            r2 += o * o;
-        }
-        m._round = std::abs(std::sqrt(r2) - 1.0f) < 0.05f;
+    // Its shape for screen-space refraction to follow rays through
+    // (transparency.glsl): a ball (every point on the ellipsoid that fills
+    // its bounds) or a box (every triangle on one side of its bounds; a
+    // rippled water top within 12% of the depth).
+    auto unit = [&](size_t v, int k) {
+        const float h = 0.5f * (m._boundsMax[k] - m._boundsMin[k]);
+        return h > 0.0f ? (vertices[v].position[k] - 0.5f * (m._boundsMin[k] + m._boundsMax[k])) / h : 2.0f;
+    };
+    bool ball = !vertices.empty() && m.facing == Mesh::kNotFacing, box = ball && corners >= 3;
+    for (size_t i = 0; ball && i < vertices.size(); ++i) {
+        const float x = unit(i, 0), y = unit(i, 1), z = unit(i, 2);
+        ball = std::abs(std::sqrt(x * x + y * y + z * z) - 1.0f) < 0.05f;
     }
+    for (size_t t = 0; !ball && box && t + 2 < corners; t += 3) {
+        bool side = false;
+        for (int k = 0; k < 3 && !side; ++k) {
+            for (float s : {-1.0f, 1.0f}) {
+                side = side || std::all_of(&indices[t], &indices[t] + 3,
+                                           [&](uint32_t v) { return std::abs(unit(v, k) - s) < 0.25f; });
+            }
+        }
+        box = side;
+    }
+    m._shape = ball ? 1u : box ? 2u : 0u;
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
     // Levels of detail of heavy meshes (lod.h), built on other threads; a
     // later Commit stores them (the mesh draws whole until then).
@@ -2308,7 +2320,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.hair = m.hair ? 1 : 0;
         d.facing = m.facing;
         d.uvSpacing = m._uvSpacing;
-        d.rounded = m._round ? 1u : 0u;
+        d.shape = m._shape;
         facing = facing || (drawable && m.facing != Mesh::kNotFacing);
         const bool program = mat && !mat->program.Empty() && mat->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |

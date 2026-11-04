@@ -932,6 +932,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     float lostLo = -1.0, lostHi = 0.0;  // the last surface the ray went behind and wasn't judged to hit
     float lostDepth = 0.0;              // how far behind that surface it went in
     vec3 lostSurface = vec3(0.0);       // where
+    bool lostLate = false;              // in front of the depth before it went behind it
     bool under = false;                 // it passed under that surface's object (below)
     bool emerged = false;               // in front of a surface since (not just of the background)
     bool crossed = false;
@@ -973,6 +974,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                 }
             }
         }
+        float lastScene = prevScene;
         prevScene = scene;
         // Behind this pixel's surface by about a step: the ray went through
         // it. Further behind, it passes behind a separate object. Surfaces
@@ -1033,24 +1035,42 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                     crossed = length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
                 }
             }
+            if (wasBehind) {
+                lo = hi;  // a step that stays behind: it lands on this pixel's surface, not the last one's
+            }
             if (!crossed && !wasBehind) {
                 lostLo = lo;
                 lostHi = hi;
                 lostDepth = length(ray - surface);
                 lostSurface = surface;
+                lostLate = i > 0;
                 emerged = false;
             }
-        } else {
-            // Out from behind an object it went in less deep than half the
-            // way it stayed behind it: through a rounded object such as a
-            // ball (as deep as wide), a ray from the floor under it into
-            // the side the camera doesn't see. That object stands in where
-            // it went in: the ball's reflection reaches down to its contact.
-            if (estimator && wasBehind && lostLo >= 0.0 &&
+        }
+        // Out from behind an object (in front of what follows, or behind a
+        // different surface: a jump in depth), having gone in less deep
+        // than half the way it stayed behind it: it went through a rounded
+        // object such as a ball (as deep as wide), a ray from the floor
+        // under it into the side the camera doesn't see. That object stands
+        // in where it went in: the ball's reflection reaches its contact.
+        // Behind a different surface otherwise (or from its first step,
+        // under its own surface: a chrome ball's underside), the ray went
+        // through that one where it's hidden: the floor under a ball. Its
+        // visible part next to there stands in.
+        float a = 1.0 - lastScene, b = 1.0 - scene;  // ~ 1 / distance
+        bool jump = (lastScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b);
+        if (estimator && wasBehind && !crossed && lostLo >= 0.0 && (!behind || (jump && scene < 1.0))) {
+            if (lostLate &&
                 lostDepth <= 0.5 * length(Unproject(vec3(sPrev.xy, SceneDepth(sPrev.xy) * 2.0 - 1.0)) - lostSurface)) {
                 under = true;
                 break;
             }
+            if (behind) {
+                crossed = true;  // lo = hi = u: this pixel's surface
+                break;
+            }
+        }
+        if (!behind) {
             emerged = emerged || scene < 1.0;
         }
         wasBehind = behind;
@@ -1066,6 +1086,10 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // would leave black in a room without a dome. That surface stands in,
     // as a back-face hit, over the probe or dome. Rays that leave the scene
     // never go behind anything.
+    // Still behind an object at the end, as deep as above: its hidden side
+    // (a ball's back in a mirror behind it), lit like its front.
+    under = under || (estimator && !crossed && wasBehind && lostLate && lostLo >= 0.0 &&
+                      lostDepth <= 0.5 * length(Unproject(vec3(sPrev.xy, SceneDepth(sPrev.xy) * 2.0 - 1.0)) - lostSurface));
     bool lost = !crossed && !under && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
     if (!crossed && !lost && !under) {
         return 0.0;
@@ -1126,7 +1150,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // the ray, rounding either way) count as front faces.
     if (lost) {
         hit *= frame.screenTrace.y;  // its coverage too: the probe or dome shows through
-    } else if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+    } else if (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
         hit.rgb *= frame.screenTrace.y;
     }
     // Fade towards the screen edges, beyond which the ray is blind.

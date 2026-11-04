@@ -115,12 +115,15 @@ vec3 DomeAlong(vec3 dir, float lod)
 // ray tracing pass found at this pixel takes its light from there instead
 // (the path through the glass, absorption inside included), and back
 // faces there draw nothing; other refracting fragments stay screen space.
-// A ball (DrawInfo::rounded: its points on its bounds' ellipsoid) seen
-// from outside refracts twice at its front face: in, across the ellipsoid
-// and out where it leaves, so it shows what's behind upside down like a
-// lens, as Karma does; its back faces draw nothing.
+// A ball or a box (DrawInfo::shape: a ball's points on its bounds'
+// ellipsoid, a box's triangles on its bounds' sides: a glass slab, a block
+// of water) seen from outside refracts twice at its front face: in, across
+// the shape and out where it leaves, so a ball shows what's behind upside
+// down like a lens and a slab shifts it, as Karma does; their back faces
+// draw nothing (from outside they would bend the camera's ray, not the one
+// inside, and reflect it totally at grazing angles: milky water).
 // ponytail: screen space: what isn't on screen isn't refracted; one
-// interface per layer (two for a ball), the thickness an estimate.
+// interface per layer (two for a ball or box), the thickness an estimate.
 // How far along e (object space, scaled so the ellipsoid is the unit ball;
 // the distance in e's units) o is from leaving the unit ball.
 float EllipsoidExit(vec3 o, vec3 e)
@@ -128,6 +131,17 @@ float EllipsoidExit(vec3 o, vec3 e)
     float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
     float disc = b * b - a * c;
     return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
+}
+
+// How far along e (unit-box space, as EllipsoidExit) o is from leaving
+// the box [-1, 1]^3, and that side's outward normal there.
+float BoxExit(vec3 o, vec3 e, out vec3 side)
+{
+    vec3 safe = mix(vec3(1e-8), e, greaterThan(abs(e), vec3(1e-8)));
+    vec3 t = (sign(safe) - o) / safe;
+    float exit = min(t.x, min(t.y, t.z));
+    side = t.x == exit ? vec3(sign(safe.x), 0.0, 0.0) : t.y == exit ? vec3(0.0, sign(safe.y), 0.0) : vec3(0.0, 0.0, sign(safe.z));
+    return max(exit, 0.0);
 }
 
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
@@ -213,22 +227,24 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
     vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
     bool solid = !thin && min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z));
-    bool ball = solid && d.rounded != 0u && dot(eye, eye) > 1.0;
-    if (ball && inside) {
+    vec3 outsideBox = abs(eye) - 1.0;
+    bool shaped = solid && (d.shape == 1u ? dot(eye, eye) > 1.0 : d.shape == 2u && max(outsideBox.x, max(outsideBox.y, outsideBox.z)) > 0.0);
+    if (shaped && inside) {
         discard;  // the front face refracts out through here
     }
-    // Where the ray leaves: a ball's exit point and the direction out of
-    // it, else the surface and the ray.
+    // Where the ray leaves: a ball's or box's exit point and the direction
+    // out of it, else the surface and the ray.
     vec3 exitP = inWorldPos, exitR = r;
-    float exitDistance = thickness;
-    if (ball && !total) {
-        float t = EllipsoidExit(o, toObject * r / extent);
-        vec3 q = o + toObject * r / extent * t;
-        vec3 outward = normalize(transpose(toObject) * (q / extent));
+    float exitDistance = thickness, across = 0.0;
+    if (shaped && !total) {
+        vec3 e = toObject * r / extent, side;
+        across = d.shape == 1u ? EllipsoidExit(o, e) : BoxExit(o, e, side);
+        side = d.shape == 1u ? o + e * across : side;
+        vec3 outward = normalize(transpose(toObject) * (side / extent));
         vec3 leaving = refract(r, -outward, ior);
-        exitP = inWorldPos + r * t;
+        exitP = inWorldPos + r * across;
         exitR = dot(leaving, leaving) > 0.0 ? leaving : r;
-        exitDistance = max(min(behind, 100.0 * camera) - t, 0.0);
+        exitDistance = max(min(behind, 100.0 * camera) - across, 0.0);
     }
     if (m.refraction.z > 0.0 && !thin) {
         // The path inside: through the ellipsoid that fills the mesh's
@@ -238,7 +254,8 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         // sheets): the distance to what is behind, at most the mesh's size.
         float path = thickness, pathInside = thickness;
         if (solid) {
-            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, EllipsoidExit(o, toObject * r / extent));
+            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0)
+                          : shaped ? across : min(behind, EllipsoidExit(o, toObject * r / extent));
             pathInside = EllipsoidExit(o, toObject * reflect(-v, n) / extent);
         }
         tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
