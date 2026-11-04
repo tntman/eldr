@@ -296,10 +296,38 @@ void main()
                 if (dot(l, ng) <= 0.0) {
                     l = reflect(-v, n);  // below the surface: the mirror direction
                 }
-                Trace(reflectOrigin, l, a);
-                EvaluateHit(l, a);
-                reflection.rgb += hit.t < 0.0 ? Dome(l, perceptual * float(frame.counts.z - 1u))
-                                              : ShadeHit(l, seed, true, (rt.shadowInfo.w & 1u) != 0u);
+                // Reflections of reflections up to rt.skinned.z rays
+                // (eldr:rtReflectionBounces): a glossy hit (below
+                // kMaxRoughness) traces its own GGX sample, weighted by
+                // its specular albedo; the last one reflects the dome.
+                vec3 o = reflectOrigin, through = vec3(1.0);
+                float r = perceptual, cone = a;
+                for (uint bounce = 1u; bounce <= 16u; ++bounce) {
+                    Trace(o, l, cone);
+                    EvaluateHit(l, cone);
+                    if (hit.t < 0.0) {
+                        reflection.rgb += through * Dome(l, r * float(frame.counts.z - 1u));
+                        break;
+                    }
+                    bool more = bounce < rt.skinned.z && hit.roughness < kMaxRoughness;
+                    vec3 hn = hit.normal, hg = hit.geometric, hp = hit.position;  // the shadow rays overwrite hit
+                    r = hit.roughness;
+                    reflection.rgb += through * ShadeHit(l, seed + uvec3(0u, 0u, bounce * 104729u), true,
+                                                         (rt.shadowInfo.w & 1u) != 0u, true, !more);
+                    if (!more) {
+                        break;
+                    }
+                    through *= gHitSpecular;
+                    vec3 ht, hb;
+                    Basis(hn, ht, hb);
+                    vec3 hv = -l;
+                    vec3 m = SampleGgxVndf(vec3(dot(hv, ht), dot(hv, hb), max(dot(hv, hn), 1e-4)), r * r,
+                                           Random2(seed + uvec3(0u, 0u, 7919u + bounce * 131u), s));
+                    vec3 next = reflect(l, ht * m.x + hb * m.y + hn * m.z);
+                    l = dot(next, hg) > 0.0 ? next : reflect(l, hn);
+                    o = OffsetRay(hp, hg);
+                    cone += r * r;
+                }
             }
             reflection.rgb /= float(samples);
             reflection.a = (1.0 - smoothstep(kFadeRoughness, kMaxRoughness, perceptual)) / keep;
@@ -351,7 +379,7 @@ void main()
             } else if ((hit.flags & kHitBackface) == 0u) {
                 EvaluateHit(l, 0.5);
                 radiance += through * ShadeHit(l, seed + uvec3(0u, 0u, i * 7919u), (hit.flags & kHitEmitter) == 0u,
-                                               (rt.shadowInfo.w & 1u) != 0u);
+                                               (rt.shadowInfo.w & 1u) != 0u, false, true);
             }
         }
         imageStore(rtGatherImage, pixel, vec4(radiance / (float(rays) * gatherShare), 1.0));

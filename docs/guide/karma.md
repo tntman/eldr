@@ -37,6 +37,7 @@ You can keep using Karma's controls; Eldr's own `eldr:` setting wins when both a
 |---|---|---|
 | Diffuse, Reflection, SSS, Volume and Light Sampling Quality | Karma Render Settings | The quality multipliers |
 | Color Limit, Indirect Color Limit | Karma Render Settings | Colour limit and indirect clamp |
+| Reflection Limit | Karma Render Settings | Ray-Traced Reflection Bounces |
 | Denoiser | Karma Render Settings | OIDN |
 | Holdout Mode, Render Visibility, Motion Blur, Velocity Blur | Render Geometry Settings, Karma tab | Same meaning |
 | Dicing Quality, Min/Max Depth | Render Geometry Settings, Karma tab | Same meaning |

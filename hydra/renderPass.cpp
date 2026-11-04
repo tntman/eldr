@@ -572,6 +572,14 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             limit = number(setting(karmaLimit));
         }
         frame.volume.volumeLimit = std::max(float(limit), 0.0f);
+        // Traced reflection bounces: eldr:rtReflectionBounces (-1: not set),
+        // else karma:global:reflectlimit, else 4.
+        static const TfToken karmaReflect("karma:global:reflectlimit");
+        double bounces = number(setting(t2.rtReflectionBounces));
+        if (bounces < 0.0) {
+            bounces = number(setting(karmaReflect));
+        }
+        frame.rtReflectionBounces = bounces < 0.0 ? 4u : uint32_t(std::clamp(bounces, 1.0, 16.0));
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&

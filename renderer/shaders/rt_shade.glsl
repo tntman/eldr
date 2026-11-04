@@ -239,19 +239,29 @@ vec3 DomeDiffuse(vec3 n)
 // shadowed by a ray; with `shadows` (eldr:rtHitShadows) every distant light
 // and the first kMaxHitShadows local lights reaching p are too, one ray
 // each, the rest unshadowed.
-// ponytail: local lights are shaded as points (textured ones by one tap, LightTint) and hits have no specular
-// highlights; lights past the cap stay unshadowed (most important first if
+// `specular` (hits seen in reflections and through glass): the lights'
+// GGX highlights (widened by the light's size) and Fresnel: the dome's
+// reflection weighted by the split-sum GGX albedo (Karis' analytic fit),
+// the diffuse by what that leaves, the dome blurred by the hit's
+// roughness. Without (final gather, probes): diffuse light and the dome's
+// reflection times F0, half blurred. `dome` false leaves the dome's
+// reflection out for a caller that traces it further
+// (eldr:rtReflectionBounces); gHitSpecular is its weight.
+// ponytail: local lights are shaded as points (textured ones by one tap,
+// LightTint); lights past the cap stay unshadowed (most important first if
 // scenes with many lights at one hit show it).
 // Light sampling (rt.gatherInfo.w, eldr:rtLightSampling): of the lights
 // that would trace, one ray for one of them, picked in proportion to its
 // unshadowed light (a weighted reservoir on one uniform number) and
 // counted 1 / p: every light shadowed, no cap, the same on average.
 const uint kMaxHitShadows = 16u;
+vec3 gHitSpecular = vec3(0.0);
 
-// One step of ShadeHit's light pick: light i with unshadowed light e joins;
-// it replaces the pick with probability w / total, u rescaled to stay uniform.
-void Reservoir(uint i, vec3 e, inout float u, inout float total, inout uint picked, inout float pickedWeight,
-               inout vec3 pickedLight)
+// One step of ShadeHit's light pick: light i of weight w (its unshadowed
+// light) and radiance `lit` joins; it replaces the pick with probability
+// w / total, u rescaled to stay uniform.
+void Reservoir(uint i, vec3 e, vec3 lit, inout float u, inout float total, inout uint picked,
+               inout float pickedWeight, inout vec3 pickedLight)
 {
     float w = e.r + e.g + e.b;
     if (w <= 0.0) {
@@ -263,18 +273,38 @@ void Reservoir(uint i, vec3 e, inout float u, inout float total, inout uint pick
         u /= q;
         picked = i;
         pickedWeight = w;
-        pickedLight = e;
+        pickedLight = lit;
     } else {
         u = (u - q) / (1.0 - q);
     }
 }
 
-vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
+// GGX reflectance (D V F) towards v of light from l, alpha a.
+vec3 HitGgx(vec3 n, vec3 v, vec3 l, float a, vec3 f0)
 {
-    vec3 p = hit.position, n = hit.normal;
+    vec3 h = normalize(v + l);
+    float NoH = max(dot(n, h), 0.0), NoV = max(dot(n, v), 1e-4), NoL = max(dot(n, l), 1e-4);
+    float a2 = a * a;
+    float f = (NoH * a2 - NoH) * NoH + 1.0;
+    float vis = 0.5 / (NoL * sqrt(NoV * NoV * (1.0 - a2) + a2) + NoV * sqrt(NoL * NoL * (1.0 - a2) + a2));
+    return a2 / (PI * f * f) * vis * (f0 + (1.0 - f0) * pow(1.0 - max(dot(l, h), 0.0), 5.0));
+}
+
+vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, bool dome)
+{
+    vec3 p = hit.position, n = hit.normal, v = -dir;
     vec3 albedo = hit.baseColor * (1.0 - hit.metallic);
     vec3 f0 = mix(vec3(0.04), hit.baseColor, hit.metallic);
-    vec3 irradiance = vec3(0.0);  // direct, cosine-weighted
+    float a = hit.roughness * hit.roughness;
+    vec3 fss = f0;  // the specular's directional albedo
+    vec3 diffuse = albedo;  // the diffuse's, under the specular
+    if (specular) {
+        vec4 r = hit.roughness * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
+        float a004 = min(r.x * r.x, exp2(-9.28 * max(dot(n, v), 0.0))) * r.x + r.y;
+        fss = f0 * (-1.04 * a004 + r.z) + (1.04 * a004 + r.w);
+        diffuse *= 1.0 - fss;
+    }
+    vec3 direct = vec3(0.0);  // radiance from the lights
     uint linkMask = RtLinkMask(hit.instance);
     bool pick = rt.gatherInfo.w != 0.0;
     float u = float(Pcg3d(seed + uvec3(0u, 0u, 0x51edu)).x >> 8u) * (1.0 / 16777216.0);
@@ -283,17 +313,23 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     vec3 pickedLight = vec3(0.0);
     for (uint i = 0u; i < frame.counts.x; ++i) {
         Light light = lights[i];
-        float NoL = dot(n, light.position.xyz);
+        vec3 l = light.position.xyz;
+        float NoL = dot(n, l);
         if (NoL > 0.0 && LightLinked(light, linkMask)) {
-            vec3 e = light.color.rgb * (NoL * light.halfHeight.w);
+            vec3 e = light.color.rgb * NoL;  // irradiance
+            vec3 w = e * light.halfHeight.w, lit = w * diffuse / PI;
+            if (specular) {
+                w += e * light.shaping.w;
+                lit += e * light.shaping.w * HitGgx(n, v, l, min(a + 0.5 * sin(light.axis.w), 1.0), f0);
+            }
             if (i == rt.params.w || (shadows && (uint(light.color.w) & 2u) != 0u)) {
                 if (pick) {
-                    Reservoir(i, e, u, total, picked, pickedWeight, pickedLight);
+                    Reservoir(i, w, lit, u, total, picked, pickedWeight, pickedLight);
                     continue;
                 }
-                e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
+                lit *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
             }
-            irradiance += e;
+            direct += lit;
         }
     }
     uint traced = 0u;
@@ -327,21 +363,26 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
         float theta = acos(clamp(cosLight, -1.0, 1.0));
         float cone = light.shaping.y <= light.shaping.x ? (theta <= light.shaping.y ? 1.0 : 0.0)
                                                          : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
-        vec3 e = light.color.rgb * LightTint(light, p) *
-                 (formFactor * window * window * cone * light.halfHeight.w * EmitterClamp(light, albedo));
+        vec3 e = light.color.rgb * LightTint(light, p) * (formFactor * window * window * cone * EmitterClamp(light, albedo));
+        vec3 w = e * light.halfHeight.w, lit = w * diffuse / PI;
+        if (specular) {
+            float size = type == kLightSphere ? light.axis.w : max(h, length(light.halfHeight.xyz));
+            w += e * light.shaping.w;
+            lit += e * light.shaping.w * HitGgx(n, v, l, min(a + 0.5 * size * inversesqrt(d2), 1.0), f0);
+        }
         if (shadows && pick && (uint(light.color.w) & 2u) != 0u) {
-            Reservoir(i, e, u, total, picked, pickedWeight, pickedLight);
+            Reservoir(i, w, lit, u, total, picked, pickedWeight, pickedLight);
             continue;
         }
-        if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(e.r, max(e.g, e.b)) > 0.0) {
-            e *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
+        if (shadows && traced < kMaxHitShadows && (uint(light.color.w) & 2u) != 0u && max(w.r, max(w.g, w.b)) > 0.0) {
+            lit *= LightVisibility(i, p, hit.geometric, Random2(seed + uvec3(0u, 0u, i * 64u), 0u), 1u);
             ++traced;
         }
-        irradiance += e;
+        direct += lit;
     }
     if (picked != kNone) {
-        irradiance += pickedLight * (total / pickedWeight) *
-                      LightVisibility(picked, p, hit.geometric, Random2(seed + uvec3(0u, 0u, picked * 64u), 0u), 1u);
+        direct += pickedLight * (total / pickedWeight) *
+                  LightVisibility(picked, p, hit.geometric, Random2(seed + uvec3(0u, 0u, picked * 64u), 0u), 1u);
     }
     vec3 indirect = DomeDiffuse(n);
     if ((frame.features.x & kFeatureGi) != 0u) {
@@ -351,7 +392,12 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows)
     if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
         indirect += CausticDiffuse(p, n);  // seen in reflections, through glass (a pool's floor), by GI
     }
-    vec3 radiance = albedo * (irradiance / PI + indirect) + f0 * Dome(reflect(dir, n), 0.5 * float(frame.counts.z));
+    vec3 radiance = direct + diffuse * indirect;
+    gHitSpecular = fss;
+    if (dome) {
+        float lod = specular ? hit.roughness * float(frame.counts.z - 1u) : 0.5 * float(frame.counts.z);
+        radiance += fss * Dome(reflect(dir, n), lod);
+    }
     radiance = BrightnessClamp(radiance, frame.lightClamp.y);
     return emission ? radiance + BrightnessClamp(hit.emissive, frame.lightClamp.y) : radiance;
 }

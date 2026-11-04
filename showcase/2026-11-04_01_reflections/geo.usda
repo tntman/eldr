@@ -1,0 +1,25 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Plane "floor" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    uniform token axis = "Y"
+    double length = 10
+    rel material:binding = </mtl/floor>
+    double width = 10
+}
+
+def Sphere "ball" (
+    apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    rel material:binding = </mtl/ball>
+    double radius = 1
+    double3 xformOp:translate = (0, 0.9, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}

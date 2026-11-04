@@ -77,7 +77,9 @@ Groups follow topics. The switches people change most come first, in open groups
 | Ray-Traced Shadows<br>`eldr:rtShadows` | off | [RT][prepass] Traced shadows for the sun and the most important local lights (`eldr:rtShadowLights`), instead of shadow maps. Softness comes from the light's size; the film averages the noise. | Kitchen about 10 ms |
 | Ray-Traced Shadows when Cheaper<br>`eldr:rtShadowsAuto` | off | [RT] When `eldr:rtShadows` is off, traces shadows instead of using maps where that is likely cheaper: dense scenes (2+ triangles per pixel) whose skinned instances are all ray traced. | 960x540, 64 samples, traced / maps: City 2.2 / 4.5 s; crowd 0.8 / 1.4 s; Kitchen 0.93 / 0.64 s |
 | Ray-Traced Reflections<br>`eldr:rtReflections` | off | [RT][prepass] Traced reflections up to roughness 0.7, replacing dome and screen-space reflections. They show off-screen objects. | Kitchen about 15 ms |
+| Ray-Traced Reflection Bounces<br>`eldr:rtReflectionBounces` | int -1 (unset: Karma's, else 4) | [RT] Karma's Reflection Limit (`karma:global:reflectlimit`): rays along a reflection path (1-16). Glossy objects seen in a reflection reflect again, so a ball on a mirror floor shows the floor in its reflection. 1: they reflect the dome only. | COST |
 | Ray-Traced Refraction<br>`eldr:rtRefraction` | off | [RT][prepass] Traces rays through glass: back faces, glass behind glass, total internal reflection and absorption, with off-screen objects visible. Rough glass blurs over film samples. | glass.usda 8.1-9.7 ms; crowd unchanged |
+| Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Hit Shadows<br>`eldr:rtHitShadows` | off | [RT] Objects seen in traced reflections, refraction and final gather get shadows from all distant lights and up to 16 local lights. Off: only the sun's, so shadowed floors reflect as lit. | Up to one ray per light per hit |
 | Final Gather<br>`eldr:finalGather` | off | [RT][prepass] With GI on, traces one ray per pixel and sample for bounced diffuse light, replacing probes, AO and SSGI there. Gives contact shadows, dark corners and colour bleeding. | 1080p, 64 samples: emissive.usda +0.34 s, Cornell +0.15 s per frame; interactive +5.5 ms per frame |
 | Caustics<br>`eldr:caustics` | off | [RT] Light focused through glass or off mirrors onto diffuse surfaces (photon mapping), from sun, sphere, rect and disk lights. Only objects with Karma's Enable Caustics primvar cast them. Sharper every sample; AOV `caustics`. | caustics.usda 960x540: 5.9 ms per sample off, 13.3 ms on (65536 photons) |
@@ -91,6 +93,7 @@ Groups follow topics. The switches people change most come first, in open groups
 | Ambient Occlusion<br>`eldr:ambientOcclusion` | on | Darkens the dome's light in corners and contact areas. [prepass] SSGI replaces it when on. | 0.34 ms |
 | Dome Lighting<br>`eldr:imageBasedLighting` | on | Lights the scene with the dome light's image (diffuse and reflections). Off: direct lights only. Also needed by the reflection probe. | Small |
 | Dome Sun Extraction<br>`eldr:domeSun` | on | Turns the sun in an HDRI dome into a distant light that casts shadows. Off: the dome image only. | CPU work when the dome changes |
+| Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | Luminance counting as sun. Lower if the sun is missed. | |
 
 ## Camera
 
@@ -170,7 +173,6 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Final Gather Roulette<br>`eldr:finalGatherRoulette` | off | [RT] From the second sample, each 8x8 block gathers on every other sample, weighted to match. Same converged image, but about 1.5x the noise at 64 samples. | 1080p, ms per sample: emissive 78 to 64, Kitchen 158 to 132, crowd 478 to 388 |
 | Caustic Photons per Light and Sample<br>`eldr:causticsPhotons` | int 65536 | Photons each light sends towards caustic casters per sample (1024 to 4M). More means less noise per sample. | 7.4 ms per sample at 65536, 28 ms at 262144 (one sun) |
 | Caustic Gather Radius<br>`eldr:causticsRadius` | float 0 (auto) | World units the first sample gathers photons over; later samples shrink it (progressive photon mapping, alpha 2/3). 0: 2% of the casters' bounding radius. Larger is smoother but blurrier at first. | |
-| Ray-Traced Refraction Interfaces<br>`eldr:rtRefractionBounces` | int 4 | Surfaces a ray passes (1-16): 2 for one ball, 4 for a ball behind a pane. | |
 | Ray-Traced Refraction Sees Displacement<br>`eldr:rtRefractionDisplacement` | on | [RT] Displaced glass bends rays by its displaced shape (with `eldr:rtDisplacement`). Off: it refracts as flat glass. | Displaced glass only |
 | Ray-Traced Refraction Starts at Glass<br>`eldr:rtRefractionClip` | on | [RT] Traces refraction only from pixels that show glass. The image is the same; off is for comparison. | glass.usda 1080p: 41.7 to 37.5 ms per sample |
 
@@ -208,7 +210,6 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Dome in the Camera<br>`eldr:domeCameraVisible` | on | Draws the dome's texture behind the scene. Off: the clear colour (with its alpha) shows; lighting and reflections still use the dome. `bool inputs:karma:light:renderlightgeo = 0` hides one dome; Hydra's `domeLightCameraVisibility` also applies. | |
 | Emissive Surfaces as Lights<br>`eldr:emissiveLights` | on | Small bright constant emitters also become rect or sphere lights with shadows (max 32). Others light via GI only. | |
 | Emissive Light Threshold<br>`eldr:emissiveLightThreshold` | float 4 | Brightest-channel radiance above which an emitter becomes a light. | |
-| Dome Sun Threshold<br>`eldr:domeSunThreshold` | float 10 | Luminance counting as sun. Lower if the sun is missed. | |
 | Direct Light Intensity<br>`eldr:directIntensity` | float 1 | Scales direct light in the final image only; bounced light and AOVs are unchanged. | None at 1. Other values add the light-split pass: crowd shading 14.8-16.5 vs 12.2-12.5 ms |
 | Indirect Light Intensity<br>`eldr:indirectIntensity` | float 1 | Scales bounced light and reflections in the final image only. 0 leaves direct light only. | As above |
 

@@ -974,7 +974,8 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         // Behind this pixel's surface by about a step: the ray went through
         // it. Further behind, it passes behind a separate object. Surfaces
         // seen at grazing angles put a crossing ray far behind along the
-        // view ray, so objects are also assumed 5% of their distance thick.
+        // view ray, so without the thickness estimator objects are also
+        // assumed 5% of their distance thick.
         // A step that goes from in front of the depth to behind it is
         // refined first and judged where it crosses: at grazing angles a
         // whole step can land far behind a surface it did pass through
@@ -998,7 +999,12 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             vec3 c = mix(s0, s1, hi);
             vec3 ray = Unproject(c);
             vec3 surface = Unproject(vec3(c.xy, SceneDepth(c.xy) * 2.0 - 1.0));
-            float thickness = max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
+            // With the estimator a refined step stands for its bracket
+            // only, so a ray that passes close behind an object (beside
+            // a ball, from the floor under it) misses it; the estimator's
+            // tests below judge grazing surfaces.
+            float thickness = estimator ? 2.0 * (wasBehind ? stepLength : length(ray - Unproject(mix(s0, s1, lo))))
+                                        : max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
             crossed = length(ray - surface) <= thickness;
             if (estimator && !crossed) {
                 // At least the depth one pixel of this surface spans along
