@@ -860,7 +860,8 @@ public:
         // tints what's behind it, see refraction).
         // kHoldout: Mesh::holdout. kShaped: a solid ball or box
         // (DrawInfo::shape), whose back faces seen from outside draw nothing.
-        enum : uint8_t { kRefracts = 1, kHoldout = 2, kShaped = 4 };
+        // kFlatThin: a flat thin-walled mesh, no far side to draw.
+        enum : uint8_t { kRefracts = 1, kHoldout = 2, kShaped = 4, kFlatThin = 8 };
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
         uint32_t instanceCapacity = 0;

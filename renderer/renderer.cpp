@@ -2767,10 +2767,12 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         copy();
         use(0);
         // (Thin walls too: their far sides, so a closed one tints twice.
-        // A ball or box seen from outside has none to draw: no copy spent.)
+        // A ball or box seen from outside, or a flat thin sheet, has none to
+        // draw: no copy spent.)
         const float *c = &gpu.translucentCenters[i * 4];
         const Vec3 fromCentre{frame.cameraPos[0] - c[0], frame.cameraPos[1] - c[1], frame.cameraPos[2] - c[2]};
-        const bool outside = (gpu.translucentFlags[i] & Scene::Gpu::kShaped) && Dot(fromCentre, fromCentre) > c[3] * c[3];
+        const bool outside = ((gpu.translucentFlags[i] & Scene::Gpu::kShaped) && Dot(fromCentre, fromCentre) > c[3] * c[3]) ||
+                             (gpu.translucentFlags[i] & Scene::Gpu::kFlatThin);
         if (frame.refractionBackFaces && !outside) {
             drawSlot(_refractBackPipeline + _shadingBase, i);
             drawn = true;

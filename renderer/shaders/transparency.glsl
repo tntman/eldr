@@ -163,8 +163,10 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     bool inside = !thin && m.refraction.x != 1.0 && away;
     // Thin walls' far sides draw first too where back faces do, so a
     // closed thin mesh tints twice (front and back wall), as traced rays
-    // and Karma see it.
-    if ((inside || (thin && away && frame.rtRefraction.z != 0u)) != (kShadingPass == 3u)) {
+    // and Karma see it; flat ones (a window) have no far side.
+    vec3 bounds = draws[instances[inSlot].draw].boundsMax.xyz - draws[instances[inSlot].draw].boundsMin.xyz;
+    bool sheet = min(bounds.x, min(bounds.y, bounds.z)) <= 1e-3 * max(bounds.x, max(bounds.y, bounds.z));
+    if ((inside || (thin && away && !sheet && frame.rtRefraction.z != 0u)) != (kShadingPass == 3u)) {
         discard;
     }
     float f0 = (ior - 1.0) / (ior + 1.0);
