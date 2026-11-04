@@ -2352,7 +2352,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _gpu.translucentVariant.push_back(variant >> 2);
             _gpu.translucentFlags.push_back(
                 (mat->transmission > 0 || mat->opacityRefracts ? Gpu::kRefracts : 0) |
-                (m.holdout ? Gpu::kHoldout : 0) | (mat->thinWalled ? Gpu::kThin : 0));
+                (m.holdout ? Gpu::kHoldout : 0));
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
             }

@@ -68,7 +68,8 @@ struct FrameData {
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
-    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode)
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode),
+                               // z 1: refracting meshes draw their back faces first (Frame::refractionBackFaces)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
 };
@@ -2765,9 +2766,8 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         };
         copy();
         use(0);
-        if (frame.refractionBackFaces && !(gpu.translucentFlags[i] & Scene::Gpu::kThin)) {
-            // (Thin walls have no inside: their back faces would all discard,
-            // and spend a background copy.)
+        if (frame.refractionBackFaces) {
+            // (Thin walls too: their far sides, so a closed one tints twice.)
             drawSlot(_refractBackPipeline + _shadingBase, i);
             drawn = true;
             copy();
@@ -4039,6 +4039,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.translucency[0] = float(std::clamp(std::lround(double(frame.refractionSamples) * frame.refractQuality), 1l, 16l));
         fd.translucency[1] = float(_transparency.BackgroundLevels());
         fd.rtRefraction[0] = rt.refraction ? 1u : 0u;
+        fd.rtRefraction[2] = frame.refractionBackFaces ? 1u : 0u;
     }
     // The shading pipelines with the code of this frame's optional features.
     // Bit 0 (kFeatureNormalMaps, never optional) marks the light splits'

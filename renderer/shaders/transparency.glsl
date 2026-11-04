@@ -105,9 +105,9 @@ vec3 DomeAlong(vec3 dir, float lod)
 // transmission. Where it refracts past every drawn surface and sky, the
 // dome lights it; without a dome coverage drops instead (the app's background).
 // Closed refractive meshes: the shading passes draw their front faces and
-// discard the back ones (by the authored normal); kShadingPass 3 draws
-// only those back faces, before the front ones (Renderer's refraction
-// layers): the surface seen from inside the medium (water from below,
+// discard the back ones (by the authored normal or winding); kShadingPass 3
+// draws only those back faces (and thin walls' far sides), before the
+// front ones (Renderer's refraction layers): the surface seen from inside the medium (water from below,
 // the far side of a glass ball), with the inverted ior, so beyond the
 // critical angle it reflects the inside totally (sampled along the
 // mirrored ray) instead of letting light out.
@@ -126,6 +126,18 @@ float EllipsoidExit(vec3 o, vec3 e)
     return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
 }
 
+// The same for the box [-1, 1]^3, for points outside that ball: a box's
+// faces (a glass block's corners had no path through the ball).
+float BoundsExit(vec3 o, vec3 e)
+{
+    if (dot(o, o) <= 1.02) {
+        return EllipsoidExit(o, e);
+    }
+    vec3 s = step(0.0, e) * 2.0 - 1.0;
+    vec3 t = (s - o) * s / max(abs(e), vec3(1e-12));
+    return max(min(t.x, min(t.y, t.z)), 0.0);
+}
+
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {
@@ -137,8 +149,16 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     Material m = ShadingMaterial();
     float ior = max(m.refraction.x, 1e-3);
     bool thin = m.refraction.y > 0.0;
-    bool inside = !thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0;
-    if (inside != (kShadingPass == 3u)) {
+    // The authored side faces away: by the normal, else (faceted meshes) by
+    // the winding, counter-clockwise outward (the projection keeps GL's y
+    // up, so Vulkan calls a triangle facing away front facing).
+    // ponytail: leftHanded orientation not flipped (traced rays neither).
+    bool away = dot(inNormal, inNormal) > 1e-12 ? dot(inNormal, v) < 0.0 : gl_FrontFacing;
+    bool inside = !thin && m.refraction.x != 1.0 && away;
+    // Thin walls' far sides draw first too where back faces do, so a
+    // closed thin mesh tints twice (front and back wall), as traced rays
+    // and Karma see it.
+    if ((inside || (thin && away && frame.rtRefraction.z != 0u)) != (kShadingPass == 3u)) {
         discard;
     }
     float f0 = (ior - 1.0) / (ior + 1.0);
@@ -203,7 +223,8 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     vec3 tintInside = tint;  // along the inside reflection
     if (m.refraction.z > 0.0 && !thin) {
         // The path inside: through the ellipsoid that fills the mesh's
-        // bounds (exact for a ball), not the bounds' diagonal. A back face
+        // bounds (exact for a ball), from points outside it through the
+        // bounds (exact for a box), not the bounds' diagonal. A back face
         // seen from outside adds none (its front face counted the path),
         // from inside the medium the way to the camera. Flat meshes (water
         // sheets): the distance to what is behind, at most the mesh's size.
@@ -215,8 +236,8 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         if (min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z))) {
             vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
             vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
-            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, EllipsoidExit(o, toObject * r / extent));
-            pathInside = EllipsoidExit(o, toObject * reflect(-v, n) / extent);
+            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, BoundsExit(o, toObject * r / extent));
+            pathInside = BoundsExit(o, toObject * reflect(-v, n) / extent);
         }
         tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
         tintInside = pow(max(tintInside, vec3(1e-4)), vec3(pathInside / m.refraction.z));

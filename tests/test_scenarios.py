@@ -7,6 +7,14 @@ eldr_rt prim). Not pixel equality with Karma, only what must hold either way:
 - furnace_grey (uniform white dome of 1): white diffuse, rough white metal, clear glass and
   coated white read about 1, grey 0.5 reads 0.5, the background 1 (energy neither made nor
   lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug.
+- coloured_glass: the 0.9 m blue block is much bluer than the 0.1 m one, which is visibly blue
+  (Beer-Lambert over the path through a scaled cube); the closed thin-walled amber pane tints
+  twice (front and back wall);
+- glass_behind_glass: the green glass ball seen through the clear pane keeps its shape (darker
+  than the wall seen through the pane above it);
+- liquid_in_glass (traced): the amber liquid fills the tumbler's inner width, seen through the
+  wall off its axis;
+- facing_mirrors (traced): past the reflect limit the repeated mirrors are black, as in Karma.
 Needs a GPU with ray tracing for the traced half.
 Run: usdenv.cmd python tests\\test_scenarios.py"""
 import os
@@ -117,6 +125,35 @@ for traced in (False, True):
         expect(lo <= v <= hi, "%s: furnace %s reads %.2f-%.2f" % (mode, name, lo, hi))
     v = sum(shot.mean((0, 1.6, 0), 2)) / 3
     known(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
+
+    shot = Shot("coloured_glass", traced)
+    ratios = []
+    for name, x, z, d in (("0.1 m", -2.2, 0.75, 0.1), ("0.9 m", 0, 0.35, 0.9)):
+        c = shot.mean((x, 0.5, z + d / 2))  # the block's front face, the white wall behind
+        ratios.append(c[2] / max(c[0], 1e-4))
+        print("  block %s %s blue/red %.2f" % (name, fmt(c), ratios[-1]))
+    expect(ratios[0] > 1.15, "%s: the 0.1 m blue glass block is blue" % mode)
+    expect(ratios[1] > 1.5 * ratios[0], "%s: the 0.9 m blue block is much bluer than the 0.1 m one" % mode)
+    c = shot.mean((2.9, 0.7, -0.5))
+    print("  amber pane %s" % fmt(c))
+    expect(c[1] < 0.5 * c[0], "%s: the closed thin amber pane tints twice (green under half the red)" % mode)
+
+    shot = Shot("glass_behind_glass", traced)
+    lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    ball, above = shot.mean((0.1, 0.7, -0.6), 6), shot.mean((0.1, 1.65, -0.6), 6)  # both through the pane
+    print("  green ball %s, wall above it %s" % (fmt(ball), fmt(above)))
+    expect(lum(ball) < 0.8 * lum(above), "%s: the green ball shows through the clear pane" % mode)
+
+    if traced:
+        shot = Shot("liquid_in_glass", traced)
+        c = shot.mean((-0.024, 0.045, 0.028), 2)  # the tumbler's front wall, 0.6 of its radius off axis
+        print("  liquid off axis %s" % fmt(c))
+        expect(c[0] > 2 * c[2], "%s: the amber liquid fills the tumbler's width" % mode)
+
+        shot = Shot("facing_mirrors", traced)
+        c = shot.mean((-1.5, 1.47, 0.89), 2)  # left mirror: a ray bouncing between them past the limit
+        print("  mirrors past the limit %s" % fmt(c))
+        expect(lum(c) < 0.05, "%s: past the reflect limit the mirrors are black" % mode)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)
