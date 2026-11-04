@@ -37,7 +37,7 @@ HDVK_SETTING(rtShadowsAuto, "Ray-Traced Shadows when Cheaper", frame.rtShadowsAu
 HDVK_SETTING(rtReflections, "Ray-Traced Reflections", frame.rtReflections)
 HDVK_SETTING(rtReflectionBounces, "Ray-Traced Reflection Bounces", -1)
 HDVK_SETTING(rtRefraction, "Ray-Traced Refraction", frame.rtRefraction)
-HDVK_SETTING(rtRefractionBounces, "Ray-Traced Refraction Interfaces (1-16)", int(frame.rtRefractionBounces))
+HDVK_SETTING(rtRefractionBounces, "Ray-Traced Refraction Interfaces", -1)
 HDVK_SETTING(rtHitShadows, "Ray-Traced Hit Shadows", frame.rtHitShadows)
 HDVK_SETTING(finalGather, "Final Gather", frame.finalGather)
 HDVK_SETTING(caustics, "Caustics", frame.caustics)

@@ -28,6 +28,7 @@
 #include "pxr/imaging/hd/legacyDisplayStyleSchema.h"
 #include "pxr/imaging/hd/primvarsSchema.h"
 #include "pxr/imaging/hd/xformSchema.h"
+#include "pxr/imaging/hd/sceneGlobalsSchema.h"
 #include "pxr/imaging/hd/resourceRegistry.h"
 #include "pxr/imaging/hd/tokens.h"
 #include "pxr/imaging/hgi/hgi.h"
@@ -1045,6 +1046,20 @@ void HdVkRenderDelegate::SetActiveCamera(SdfPath const &camera)
     std::lock_guard<std::mutex> lock(_shutterMutex);
     _activeCamera = camera;
     _activeKnown = true;
+}
+
+double HdVkSceneFrame(HdRenderIndex &index)
+{
+    HdSceneIndexBaseRefPtr si = index.GetTerminalSceneIndex();
+    const HdDoubleDataSourceHandle current =
+        si ? HdSceneGlobalsSchema::GetFromSceneIndex(si).GetCurrentFrame() : HdDoubleDataSourceHandle();
+    const double now = current ? current->GetTypedValue(0.0f) : 0.0;
+    return std::isfinite(now) ? now : 0.0;  // NaN or -DBL_MAX: the default or earliest time code
+}
+
+bool HdVkRenderDelegate::SceneFrameChanged(HdRenderIndex &index) const
+{
+    return HdVkSceneFrame(index) != _sceneFrame;
 }
 
 bool HdVkRenderDelegate::SampledMotionShutter(float *open, float *close)

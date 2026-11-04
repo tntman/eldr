@@ -84,6 +84,8 @@ bool HdVkFindAov(TfToken const &name, HdVkExtraAov *aov);
 // always) from older scenes is on at 2 only: HdVkOnOff.
 bool HdVkLegacyMode(TfToken const &key);
 bool HdVkOnOff(VtValue const &value, bool fallback);
+// The scene's current frame (HdSceneGlobalsSchema), 0 without.
+double HdVkSceneFrame(HdRenderIndex &index);
 // Light groups: Karma's LPE tags (inputs:karma:light:lpetag) in the order
 // AOVs first asked for them, at most vkr::Aovs::kMaxLightGroups (another
 // gets -1 and a warning). Process-wide.
@@ -198,6 +200,11 @@ public:
     // setting): the next commit keeps the last one's motion where it moves
     // nothing itself (a re-diced mesh uploads geometry, not its motion).
     void KeepMotion() { _keepMotion = true; }
+    // The frame the render pass last rendered (HdVkSceneFrame): a transform
+    // that changes while the scene stays at it is an edit (a prim moved by
+    // hand), not motion, so it doesn't blur (as Karma).
+    void NoteSceneFrame(double frame) { _sceneFrame = frame; }
+    bool SceneFrameChanged(HdRenderIndex &index) const;
     // What the film starts over on besides the camera and the settings:
     // every sync of geometry, instancers, materials, volumes and fields
     // (lights through the renderer's lighting hash). Not cameras: an app may
@@ -251,6 +258,7 @@ private:
     unsigned _hostOnlyChanges = 0;      // setting changes SettingsVersion leaves out
     bool _motionSettingsChanged = false;  // since the last CommitResources
     bool _keepMotion = false;             // KeepMotion since the last CommitResources
+    double _sceneFrame = -1e300;          // NoteSceneFrame's; none yet
     HdSceneIndexBasePtr _terminalSceneIndex;
     std::string _cryptomatteObject, _cryptomatteMaterial;
     // GPU sharing; declared last: released before the renderer and device.

@@ -253,12 +253,11 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
     vkr::Renderer::Frame frame;
     // The scene's time (HdSceneGlobalsSchema; 0 without), for MaterialX's
     // frame and time nodes.
+    const double sceneFrame = HdVkSceneFrame(*GetRenderIndex());
+    static_cast<HdVkRenderDelegate *>(GetRenderIndex()->GetRenderDelegate())->NoteSceneFrame(sceneFrame);
+    frame.sceneTime[0] = float(sceneFrame);
     if (HdSceneIndexBaseRefPtr si = GetRenderIndex()->GetTerminalSceneIndex()) {
-        const HdSceneGlobalsSchema globals = HdSceneGlobalsSchema::GetFromSceneIndex(si);
-        const HdDoubleDataSourceHandle current = globals.GetCurrentFrame(), fps = globals.GetTimeCodesPerSecond();
-        // NaN or -DBL_MAX: the default or earliest time code.
-        const float now = current ? float(current->GetTypedValue(0.0f)) : 0.0f;
-        frame.sceneTime[0] = std::isfinite(now) ? float(now) : 0.0f;
+        const HdDoubleDataSourceHandle fps = HdSceneGlobalsSchema::GetFromSceneIndex(si).GetTimeCodesPerSecond();
         const double rate = fps ? fps->GetTypedValue(0.0f) : 24.0;
         frame.sceneTime[1] = frame.sceneTime[0] / float(rate > 0.0 ? rate : 24.0);
     }
@@ -572,14 +571,18 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
             limit = number(setting(karmaLimit));
         }
         frame.volume.volumeLimit = std::max(float(limit), 0.0f);
-        // Traced reflection bounces: eldr:rtReflectionBounces (-1: not set),
-        // else karma:global:reflectlimit, else 4.
-        static const TfToken karmaReflect("karma:global:reflectlimit");
-        double bounces = number(setting(t2.rtReflectionBounces));
-        if (bounces < 0.0) {
-            bounces = number(setting(karmaReflect));
-        }
-        frame.rtReflectionBounces = bounces < 0.0 ? 4u : uint32_t(std::clamp(bounces, 1.0, 16.0));
+        // Traced reflection bounces and refraction interfaces:
+        // eldr:rtReflectionBounces / eldr:rtRefractionBounces (-1: not set),
+        // else karma:global:reflectlimit / refractlimit, else 4.
+        auto limit = [&](const TfToken &eldr, const char *karma) {
+            double v = number(setting(eldr));
+            if (v < 0.0) {
+                v = number(setting(TfToken(karma)));
+            }
+            return v < 0.0 ? 4u : uint32_t(std::clamp(v, 1.0, 16.0));
+        };
+        frame.rtReflectionBounces = limit(t2.rtReflectionBounces, "karma:global:reflectlimit");
+        frame.rtRefractionBounces = limit(t2.rtRefractionBounces, "karma:global:refractlimit");
     }
     // Hydra's own switch (usdview's Lights menu) also hides the dome.
     frame.showEnvironment = frame.showEnvironment &&
@@ -685,7 +688,6 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                                 {t.volumeLocalShadowStride, &frame.volume.localShadowStride},
                                 {t.volumeResolution, &frame.volume.resolution},
                                 {t2.planarCount, &frame.planarCount},
-                                {t2.rtRefractionBounces, &frame.rtRefractionBounces},
                                 {t.filmSamples, &frame.filmSamples},
                                 {t.interactiveSamples, &frame.interactiveSamples},
                                 {t.adaptiveMinSamples, &frame.adaptiveMinSamples}}) {
