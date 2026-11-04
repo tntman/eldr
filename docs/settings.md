@@ -183,7 +183,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | History weight (0-0.99). Higher is smoother, slower to react. Little effect on stills. | |
 | GI Preconverge<br>`eldr:giPreconverge` | on | [film] Waits for fresh probes to settle before the film starts averaging. | Cornell: RMSE 0.0128 to 0.0047 |
 | GI Probe Relocation<br>`eldr:giRelocation` | on | Moves probes that sit inside or just behind walls out into open space, so light near walls stays right. | emissive.usda (4096 probes) 2.50 to 3.04 ms |
-| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 0.5 | World-space scan radius. Match scene scale. | |
+| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 1 | How far (world units) geometry darkens a point: 1 suits scenes in metres (furniture, rooms, characters). Larger darkens wider areas. | |
 | Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Directions per pixel (1-8). 3 is enough with the film. | Linear |
 | SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps per direction and side (1-32). | |
 | SSGI Radius<br>`eldr:ssgiRadius` | float 1 | World-space gather radius; use a fraction of the room size. | |
