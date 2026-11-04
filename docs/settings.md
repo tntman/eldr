@@ -185,7 +185,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | GI Hysteresis<br>`eldr:giHysteresis` | float 0.97 | How much each GI probe keeps of its earlier light per frame (0-0.99). Higher: smoother, slower to react to moving lights and objects. Little effect on stills. [RT] | |
 | GI Preconverge<br>`eldr:giPreconverge` | on | Waits for new GI probes to settle before the image starts refining, so the first samples don't bake in dark, unsettled light. [film] [RT] | Cornell: RMSE 0.0128 to 0.0047 |
 | GI Probe Relocation<br>`eldr:giRelocation` | on | Moves GI probes stuck inside or just behind walls out into open space, so light near walls doesn't leak or go dark. [RT] | emissive.usda (4096 probes) 2.50 to 3.04 ms |
-| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 0.5 | How far Ambient Occlusion looks for nearby surfaces, in scene units. Match it to the scene's scale: larger darkens wider areas. | |
+| Ambient Occlusion Radius<br>`eldr:aoRadius` | float 1 | How far Ambient Occlusion looks for nearby surfaces, in scene units: 1 suits scenes in metres. Larger darkens wider areas. | |
 | Ambient Occlusion Directions<br>`eldr:aoSlices` | int 3 | Directions Ambient Occlusion checks per pixel (1-8). More: less noise per frame; 3 is enough once the image refines. | Linear |
 | SSGI Steps<br>`eldr:ssgiSteps` | int 8 | Steps SSGI takes along each direction (1-32). More: finds thinner and farther surfaces, but slower. | |
 | SSGI Radius<br>`eldr:ssgiRadius` | float 1 | How far SSGI gathers bounced light, in scene units. Use a fraction of the room size: larger spreads light farther but gets noisier. | |

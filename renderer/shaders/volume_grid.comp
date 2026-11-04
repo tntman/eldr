@@ -9,7 +9,7 @@
 // dome's pole, slot 1 + k: towards lights[k] (a distant light's direction,
 // a local light's position). rgb: the other volumes' depth (OthersDepth,
 // a step per voxel), a: the volume's own density integral (ShadowMarch,
-// a step per voxel; distant lights and the dome only). The fields as at
+// a step per voxel; to a local light's position at most). The fields as at
 // this frame (VOLUME_STATIC): time samples of moving volumes march.
 // ponytail: a cube of cells per volume whatever its shape; flat volumes
 // waste most of theirs.
@@ -58,15 +58,15 @@ void main()
         dir = lights[light - 1u].position.xyz - x;
         distant = false;
     }
-    float self = 0.0;
-    if (distant) {
-        vec3 dl = Row3(w0, w1, w2, dir, 0.0);
-        float far = Slabs(p, dl, lo, hi).y;
-        uint steps = uint(clamp(ceil(far * length(dl)), 1.0, 512.0));
-        pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
-        uint table = params.tables != 0u ? volumes[i].lutOffsets.w : kNone;
-        self = ShadowMarch(table, volumes[i].lutLow.w, volumes[i].lutScale.w, acc, p, dl, lo, hi, 0.5, steps);
-    }
+    // Its own density towards the light: along a unit direction, to the
+    // box's edge or a local light's distance.
+    float reach = distant ? 3.0e38 : length(dir);
+    vec3 dl = Row3(w0, w1, w2, distant ? dir : dir / max(reach, 1e-20), 0.0);
+    float far = min(Slabs(p, dl, lo, hi).y, reach);
+    uint steps = uint(clamp(ceil(far * length(dl)), 1.0, 512.0));
+    pnanovdb_readaccessor_t acc = Accessor(volumes[i].grids.x);
+    uint table = params.tables != 0u ? volumes[i].lutOffsets.w : kNone;
+    float self = ShadowMarch(table, volumes[i].lutLow.w, volumes[i].lutScale.w, acc, p, dl, lo, hi, 0.5, steps, reach);
     vec3 others = params.mutual != 0u
                       ? OthersDepth(i, x, distant ? dir * 1e4 : dir, 0.5, params.count, 0u, params.density,
                                     params.tables != 0u)

@@ -15,7 +15,7 @@
 # /Render/ambient (the default): AO darkens the corner, the gaps between
 # the boxes and under the ball. /Render/aoOff: flat sky light everywhere
 # (eldr:ambientOcclusion off). /Render/aoWide: eldr:aoRadius 2 instead of
-# 0.5: wider, softer darkening.
+# 1: wider, softer darkening.
 
 def Camera "cam"
 {
