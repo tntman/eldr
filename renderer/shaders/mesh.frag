@@ -930,6 +930,9 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     float lo = 0.0, hi = 0.0;  // the crossing's bracket
     float lostLo = -1.0, lostHi = 0.0;  // the last surface the ray went behind and wasn't judged to hit
+    float lostDepth = 0.0;              // how far behind that surface it went in
+    vec3 lostSurface = vec3(0.0);       // where
+    bool under = false;                 // it passed under that surface's object (below)
     bool emerged = false;               // in front of a surface since (not just of the background)
     bool crossed = false;
     for (int i = 0; i < steps && !crossed; ++i) {
@@ -1033,10 +1036,22 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             if (!crossed && !wasBehind) {
                 lostLo = lo;
                 lostHi = hi;
+                lostDepth = length(ray - surface);
+                lostSurface = surface;
                 emerged = false;
             }
-        } else if (scene < 1.0) {
-            emerged = true;
+        } else {
+            // Out from behind an object it went in less deep than half the
+            // way it stayed behind it: through a rounded object such as a
+            // ball (as deep as wide), a ray from the floor under it into
+            // the side the camera doesn't see. That object stands in where
+            // it went in: the ball's reflection reaches down to its contact.
+            if (estimator && wasBehind && lostLo >= 0.0 &&
+                lostDepth <= 0.5 * length(Unproject(vec3(sPrev.xy, SceneDepth(sPrev.xy) * 2.0 - 1.0)) - lostSurface)) {
+                under = true;
+                break;
+            }
+            emerged = emerged || scene < 1.0;
         }
         wasBehind = behind;
         uPrev = u;
@@ -1051,11 +1066,11 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // would leave black in a room without a dome. That surface stands in,
     // as a back-face hit, over the probe or dome. Rays that leave the scene
     // never go behind anything.
-    bool lost = !crossed && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
-    if (!crossed && !lost) {
+    bool lost = !crossed && !under && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
+    if (!crossed && !lost && !under) {
         return 0.0;
     }
-    if (lost) {
+    if (lost || under) {
         lo = lostLo;
         hi = lostHi;
     }

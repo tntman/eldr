@@ -505,6 +505,7 @@ private:
     bool _flat = false;
     float _flatTriangle[9] = {};
     float _uvSpacing = 0;  // DrawInfo::uvSpacing
+    bool _round = false;   // DrawInfo::rounded
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -666,7 +667,7 @@ struct DrawInfo {
     uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
     uint32_t caustics;         // 1: Mesh::causticsCast, 2: receives (Mesh::causticsReceive)
     float causticsRoughness;   // Mesh::causticsRoughness
-    uint32_t pad;
+    uint32_t rounded;          // 1: its points lie on its bounds' ellipsoid (a ball; transparency.glsl)
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
