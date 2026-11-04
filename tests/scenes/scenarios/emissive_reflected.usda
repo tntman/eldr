@@ -1,0 +1,222 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    upAxis = "Y"
+)
+
+# Emitters seen in reflections: an orange emissive panel and a cyan emissive
+# ball (emission 4, under the colour limit of 20) next to a chrome sphere,
+# over a glossy floor (roughness 0.1); dim sky and key. Look at: the
+# emitters' reflections in the floor and the chrome (bright, right colour),
+# the light they cast on the floor (Eldr: eldr:emissiveLights / final
+# gather vs Karma).
+# Written by make_scenarios.py; edit that and run it again.
+
+def DomeLight "sky"
+{
+    color3f inputs:color = (0.55, 0.62, 0.75)
+    float inputs:intensity = 0.15
+}
+
+def DistantLight "key"
+{
+    float inputs:angle = 0.53
+    float inputs:intensity = 0.5
+    bool inputs:normalize = 1
+    float3 xformOp:rotateXYZ = (-45, 35, 0)
+    uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+}
+
+def Camera "cam"
+{
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    float2 clippingRange = (0.1, 10000)
+    matrix4d xformOp:transform = ((1, 0, 0, 0), (0, 0.991998, -0.126254, 0), (0, 0.126254, 0.991998, 0), (0, 1.3, 5.5, 1))
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+def Mesh "floor" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-10, 0, 10), (10, 0, 10), (10, 0, -10), (-10, 0, -10)]
+    uniform token subdivisionScheme = "none"
+    normal3f[] normals = [(0, 1, 0), (0, 1, 0), (0, 1, 0), (0, 1, 0)] (
+        interpolation = "vertex"
+    )
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/gloss>
+}
+
+def Mesh "panel" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-2.6, 0.3, -1), (-1.4, 0.3, -0.6), (-1.4, 1.8, -0.6), (-2.6, 1.8, -1)]
+    uniform token subdivisionScheme = "none"
+    texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (
+        interpolation = "vertex"
+    )
+
+    rel material:binding = </mtl/orangeGlow>
+}
+
+def Sphere "glowBall" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.35
+    double3 xformOp:translate = (1.8, 0.35, 0.5)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/cyanGlow>
+}
+
+def Sphere "chrome" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
+{
+    double radius = 0.7
+    double3 xformOp:translate = (0, 0.7, -0.3)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    rel material:binding = </mtl/chrome>
+}
+
+def Scope "mtl"
+{
+    def Material "gloss"
+    {
+        token outputs:mtlx:surface.connect = </mtl/gloss/surface.outputs:out>
+        token outputs:surface.connect = </mtl/gloss/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.2, 0.2, 0.2)
+            float inputs:specular_roughness = 0.1
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.1
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.2, 0.2, 0.2)
+            token outputs:surface
+        }
+    }
+    def Material "orangeGlow"
+    {
+        token outputs:mtlx:surface.connect = </mtl/orangeGlow/surface.outputs:out>
+        token outputs:surface.connect = </mtl/orangeGlow/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0, 0, 0)
+            float inputs:specular_roughness = 0.5
+            float inputs:emission = 4
+            color3f inputs:emission_color = (1, 0.5, 0.1)
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.5
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (4, 2, 0.4)
+            token outputs:surface
+        }
+    }
+    def Material "cyanGlow"
+    {
+        token outputs:mtlx:surface.connect = </mtl/cyanGlow/surface.outputs:out>
+        token outputs:surface.connect = </mtl/cyanGlow/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0, 0, 0)
+            float inputs:specular_roughness = 0.5
+            float inputs:emission = 4
+            color3f inputs:emission_color = (0.1, 0.8, 1)
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0.5
+            float inputs:metallic = 0
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (0.4, 3.2, 4)
+            token outputs:surface
+        }
+    }
+    def Material "chrome"
+    {
+        token outputs:mtlx:surface.connect = </mtl/chrome/surface.outputs:out>
+        token outputs:surface.connect = </mtl/chrome/preview.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "ND_standard_surface_surfaceshader"
+            float inputs:base = 1
+            color3f inputs:base_color = (0.95, 0.95, 0.95)
+            float inputs:specular_roughness = 0
+            float inputs:metalness = 1
+            token outputs:out
+        }
+        def Shader "preview"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            float inputs:roughness = 0
+            float inputs:metallic = 1
+            float inputs:ior = 1.5
+            color3f inputs:diffuseColor = (0.95, 0.95, 0.95)
+            token outputs:surface
+        }
+    }
+}
+
+def Scope "Render"
+{
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+    }
+    def RenderSettings "eldr_rt"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 64
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:finalGather = 1
+        custom bool eldr:caustics = 1
+        custom int eldr:rtShadowSamples = 1
+        custom int eldr:rtShadowLights = 16
+    }
+    def RenderSettings "karma"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        custom string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"forcecpu\": false, \"aovs\": [\"C\"]}]]"
+        custom int karma:global:pathtracedsamples = 128
+    }
+}
