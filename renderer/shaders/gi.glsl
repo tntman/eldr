@@ -15,7 +15,8 @@ layout(std140, set = 0, binding = 59) uniform RayTracingData {
     vec4 giParams;       // x: hysteresis this frame, y: rays per probe, z: visibility distance range,
                          // w: of them the fixed rays (kGiFixedRays with relocation, else 0)
     mat4 giRotation;     // this frame's rotation of the probes' ray directions
-    uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many
+    uvec4 skinned;       // x: the TLAS's first skinned instance (rt.glsl), y: how many; z: rays along a
+                         // traced reflection path (rt_pixels.rgen, eldr:rtReflectionBounces)
     vec4 shadowSample;   // xy: this sample's point on the light shapes (sample dimensions), z: share of the
                          // samples each light is traced in (rt_pixels.rgen; 0: all), w: layer stride (rows)
     uvec4 shadowInfo;    // x: shadow rays' cull mask (kRtMaskTranslucent: through translucent casters),
