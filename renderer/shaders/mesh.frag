@@ -870,6 +870,25 @@ bool Behind(float z, float scene)
     return scene < 1.0 && z - scene > 7.0 / 16777216.0;
 }
 
+// The depth of the nearest opaque back face (Frame::ssrBackfaceDepth),
+// window [0, 1]: the far side of a closed object seen at a pixel. Without
+// it the prepass depth is bound: every surface open.
+layout(set = 0, binding = 78) uniform sampler2D backDepth;
+
+float BackDepth(vec2 ndc)
+{
+    ivec2 size = textureSize(backDepth, 0);
+    return texelFetch(backDepth, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
+}
+
+// Whether the surface at `ndc` (window depth `scene`) has a back behind
+// it: a closed object's, not an open surface's (a plane, a card).
+bool Thick(vec2 ndc, float scene)
+{
+    float back = BackDepth(ndc);
+    return back < 1.0 && Behind(back, scene);
+}
+
 // Denoised SSR (renderer/ssr.h, frame.ssr.z): the opaque surface's one
 // GGX-sampled ray per pixel, for the denoiser.
 layout(set = 0, binding = 72, rgba16f) uniform writeonly image2D ssrRays;        // radiance along it, its pdf
@@ -945,12 +964,8 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     float lo = 0.0, hi = 0.0;  // the crossing's bracket
-    float lostLo = -1.0;  // the last surface the ray went behind and wasn't judged to hit
-    vec3 lostSurface = vec3(0.0);       // where
-    vec3 lostInner = vec3(0.0);         // a point of it a few pixels in
-    vec2 lostInnerNdc = vec2(0.0);      // where
-    bool lostLate = false;              // that surface isn't the ray's own: in front of the depth before, nearer than its start or facing elsewhere
-    bool under = false;                 // it went through that surface's object, hidden behind its front
+    bool passed = false;  // the ray went behind a surface it didn't hit
+    bool under = false;   // it is inside an object, hidden behind its front
     bool crossed = false;
     for (int i = 0; i < steps && !crossed; ++i) {
         float u = mix(uStart, uEnd, (float(i) + noise) / float(steps));
@@ -1002,7 +1017,11 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         if (behind) {
             float stepLength = length(Unproject(s) - Unproject(sPrev));
             if (!wasBehind) {
-                for (int k = 0; k < 5; ++k) {
+                // To within a pixel (at most 12 halvings): wider, a grazing
+                // floor's depth changes too much across the bracket to read
+                // as one continuous surface (misses on a chrome ball's
+                // lower half).
+                for (int k = 0; k < 12 && (hi - lo) * pixels > uEnd; ++k) {
                     float mid = 0.5 * (lo + hi);
                     vec3 m = mix(s0, s1, mid);
                     if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
@@ -1025,43 +1044,57 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             // the ray may pass behind a separate object: only the footprint
             // counts, so a ray from the floor beside a ball doesn't take
             // the ball's colour (columns hanging from its sides).
-            vec3 ahead = Unproject(vec3(c.xy + pixelNdc, SceneDepth(c.xy + pixelNdc) * 2.0 - 1.0));
-            vec3 back = Unproject(vec3(c.xy - pixelNdc, SceneDepth(c.xy - pixelNdc) * 2.0 - 1.0));
-            float footprint = min(length(ahead - surface), length(back - surface));
+            // Sampled a pixel and a half away: a diagonal pixel's step
+            // can stay in the same texel (no footprint: a grazing floor's
+            // crossings read as jumps, misses on a chrome ball's lower half).
+            vec2 o = 1.5 * pixelNdc;
+            vec3 ahead = Unproject(vec3(c.xy + o, SceneDepth(c.xy + o) * 2.0 - 1.0));
+            vec3 back = Unproject(vec3(c.xy - o, SceneDepth(c.xy - o) * 2.0 - 1.0));
+            float footprint = min(length(ahead - surface), length(back - surface)) / 1.5;
             vec3 l = mix(s0, s1, lo);
             vec3 before = Unproject(vec3(l.xy, SceneDepth(l.xy) * 2.0 - 1.0));
             bool continuous = !wasBehind && length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
             float behindBy = length(ray - surface);
             crossed = estimator ? continuous || behindBy <= footprint
                                 : continuous && behindBy <= max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
-            // Still behind a surface the ray went behind (not its own):
-            // inside its object if nearer than its back, taken as the
-            // front mirrored about the depth where the ray went in (a
-            // ball's rim lies at about its centre's depth). A ray from the
-            // floor into a ball's hidden underside hits it there; one that
-            // passes behind the ball stays beyond its back and misses.
-            // Checked pixel by pixel along the step: such a ray is inside
-            // only briefly.
-            if (estimator && !crossed && wasBehind && lostLate && lostLo >= 0.0) {
-                float lostDistance = length(lostSurface - frame.cameraPos.xyz);
-                int n = min(int((u - uPrev) * pixels / uEnd), budget);
+            // Across a silhouette the hit is hidden where the ray meets it:
+            // like inside an object, the front a pixel on stands in, not
+            // the edge's antialiased pixel (specks on a chrome ball's lower
+            // half, which reflects the floor at its contact).
+            if (estimator && crossed && !continuous) {
+                under = true;
+                lo = min(hi + uEnd / pixels, u);
+            }
+            // Inside an object (Frame::ssrBackfaceDepth): between the
+            // depth of its front and of its back (the nearest back face)
+            // at a pixel. A ray that goes behind a silhouette into an
+            // object hits its hidden side; one beyond its back passes
+            // behind it and goes on. Checked pixel by pixel from the
+            // crossing (a pixel on: the silhouette's antialiased pixel is
+            // part background) or the last step: such a ray is inside only
+            // briefly. Open surfaces have no back here: one pixel thick.
+            if (estimator && !crossed) {
+                float from = wasBehind ? uPrev : min(hi + uEnd / pixels, u);
+                int n = min(int((u - from) * pixels / uEnd), budget);
                 budget -= n;
-                for (int k = 1; k <= n + 1 && !under; ++k) {
-                    lo = mix(uPrev, u, float(k) / float(n + 1));
-                    vec3 sk = mix(s0, s1, lo);
-                    vec3 sf = Unproject(vec3(sk.xy, SceneDepth(sk.xy) * 2.0 - 1.0));
-                    float thickness = 2.0 * (lostDistance - length(sf - frame.cameraPos.xyz));
-                    // Normals over a quarter of the way there (up to 24
-                    // pixels), smoothing over a mesh's facets (teeth along
-                    // the edge) without reaching past a small object.
-                    float wide = clamp(0.125 * length((sk.xy - lostInnerNdc) * frame.viewport.xy), 2.0, 24.0);
-                    vec3 nf = DepthNormal(sk.xy, sf, wide), d = lostInner - sf;
-                    float turn = length(nf - DepthNormal(lostInnerNdc, lostInner, wide));
-                    if (turn > 0.3) {
-                        float radius = 0.5 * (length(d) / turn + min(dot(d, d) / max(-2.0 * dot(d, nf), 1e-20), length(d) / turn));
-                        thickness = max(thickness, 2.0 * radius * dot(nf, ViewDirection(sf)));
+                for (int k = 0; k <= n; ++k) {
+                    float uk = n == 0 ? from : mix(from, u, float(k) / float(n));
+                    vec3 sk = mix(s0, s1, uk);
+                    float zk = sk.z * 0.5 + 0.5, back = BackDepth(sk.xy), fk = SceneDepth(sk.xy);
+                    if (back < 1.0 && zk <= back && Behind(zk, fk)) {
+                        // More than two pixels' width behind the front: a
+                        // ray grazing its own surface dips behind a pixel's
+                        // depth within the pixel (bright specks on a chrome
+                        // ball's lower half).
+                        vec3 sf = Unproject(vec3(sk.xy, fk * 2.0 - 1.0));
+                        float pixel = length(Unproject(vec3(sk.xy + 1.5 * pixelNdc, fk * 2.0 - 1.0)) - sf) / 1.5;
+                        if (length(Unproject(sk) - sf) <= 2.0 * pixel) {
+                            continue;
+                        }
+                        lo = uk;
+                        under = true;
+                        break;
                     }
-                    under = length(Unproject(sk) - sf) <= thickness;
                 }
                 if (under) {
                     break;
@@ -1070,24 +1103,16 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             if (wasBehind) {
                 lo = hi;  // a step that stays behind: it lands on this pixel's surface, not the last one's
             }
-            if (!crossed && !wasBehind) {
-                lostLo = lo;
-                lostSurface = surface;
-                float o = 1.0 - (s0.z * 0.5 + 0.5), e = 1.0 - SceneDepth(c.xy);  // ~ 1 / distance
-                lostInnerNdc = c.xy + 3.0 * pixelNdc;
-                lostInner = Unproject(vec3(lostInnerNdc, SceneDepth(lostInnerNdc) * 2.0 - 1.0));
-                // Facing another way than the start (far from the camera a ball
-                // and the floor under it differ by less than 10% in depth).
-                lostLate = i > 0 || abs(o - e) > 0.1 * max(o, e) || dot(DepthNormal(lostInnerNdc, lostInner, 1.0), DepthNormal(s0.xy, p, 1.0)) < 0.9;
-            }
+            passed = passed || (!crossed && !wasBehind);
         }
-        // From behind one surface to behind a different one (a jump in
-        // depth), the ray went through the second where it's hidden: the
-        // floor under a ball. Its visible part next to there stands in.
+        // From behind one surface to behind a different, open one (a jump
+        // in depth; no back to pass behind), the ray went through the
+        // second where it's hidden: the floor under a ball. Its visible
+        // part next to there stands in.
         float a = 1.0 - lastScene, b = 1.0 - scene;  // ~ 1 / distance
         bool jump = (lastScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b);
-        if (estimator && wasBehind && !crossed && lostLo >= 0.0 && behind && jump && scene < 1.0) {
-            crossed = true;  // lo = hi = u: this pixel's surface
+        if (estimator && wasBehind && !crossed && passed && behind && jump && scene < 1.0 && !Thick(s.xy, scene)) {
+            crossed = under = true;  // lo = hi = u: this pixel's surface
             break;
         }
         wasBehind = behind;

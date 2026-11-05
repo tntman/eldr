@@ -6,7 +6,8 @@ A ball on a mirror-like floor reflects as a ball, with its highlights, and refle
 
 A glossy purple ball on an orange, glass-like floor (roughness 0), lit by an HDRI of a beach and a sun.
 
-- **rtOff**: screen-space reflections. The floor shows the ball where the screen sees it; its hidden underside comes from the dome.
+- **rtOff**: screen-space reflections. The floor shows the ball where the screen sees it; its hidden underside comes from the dome. The back faces' depth (`eldr:ssrBackfaceDepth`) tells SSR how thick the ball is, so rays under it hit it and rays past it go on: a round reflection down to the contact.
+- **backfaceOff**: rtOff without `eldr:ssrBackfaceDepth`: every surface counts as one pixel thick, so rays that go under the ball miss it and the reflection's lower edge comes from the dome.
 - **rtOn**: traced reflections. The reflected ball has the sun's highlight, a brighter rim, and the floor reflected in it.
 - **reflectLimit1**: traced, one bounce: the reflected ball reflects only the dome.
 - **reflectLimit4**: traced, four bounces (`eldr:rtReflectionBounces`), Karma's default.

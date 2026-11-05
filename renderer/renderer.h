@@ -586,6 +586,13 @@ public:
         // history then keeps mips (6 levels, blitted each frame). Off: one
         // texel, sharp at any roughness.
         bool ssrHitFilter = true;
+        // SSR measures each object's thickness (with ssgiThickness): a
+        // second depth-only pass of the opaque back faces gives each pixel
+        // the depth of its object's far side, and a ray between the two is
+        // inside it (a hit), beyond it behind it (it goes on). Open
+        // surfaces (planes, cards) count as one pixel thick. Off: every
+        // surface one pixel thick.
+        bool ssrBackfaceDepth = true;
         // Ray tracing sees displacement (with displacement on): displaced
         // meshes' BLASes are built from their displaced vertices (rebuilt
         // when the scale changes). Off: from their rest vertices.
@@ -917,7 +924,9 @@ private:
     uint32_t _prewarmFor = kNone;      // the features the queue was made around
     VkPipelineCache _prewarmCache = VK_NULL_HANDLE;
     bool _prewarmMerged = false;  // the worker's pipelines went into the device's cache
-    VkPipeline _prepassPipeline[kVariants] = {};      // depth only
+    VkPipeline _prepassPipeline[kVariants] = {};      // depth only; cull mode dynamic (back faces: _backDepth)
+    Image _backDepth;  // the opaque back faces' nearest depth (Frame::ssrBackfaceDepth), made on first use
+    bool _backfaces = false;  // _backDepth is drawn this frame (else mesh.frag reads the prepass depth there)
     VkPipeline _translucentPipeline[kShadingSets * kVariants] = {};  // shading, blended over the opaque
     VkPipeline _oitPipeline[kShadingSets * kVariants] = {};  // shading, OIT accumulation (Transparency)
     // Refracting meshes' back faces, seen from inside (transparency.glsl's

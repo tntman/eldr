@@ -25,6 +25,7 @@ PASSES = [
     ("sunShadows", "Sun shadow tints"),
     ("sunShadowMin", "Sun shadow minimum"),
     ("depthPrepass", "Depth prepass"),
+    ("ssrBackfaces", "SSR back faces"),
     ("ambientOcclusion", "Ambient occlusion"),
     ("ssgi", "Screen-space GI"),
     ("localShadows", "Local light shadows"),
