@@ -1,0 +1,53 @@
+#usda 1.0
+(
+    metersPerUnit = 1
+    renderSettingsPrimPath = "/Render/eldr_default"
+    subLayers = [
+        @../../tests/scenes/scenarios/water_over_tiles.usda@
+    ]
+    upAxis = "Y"
+)
+
+# Refraction Ray March: a pool of rippled water over tiles, the camera
+# looking down at it. Near the bottom of the image the bent rays reach
+# tiles hidden under the pool's front deck or below the screen.
+# /Render/marchOn: the refraction keeps the last tiles seen, so the water
+#   shows tiles down to its edge.
+# /Render/marchOff (eldr:refractionMarch 0): reads the point at the
+#   estimated thickness, which lands on the deck in front of the water: a
+#   flat grey band at the bottom.
+
+def Scope "Render"
+{
+    # --- standard settings (houdini/make_showcase_hip.py; rewritten on every run) ---
+    def RenderSettings "eldr_final"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        custom bool eldr:caustics = 1
+        custom bool eldr:denoise = 1
+        custom bool eldr:filmRestart = 1
+        custom int eldr:filmSamples = 256
+        custom bool eldr:finalGather = 1
+        custom bool eldr:gi = 1
+        custom bool eldr:rtHitShadows = 1
+        custom bool eldr:rtReflections = 1
+        custom bool eldr:rtRefraction = 1
+        custom int eldr:rtShadowLights = 16
+        custom int eldr:rtShadowSamples = 1
+        custom bool eldr:rtShadows = 1
+    }
+    # --- end standard settings ---
+    def RenderSettings "marchOn"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+    }
+
+    def RenderSettings "marchOff"
+    {
+        rel camera = </cam>
+        custom bool eldr:refractionMarch = 0
+        uniform int2 resolution = (960, 540)
+    }
+}

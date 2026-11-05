@@ -83,6 +83,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_11_effect_denoise` | Bounced light, traced shadows and traced reflections are filtered while few film samples exist, so early images are clean. | `raw4`, `raw16`, `raw64`, `denoise4`, `denoise16`, `denoise64`, `noFade64` |
 | `2026-10-29_12_quality_multipliers` | Spend more rays on the noisy part of the image (diffuse, light, reflection) instead of more film samples, as Karma's quality controls do. | `default`, `diffuse2`, `diffuse2LightHalf`, `karmaNames`, `allHalf` |
 | `2026-10-31_01_refraction_quality` | More light paths through rough glass give a smoother result without more film samples. | `refractQuality1`, `refractQuality4` |
+| `2026-11-05_01_refraction_march` | Water and glass refract the surface their bent rays really reach, not something in front of them. | `marchOn`, `marchOff` |
 
 ## AOVs
 

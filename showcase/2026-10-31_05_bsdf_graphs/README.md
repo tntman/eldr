@@ -4,7 +4,7 @@
 Surfaces built from MaterialX BSDF nodes (mix, layer, add, multiply), Lama and glTF materials render like Karma.
 <!-- summary -->
 
-Twelve spheres: a red and green mix, plastic, coated gold, red paint masked into gold, sheen, glass, subsurface, an emitter, Lama coated copper, Lama sheen, glTF iridescence and brushed metal.
+Twelve spheres: a red and green mix, plastic, coated gold, red paint masked into gold, sheen, glass, subsurface, an emitter, a LamaLayer of a LamaDielectric over copper (glass, as in Karma: the dielectric's transmission hides the base), Lama sheen, glTF iridescence and brushed metal.
 
 - **graphsOn**: every graph renders.
 - **graphsOff**: graphs ignored; the masked sphere loses its mix and the Lama spheres their roughness.

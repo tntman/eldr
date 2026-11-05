@@ -69,7 +69,8 @@ struct FrameData {
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
     uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode),
-                               // z 1: refracting meshes draw their back faces first (Frame::refractionBackFaces)
+                               // z 1: refracting meshes draw their back faces first (Frame::refractionBackFaces),
+                               // w 1: screen-space refraction marches the depth buffer (Frame::refractionMarch)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
 };
@@ -4092,6 +4093,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.translucency[1] = float(_transparency.BackgroundLevels());
         fd.rtRefraction[0] = rt.refraction ? 1u : 0u;
         fd.rtRefraction[2] = frame.refractionBackFaces ? 1u : 0u;
+        fd.rtRefraction[3] = frame.refractionMarch ? 1u : 0u;
     }
     // The shading pipelines with the code of this frame's optional features.
     // Bit 0 (kFeatureNormalMaps, never optional) marks the light splits'

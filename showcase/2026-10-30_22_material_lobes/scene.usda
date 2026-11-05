@@ -233,6 +233,18 @@ def Scope "mtl"
         }
     }
 
+    def Material "backdrop"
+    {
+        token outputs:surface.connect = </mtl/backdrop/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (1, 1, 1)
+            token outputs:surface
+        }
+    }
+
     def Material "plain"
     {
         token outputs:surface.connect = </mtl/plain/surface.outputs:surface>

@@ -51,6 +51,8 @@
 #include <fstream>
 #include <optional>
 #include <set>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 PXR_NAMESPACE_OPEN_SCOPE
@@ -2246,9 +2248,10 @@ void ReadLobes(HdMaterialNode2 const &surface, vkr::Material *m, GraphCompiler &
 // graph compiler runs. Nodegraph-implemented nodes (Lama's, a document's
 // own BSDFs and surface shaders) are expanded first.
 //   oren_nayar / burley diffuse: base_color (their weighted sum)
-//   dielectric R (RT on top of a layer): specular; on top of a reflecting
-//     base: coat. T or RT not on top of a layer: transmission (T on top of
-//     a layer passes light to the base, as MaterialX's layer)
+//   dielectric R: specular; on top of a reflecting base: coat. T or RT:
+//     transmission. As in Karma, a T or RT dielectric on top of a layer
+//     refracts into the surface: the layer drops its base (Lama's coated
+//     metal of a LamaDielectric is a glass)
 //   conductor: metalness; base_color its F0 (from ior and extinction, or
 //     artistic_ior's reflectivity), specular_color its edge colour
 //   generalized_schlick: a conductor of color0 and color82 alone, a
@@ -2653,8 +2656,23 @@ private:
         if (category == "layer") {
             const mx::NodeDefPtr def = MxNodeDef(node.nodeTypeId);
             const mx::InputPtr base = def ? def->getActiveInput("base") : nullptr;
-            const int below = base && base->getType() == "VDF" ? 0 : sub("base", w, tint, ctx);
-            return below | sub("top", w, tint, below ? std::max(ctx, below & kReflects ? 2 : 1) : ctx);
+            const bool outer = std::exchange(_transmitsOnTop, false);
+            const State saved{_sums, _first, _metal, _metalColor, unsupported};
+            int below = base && base->getType() == "VDF" ? 0 : sub("base", w, tint, ctx);
+            const bool baseTransmits = std::exchange(_transmitsOnTop, false);
+            int top = sub("top", w, tint, below ? std::max(ctx, below & kReflects ? 2 : 1) : ctx);
+            if (below && _transmitsOnTop) {
+                // Karma's dielectric in T or RT mode ignores the base it is
+                // layered over (the light refracts in): the top alone.
+                // ponytail: drops the whole base, also under a top that
+                // mixes a transmitting dielectric with other lobes.
+                std::tie(_sums, _first, _metal, _metalColor, unsupported) = saved;
+                _transmitsOnTop = false;
+                below = 0;
+                top = sub("top", w, tint, ctx);
+            }
+            _transmitsOnTop = outer || baseTransmits || _transmitsOnTop;
+            return below | top;
         }
         const Term lw = Op("multiply", w, in("weight", 1.0f));
         auto colour = [&](const char *name) { return Op("multiply", in(name, 1.0f), tint); };
@@ -2718,6 +2736,7 @@ private:
                 ThinFilm(node);
                 found |= kReflects;
             }
+            _transmitsOnTop = _transmitsOnTop || (mode != "R" && ctx != 0);
             if (mode != "R" && ctx == 0) {
                 Add("transmission", lw);
                 First("transmission_color", tinted);
@@ -2772,6 +2791,8 @@ private:
     std::map<TfToken, std::vector<Term>> _sums;
     std::map<TfToken, Term> _first;
     std::vector<Term> _metal, _metalColor;
+    using State = std::tuple<decltype(_sums), decltype(_first), decltype(_metal), decltype(_metal), std::vector<std::string>>;
+    bool _transmitsOnTop = false;  // a T or RT dielectric walked on top of a layer
     int _ops = 0;
 };
 
