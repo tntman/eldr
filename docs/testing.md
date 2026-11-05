@@ -128,6 +128,9 @@ hython tests\compare_renderers.py showcase\<folder>\scene.usda <outdir>
 - Karma hides a dome from the camera unless its Render Light Geometry is on, while Eldr and
   EEVEE show it. The script gives Karma a layer that turns it on for domes that don't author it
   (`--karma-dome-hidden` keeps Karma's default).
+- A scene without lights (lit by emissive surfaces alone, such as a Cornell box with a glowing
+  ceiling) renders Karma Path Traced at 2048 samples: its default Variance sampling leaves such
+  scenes noisy. `--karma-samples N` sets the samples for any scene.
 - Karma's default diffuse limit is one bounce; Eldr's GI is every bounce. Karma decodes a float
   `.tx` dome texture as sRGB (darker, more saturated); the same pixels as an EXR read as linear in
   all three renderers.
