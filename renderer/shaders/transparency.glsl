@@ -72,10 +72,10 @@ void TransmissionBegin(inout float alpha)
 // up a surface in front of the one it reaches. A ray in front of everything
 // when it ends or leaves the screen goes on to where its direction lands on
 // screen: behind a surface there it meets it, off screen it leaves the
-// scene (the dome, or nothing). Steps: one per 16 pixels the march crosses
-// on screen (8 to 32), spaced quadratically from a per-pixel jittered start
+// scene (the dome, or nothing). Steps: one per 32 pixels the march crosses
+// on screen (8 to 16), spaced quadratically from a per-pixel jittered start
 // (each film sample another: steps dither instead of banding), the hit
-// refined by 6 halvings.
+// refined by 5 halvings.
 // ponytail: a thin object between two steps is missed.
 float RefractionDistance(vec2 uv, float z)
 {
@@ -103,9 +103,9 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
         c1 = mix(c0, c1, (c0.w - 1e-4) / max(c0.w - c1.w, 1e-8));
     }
     float pixels = length((c1.xy / max(c1.w, 1e-8) - c0.xy / max(c0.w, 1e-8)) * 0.5 * frame.viewport.xy);
-    int steps = clamp(int(pixels / 16.0), 8, 32);
+    int steps = clamp(int(pixels / 32.0), 8, 16);
     float jitter = SampleNoise(kDimRefraction, gl_FragCoord.xy + vec2(29.0, 17.0), float(frame.localLights.y));
-    for (int i = 1; i <= 32; ++i) {
+    for (int i = 1; i <= 16; ++i) {
         if (i > steps) {
             break;
         }
@@ -136,7 +136,7 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
             continue;
         }
         float lo = before, hi = t;
-        for (int j = 0; j < 6; ++j) {
+        for (int j = 0; j < 5; ++j) {
             float mid = 0.5 * (lo + hi);
             vec4 c = frame.viewProj * vec4(origin + dir * mid, 1.0);
             vec3 n = c.xyz / c.w;
