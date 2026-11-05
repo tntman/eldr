@@ -202,6 +202,9 @@ def preview_glass(shader, bsdf, mat, out):
 def build_material(mat, shader, table):
     nt = mat.node_tree
     nt.nodes.clear()
+    # The importer's blend mode (its UsdPreviewSurface reading) doesn't carry over: blended
+    # surfaces get no ray-traced refraction.
+    mat.surface_render_method = "DITHERED"
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
