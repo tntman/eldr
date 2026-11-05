@@ -675,15 +675,15 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
     // The coat's own representative point at its roughness: a smooth coat
     // over a rough base reflects the light's sharp shape.
     // ponytail: the coat takes the base's texture tap.
-    vec3 lc = l;
+    vec3 lCoat = l;
     float coatNorm = 1.0, ca = CoatAlpha();
     if (ca > 0.0) {
         coatNorm = uint(light.position.w) == kLightSphere
-            ? SphereRegion(n, v, r, ca, toLight, d, light.halfWidth.w, specularE, lc)
-            : LightRegion(n, v, ca, toLight, d, regionA1, regionA2, regionUv, regionBox, specularE, lc);
-        coatNorm *= StretchRatio(n, v, lc, ca);
+            ? SphereRegion(n, v, r, ca, toLight, d, light.halfWidth.w, specularE, lCoat)
+            : LightRegion(n, v, ca, toLight, d, regionA1, regionA2, regionUv, regionBox, specularE, lCoat);
+        coatNorm *= StretchRatio(n, v, lCoat, ca);
     }
-    specular += LayerLight(n, v, l, NoV, lc, coatNorm) * specularE * light.shaping.w;
+    specular += LayerLight(n, v, l, NoV, lCoat, coatNorm) * specularE * light.shaping.w;
     specular *= specularTint;
     vec3 shadow = LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
     if (LightSplits()) {
