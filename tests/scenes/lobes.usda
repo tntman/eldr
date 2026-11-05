@@ -222,6 +222,18 @@ def Scope "mtl"
         }
     }
 
+    def Material "backdrop"
+    {
+        token outputs:surface.connect = </mtl/backdrop/surface.outputs:surface>
+        def Shader "surface"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0, 0, 0)
+            color3f inputs:emissiveColor = (1, 1, 1)
+            token outputs:surface
+        }
+    }
+
     def Material "plain"
     {
         token outputs:surface.connect = </mtl/plain/surface.outputs:surface>
@@ -483,5 +495,18 @@ def Sphere "previewAmber" (prepend apiSchemas = ["MaterialBindingAPI"])
 {
     rel material:binding = </mtl/previewAmber>
     double3 xformOp:translate = (3.6, -3.6, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}
+
+# A white emissive card behind texturedDepth: the medium ends there (an open
+# sheet with only the dome behind absorbs everything).
+def Mesh "texturedDepthBack" (prepend apiSchemas = ["MaterialBindingAPI"])
+{
+    int[] faceVertexCounts = [4]
+    int[] faceVertexIndices = [0, 1, 2, 3]
+    point3f[] points = [(-1.3, -1.3, 0), (1.3, -1.3, 0), (1.3, 1.3, 0), (-1.3, 1.3, 0)]
+    uniform token subdivisionScheme = "none"
+    rel material:binding = </mtl/backdrop>
+    double3 xformOp:translate = (6.45, -3.87, -1.5)
     uniform token[] xformOpOrder = ["xformOp:translate"]
 }
