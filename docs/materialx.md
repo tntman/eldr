@@ -92,7 +92,6 @@ Eldr matches Storm here.
 | smoothstep on vectors, `max_color4` | Karma returns 0 or wrong channels |
 | color4 `image` outputs, HDR images, place2d | Karma darker or offset |
 | OpenPBR `emission_luminance` | Karma scales nits down (10000 renders as about 20) |
-| anisotropy without uvs (implicit spheres) | Karma's tangent has a pole facing the camera (a pinwheel of sparkles there); Eldr's circles the world up axis, so the highlight stretches into a band around it |
 | negative values | Graphs keep negative values from node to node in both (`minus`, `subtract`, `power` of a negative base to a whole exponent). Karma also keeps negative radiance in the image; Eldr's image clamps at 0 (the harness clamps both) |
 
 ## How the compiler handles nodes
