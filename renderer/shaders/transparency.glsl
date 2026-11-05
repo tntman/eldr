@@ -105,16 +105,16 @@ vec3 DomeAlong(vec3 dir, float lod)
 // transmission. Where it refracts past every drawn surface and sky, the
 // dome lights it; without a dome coverage drops instead (the app's background).
 // Closed refractive meshes: the shading passes draw their front faces and
-// discard the back ones (by the authored normal); kShadingPass 3 draws
-// only those back faces, before the front ones (Renderer's refraction
-// layers): the surface seen from inside the medium (water from below,
+// discard the back ones (by the authored normal or winding); kShadingPass 3
+// draws only those back faces (and thin walls' far sides), before the
+// front ones (Renderer's refraction layers): the surface seen from inside the medium (water from below,
 // the far side of a glass ball), with the inverted ior, so beyond the
 // critical angle it reflects the inside totally (sampled along the
 // mirrored ray) instead of letting light out.
 // With traced refraction (frame.rtRefraction.x) the front surface the
 // ray tracing pass found at this pixel takes its light from there instead
-// (the path through the glass, absorption inside included), and back
-// faces there draw nothing; other refracting fragments stay screen space.
+// (the path through the glass, absorption inside included), and
+// refracting fragments behind it there draw nothing; other refracting fragments stay screen space.
 // A ball or a box (DrawInfo::shape: a ball's points on its bounds'
 // ellipsoid, a box's triangles on its bounds' sides: a glass slab, a block
 // of water) seen from outside refracts twice at its front face: in, across
@@ -155,8 +155,18 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     Material m = ShadingMaterial();
     float ior = max(m.refraction.x, 1e-3);
     bool thin = m.refraction.y > 0.0;
-    bool inside = !thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0;
-    if (inside != (kShadingPass == 3u)) {
+    // The authored side faces away: by the normal, else (faceted meshes) by
+    // the winding, counter-clockwise outward (the projection keeps GL's y
+    // up, so Vulkan calls a triangle facing away front facing).
+    // ponytail: leftHanded orientation not flipped (traced rays neither).
+    bool away = dot(inNormal, inNormal) > 1e-12 ? dot(inNormal, v) < 0.0 : gl_FrontFacing;
+    bool inside = !thin && m.refraction.x != 1.0 && away;
+    // Thin walls' far sides draw first too where back faces do, so a
+    // closed thin mesh tints twice (front and back wall), as traced rays
+    // and Karma see it; flat ones (a window) have no far side.
+    vec3 bounds = draws[instances[inSlot].draw].boundsMax.xyz - draws[instances[inSlot].draw].boundsMin.xyz;
+    bool sheet = min(bounds.x, min(bounds.y, bounds.z)) <= 1e-3 * max(bounds.x, max(bounds.y, bounds.z));
+    if ((inside || (thin && away && !sheet && frame.rtRefraction.z != 0u)) != (kShadingPass == 3u)) {
         discard;
     }
     float f0 = (ior - 1.0) / (ior + 1.0);
@@ -201,6 +211,9 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
             discard;  // the traced path went through this back face
         }
         float camera = length(inWorldPos - frame.cameraPos.xyz);
+        if (traced.a != 0.0 && camera > 1.01 * abs(traced.a)) {
+            discard;  // behind the traced surface: on its path (a tumbler's far inner wall, the liquid)
+        }
         if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
             vec3 transmitted = through * over * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;

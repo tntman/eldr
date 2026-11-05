@@ -165,20 +165,30 @@ void EvaluateHit(vec3 dir, float cone)
 }
 
 // One refracted path from the first refracting surface s (hit: its hit),
-// arriving along dir, through up to `interfaces` interfaces: rgb the light
-// it brings, a 1, or -1 where it left the scene with no dome. `ray` steps
-// the first microfacet normal along R2 (stratified across a pixel's rays).
-// Traced refraction's (rt_refraction.rgen) and glass seen in traced
-// reflections (rt_pixels.rgen); the first surface's Fresnel, weight and
-// tint are the caller's.
+// arriving along dir: rgb the light it brings, a 1, or -1 where it left the
+// scene with no dome. `ray` steps the first microfacet normal along R2
+// (stratified across a pixel's rays). Traced refraction's
+// (rt_refraction.rgen) and glass seen in traced reflections
+// (rt_pixels.rgen); the first surface's Fresnel, weight and tint are the
+// caller's.
+// Nested media: a stack of the media the ray is in (the camera in air), so
+// an interface bends by the ratio of the iors on its two sides (liquid
+// against glass) and absorbs by the medium the ray is in (an ice cube in a
+// drink: the drink's again after the cube). Up to `interfaces` refractions
+// (Karma's refract limit) and rt.skinned.z reflections inside (its reflect
+// limit) bend the ray; past either, as Karma's Thinwall at Refract Limit,
+// further surfaces let it through straight, the media still absorbing, up
+// to kMaxHits surfaces in all (past them the path ends black).
+// ponytail: 4 nested media, entered and left in order (no priorities).
+const uint kMaxMedia = 4u, kMaxHits = 24u;
 vec4 RefractedPath(Surface s, vec3 dir, float cone, uint interfaces, uvec3 seed, uint ray)
 {
     const uint kMaskAll = kRtMaskSurfaces | kRtMaskTranslucent;
     vec3 throughput = vec3(1.0);
-    bool inMedium = false;
-    vec3 mediumColor = vec3(1.0);
-    float mediumDepth = 0.0;
-    for (uint bounce = 0u; bounce < interfaces; ++bounce) {
+    vec4 media[kMaxMedia];  // rgb the transmission colour, a its depth (0: absorbs at the surface)
+    float mediaIor[kMaxMedia];
+    uint depth = 0u, refractions = 0u, reflections = 0u;
+    for (uint bounce = 0u; bounce < kMaxHits; ++bounce) {
         if (bounce > 0u) {
             s = Evaluate(dir, cone);
         }
@@ -193,8 +203,14 @@ vec4 RefractedPath(Surface s, vec3 dir, float cone, uint interfaces, uvec3 seed,
         vec3 n = s.n, ng = s.ng;
         if (!straight) {
             bool thin = m.refraction.y > 0.0;
-            bool exiting = !thin && m.refraction.x != 1.0 && s.backface;
+            bool exiting = !thin && s.backface;
+            bool limit = refractions >= interfaces || reflections >= rt.skinned.z;
             float ior = max(m.refraction.x, 1e-3);
+            // The iors on both sides: the medium the ray is in and the one
+            // it enters (leaving: the one around this medium).
+            float outer = depth > 0u ? mediaIor[depth - 1u] : 1.0;
+            float under = depth > 1u ? mediaIor[depth - 2u] : 1.0;
+            float eta = exiting ? ior / under : outer / ior;
             // A microfacet normal (facing the ray) by the roughness.
             vec3 t, bt;
             Basis(n, t, bt);
@@ -202,29 +218,38 @@ vec4 RefractedPath(Surface s, vec3 dir, float cone, uint interfaces, uvec3 seed,
             vec3 h = SampleGgxVndf(vec3(dot(v, t), dot(v, bt), max(dot(v, n), 1e-4)), s.roughness * s.roughness,
                                    Random2(seed + uvec3(0u, 0u, 7907u * (bounce + 1u)), bounce == 0u ? ray : 0u));
             n = normalize(t * h.x + bt * h.y + n * h.z);
-            vec3 r = thin ? dir : refract(dir, n, exiting ? ior : 1.0 / ior);
+            vec3 r = thin || limit ? dir : refract(dir, n, eta);
             bool total = dot(r, r) == 0.0;
-            float f0 = (ior - 1.0) / (ior + 1.0);
+            // Schlick's cosine is the one on the thinner medium's side.
+            float f0 = (eta - 1.0) / (eta + 1.0);
             f0 *= f0;
-            float cosine = exiting ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
+            float cosine = eta > 1.0 ? (total ? 0.0 : clamp(-dot(r, n), 0.0, 1.0)) : clamp(dot(n, v), 0.0, 1.0);
             float F = total ? 1.0 : f0 + (1.0 - f0) * pow(1.0 - cosine, 5.0);
-            bool mirrored = total || (bounce > 0u && u.y < F);
+            bool mirrored = !limit && (total || (bounce > 0u && u.y < F));
             if (!mirrored) {
-                if (bounce > 0u && (thin || (!exiting && m.refraction.z <= 0.0))) {
+                // Without a depth the colour tints on entry (an ior of 1
+                // on both sides, as the shading pass tints those faces).
+                bool tints = thin || (m.refraction.z <= 0.0 && (!exiting || m.refraction.x == 1.0));
+                if (bounce > 0u && tints) {
                     throughput *= m.transmission.rgb;  // the first surface's tint is the shading pass's
                 }
-                if (!thin) {
-                    inMedium = !exiting;
-                    mediumColor = m.transmission.rgb;
-                    mediumDepth = m.refraction.z;
+                if (exiting) {
+                    depth -= depth > 0u ? 1u : 0u;
+                } else if (!thin && depth < kMaxMedia) {
+                    media[depth] = vec4(m.transmission.rgb, m.refraction.z);
+                    mediaIor[depth] = ior;
+                    ++depth;
                 }
+                ++refractions;
+            } else {
+                ++reflections;
             }
             dir = mirrored ? reflect(dir, n) : r;
         }
         TraceMask(OffsetRay(hit.position, dot(dir, ng) > 0.0 ? ng : -ng), dir, cone, kMaskAll);
-        if (inMedium && mediumDepth > 0.0) {
+        if (depth > 0u && media[depth - 1u].a > 0.0) {
             float travelled = hit.t < 0.0 ? 1e30 : hit.t;
-            throughput *= pow(max(mediumColor, vec3(1e-4)), vec3(travelled / mediumDepth));
+            throughput *= pow(max(media[depth - 1u].rgb, vec3(1e-4)), vec3(travelled / media[depth - 1u].a));
         }
         if (hit.t < 0.0) {
             return vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), frame.envRadiance.w > 0.0 ? 1.0 : -1.0);
@@ -234,6 +259,5 @@ vec4 RefractedPath(Surface s, vec3 dir, float cone, uint interfaces, uvec3 seed,
             return vec4(throughput * ShadeHit(dir, seed, true, (rt.shadowInfo.w & 1u) != 0u, true, true), 1.0);
         }
     }
-    // Out of interfaces inside glass: the dome along the last direction.
-    return vec4(throughput * (Dome(dir, 0.0) + SunDiscs(dir)), 1.0);
+    return vec4(0.0, 0.0, 0.0, 1.0);  // ended: as Karma's paths past their limits
 }

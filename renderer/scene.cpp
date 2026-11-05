@@ -2377,12 +2377,22 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _gpu.refraction = _gpu.refraction || mat->Transmits() || mat->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
+            // Flat in object space (transparency.glsl's test): a sheet, no far side.
+            float lo = std::numeric_limits<float>::max(), hi = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                lo = std::min(lo, m._boundsMax[k] - m._boundsMin[k]);
+                hi = std::max(hi, m._boundsMax[k] - m._boundsMin[k]);
+            }
             _gpu.translucentFlags.push_back(
                 (mat->transmission > 0 || mat->opacityRefracts ? Gpu::kRefracts : 0) |
-                (m.holdout ? Gpu::kHoldout : 0) | (mat->thinWalled ? Gpu::kThin : 0));
+                (m.holdout ? Gpu::kHoldout : 0) | (m._shape != 0 && !mat->thinWalled ? Gpu::kShaped : 0) |
+                (mat->thinWalled && lo <= 1e-3f * hi ? Gpu::kFlatThin : 0));
+            float r2 = 0.0f;
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
+                r2 += 0.25f * (m._worldMax[k] - m._worldMin[k]) * (m._worldMax[k] - m._worldMin[k]);
             }
+            _gpu.translucentCenters.push_back(std::sqrt(r2));
         }
         if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));

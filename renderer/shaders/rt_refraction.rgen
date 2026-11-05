@@ -20,8 +20,9 @@
 // rasterizer's jittered camera) finds the nearest refracting surface
 // (passing translucent surfaces that don't refract, which draw over it),
 // is refracted there and followed through the translucent meshes
-// (kRtMaskTranslucent) up to rt.refraction.x interfaces: into and out of
-// each medium, glass behind glass, total internal reflection past the
+// (kRtMaskTranslucent), bending at up to rt.refraction.x of them (then
+// straight through, RefractedPath): into and out of nested media, glass
+// behind glass, total internal reflection past the
 // critical angle, a GGX microfacet normal per ray by the roughness (rough
 // glass; the film or TAA averages). Every surface's material is evaluated
 // at the hit as the shading pass evaluates it (Evaluate: textures, the
@@ -31,7 +32,7 @@
 // and thin walls. After the first surface each one, by its fractions, lets
 // the ray through straight, refracts or reflects it (Fresnel), or ends it
 // on its own diffuse surface; a medium absorbs by Beer-Lambert over its
-// transmission depth (the one at its entry point), a surface without one
+// transmission depth (the one the ray is in), a surface without one
 // or a thin wall tints on entry. What the ray hits at last is shaded as
 // traced reflections shade their hits (ShadeHit), a miss sees the dome and
 // the suns' discs (SunDiscs).

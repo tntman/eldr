@@ -8,7 +8,8 @@ orthographic camera:
   refracted angle (0.329 units); with its ior from a material graph (2,
   where the constant would be 1.5) by 0.440;
 - glass seen through glass takes its transmission colour from its graph
-  (red, where the constant would be white);
+  (red, where the constant would be white), and bends: the slab behind a
+  clear pane shifts the edge as alone;
 - a sheet of glass rippled by a sine height map bends the edge behind it
   into a wiggle (eldr:rtRefractionDisplacement); flat, it stays straight.
 Needs a GPU with ray tracing.
@@ -168,7 +169,9 @@ def edge(image):
     rows = [y / 20 for y in range(-6, 7)]
     xs = [px / SIZE * 4 - 2 for px in range(SIZE)]
     profile = [sum(pixel(image, x, y)[1] for y in rows) / len(rows) for x in xs]
-    inside = [i for i, x in enumerate(xs) if -0.9 < x < 0.9]
+    # From x = -0.6: left of it the slab's side face guides light along the
+    # slab by total internal reflection, out onto the black half (dark).
+    inside = [i for i, x in enumerate(xs) if -0.6 < x < 0.9]
     high = max(profile[i] for i in inside)
     for i in inside:
         if profile[i] < 0.5 * high:
@@ -234,6 +237,22 @@ quad(stage, "/card", -4, -4, 4, 4, -3, white)
 c = pixel(render(stage, frustum, True), 0.1, 0.1)
 print("through both panes:", [round(x, 3) for x in c])
 expect(c[0] > 0.3 and c[1] < 0.1 * c[0] and c[2] < 0.1 * c[0], "the second pane tints by its graph's colour")
+
+# Glass behind glass also bends: the 45-degree slab behind a clear pane
+# (straight on: the pane alone shifts nothing) shifts the edge as alone.
+stage, frustum, glass = stage_with_camera()
+box("/front", 1.2, 1.7, glass)
+slab = box("/slab", -0.5, 0.5, glass)
+slab.AddTranslateOp().Set(Gf.Vec3d(0, 0, -0.5))
+slab.AddRotateYOp().Set(45.0)
+quad(stage, "/white", -4, -4, 0, 4, -3, material(stage, "/mtl/white", {"diffuseColor": (C, (0, 0, 0)),
+                                                                        "emissiveColor": (C, (1, 1, 1))}))
+quad(stage, "/black", 0, -4, 4, 4, -3, material(stage, "/mtl/black", {"diffuseColor": (C, (0, 0, 0))}))
+r = math.asin(math.sin(math.radians(45)) / 1.5)
+expected = math.sin(math.radians(45) - r) / math.cos(r)
+shift = edge(render(stage, frustum, True))
+print("edge shift through a pane and the slab: traced", shift, "expected", round(expected, 3))
+expect(shift is not None and abs(abs(shift) - expected) < 0.05, "glass behind glass refracts (the far slab shifts the edge)")
 
 # Displaced glass (eldr:rtRefractionDisplacement): a sheet of glass at z = 0
 # rippled by a height map h = 0.05 (1 + sin(2 pi (x + y))) in front of the
