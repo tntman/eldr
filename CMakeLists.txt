@@ -189,6 +189,14 @@ add_library(vkrenderer STATIC
     renderer/fog.cpp renderer/probes.cpp renderer/volume.cpp renderer/lod.cpp renderer/denoise.cpp
     ${shader_incs})
 target_include_directories(vkrenderer PUBLIC renderer third_party/nanovdb PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+# The sources that #include shader .inc files rebuild when any shader does:
+# sccache can hand back another build dir's include list, and ninja then
+# misses this one's .inc files.
+set_source_files_properties(
+    renderer/aov.cpp renderer/device.cpp renderer/distortion.cpp renderer/fog.cpp renderer/fullscreen.cpp
+    renderer/gtao.cpp renderer/lens.cpp renderer/post.cpp renderer/raytracing.cpp renderer/renderer.cpp
+    renderer/ssr.cpp renderer/subsurface.cpp renderer/taa.cpp renderer/transparency.cpp renderer/volume.cpp
+    PROPERTIES OBJECT_DEPENDS "${shader_incs}")
 target_link_libraries(vkrenderer PUBLIC Vulkan::Vulkan)
 # Intel Open Image Denoise (eldr:denoise), optional: its release package in
 # OIDN_ROOT or on CMAKE_PREFIX_PATH (default C:/dev/oidn-2.5.1 if there).
