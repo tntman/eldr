@@ -13,6 +13,8 @@
 # StinsonBeach.hdr and a sun.
 # /Render/rtOff: screen-space reflections; the ball reflects as a ball
 #   where the screen shows it, its hidden underside comes from the dome.
+# /Render/backfaceOff: rtOff without eldr:ssrBackfaceDepth: every surface
+#   counts as one pixel thick, so the reflected ball loses its underside.
 # /Render/rtOn: traced reflections: the reflected ball has the sun's
 #   highlight and its own reflection of the floor (4 bounces).
 # /Render/reflectLimit1: one bounce: the reflected ball reflects the dome.
@@ -119,6 +121,11 @@ def Scope "Render"
         rel camera = </cam>
         custom bool eldr:rtReflections = 0
         uniform int2 resolution = (640, 360)
+    }
+
+    def RenderSettings "backfaceOff" (prepend inherits = </Render/rtOff>)
+    {
+        custom bool eldr:ssrBackfaceDepth = 0
     }
 
     def RenderSettings "rtOn"

@@ -666,7 +666,7 @@ Renderer::~Renderer()
     for (VkImageView v : _shadowLayers) {
         vkDestroyImageView(_dev.device, v, nullptr);
     }
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_shadowMap, &_shadowAtlas, &_brdfLut,
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_backDepth, &_velocity, &_shadowMap, &_shadowAtlas, &_brdfLut,
                        &_blackCube, &_blueNoise, &_up[0], &_up[1], &_up[2], &_up[3], &_filmIds[0], &_filmIds[1],
                        &_filmIds[2]}) {
         _dev.Destroy(*img);
@@ -886,6 +886,8 @@ void Renderer::_CreateDescriptors()
         // Light splits (aov.h), stored by the shading pass; last frame's for SSR.
         {67, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, kFragment},
         {76, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
+        // SSR's back-face depth (_backDepth; the prepass depth without it).
+        {78, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, kFragment},
         // Motion blur time samples (shutter.comp): last frame's rigid rows,
         // joints and blend shape weights.
         {69, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_VERTEX_BIT},
@@ -1235,8 +1237,16 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         pci.pStages = depthStages;
         pci.pDepthStencilState = &depth;
         pci.pColorBlendState = &noBlend;
-        pci.pDynamicState = &dynamic;
+        // The camera's prepass draws both sides; SSR's back-face pass
+        // (_backDepth) the same pipelines with the front faces culled.
+        const VkDynamicState prepassStates[4] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR,
+                                                 VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE};
+        VkPipelineDynamicStateCreateInfo prepassDynamic = dynamic;
+        prepassDynamic.dynamicStateCount = 4;
+        prepassDynamic.pDynamicStates = prepassStates;
+        pci.pDynamicState = &prepassDynamic;
         r = createMesh(pci, _prepassPipeline, kDepthVariants);
+        pci.pDynamicState = &dynamic;
 
         VkPipelineRasterizationStateCreateInfo shadowRaster = raster;
         shadowRaster.depthBiasEnable = VK_TRUE;
@@ -1255,7 +1265,9 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         pci.stageCount = sci.stageCount = 2;
         pci.pStages = sci.pStages = maskStages;
         if (r == VK_SUCCESS) {
+            pci.pDynamicState = &prepassDynamic;
             r = createMesh(pci, _prepassCutoutPipeline, kDepthVariants);
+            pci.pDynamicState = &dynamic;
         }
         if (r == VK_SUCCESS) {
             r = createMesh(sci, _shadowCutoutPipeline, kDepthVariants);
@@ -1764,7 +1776,8 @@ void Renderer::_Resize(uint32_t width, uint32_t height)
 // while upscaling (TAA's history stays, at the frame's size).
 void Renderer::_ResizeScene(uint32_t width, uint32_t height)
 {
-    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_velocity, &_filmIds[0], &_filmIds[1], &_filmIds[2]}) {
+    for (Image *img : {&_color, &_primId, &_instanceId, &_depth, &_backDepth, &_velocity, &_filmIds[0], &_filmIds[1],
+                       &_filmIds[2]}) {
         _dev.Destroy(*img);
     }
     // Back at the frame's size: the upscale's copies go (their memory is
@@ -1912,6 +1925,10 @@ void Renderer::_UpdateDescriptors(const Scene::Gpu &gpu, bool prepass, VkImageVi
     write(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &ao);
     write(12, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &previous);
     write(13, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &depth);
+    const VkDescriptorImageInfo backDepth =
+        _backfaces ? VkDescriptorImageInfo{_clampSampler, _backDepth.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL}
+                   : depth;
+    write(78, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, nullptr, &backDepth);
     write(14, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &clusters, nullptr);
     write(15, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &skin, nullptr);
     write(16, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &joints, nullptr);
@@ -4054,6 +4071,16 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     if (!refraction) {
         _transparency.DropBackground();
     }
+    // SSR's thickness (Frame::ssrBackfaceDepth): the back faces' depth,
+    // its memory only while it draws.
+    _backfaces = draw && fd.ssr[0] > 0.0f && frame.ssgiThickness && frame.ssrBackfaceDepth;
+    if (_backfaces && !_backDepth.image) {
+        _backDepth = _dev.CreateImage(kDepthFormat, _width, _height, 1, 1,
+                                      VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                                      VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_VIEW_TYPE_2D);
+    } else if (!_backfaces && _backDepth.image) {
+        _dev.Destroy(_backDepth);
+    }
     _UpdateDescriptors(gpu, frame.depthPrepass, refraction ? _transparency.EnsureBackground() : VK_NULL_HANDLE);
     if (_rt) {
         _rt->UpdateDescriptors(_set, gpu);
@@ -4504,6 +4531,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         vkCmdSetScissor(_cmd, 0, 1, &scissor);
         if (draw) {
             vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline[0]);
+            vkCmdSetCullMode(_cmd, VK_CULL_MODE_NONE);
+            vkCmdSetFrontFace(_cmd, VK_FRONT_FACE_CLOCKWISE);
             PushDraw(_cmd, _layout, jitteredViewProj, 0);
             vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
@@ -4517,6 +4546,40 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                      VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                      VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
         pass("depthPrepass");
+    }
+    // SSR's thickness (Frame::ssrBackfaceDepth): the same draws with the
+    // front faces culled, the nearest back face per pixel. USD's front
+    // faces wind counter-clockwise with y up: clockwise in Vulkan's
+    // framebuffer (no y flip). Left-handed meshes arrive reversed
+    // (HdMeshUtil); a mesh wound inside out reads its front here, as thin.
+    // ponytail: negative-scale instances wind reversed too (thin); a
+    // per-draw front face if that matters.
+    if (_backfaces && frame.depthPrepass) {
+        ImageBarrier(_cmd, _backDepth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT), VK_PIPELINE_STAGE_2_NONE, 0,
+                     kDepthTests,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                     VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        VkRenderingAttachmentInfo backAtt = depthAtt;
+        backAtt.imageView = _backDepth.view;
+        VkRenderingInfo bri = ri;
+        bri.pDepthAttachment = &backAtt;
+        vkCmdBeginRendering(_cmd, &bri);
+        vkCmdSetViewport(_cmd, 0, 1, &vp);
+        vkCmdSetScissor(_cmd, 0, 1, &scissor);
+        vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _prepassPipeline[0]);
+        vkCmdSetCullMode(_cmd, VK_CULL_MODE_FRONT_BIT);
+        vkCmdSetFrontFace(_cmd, VK_FRONT_FACE_CLOCKWISE);
+        PushDraw(_cmd, _layout, jitteredViewProj, 0);
+        vkCmdBindVertexBuffers(_cmd, 0, 1, &gpu.vertices, &vertexOffset);
+        vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
+        DrawChunks(_cmd, gpu, _commands.buffer, 0, _prepassPipeline, _prepassCutoutPipeline, kDepthVariants,
+                   fd.lodFade[0] > 0);
+        vkCmdEndRendering(_cmd);
+        ImageBarrier(_cmd, _backDepth.image, Range(VK_IMAGE_ASPECT_DEPTH_BIT), kDepthTests,
+                     VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                     VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                     VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL);
+        pass("ssrBackfaces");
     }
 
     // AO only darkens the dome lighting, so without a dome it is skipped.
