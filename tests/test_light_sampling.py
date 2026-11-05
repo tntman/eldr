@@ -1,7 +1,8 @@
 """Light sampling (eldr:rtLightSampling) and gather roulette (eldr:finalGatherRoulette) keep the converged
 film: the Cornell box lit by seven shadowed lights (over four, so the per-pixel shadows share the samples;
 one a spot, so some pixels cull it) with traced shadows, GI and the final gather. The image's mean with
-both on is within 1% of both off, and so is each quarter of it.
+both on is within 1% of both off, and so is each quarter of it. The colour limit is off: it caps each
+sample, so the noisier sampled estimate would lose more of its rare bright samples (as in Karma).
 Run: usdenv.cmd python tests\\test_light_sampling.py <exrinfo>"""
 import os
 import subprocess
@@ -63,7 +64,7 @@ def render(on):
     if os.path.exists(exr):
         os.remove(exr)
     subprocess.run([sys.executable, os.path.join(HERE, "exr_record.py"), scene, "/Render", "/cam",
-                    *FINAL_ARGS, "eldr:filmSamples=128", "eldr:autoExposure=false",
+                    *FINAL_ARGS, "eldr:filmSamples=128", "eldr:autoExposure=false", "eldr:colorLimit=0", "eldr:indirectClamp=20",
                     "eldr:rtShadows=1", "eldr:gi=true", "eldr:finalGather=true",
                     "eldr:rtLightSampling=%s" % on, "eldr:finalGatherRoulette=%s" % on],
                    check=True, timeout=900, env=dict(os.environ, EXR_SIZE=str(SIZE)))

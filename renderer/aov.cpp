@@ -179,7 +179,7 @@ Aovs::Aovs(Device &device)
     lci.pushConstantRangeCount = 1;
     lci.pPushConstantRanges = &range;
     Check(vkCreatePipelineLayout(d, &lci, nullptr, &_layout), "vkCreatePipelineLayout");
-    const VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6},
+    const VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3},
                                            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}};
     VkDescriptorPoolCreateInfo pci{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};

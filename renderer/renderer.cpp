@@ -3625,7 +3625,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Through glass and smoke: translucent casters colour each light's
     // shadow (a texel per light), volumes are marched (per channel).
     const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
-    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
+    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency &&
+                     (!gpu.translucent.empty() || !gpu.tintCasters.empty());
     rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows
                            ? gpu.volumeCount : 0;
     rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
