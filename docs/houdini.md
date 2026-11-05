@@ -36,6 +36,7 @@ The build writes `build-h22/houdini/eldr.json`, a Houdini package. It adds `buil
 |---|---|
 | `HdVkRendererPlugin_Global.ds` | Render Settings LOP tab: every `eldr:*` setting, each with Karma's Do Nothing / Set or Create / Block menu |
 | `HdVkRendererPlugin_Geometry.ds` | Render Geometry Settings LOP tab: Eldr's own primvars in collapsible sections (Subdivision and dicing, Visibility, Motion, Curves and points, Reflections, Volumes), each with a tooltip, and a line on the order eldr, Karma, default |
+| `HdVkRendererPlugin_Light.ds` | Light LOPs' tab (Light, Dome Light, Distant Light): Eldr's own light attributes (see [Light tab](#light-tab)) |
 | `HdVkRendererPlugin_Viewport.ds` | Viewport Display Options |
 
 Nodes made before Eldr was installed need **Rebuild Renderer-Specific Parameters**.
@@ -70,6 +71,18 @@ Eldr's tab, by section (`houdini/gen_ui.py`, SECTIONS):
 `primvars:eldr:ribbons` and `primvars:eldr:sprites` are read too (they win over the styles) but have no control: Render Curves As and Render Points As cover them.
 
 Not honoured from the Karma tab: Cull Backface (Eldr draws every mesh double-sided), time samples (Eldr samples points and transforms at the shutter's open and close, `eldr:motionBlurTimeSamples`), the volume step rates and filters (`eldr:volumeStepSize` is global), Dicing Quality Scale, Offscreen Quality, Dicing Camera and the other global dicing controls (Dicing Quality and the depths are honoured), Displacement Style, the limit controls (Volume Limit aside), the quality controls per object (Karma Render Settings' Diffuse, Reflection, Refraction, SSS and Volume Quality and Light Sampling Quality are honoured globally, from the settings prim: `eldr:diffuseQuality` and its twins win), light-source scales, portals, LPE tags on objects (lights' tags are light groups), fake caustics (caustics themselves are honoured: Enable Caustics, Roughness Clamp, a light's Contributes to Caustics), outlines, trace sets and stencils.
+
+## Light tab
+
+The Light, Dome Light and Distant Light LOPs get an Eldr tab beside Karma's, with the same three controls on every light type. Each authors an `inputs:eldr:light:*` attribute on the light and has a Karma twin on the Karma tab (`karma:` in place of `eldr:`): **Eldr's setting wins when set, then Karma's, then the default**. Leave Eldr's at Do Nothing to share Karma's value.
+
+| Control | Attribute | Default | Applies to |
+|---|---|---|---|
+| Render Light Geometry | `bool inputs:eldr:light:renderlightgeo` | sphere, rect, disk, cylinder: hidden; dome: shown | The light's shape in the camera (the dome still lights and reflects when hidden); distant lights have no shape |
+| LPE Tag | `string inputs:eldr:light:lpetag` | none | The light group: `lpe:C.*<L.'tag'>` holds its direct light (see Light groups below); every light type |
+| Contributes to Caustics | `bool inputs:eldr:light:contributescaustics` | on | Caustic photons (with Caustics on) from distant, sphere, rect and disk lights; domes and cylinders send none |
+
+The rest of the light comes from the USD attributes on the Base Properties, Shaping and Shadow tabs (colour, intensity, exposure, temperature, normalize, diffuse and specular multipliers, texture, cone, focus, IES, shadow enable, light and shadow linking). From the Karma tab Eldr reads only the three twins above.
 
 ## Subdivision surfaces
 
