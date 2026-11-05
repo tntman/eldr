@@ -68,7 +68,8 @@ struct FrameData {
     float deform[4];         // x: time sample's offset from this frame (frames), y: 1 = Mesh::velocities on,
                              // z: 1 = a time sample (motion vectors from the shutter's capture),
                              // w: its capture holds joints (+1) and blend shape weights (+2)
-    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode)
+    uint32_t rtRefraction[4];  // x 1: refracting front faces read the traced refraction (Frame::rtRefraction), y 1: opacity presence on (Frame::opacityMode),
+                               // z 1: refracting meshes draw their back faces first (Frame::refractionBackFaces)
     float scene[4];          // the scene's frame and time in seconds (Frame::sceneTime: MaterialX frame, time)
     uint32_t tiles[4];       // tiles.glsl: the stamp a tile needs to be shaded (0: all are), tiles across, down
 };
@@ -244,14 +245,16 @@ void PushDraw(VkCommandBuffer cmd, VkPipelineLayout layout, const float *viewPro
 // no shadows).
 // `fading`: levels of detail crossfade, so their chunks take `cutout` too
 // (mask.frag's dither; the camera's depth prepass).
+// `skipTints`: a shadow pass whose tint maps take the kTints meshes.
 void DrawChunks(VkCommandBuffer cmd, const Scene::Gpu &gpu, VkBuffer commands, VkDeviceSize offset,
-                const VkPipeline *opaque, const VkPipeline *cutout, uint8_t variants, bool fading = false)
+                const VkPipeline *opaque, const VkPipeline *cutout, uint8_t variants, bool fading = false,
+                bool skipTints = false)
 {
     constexpr VkDeviceSize stride = sizeof(VkDrawIndexedIndirectCommand);
     VkPipeline bound = VK_NULL_HANDLE;
     for (size_t i = 0; i + 1 < gpu.drawChunks.size(); ++i) {
         const uint8_t kind = gpu.chunkKind[i] & (Scene::Gpu::kWide - 1);
-        if (kind == Scene::Gpu::kTranslucent) {
+        if (kind == Scene::Gpu::kTranslucent || (skipTints && kind == Scene::Gpu::kTints)) {
             continue;
         }
         const bool masked = kind == Scene::Gpu::kCutout || (fading && gpu.chunkLevels[i]);
@@ -2470,6 +2473,7 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         key.insert(key.end(), t.rect, t.rect + 4);
     }
     key.push_back(tint ? float(_transparency.AtlasTint().size) : 0.0f);
+    key.push_back(_shadowTints ? 1.0f : 0.0f);
     key.push_back(volume ? float(gpu.volumeVersion % (1u << 24)) + 1.0f : 0.0f);  // ponytail: a stamp wrapping at 2^24 can miss a change
     if (!tiles.empty() && gpu.version == _atlasVersion && key == _atlasKey) {
         return;  // still in SHADER_READ_ONLY_OPTIMAL from when it was drawn
@@ -2570,7 +2574,8 @@ void Renderer::_RenderLocalShadows(const Scene::Gpu &gpu, const std::vector<Shad
         vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
         const uint32_t shadowLink = uint32_t(t.origin[3]);
         PushDraw(_cmd, _layout, t.viewProj, tileList, 0, shadowLink);
-        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
+        DrawChunks(_cmd, gpu, _commands.buffer, tileCommands, _shadowPipeline, _shadowCutoutPipeline, kDepthVariants,
+                   false, _shadowTints);
         vkCmdEndRendering(_cmd);
         if (tint) {
             const Transparency::TintMap &map = _transparency.AtlasTint();
@@ -2626,7 +2631,7 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
 {
     std::vector<std::pair<float, size_t>> order;
     for (size_t i = 0; i < gpu.translucent.size(); ++i) {
-        const float *c = &gpu.translucentCenters[i * 3];
+        const float *c = &gpu.translucentCenters[i * 4];
         const Vec3 d{c[0] - frame.cameraPos[0], c[1] - frame.cameraPos[1], c[2] - frame.cameraPos[2]};
         order.push_back({Dot(d, d), i});
     }
@@ -2765,9 +2770,14 @@ void Renderer::_RenderTranslucency(const Scene::Gpu &gpu, const Frame &frame, Fr
         };
         copy();
         use(0);
-        if (frame.refractionBackFaces && !(gpu.translucentFlags[i] & Scene::Gpu::kThin)) {
-            // (Thin walls have no inside: their back faces would all discard,
-            // and spend a background copy.)
+        // (Thin walls too: their far sides, so a closed one tints twice.
+        // A ball or box seen from outside, or a flat thin sheet, has none to
+        // draw: no copy spent.)
+        const float *c = &gpu.translucentCenters[i * 4];
+        const Vec3 fromCentre{frame.cameraPos[0] - c[0], frame.cameraPos[1] - c[1], frame.cameraPos[2] - c[2]};
+        const bool outside = ((gpu.translucentFlags[i] & Scene::Gpu::kShaped) && Dot(fromCentre, fromCentre) > c[3] * c[3]) ||
+                             (gpu.translucentFlags[i] & Scene::Gpu::kFlatThin);
+        if (frame.refractionBackFaces && !outside) {
             drawSlot(_refractBackPipeline + _shadingBase, i);
             drawn = true;
             copy();
@@ -2837,6 +2847,15 @@ void Renderer::_DrawTintCasters(const Scene::Gpu &gpu, VkDeviceSize commands)
             }
             vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
                                      commands + VkDeviceSize(gpu.translucent[i]) * sizeof(VkDrawIndexedIndirectCommand),
+                                     1, sizeof(VkDrawIndexedIndirectCommand));
+        }
+        for (size_t i = 0; _shadowTints && i < gpu.tintCasters.size(); ++i) {
+            if (pipelines[gpu.tintCasterVariant[i] & kDepthVariants] != bound) {
+                bound = pipelines[gpu.tintCasterVariant[i] & kDepthVariants];
+                vkCmdBindPipeline(_cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, bound);
+            }
+            vkCmdDrawIndexedIndirect(_cmd, _commands.buffer,
+                                     commands + VkDeviceSize(gpu.tintCasters[i]) * sizeof(VkDrawIndexedIndirectCommand),
                                      1, sizeof(VkDrawIndexedIndirectCommand));
         }
     }
@@ -3606,7 +3625,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Through glass and smoke: translucent casters colour each light's
     // shadow (a texel per light), volumes are marched (per channel).
     const bool rtDraw = gpu.drawCount > 0 && gpu.instanceCapacity > 0;
-    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency && !gpu.translucent.empty();
+    rt.shadowColor = frame.rtTranslucentShadows && rtDraw && frame.translucency &&
+                     (!gpu.translucent.empty() || !gpu.tintCasters.empty());
     rt.shadowVolumes = frame.rtTranslucentShadows && rtDraw && frame.volumes && frame.volume.shadows
                            ? gpu.volumeCount : 0;
     rt.volumeStep = std::max(frame.volume.stepSize, 0.05f);  // as VolumeParams
@@ -3806,8 +3826,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::memcpy(fd.envRadiance, gpu.environmentRadiance, sizeof(gpu.environmentRadiance));
         fd.envRadiance[3] = 1.0f;
     }
-    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentCameraVisible && gpu.environmentLatlong != kNone;
-    fd.counts[3] = sky ? gpu.environmentLatlong : kNone;  // the dome the sky pass shows
+    const bool sky = gpu.environment && frame.showEnvironment && gpu.environmentCameraVisible;
+    // The dome the sky pass shows: its latlong texture, or kNone - 1 for an
+    // untextured dome (its colour x intensity, uniform).
+    fd.counts[3] = !sky ? kNone : gpu.environmentLatlong != kNone ? gpu.environmentLatlong : kNone - 1;
     // Volumetric fog; it also covers the background, as the sky pass does
     // (premultiplied: needs post to composite the clear colour behind).
     _filmFroxels = film && frame.fogFilmJitter;
@@ -3944,7 +3966,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Frame::translucentShadows says (its light arrives as photons): with it
     // off the tint maps hold the casters alone.
     const bool translucentShadows = draw && frame.translucency && (frame.translucentShadows || rt.caustics) &&
-                                    !gpu.translucent.empty();
+                                    (!gpu.translucent.empty() || !gpu.tintCasters.empty());
+    // Thin-walled subsurface meshes (Scene::Gpu::kTints) shadow as tint
+    // casters instead of in the opaque shadow maps.
+    _shadowTints = translucentShadows && frame.translucentShadows && !gpu.tintCasters.empty();
     if (translucentShadows && !frame.translucentShadows) {
         fd.features[0] |= kFeatureTintCastersOnly;
     }
@@ -4039,6 +4064,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         fd.translucency[0] = float(std::clamp(std::lround(double(frame.refractionSamples) * frame.refractQuality), 1l, 16l));
         fd.translucency[1] = float(_transparency.BackgroundLevels());
         fd.rtRefraction[0] = rt.refraction ? 1u : 0u;
+        fd.rtRefraction[2] = frame.refractionBackFaces ? 1u : 0u;
     }
     // The shading pipelines with the code of this frame's optional features.
     // Bit 0 (kFeatureNormalMaps, never optional) marks the light splits'
@@ -4375,7 +4401,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             vkCmdBindIndexBuffer(_cmd, gpu.indices, 0, VK_INDEX_TYPE_UINT32);
             DrawChunks(_cmd, gpu, _commands.buffer,
                        VkDeviceSize(1 + c) * gpu.drawCount * sizeof(VkDrawIndexedIndirectCommand),
-                       _shadowPipeline, _shadowCutoutPipeline, kDepthVariants);
+                       _shadowPipeline, _shadowCutoutPipeline, kDepthVariants, false, _shadowTints);
             vkCmdEndRendering(_cmd);
             static const char *const kCascadeNames[] = {"sunCascade0", "sunCascade1", "sunCascade2", "sunCascade3"};
             pass(kCascadeNames[std::min<uint32_t>(c, 3)]);
@@ -4841,7 +4867,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             _taa.RecordFilm(_cmd, filmOffset, filmRadius, filmMode, frame.filmWarmStart,
                             adaptiveThreshold, frame.adaptiveMinSamples,
                             frame.post.autoExposure ? _post.Exposure() : std::exp2(frame.post.exposureCompensation),
-                            _filmStamp);
+                            _filmStamp, fd.lightClamp[2]);
             if (_denoiseUpload) {  // the denoised image over the film's resolve (Frame::denoise)
                 const VkImage resolved = _taa.OutputImage();
                 ImageBarrier(_cmd, resolved, Range(VK_IMAGE_ASPECT_COLOR_BIT), VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
@@ -4858,7 +4884,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
             }
             pass("film");
         } else {
-            _taa.Record(_cmd, &reprojection.m[0][0], alpha, filmOffset);
+            _taa.Record(_cmd, &reprojection.m[0][0], alpha, filmOffset, fd.lightClamp[2]);
             pass("taa");
         }
         if (postBlur) {
@@ -4992,6 +5018,8 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
         std::copy(filmOffset, filmOffset + 2, params.filmOffset);
         params.filmRadius = filmRadius;
         params.filmWeights = _taa.FilmWeights();
+        params.beauty = frame.postProcess ? _color.view : VK_NULL_HANDLE;  // TAA's and the film's input
+        params.colorLimit = fd.lightClamp[2];
         std::copy(out.aovFilters, out.aovFilters + Aovs::kCount, params.filters);
         std::copy(out.aovFilterRadius, out.aovFilterRadius + Aovs::kCount, params.filterRadius);
         const VkPipeline *pipelines = draw && Aovs::NeedsGeometry(aovTargets) ? _aovs.Pipelines(_layout) : nullptr;

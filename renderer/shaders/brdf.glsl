@@ -43,7 +43,8 @@ Material ShadingMaterial()
 struct Base {
     vec3 metalF0, metalF90, metalA;  // metal Fresnel: Schlick F0..F90 minus Hoffman's a mu (1 - mu)^6 (F82)
     vec3 metalW;                     // its weight: metallic (and what the layers above leave)
-    vec3 dielF0;                     // dielectric Fresnel: F0 (F90 white)
+    vec3 dielF0;                     // dielectric Fresnel: F0
+    float dielF90;                   // its F90 (Schlick's): 1, or F0 for a flat Fresnel (Karma's default material)
     float dielEta;                   // > 0: the exact Fresnel of this relative index, else Schlick's
     vec3 dielW;                      // its weight times tint: 1 - metallic, specular colour, layers above
     float msK;                       // multiple scattering (Turquin 2019): (1 - Ess) / Ess, 0: single
@@ -111,7 +112,7 @@ vec3 DielectricFresnel(float mu)
         return vec3(FresnelDielectric(mu, base.dielEta));
     }
     float m = 1.0 - mu;
-    return base.dielF0 + (1.0 - base.dielF0) * (m * m * m * m * m);
+    return base.dielF0 + (base.dielF90 - base.dielF0) * (m * m * m * m * m);
 }
 
 // The base's Fresnel at cos mu between the light (or view) and the half
@@ -128,7 +129,7 @@ vec3 BaseFresnel(float mu)
 // for the dielectric Schlick's albedo at its F0, as MaterialX).
 vec3 DielectricAlbedo(float NoV, vec3 dfg)
 {
-    return (base.dielF0 * dfg.x + dfg.y) * (1.0 + DielectricFresnel(NoV) * base.dielMsK);
+    return (base.dielF0 * dfg.x + base.dielF90 * dfg.y) * (1.0 + DielectricFresnel(NoV) * base.dielMsK);
 }
 
 vec3 BaseAlbedo(float NoV, vec3 dfg)
@@ -210,7 +211,7 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
     base.diffuseRoughness = 0.0;
     vec3 specColor = vec3(1.0), specularF0 = vec3(0.0);
     float specWeight = 1.0, ior = 1.5, coat = 0.0, coatIor = 1.5, affect = 0.0;
-    bool specularWorkflow = false;
+    bool specularWorkflow = false, flatFresnel = false;
     if (inMaterial != kNoMaterial) {
         Material m = ShadingMaterial();
         base.model = uint(m.surface.x + 0.5);
@@ -220,6 +221,7 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
         ior = m.refraction.x;
         specularWorkflow = m.specularColor.w > 0.0 && (frame.features.x & kFeatureSpecularWorkflow) != 0u;
         specularF0 = max(m.specularColor.rgb, 0.0);
+        flatFresnel = m.specularColor.w < 0.0;
         if (m.coat.x > 0.0 && (frame.features.x & kFeatureClearcoat) != 0u) {
             coat = clamp(m.coat.x, 0.0, 1.0);
             float s = sqrt(clamp(m.coat.z, 0.0, 0.99));
@@ -234,11 +236,13 @@ vec3 SetupBase(vec3 baseColor, float metallic, vec3 response, float NoV, vec3 df
     base.metalF90 = vec3(1.0);
     base.metalA = vec3(0.0);
     base.dielEta = 0.0;
+    base.dielF90 = 1.0;
     float throughputWeight = 1.0;
     vec3 diffuse = baseColor;
     if (base.model == 0u) {
         float r = (ior - 1.0) / (ior + 1.0);
         base.dielF0 = specularWorkflow ? specularF0 : vec3(r * r);
+        base.dielF90 = flatFresnel ? r * r : 1.0;
         metallic = specularWorkflow ? 0.0 : metallic;
         base.metalF0 = baseColor;
         base.metalF90 = baseColor;
@@ -639,12 +643,19 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
     return normalize(mix(n, stretched, layers.anisotropy * clamp(5.0 * perceptual, 0.0, 1.0)));
 }
 
+// The coat's GGX alpha (0: no coat): mesh.frag finds the coat's own
+// representative point on a light at it.
+float CoatAlpha()
+{
+    return layers.coat > 0.0 ? layers.coatPerceptual * layers.coatPerceptual : 0.0;
+}
+
 // The lobes' reflection of light from direction l, times cos, per unit of
-// the light's specular radiance. `regionArea`: the light's area in
-// half-vector space / pi (mesh.frag's LightRegion); the coat normalizes its
-// own lobe for it as for a disc of that area.
-// ponytail: the coat shares the base's representative point.
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
+// the light's specular radiance. The coat's lobe is taken towards lc, the
+// light's representative point for the coat's own roughness (mesh.frag's
+// LightRegion at CoatAlpha()), times coatNorm, that point's normalization,
+// so a smooth coat over a rough base shows the light's sharp shape.
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
 {
     vec3 c = vec3(0.0);
     float NoL = clamp(dot(n, l), 0.0, 1.0);
@@ -653,9 +664,11 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
     gCoatLight = 0.0;
     if (layers.coat > 0.0) {
         float a = layers.coatPerceptual * layers.coatPerceptual;
-        float F = CoatFresnel(max(dot(l, h), 0.0));
-        gCoatLight = layers.coat * D_GGX(NoH, a) * V_SmithGGXCorrelated(NoV, max(NoL, 1e-4), a) * F *
-                     (1.0 + F * layers.coatMsK) * NoL * (a * a) / (a * a + regionArea);
+        float NoLc = clamp(dot(n, lc), 0.0, 1.0);
+        vec3 hc = normalize(v + lc);
+        float F = CoatFresnel(max(dot(lc, hc), 0.0));
+        gCoatLight = layers.coat * D_GGX(max(dot(n, hc), 0.0), a) * V_SmithGGXCorrelated(NoV, max(NoLc, 1e-4), a) *
+                     F * (1.0 + F * layers.coatMsK) * NoLc * coatNorm;
         c += gCoatLight;
     }
     if (layers.sheen != vec3(0.0)) {
@@ -708,7 +721,12 @@ vec3 BentNormal(vec3 n, vec3 v, float perceptual)
     return n;
 }
 
-vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, float regionArea)
+float CoatAlpha()
+{
+    return 0.0;
+}
+
+vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
 {
     return vec3(0.0);
 }

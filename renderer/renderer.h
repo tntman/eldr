@@ -41,7 +41,7 @@ public:
         bool postProcess = true;      // false: color is the raw linear HDR scene
         bool taa = true;              // with postProcess: jittered + temporally resolved
         bool ambientOcclusion = true; // GTAO on the dome (image-based) lighting
-        float aoRadius = 0.5f;        // world units
+        float aoRadius = 1.0f;        // world units
         bool ssr = true;              // screen-space reflections (needs postProcess)
         bool shadows = true;          // the distant light's shadow cascades
         bool localShadows = true;     // local lights' shadow atlas
@@ -841,6 +841,7 @@ private:
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
     bool _taaValid = false;
+    bool _shadowTints = false;  // the kTints meshes shadow in the tint maps (Scene::Gpu::kTints)
     bool _historyValid = false;    // the TAA history holds last frame's image
     // Last frame stored the light splits; this one keeps them for SSR (Aovs::ClearSplits).
     bool _splitsStored = false, _keepSplits = false;

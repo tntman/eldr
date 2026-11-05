@@ -511,10 +511,10 @@ bool Scene::SetDefaultMaterial(bool karma)
 // 0-75 degrees) and a white dome: diffuse 0.4 x displayColor (white without
 // one), within 1%, plus an untinted lobe of directional albedo 0.033 at any
 // view angle (no Fresnel rise), Beckmann-like of width 0.29. Here: GGX of
-// alpha 0.29 (roughness 0.54) and F0 0.034 (ior 1.45); the diffuse weight
-// makes up for the 3.5% the specular takes from it.
+// alpha 0.29 (roughness 0.54) and F0 0.034 (ior 1.45) without a Fresnel
+// rise; the diffuse weight makes up for the 3.5% the specular takes from it.
 // ponytail: GGX's longer tail is 2x Karma's lobe 30 degrees off the mirror
-// direction (0.002 against 0.001 of the light); Schlick rises at grazing.
+// direction (0.002 against 0.001 of the light).
 const Material *Scene::_MaterialOf(const Mesh &mesh)
 {
     if (mesh.material || !_karmaDefault) {
@@ -529,6 +529,7 @@ const Material *Scene::_MaterialOf(const Mesh &mesh)
         m->displayColorWeight = (mesh.colorAuthored ? 0.4f : 0.8f) / (1.0f - 0.035f);
         m->roughness = 0.54f;
         m->ior = 1.45f;
+        m->flatFresnel = true;
         m->opacity = opacity;
         m->opacityPresence = true;  // Karma's Of: the whole response
     }
@@ -933,6 +934,7 @@ void Scene::_UploadGeometry(Mesh &m)
         m._flat = s._flat;
         std::copy_n(s._flatTriangle, 9, m._flatTriangle);
         m._uvSpacing = s._uvSpacing;
+        m._shape = s._shape;
         m._vertexOffset = s._vertexOffset, m._vertexCount = s._vertexCount;
         m._firstIndex = s._firstIndex, m._indexCount = s._indexCount;
         m._skinOffset = s._skinOffset, m._skinCount = s._skinCount, m._skinStride = s._skinStride;
@@ -1181,6 +1183,30 @@ void Scene::_UploadGeometry(Mesh &m)
         uvLength += std::hypot(double(b[0]) - a[0], double(b[1]) - a[1]);
     }
     m._uvSpacing = corners > 0 ? float(uvLength / double(corners)) : 0.0f;
+    // Its shape for screen-space refraction to follow rays through
+    // (transparency.glsl): a ball (every point on the ellipsoid that fills
+    // its bounds) or a box (every triangle on one side of its bounds; a
+    // rippled water top within 12% of the depth).
+    auto unit = [&](size_t v, int k) {
+        const float h = 0.5f * (m._boundsMax[k] - m._boundsMin[k]);
+        return h > 0.0f ? (vertices[v].position[k] - 0.5f * (m._boundsMin[k] + m._boundsMax[k])) / h : 2.0f;
+    };
+    bool ball = !vertices.empty() && m.facing == Mesh::kNotFacing, box = ball && corners >= 3;
+    for (size_t i = 0; ball && i < vertices.size(); ++i) {
+        const float x = unit(i, 0), y = unit(i, 1), z = unit(i, 2);
+        ball = std::abs(std::sqrt(x * x + y * y + z * z) - 1.0f) < 0.05f;
+    }
+    for (size_t t = 0; !ball && box && t + 2 < corners; t += 3) {
+        bool side = false;
+        for (int k = 0; k < 3 && !side; ++k) {
+            for (float s : {-1.0f, 1.0f}) {
+                side = side || std::all_of(&indices[t], &indices[t] + 3,
+                                           [&](uint32_t v) { return std::abs(unit(v, k) - s) < 0.25f; });
+            }
+        }
+        box = side;
+    }
+    m._shape = ball ? 1u : box ? 2u : 0u;
     const uint32_t vertexCount = uint32_t(vertices.size()), indexCount = uint32_t(corners);
     // Levels of detail of heavy meshes (lod.h), built on other threads; a
     // later Commit stores them (the mesh draws whole until then).
@@ -2211,7 +2237,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             g.surface[2] = m.coatAffectColor;
             g.surface[3] = m.coatAffectRoughness;
             std::copy(m.specularColor, m.specularColor + 3, g.specularColor);
-            g.specularColor[3] = m.specularWorkflow ? 1.0f : 0.0f;
+            g.specularColor[3] = m.specularWorkflow ? 1.0f : m.flatFresnel ? -1.0f : 0.0f;
             g.coat[0] = m.coat;
             g.coat[1] = m.coatRoughness;
             g.coat[2] = m.coatF0;
@@ -2264,6 +2290,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.translucentVariant.clear();
     _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
+    _gpu.tintCasters.clear();
+    _gpu.tintCasterVariant.clear();
     _gpu.slotGeometry.resize(slots);
     _gpu.refraction = false;
     _gpu.holdouts = false;
@@ -2295,6 +2323,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         d.hair = m.hair ? 1 : 0;
         d.facing = m.facing;
         d.uvSpacing = m._uvSpacing;
+        d.shape = m._shape;
         facing = facing || (drawable && m.facing != Mesh::kNotFacing);
         const bool program = mat && !mat->program.Empty() && mat->program.Valid();
         const uint8_t variant = (m._skinStride == 2 ? Gpu::kWide : 0) |
@@ -2350,12 +2379,26 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             _gpu.refraction = _gpu.refraction || mat->Transmits() || mat->opacityRefracts;
             _gpu.translucent.push_back(uint32_t(slot));
             _gpu.translucentVariant.push_back(variant >> 2);
+            // Flat in object space (transparency.glsl's test): a sheet, no far side.
+            float lo = std::numeric_limits<float>::max(), hi = 0.0f;
+            for (int k = 0; k < 3; ++k) {
+                lo = std::min(lo, m._boundsMax[k] - m._boundsMin[k]);
+                hi = std::max(hi, m._boundsMax[k] - m._boundsMin[k]);
+            }
             _gpu.translucentFlags.push_back(
                 (mat->transmission > 0 || mat->opacityRefracts ? Gpu::kRefracts : 0) |
-                (m.holdout ? Gpu::kHoldout : 0) | (mat->thinWalled ? Gpu::kThin : 0));
+                (m.holdout ? Gpu::kHoldout : 0) | (m._shape != 0 && !mat->thinWalled ? Gpu::kShaped : 0) |
+                (mat->thinWalled && lo <= 1e-3f * hi ? Gpu::kFlatThin : 0));
+            float r2 = 0.0f;
             for (int k = 0; k < 3; ++k) {
                 _gpu.translucentCenters.push_back(0.5f * (m._worldMin[k] + m._worldMax[k]));
+                r2 += 0.25f * (m._worldMax[k] - m._worldMin[k]) * (m._worldMax[k] - m._worldMin[k]);
             }
+            _gpu.translucentCenters.push_back(std::sqrt(r2));
+        } else if (mat && mat->thinWalled && mat->subsurface > 0) {
+            kind[slot] = Gpu::kTints;  // a leaf: its shadow lets its colour through
+            _gpu.tintCasters.push_back(uint32_t(slot));
+            _gpu.tintCasterVariant.push_back(variant >> 2);
         }
         if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
@@ -2400,7 +2443,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
                                    drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
-                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase};
+                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase,
+                                   blend == Gpu::kTints};
         drawn[slot] = drawable ? m._instanceCount : 0;
         rays[slot] = drawable ? m.rays : 0;
         if (drawable) {
@@ -2446,6 +2490,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             const Mesh::Lod &lod = m._lods[k];
             commands[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
             kind[next] = kind[slot];
+            if ((kind[slot] & (Gpu::kWide - 1)) == Gpu::kTints) {  // its levels shadow as tints too
+                _gpu.tintCasters.push_back(uint32_t(next));
+                _gpu.tintCasterVariant.push_back(kind[slot] >> 2);
+            }
             weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
             g.errors[k] = lod.error;
         }
@@ -2475,6 +2523,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
     }
     for (uint32_t &s : _gpu.translucent) {
+        s = commandOf[s];
+    }
+    for (uint32_t &s : _gpu.tintCasters) {
         s = commandOf[s];
     }
     for (uint32_t &s : _gpu.subsurface) {

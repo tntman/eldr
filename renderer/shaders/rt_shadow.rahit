@@ -33,7 +33,7 @@ void main()
         if ((RtLinkMask(uint(gl_InstanceID)) & (1u << uint(shadowLink))) == 0u) {
             ignoreIntersectionEXT;
         }
-        if ((rtSlots[slot].flags & (kRtSlotCutout | kRtSlotTranslucent)) == 0u) {
+        if ((rtSlots[slot].flags & (kRtSlotCutout | kRtSlotTranslucent | kRtSlotTints)) == 0u) {
             return;
         }
     }
@@ -55,7 +55,8 @@ void main()
     if (translucent && (rt.shadowInfo.w & 2u) == 0u) {  // seen for the casters alone (rtTranslucentShadows off)
         ignoreIntersectionEXT;
     }
-    if (translucent) {
+    // A thin-walled subsurface leaf tints shadow rays that tint, else blocks.
+    if (translucent || ((rtSlots[slot].flags & kRtSlotTints) != 0u && (rt.shadowInfo.w & 2u) != 0u)) {
         shadowRay.rgb *= clamp(ShadowTransmission(materials[material], uv), 0.0, 1.0);
         ignoreIntersectionEXT;
     }

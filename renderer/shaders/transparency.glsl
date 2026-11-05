@@ -63,9 +63,9 @@ void TransmissionBegin(inout float alpha)
 // after `distance`: where that point lands on screen, blurred over mips and
 // frame.translucency.x rotated taps by the roughness spreading the rays
 // over `spread`.
-vec4 RefractedBackground(vec3 dir, float distance, float spread)
+vec4 RefractedBackground(vec3 origin, vec3 dir, float distance, float spread)
 {
-    vec3 exitP = inWorldPos + dir * distance;
+    vec3 exitP = origin + dir * distance;
     vec4 clip = frame.viewProj * vec4(exitP, 1.0);
     vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;
     vec3 v = ViewDirection(inWorldPos);
@@ -105,18 +105,25 @@ vec3 DomeAlong(vec3 dir, float lod)
 // transmission. Where it refracts past every drawn surface and sky, the
 // dome lights it; without a dome coverage drops instead (the app's background).
 // Closed refractive meshes: the shading passes draw their front faces and
-// discard the back ones (by the authored normal); kShadingPass 3 draws
-// only those back faces, before the front ones (Renderer's refraction
-// layers): the surface seen from inside the medium (water from below,
+// discard the back ones (by the authored normal or winding); kShadingPass 3
+// draws only those back faces (and thin walls' far sides), before the
+// front ones (Renderer's refraction layers): the surface seen from inside the medium (water from below,
 // the far side of a glass ball), with the inverted ior, so beyond the
 // critical angle it reflects the inside totally (sampled along the
 // mirrored ray) instead of letting light out.
 // With traced refraction (frame.rtRefraction.x) the front surface the
 // ray tracing pass found at this pixel takes its light from there instead
-// (the path through the glass, absorption inside included), and back
-// faces there draw nothing; other refracting fragments stay screen space.
+// (the path through the glass, absorption inside included), and
+// refracting fragments behind it there draw nothing; other refracting fragments stay screen space.
+// A ball or a box (DrawInfo::shape: a ball's points on its bounds'
+// ellipsoid, a box's triangles on its bounds' sides: a glass slab, a block
+// of water) seen from outside refracts twice at its front face: in, across
+// the shape and out where it leaves, so a ball shows what's behind upside
+// down like a lens and a slab shifts it, as Karma does; their back faces
+// draw nothing (from outside they would bend the camera's ray, not the one
+// inside, and reflect it totally at grazing angles: milky water).
 // ponytail: screen space: what isn't on screen isn't refracted; one
-// interface per layer, the thickness an estimate.
+// interface per layer (two for a ball or box), the thickness an estimate.
 // How far along e (object space, scaled so the ellipsoid is the unit ball;
 // the distance in e's units) o is from leaving the unit ball.
 float EllipsoidExit(vec3 o, vec3 e)
@@ -124,6 +131,17 @@ float EllipsoidExit(vec3 o, vec3 e)
     float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
     float disc = b * b - a * c;
     return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
+}
+
+// How far along e (unit-box space, as EllipsoidExit) o is from leaving
+// the box [-1, 1]^3, and that side's outward normal there.
+float BoxExit(vec3 o, vec3 e, out vec3 side)
+{
+    vec3 safe = mix(vec3(1e-8), e, greaterThan(abs(e), vec3(1e-8)));
+    vec3 t = (sign(safe) - o) / safe;
+    float exit = min(t.x, min(t.y, t.z));
+    side = t.x == exit ? vec3(sign(safe.x), 0.0, 0.0) : t.y == exit ? vec3(0.0, sign(safe.y), 0.0) : vec3(0.0, 0.0, sign(safe.z));
+    return max(exit, 0.0);
 }
 
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
@@ -137,8 +155,18 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     Material m = ShadingMaterial();
     float ior = max(m.refraction.x, 1e-3);
     bool thin = m.refraction.y > 0.0;
-    bool inside = !thin && m.refraction.x != 1.0 && dot(inNormal, v) < 0.0;
-    if (inside != (kShadingPass == 3u)) {
+    // The authored side faces away: by the normal, else (faceted meshes) by
+    // the winding, counter-clockwise outward (the projection keeps GL's y
+    // up, so Vulkan calls a triangle facing away front facing).
+    // ponytail: leftHanded orientation not flipped (traced rays neither).
+    bool away = dot(inNormal, inNormal) > 1e-12 ? dot(inNormal, v) < 0.0 : gl_FrontFacing;
+    bool inside = !thin && m.refraction.x != 1.0 && away;
+    // Thin walls' far sides draw first too where back faces do, so a
+    // closed thin mesh tints twice (front and back wall), as traced rays
+    // and Karma see it; flat ones (a window) have no far side.
+    vec3 bounds = draws[instances[inSlot].draw].boundsMax.xyz - draws[instances[inSlot].draw].boundsMin.xyz;
+    bool sheet = min(bounds.x, min(bounds.y, bounds.z)) <= 1e-3 * max(bounds.x, max(bounds.y, bounds.z));
+    if ((inside || (thin && away && !sheet && frame.rtRefraction.z != 0u)) != (kShadingPass == 3u)) {
         discard;
     }
     float f0 = (ior - 1.0) / (ior + 1.0);
@@ -183,6 +211,9 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
             discard;  // the traced path went through this back face
         }
         float camera = length(inWorldPos - frame.cameraPos.xyz);
+        if (traced.a != 0.0 && camera > 1.01 * abs(traced.a)) {
+            discard;  // behind the traced surface: on its path (a tumbler's far inner wall, the liquid)
+        }
         if (!inside && abs(abs(traced.a) - camera) <= 0.01 * camera) {
             vec3 transmitted = through * over * (m.refraction.z > 0.0 && !thin ? vec3(1.0) : m.transmission.rgb);
             color += transmitted * traced.rgb;
@@ -201,21 +232,43 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     float spread = perceptual * perceptual * min(behind, camera);
     vec3 tint = m.transmission.rgb;
     vec3 tintInside = tint;  // along the inside reflection
+    // The ellipsoid that fills the mesh's bounds, in its unit-ball space.
+    mat4 xf = InstanceTransform(inst);
+    mat3 toObject = inverse(mat3(xf));
+    vec3 extent = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+    vec3 centre = 0.5 * (d.boundsMax.xyz + d.boundsMin.xyz);
+    vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
+    vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
+    bool solid = !thin && min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z));
+    vec3 outsideBox = abs(eye) - 1.0;
+    bool shaped = solid && (d.shape == 1u ? dot(eye, eye) > 1.0 : d.shape == 2u && max(outsideBox.x, max(outsideBox.y, outsideBox.z)) > 0.0);
+    if (shaped && inside) {
+        discard;  // the front face refracts out through here
+    }
+    // Where the ray leaves: a ball's or box's exit point and the direction
+    // out of it, else the surface and the ray.
+    vec3 exitP = inWorldPos, exitR = r;
+    float exitDistance = thickness, across = 0.0;
+    if (shaped && !total) {
+        vec3 e = toObject * r / extent, side;
+        across = d.shape == 1u ? EllipsoidExit(o, e) : BoxExit(o, e, side);
+        side = d.shape == 1u ? o + e * across : side;
+        vec3 outward = normalize(transpose(toObject) * (side / extent));
+        vec3 leaving = refract(r, -outward, ior);
+        exitP = inWorldPos + r * across;
+        exitR = dot(leaving, leaving) > 0.0 ? leaving : r;
+        exitDistance = max(min(behind, 100.0 * camera) - across, 0.0);
+    }
     if (m.refraction.z > 0.0 && !thin) {
         // The path inside: through the ellipsoid that fills the mesh's
         // bounds (exact for a ball), not the bounds' diagonal. A back face
         // seen from outside adds none (its front face counted the path),
         // from inside the medium the way to the camera. Flat meshes (water
         // sheets): the distance to what is behind, at most the mesh's size.
-        mat4 xf = InstanceTransform(inst);
-        mat3 toObject = inverse(mat3(xf));
-        vec3 extent = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
-        vec3 centre = 0.5 * (d.boundsMax.xyz + d.boundsMin.xyz);
         float path = thickness, pathInside = thickness;
-        if (min(extent.x, min(extent.y, extent.z)) > 1e-3 * max(extent.x, max(extent.y, extent.z))) {
-            vec3 o = (toObject * (inWorldPos - xf[3].xyz) - centre) / extent;
-            vec3 eye = (toObject * (frame.cameraPos.xyz - xf[3].xyz) - centre) / extent;
-            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0) : min(behind, EllipsoidExit(o, toObject * r / extent));
+        if (solid) {
+            path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0)
+                          : shaped ? across : min(behind, EllipsoidExit(o, toObject * r / extent));
             pathInside = EllipsoidExit(o, toObject * reflect(-v, n) / extent);
         }
         tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
@@ -228,9 +281,9 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     bool dome = frame.envRadiance.w > 0.0;
     float domeLod = perceptual * float(frame.counts.z - 1u);
     if (!total) {
-        vec4 background = RefractedBackground(r, thickness, spread);
+        vec4 background = RefractedBackground(exitP, exitR, exitDistance, spread);
         vec3 transmitted = through * over * tint;
-        vec3 light = background.rgb + (1.0 - background.a) * DomeAlong(r, domeLod);
+        vec3 light = background.rgb + (1.0 - background.a) * DomeAlong(exitR, domeLod);
         color += transmitted * light;
         gRefractedLight += transmitted * light;
         lost += dome ? 0.0 : dot(transmitted, vec3(1.0 / 3.0)) * (1.0 - background.a);
@@ -238,7 +291,7 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
     if (inside) {
         // The inside's reflection, all of it past the critical angle.
         vec3 inward = reflect(-v, n);
-        vec4 mirrored = RefractedBackground(inward, min(camera, size), spread);
+        vec4 mirrored = RefractedBackground(inWorldPos, inward, min(camera, size), spread);
         vec3 reflected = gRefracted * F * over * tintInside;
         vec3 light = mirrored.rgb + (1.0 - mirrored.a) * DomeAlong(inward, domeLod);
         color += reflected * light;

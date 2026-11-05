@@ -6,7 +6,17 @@ eldr_rt prim). Not pixel equality with Karma, only what must hold either way:
 - glass_solid_and_thin: the glass ball, slab and thin pane aren't black;
 - furnace_grey (uniform white dome of 1): white diffuse, rough white metal, clear glass and
   coated white read about 1, grey 0.5 reads 0.5, the background 1 (energy neither made nor
-  lost). A constant (untextured) dome isn't drawn behind the scene yet: reported as a known bug.
+  lost), and the constant (untextured) dome shows behind the scene at 1;
+- coloured_glass: the 0.9 m blue block is much bluer than the 0.1 m one, which is visibly blue
+  (Beer-Lambert over the path through a scaled cube); the closed thin-walled amber pane tints
+  twice (front and back wall);
+- glass_behind_glass: the green glass ball seen through the clear pane keeps its shape (darker
+  than the wall seen through the pane above it);
+- liquid_in_glass (traced): the amber liquid fills the tumbler's inner width, seen through the
+  wall off its axis;
+- facing_mirrors (traced): past the reflect limit the repeated mirrors are black, as in Karma;
+- sun_on_chrome: the colour limit caps the chrome sun highlights (every camera sample, as Karma);
+- subsurface_translucent: the thin translucent leaf's shadow is greener than an opaque one.
 Needs a GPU with ray tracing for the traced half.
 Run: usdenv.cmd python tests\\test_scenarios.py"""
 import os
@@ -35,7 +45,7 @@ fbo.bind()
 
 
 class Shot:
-    def __init__(self, name, traced):
+    def __init__(self, name, traced, settings={}):
         self.stage = Usd.Stage.Open(os.path.join(SCENES, name + ".usda"))
         camera = UsdGeom.Camera(self.stage.GetPrimAtPath("/cam")).GetCamera(Usd.TimeCode.Default())
         CameraUtil.ConformWindow(camera, CameraUtil.Fit, W / H)
@@ -46,7 +56,7 @@ class Shot:
         # Linear radiance with the post steps (screen-space reflections) kept.
         for key, value in {"eldr:tonemapper": "none", "eldr:autoExposure": False, "eldr:bloomIntensity": 0.0}.items():
             engine.SetRendererSetting(key, value)
-        for key, value in (RT if traced else {}).items():
+        for key, value in dict(RT if traced else {}, **settings).items():
             engine.SetRendererSetting(key, value)
         engine.SetRenderViewport(Gf.Vec4d(0, 0, W, H))
         engine.SetCameraState(frustum.ComputeViewMatrix(), frustum.ComputeProjectionMatrix())
@@ -57,13 +67,18 @@ class Shot:
         self.image = fbo.toImage()
         del engine
 
+    def peak(self):
+        """The brightest channel anywhere in the image."""
+        return max(max(c.redF(), c.greenF(), c.blueF())
+                   for c in (self.image.pixelColor(x, y) for y in range(H) for x in range(W)))
+
     def pixel(self, point):
         p = self.toNdc.Transform(Gf.Vec3d(*point))
         return int((p[0] + 1) / 2 * W), int((1 - p[1]) / 2 * H)
 
     def mean(self, point, r=3):
-        """Mean RGB over a (2r+1)^2 window around the point's pixel."""
-        x0, y0 = self.pixel(point)
+        """Mean RGB over a (2r+1)^2 window around the point's pixel (or a pixel, (x, y) ints)."""
+        x0, y0 = point if len(point) == 2 else self.pixel(point)
         assert r <= x0 < W - r and r <= y0 < H - r, "%s projects off the image" % (point,)
         cs = [self.image.pixelColor(x, y) for y in range(y0 - r, y0 + r + 1) for x in range(x0 - r, x0 + r + 1)]
         return tuple(sum(getattr(c, ch)() for c in cs) / len(cs) for ch in ("redF", "greenF", "blueF"))
@@ -116,7 +131,66 @@ for traced in (False, True):
         print("  %s %.3f" % (name, v))
         expect(lo <= v <= hi, "%s: furnace %s reads %.2f-%.2f" % (mode, name, lo, hi))
     v = sum(shot.mean((0, 1.6, 0), 2)) / 3
-    known(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
+    expect(0.97 <= v <= 1.03, "%s: a constant (untextured) dome shows behind the scene, reads 1 (%.3f)" % (mode, v))
+
+    shot = Shot("coloured_glass", traced)
+    ratios = []
+    for name, x, z, d in (("0.1 m", -2.2, 0.75, 0.1), ("0.9 m", 0, 0.35, 0.9)):
+        c = shot.mean((x, 0.5, z + d / 2))  # the block's front face, the white wall behind
+        ratios.append(c[2] / max(c[0], 1e-4))
+        print("  block %s %s blue/red %.2f" % (name, fmt(c), ratios[-1]))
+    expect(ratios[0] > 1.15, "%s: the 0.1 m blue glass block is blue" % mode)
+    expect(ratios[1] > 1.5 * ratios[0], "%s: the 0.9 m blue block is much bluer than the 0.1 m one" % mode)
+    c = shot.mean((2.9, 0.7, -0.5))
+    print("  amber pane %s" % fmt(c))
+    expect(c[1] < 0.5 * c[0], "%s: the closed thin amber pane tints twice (green under half the red)" % mode)
+
+    lum = lambda c: 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    shot = Shot("glass_behind_glass", traced)
+    ball, above = shot.mean((0.1, 0.7, -0.6), 6), shot.mean((0.1, 1.65, -0.6), 6)  # both through the pane
+    print("  green ball %s, wall above it %s" % (fmt(ball), fmt(above)))
+    expect(lum(ball) < 0.8 * lum(above), "%s: the green ball shows through the clear pane" % mode)
+
+    if traced:
+        shot = Shot("liquid_in_glass", traced)
+        c = shot.mean((-0.024, 0.045, 0.028), 2)  # the tumbler's front wall, 0.6 of its radius off axis
+        print("  liquid off axis %s" % fmt(c))
+        expect(c[0] > 2 * c[2], "%s: the amber liquid fills the tumbler's width" % mode)
+
+        shot = Shot("facing_mirrors", traced)
+        c = shot.mean((-1.5, 1.47, 0.89), 2)  # left mirror: a ray bouncing between them past the limit
+        print("  mirrors past the limit %s" % fmt(c))
+        expect(lum(c) < 0.05, "%s: past the reflect limit the mirrors are black" % mode)
+
+# Karma's colour limit caps every camera sample (chrome sun highlights too), not only
+# directly seen emitters. A small limit keeps the check inside the image's range.
+for traced in (False, True):
+    mode = "traced" if traced else "default"
+    limited = Shot("sun_on_chrome", traced, {"eldr:colorLimit": 0.5}).peak()
+    full = Shot("sun_on_chrome", traced, {"eldr:colorLimit": 0.0}).peak()
+    print("  sun_on_chrome peak: limit 0.5 %.3f, off %.3f" % (limited, full))
+    expect(limited <= 0.52 and full > 0.7, "%s: the colour limit caps the chrome highlights" % mode)
+
+# The clear coat reflects the softbox sharply: on the coated ball (pixels at 384 x 216) the
+# coat's white band of it (blue: the red base adds little) stands well above the coat just
+# above and below the band, 6 pixels away (a blurred streak has no such edge).
+for traced in (False, True):
+    mode = "traced" if traced else "default"
+    shot = Shot("car_paint", traced)
+    inside, above, below = shot.mean((295, 91), 1), shot.mean((295, 85), 1), shot.mean((295, 99), 1)
+    print("  coat softbox %s, above %s, below %s" % (fmt(inside), fmt(above), fmt(below)))
+    expect(inside[2] > 1.6 * max(above[2], below[2]), "%s: the coat shows the softbox sharply" % mode)
+
+# The back-lit thin translucent leaf's shadow lets a little of its green through (Karma: about
+# 5% of the sun times its colour): greener and lighter than the opaque ball's shadow. The floor
+# where the sun's ray through the leaf's (2.1, 0.6, 0) lands, and through the ball's centre.
+for traced in (False, True):
+    mode = "traced" if traced else "default"
+    shot = Shot("subsurface_translucent", traced)
+    leaf, ball = shot.mean((1.66, 0.0, 1.21), 2), shot.mean((-1.04, 0.0, 1.21), 2)
+    print("  leaf shadow %s, opaque ball's %s" % (fmt(leaf), fmt(ball)))
+    expect(leaf[1] / leaf[2] > 1.03 * ball[1] / ball[2] and leaf[1] > 1.03 * ball[1],
+           "%s: the leaf's shadow is greener than an opaque one" % mode)
 
 print("FAILED" if failures else "OK")
 sys.exit(1 if failures else 0)

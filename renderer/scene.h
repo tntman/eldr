@@ -292,6 +292,9 @@ struct Material {
     // metallic is ignored.
     bool specularWorkflow = false;
     float specularColor[3] = {0, 0, 0};
+    // UsdPreviewSurface model only: the dielectric's reflectance stays F0 at
+    // every angle (no Fresnel rise), as Karma's default material.
+    bool flatFresnel = false;
     // Clearcoat: a second GGX lobe on top; the base beneath is tinted by
     // coatColor and loses what the coat reflects. Weight 0: none.
     float coat = 0;
@@ -505,6 +508,7 @@ private:
     bool _flat = false;
     float _flatTriangle[9] = {};
     float _uvSpacing = 0;  // DrawInfo::uvSpacing
+    uint32_t _shape = 0;   // DrawInfo::shape
     // Placement in the GPU pools (deduplicated, indexed vertices).
     uint32_t _vertexOffset = 0, _vertexCount = 0;
     uint32_t _firstIndex = 0, _indexCount = 0;
@@ -666,7 +670,7 @@ struct DrawInfo {
     uint32_t velocities;       // the mesh's first vec4 in Gpu::velocities, kNone: none
     uint32_t caustics;         // 1: Mesh::causticsCast, 2: receives (Mesh::causticsReceive)
     float causticsRoughness;   // Mesh::causticsRoughness
-    uint32_t pad;
+    uint32_t shape;            // 1: a ball (points on its bounds' ellipsoid), 2: a box (triangles on its bounds); transparency.glsl
 };
 static_assert(sizeof(DrawInfo) % 16 == 0, "std430 array stride of DrawInfo");
 // Rest bounds of the vertices one joint moves (min.x > max.x: none).
@@ -839,9 +843,11 @@ public:
         // beyond the metallic base, Material::Layered, or Mesh::hair; shading
         // pass only), kDisplaced (a displacing material; every pass): kind >>
         // 2 picks the renderer's pipeline variant. Chunks also end where it
-        // changes.
+        // changes. kTints: opaque, but with tinted shadows on its shadow is
+        // a tint caster's (a thin-walled subsurface material lets its
+        // colour through: tintCasters), not in the opaque shadow maps.
         enum : uint8_t {
-            kOpaque, kCutout, kTranslucent, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
+            kOpaque, kCutout, kTranslucent, kTints, kWide = 4, kDualQuat = 8, kProgram = 16, kProcedural = 32, kLayers = 64,
             kDisplaced = 128
         };
         std::vector<uint8_t> chunkKind;
@@ -849,15 +855,21 @@ public:
         // their commands), whose crossfade needs the alpha-tested prepass.
         std::vector<uint8_t> chunkLevels;
         // The translucent meshes' commands (with their pipeline variants)
-        // and their world bounds' centres (xyz).
+        // and their world bounds' centres and radii (xyz, w).
         std::vector<uint32_t> translucent;
         std::vector<uint8_t> translucentVariant;
         // Per translucent slot: kRefracts (a material that refracts or
         // tints what's behind it, see refraction).
-        // kHoldout: Mesh::holdout.
-        enum : uint8_t { kRefracts = 1, kHoldout = 2, kThin = 4 };  // kThin: thin-walled, no inside to draw
+        // kHoldout: Mesh::holdout. kShaped: a solid ball or box
+        // (DrawInfo::shape), whose back faces seen from outside draw nothing.
+        // kFlatThin: a flat thin-walled mesh, no far side to draw.
+        enum : uint8_t { kRefracts = 1, kHoldout = 2, kShaped = 4, kFlatThin = 8 };
         std::vector<uint8_t> translucentFlags;
         std::vector<float> translucentCenters;
+        // The kTints meshes' commands and pipeline variants (the tint maps
+        // draw them with the translucent ones).
+        std::vector<uint32_t> tintCasters;
+        std::vector<uint8_t> tintCasterVariant;
         uint32_t instanceCapacity = 0;
         uint32_t lightCount = 0;        // distant
         uint32_t localLightCount = 0;   // sphere/rect, after the distant ones
@@ -940,6 +952,7 @@ public:
             bool displaced = false;  // its material displaces (Gpu::kDisplaced)
             bool translucent = false;  // blended: only traced shadows that tint see it
             uint32_t firstInstance = 0;  // its first instance slot (a displacement graph's instance inputs)
+            bool tints = false;  // kTints: traced shadows take its tint, other rays see it opaque
         };
         std::vector<SlotGeometry> slotGeometry;
         // A drawn translucent material refracts or tints what's behind it

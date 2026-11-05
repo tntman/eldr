@@ -246,13 +246,15 @@ void TemporalAA::SetInput(uint32_t width, uint32_t height, VkImageView color, Vk
     vkUpdateDescriptorSets(_dev.device, 4, writes, 0, nullptr);
 }
 
-void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2])
+void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2],
+                        float colorLimit)
 {
     TaaParams params{};
     std::copy(reprojection, reprojection + 16, params.reprojection);
     params.params[0] = alpha;
     params.params[1] = 1.0f / _width;
     params.params[2] = 1.0f / _height;
+    params.params[3] = colorLimit;
     const bool upscale = _inWidth != _width || _inHeight != _height;
     if (upscale) {
         params.upscale[0] = offset[0];
@@ -272,10 +274,11 @@ void TemporalAA::Record(VkCommandBuffer cmd, const float reprojection[16], float
 }
 
 void TemporalAA::RecordFilm(VkCommandBuffer cmd, const float offset[2], float radius, uint32_t mode, float seed,
-                            float threshold, uint32_t minSamples, float exposure, uint32_t tileStamp)
+                            float threshold, uint32_t minSamples, float exposure, uint32_t tileStamp,
+                            float colorLimit)
 {
     const FilmParams params{{offset[0], offset[1], radius, float(mode)}, {seed, 0, 0, 0},
-                            {threshold, float(minSamples), exposure, 0}, {tileStamp, TilesAcross(), 0, 0}};
+                            {threshold, float(minSamples), exposure, colorLimit}, {tileStamp, TilesAcross(), 0, 0}};
     // The count of pixels still sampling starts at 0 (last frame's host read is done).
     vkCmdFillBuffer(cmd, _active.buffer, 0, sizeof(uint32_t), 0);
     ImageBarrier(cmd, _resolved.image, Color(), VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,

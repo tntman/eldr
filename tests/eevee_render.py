@@ -12,7 +12,9 @@ misplaced one with rt off.
 Blender's importer reads UsdPreviewSurface only and converts lights in its own units, so this
 script sets from the stage: MaterialX standard_surface / open_pbr / ND_UsdPreviewSurface
 materials (Principled BSDF), bindings on shape prims (Sphere, Cube, ...) and their smoothness,
-light power in Karma's units, and the dome as the world. Scene units stay as authored (Karma
+light power in Karma's units, and the dome as the world. Glass (transmission tinted by
+transmission_color, UsdPreviewSurface opacity under 1 with an ior) gets EEVEE's ray-traced
+refraction; opacity textures are cut-outs (alpha clipped, dithered). Scene units stay as authored (Karma
 ignores metersPerUnit too)."""
 import argparse
 import math
@@ -138,9 +140,71 @@ def texture_file(shader, depth=4):
     return None
 
 
+def reads_alpha(inp, depth=4):
+    """Whether a connected input takes an image's alpha (UsdUVTexture's a, extract index 3)."""
+    if depth == 0 or not inp or not inp.HasConnectedSource():
+        return False
+    src, name, _ = inp.GetConnectedSource()
+    if name == "a":
+        return True
+    node = UsdShade.Shader(src.GetPrim())
+    index = node.GetInput("index")
+    if str(node.GetIdAttr().Get()).startswith("ND_extract_") and index and index.Get() == 3:
+        return True
+    return any(reads_alpha(i, depth - 1) for i in node.GetInputs())
+
+
+def refract(mat, out, thin):
+    """EEVEE refracts what's behind only with ray-traced transmission on the material."""
+    if hasattr(mat, "use_raytrace_refraction"):
+        mat.use_raytrace_refraction = True
+    if thin and "Thickness" in out.inputs:  # a thin wall: no thickness to bend through
+        mat.thickness_mode = "SLAB"
+        zero = mat.node_tree.nodes.new("ShaderNodeValue")
+        zero.outputs[0].default_value = 0.0
+        mat.node_tree.links.new(zero.outputs[0], out.inputs["Thickness"])
+
+
+def clip(mat, bsdf, threshold):
+    """An opacity cut-out: alpha 0 or 1 at the threshold (Eldr's and Karma's cut-outs)."""
+    nt = mat.node_tree
+    link = bsdf.inputs["Alpha"].links[0] if bsdf.inputs["Alpha"].is_linked else None
+    if link is None:
+        bsdf.inputs["Alpha"].default_value = float(bsdf.inputs["Alpha"].default_value >= threshold)
+        return
+    step = nt.nodes.new("ShaderNodeMath")
+    step.operation = "GREATER_THAN"
+    step.inputs[1].default_value = threshold - 1e-4
+    nt.links.new(link.from_socket, step.inputs[0])
+    nt.links.new(step.outputs[0], bsdf.inputs["Alpha"])
+
+
+def preview_glass(shader, bsdf, mat, out):
+    """UsdPreviewSurface opacity under 1 with an ior is glass (Karma, Eldr's opacityRefracts):
+    transmission 1 - opacity. A threshold makes it a cut-out instead."""
+    get = lambda name, d: (shader.GetInput(name).Get() if shader.GetInput(name) and
+                           shader.GetInput(name).Get() is not None else d)
+    threshold, ior, mode = get("opacityThreshold", 0.0), get("ior", None), get("opacityMode", "transparent")
+    opacity = shader.GetInput("opacity")
+    if threshold > 0:
+        clip(mat, bsdf, threshold)
+        mat.surface_render_method = "DITHERED"
+    elif ior is not None and ior != 1 and str(mode) != "presence" and not (opacity and opacity.HasConnectedSource()):
+        o = get("opacity", 1.0)
+        if o < 1:
+            bsdf.inputs["Alpha"].default_value = 1.0
+            bsdf.inputs["Transmission Weight"].default_value = 1.0 - o
+            bsdf.inputs["IOR"].default_value = ior
+            mat.surface_render_method = "DITHERED"
+            refract(mat, out, False)
+
+
 def build_material(mat, shader, table):
     nt = mat.node_tree
     nt.nodes.clear()
+    # The importer's blend mode (its UsdPreviewSurface reading) doesn't carry over: blended
+    # surfaces get no ray-traced refraction.
+    mat.surface_render_method = "DITHERED"
     out = nt.nodes.new("ShaderNodeOutputMaterial")
     bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
     nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
@@ -156,7 +220,8 @@ def build_material(mat, shader, table):
                 tex.image = bpy.data.images.load(readable(path), check_existing=True)
                 srgb = isinstance(default, tuple) and os.path.splitext(path)[1].lower() in (".png", ".jpg", ".jpeg", ".tga", ".bmp")
                 colorspace(tex.image, not srgb)
-                nt.links.new(tex.outputs["Color"], bsdf.inputs[socket])
+                alpha = socket == "Alpha" and reads_alpha(inp)
+                nt.links.new(tex.outputs["Alpha" if alpha else "Color"], bsdf.inputs[socket])
                 continue
         sock = bsdf.inputs[socket]
         if socket == "Alpha" and isinstance(value, (tuple, Gf.Vec3f)):
@@ -182,8 +247,30 @@ def build_material(mat, shader, table):
         bsdf.inputs["Specular IOR Level"].default_value = 0.5 * (spec.Get() if spec and spec.Get() is not None else 1.0)
     if table is PREVIEW:
         bsdf.inputs["Emission Strength"].default_value = 1.0
-    if bsdf.inputs["Alpha"].default_value < 1 or bsdf.inputs["Alpha"].is_linked:
+    if bsdf.inputs["Alpha"].is_linked:
+        # A textured opacity is a cut-out: MaterialX's at 0.5 (as Eldr), stochastic (hashed) as
+        # Karma's presence; UsdPreviewSurface's at its threshold (preview_glass).
+        if table is not PREVIEW:
+            clip(mat, bsdf, 0.5)
+        mat.surface_render_method = "DITHERED"
+    elif bsdf.inputs["Alpha"].default_value < 1:
         mat.surface_render_method = "BLENDED"
+    if table is PREVIEW:
+        preview_glass(shader, bsdf, mat, out)
+    else:
+        # Transmission: the Principled BSDF tints it by Base Color, standard_surface and
+        # OpenPBR by transmission_color.
+        weight, color, thin = (("transmission", "transmission_color", "thin_walled") if table is STANDARD else
+                               ("transmission_weight", "transmission_color", "geometry_thin_walled"))
+        get = lambda name, d: (shader.GetInput(name).Get() if shader.GetInput(name) and
+                               shader.GetInput(name).Get() is not None else d)
+        w = get(weight, 0.0)
+        if w > 0 or shader.GetInput(weight) and shader.GetInput(weight).HasConnectedSource():
+            tc = get(color, (1, 1, 1))
+            if not bsdf.inputs["Base Color"].is_linked:
+                c = bsdf.inputs["Base Color"].default_value
+                bsdf.inputs["Base Color"].default_value = (*(c[i] * (1 - w) + tc[i] * w for i in range(3)), 1)
+            refract(mat, out, bool(get(thin, False)))
 
 
 for prim in stage.Traverse():
@@ -194,7 +281,14 @@ for prim in stage.Traverse():
     table = {"ND_standard_surface_surfaceshader": STANDARD, "ND_open_pbr_surface_surfaceshader": OPENPBR,
              "ND_UsdPreviewSurface_surfaceshader": PREVIEW}.get(str(sid))
     if table is None:
-        continue  # UsdPreviewSurface: the importer's own material
+        # UsdPreviewSurface: the importer's own material, with its glass and cut-outs as Karma's.
+        preview = UsdShade.Material(prim).ComputeSurfaceSource()[0]
+        mat = materials.get(prim.GetName())
+        bsdf = mat.node_tree.nodes.get("Principled BSDF") if mat and mat.node_tree else None
+        out = mat.node_tree.nodes.get("Material Output") if bsdf else None
+        if preview and out and str(preview.GetIdAttr().Get()) == "UsdPreviewSurface":
+            preview_glass(preview, bsdf, mat, out)
+        continue
     mat = materials.get(prim.GetName()) or bpy.data.materials.new(prim.GetName())
     mat.use_nodes = True
     materials[prim.GetName()] = mat

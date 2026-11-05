@@ -10,18 +10,24 @@ layout(location = 1) out int outPrimId;      // the sky is not pickable
 layout(location = 2) out int outInstanceId;
 layout(location = 3) out vec2 outVelocity;  // the sky doesn't move by itself
 
-// The dome (frame.counts.w: its latlong texture, kNone: none shown) behind
+// The dome (frame.counts.w: its latlong texture, kNone - 1: untextured, its
+// colour everywhere, kNone: none shown) behind
 // the volumetric fog of the whole froxel range; premultiplied, so without
 // a dome the fog alone covers the background.
 void main()
 {
     vec4 c = vec4(0.0);
-    if (frame.counts.w != kNone) {
+    if (frame.counts.w == kNone - 1u) {
+        c = vec4(frame.envRadiance.rgb, 1.0);
+    } else if (frame.counts.w != kNone) {
         // Row 0 is NDC y = -1 (GL/Hydra bottom row), so no flip here.
         vec2 ndc = gl_FragCoord.xy / frame.viewport.xy * 2.0 - 1.0;
         vec4 nearP = frame.invViewProj * vec4(ndc, -1.0, 1.0);
         vec4 farP = frame.invViewProj * vec4(ndc, 1.0, 1.0);
-        vec3 dir = normalize(farP.xyz / farP.w - nearP.xyz / nearP.w);  // works for ortho too
+        // Far minus near times both w (ortho too): an oblique near plane
+        // (planar mirrors) puts NDC z = 1 behind the eye (w < 0), where the
+        // divided difference points backwards.
+        vec3 dir = normalize(farP.xyz * nearP.w - nearP.xyz * farP.w);
         vec3 local = normalize(mat3(frame.envWorldToLocal) * dir);
         c = vec4(textureLod(textures[nonuniformEXT(frame.counts.w)], LatlongUv(local), 0.0).rgb * frame.envRadiance.rgb,
                  1.0);
