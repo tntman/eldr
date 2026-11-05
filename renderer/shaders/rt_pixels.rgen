@@ -299,7 +299,7 @@ void main()
                 // Reflections of reflections up to rt.skinned.z rays
                 // (eldr:rtReflectionBounces): a glossy hit (below
                 // kMaxRoughness) traces its own GGX sample, weighted by
-                // its specular albedo; the last one reflects the dome.
+                // its specular albedo.
                 vec3 o = reflectOrigin, through = vec3(1.0);
                 float r = perceptual, cone = a;
                 Surface glass;
@@ -331,11 +331,14 @@ void main()
                             hit.baseColor *= 1.0 - transmitted;
                         }
                     }
-                    bool more = !glassHit && bounce < rt.skinned.z && hit.roughness < kMaxRoughness;
+                    // Past the last ray a glossy hit reflects black (Karma's
+                    // reflect limit ends the path); a rougher one the dome.
+                    bool glossy = !glassHit && hit.roughness < kMaxRoughness;
+                    bool more = glossy && bounce < rt.skinned.z;
                     vec3 hn = hit.normal, hg = hit.geometric, hp = hit.position;  // the shadow rays overwrite hit
                     r = hit.roughness;
                     reflection.rgb += through * ShadeHit(l, seed + uvec3(0u, 0u, bounce * 104729u), true,
-                                                         (rt.shadowInfo.w & 1u) != 0u, true, !more);
+                                                         (rt.shadowInfo.w & 1u) != 0u, true, !glossy);
                     if (glassHit) {
                         glassWeight = through * transmitted * (1.0 - gHitSpecular) * tint;
                         glassPosition = hp;

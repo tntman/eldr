@@ -572,6 +572,16 @@ void March(uint i, vec3 origin, vec3 dir, float t0, float t1, float noise, vec3 
                     open += e;
                     if (tap) {
                         e *= LocalShadow(index, x);
+                        // Its own density towards the light (outside the
+                        // light's shadow link it doesn't shadow itself).
+                        if (ShadowLinked(lights[index], linkMask)) {
+                            const bool localGrid = grid && 1u + index < params.gridLights;
+                            float reach = length(lights[index].position.xyz - x);
+                            e *= exp(-extinction * (localGrid ? GridTap(i, 1u + index, p).a
+                                                              : ShadowMarch(table, tableLow, tableScale, shadow, p,
+                                                                            Row3(w0, w1, w2, l, 0.0), lo, hi, noise,
+                                                                            params.shadowSteps, reach)));
+                        }
                         if (mutual) {
                             e *= exp(-(gridOthers && 1u + index < params.gridLights
                                            ? GridTap(i, 1u + index, p).rgb

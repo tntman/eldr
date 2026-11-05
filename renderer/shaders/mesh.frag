@@ -649,12 +649,12 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         norm = LightRegion(n, v, a, toLight, d, hw, hh, uv, rect, specularE, l);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
-            // The texture (s = 0 at +X as UsdLux says; the image's top row at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where the specular representative point is, and
-            // above p (its foot on the plane) for diffuse, each at the mip
-            // of what it gathers: the lobe's footprint at the light (its
-            // radius in light directions, 2 a, stretched as LightRegion
-            // stretched it), and the light seen from its height over the
-            // plane.
+            // The texture (s = 0 at +X as UsdLux says; the image's top row
+            // at +Y, as Karma, i.e. t = 1: rows are stored bottom-up) where
+            // the specular representative point is, at the mip of the
+            // lobe's footprint at the light (its radius in light
+            // directions, 2 a, stretched as LightRegion stretched it); for
+            // diffuse from 4 x 4 cells of the light (LightTextureDiffuse).
             // ponytail: two taps; no prefiltered form factor (Heitz's
             // filtered polygon lights would get the wide lobes right).
             float extent = length(hw) + length(hh);
@@ -663,11 +663,7 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
             float aLobe = min(2.0 * a * max(regionStretch.x, regionStretch.y), 1.0);
             float lobeLod = log2(texels * clamp(aLobe * d / extent, 1.0 / texels, 1.0));
             specularTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + uv * vec2(-0.5, 0.5), lobeLod).rgb;
-            vec2 foot = vec2(dot(-toLight, hw) / dot(hw, hw), dot(-toLight, hh) / dot(hh, hh));
-            foot = rect ? clamp(foot, -1.0, 1.0) : foot / max(length(foot), 1.0);
-            float height = abs(dot(toLight, light.axis.xyz));
-            float footLod = log2(texels * clamp(height / extent, 1.0 / texels, 1.0));
-            diffuseTint = textureLod(textures[nonuniformEXT(tex)], vec2(0.5, 0.5) + foot * vec2(-0.5, 0.5), footLod).rgb;
+            diffuseTint = LightTextureDiffuse(light, tex, toLight, n, 4);
         }
     }
     // The diffuse lobe (Oren-Nayar) towards the light's centre.
@@ -950,6 +946,10 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     float lo = 0.0, hi = 0.0;  // the crossing's bracket
     float lostLo = -1.0, lostHi = 0.0;  // the last surface the ray went behind and wasn't judged to hit
+    float lostDepth = 0.0;              // how far behind that surface it went in
+    vec3 lostSurface = vec3(0.0);       // where
+    bool lostLate = false;              // in front of the depth before it went behind it
+    bool under = false;                 // it passed under that surface's object (below)
     bool emerged = false;               // in front of a surface since (not just of the background)
     bool crossed = false;
     for (int i = 0; i < steps && !crossed; ++i) {
@@ -990,6 +990,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                 }
             }
         }
+        float lastScene = prevScene;
         prevScene = scene;
         // Behind this pixel's surface by about a step: the ray went through
         // it. Further behind, it passes behind a separate object. Surfaces
@@ -1050,13 +1051,43 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                     crossed = length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
                 }
             }
+            if (wasBehind) {
+                lo = hi;  // a step that stays behind: it lands on this pixel's surface, not the last one's
+            }
             if (!crossed && !wasBehind) {
                 lostLo = lo;
                 lostHi = hi;
+                lostDepth = length(ray - surface);
+                lostSurface = surface;
+                lostLate = i > 0;
                 emerged = false;
             }
-        } else if (scene < 1.0) {
-            emerged = true;
+        }
+        // Out from behind an object (in front of what follows, or behind a
+        // different surface: a jump in depth), having gone in less deep
+        // than half the way it stayed behind it: it went through a rounded
+        // object such as a ball (as deep as wide), a ray from the floor
+        // under it into the side the camera doesn't see. That object stands
+        // in where it went in: the ball's reflection reaches its contact.
+        // Behind a different surface otherwise (or from its first step,
+        // under its own surface: a chrome ball's underside), the ray went
+        // through that one where it's hidden: the floor under a ball. Its
+        // visible part next to there stands in.
+        float a = 1.0 - lastScene, b = 1.0 - scene;  // ~ 1 / distance
+        bool jump = (lastScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b);
+        if (estimator && wasBehind && !crossed && lostLo >= 0.0 && (!behind || (jump && scene < 1.0))) {
+            if (lostLate &&
+                lostDepth <= 0.5 * length(Unproject(vec3(sPrev.xy, SceneDepth(sPrev.xy) * 2.0 - 1.0)) - lostSurface)) {
+                under = true;
+                break;
+            }
+            if (behind) {
+                crossed = true;  // lo = hi = u: this pixel's surface
+                break;
+            }
+        }
+        if (!behind) {
+            emerged = emerged || scene < 1.0;
         }
         wasBehind = behind;
         uPrev = u;
@@ -1071,11 +1102,15 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // would leave black in a room without a dome. That surface stands in,
     // as a back-face hit, over the probe or dome. Rays that leave the scene
     // never go behind anything.
-    bool lost = !crossed && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
-    if (!crossed && !lost) {
+    // Still behind an object at the end, as deep as above: its hidden side
+    // (a ball's back in a mirror behind it), lit like its front.
+    under = under || (estimator && !crossed && wasBehind && lostLate && lostLo >= 0.0 &&
+                      lostDepth <= 0.5 * length(Unproject(vec3(sPrev.xy, SceneDepth(sPrev.xy) * 2.0 - 1.0)) - lostSurface));
+    bool lost = !crossed && !under && !emerged && lostLo >= 0.0 && frame.screenTrace.y < 1.0;
+    if (!crossed && !lost && !under) {
         return 0.0;
     }
-    if (lost) {
+    if (lost || under) {
         lo = lostLo;
         hi = lostHi;
     }
@@ -1109,7 +1144,21 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
         prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
     }
-    hit = textureLod(previousColor, prevUv, lod);
+    if (lod > 1.0) {
+        // A coarse mip's texel is a square: a bright hit (the sun's
+        // highlight on a ball) showed as a block. Four taps a mip finer on
+        // a rotated grid over the footprint round it off.
+        vec2 texel = exp2(lod - 1.0) / vec2(textureSize(previousColor, 0));
+        hit = vec4(0.0);
+        for (int k = 0; k < 4; ++k) {
+            vec2 o = vec2(k == 0 ? 0.25 : k == 1 ? -0.25 : k == 2 ? 0.75 : -0.75,
+                          k == 0 ? 0.75 : k == 1 ? -0.75 : k == 2 ? -0.25 : 0.25);
+            hit += textureLod(previousColor, prevUv + o * texel, lod - 1.0);
+        }
+        hit *= 0.25;
+    } else {
+        hit = textureLod(previousColor, prevUv, lod);
+    }
     if (frame.ssr.w > 0.0) {
         // Last frame's colour carries the light path intensities; its
         // splits take them out, so the reflection is scaled once (as
@@ -1131,7 +1180,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // the ray, rounding either way) count as front faces.
     if (lost) {
         hit *= frame.screenTrace.y;  // its coverage too: the probe or dome shows through
-    } else if (frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+    } else if (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
         hit.rgb *= frame.screenTrace.y;
     }
     // Fade towards the screen edges, beyond which the ray is blind.
@@ -1348,7 +1397,10 @@ void main()
         specular = ProbeSpecular(inWorldPos, reflect(-v, BentNormal(n, v, perceptual)), perceptual, specular, n,
                                  finalGather ? Lavg * occlusion : Lavg * diffuseAO + SsgiDiffuse());
     }
-    float specularAO = clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0);
+    // Never below the diffuse occlusion: on smooth surfaces at grazing
+    // angles the formula goes black where the hidden reflection (an
+    // object's underside) is only darker, blotting object bases.
+    float specularAO = max(clamp(pow(NoV + diffuseAO, exp2(-16.0 * a - 1.0)) - 1.0 + diffuseAO, 0.0, 1.0), diffuseAO);
     specular *= MultiBounce(specularAO, f0);
     // The mirror's planar reflection, elsewhere screen-space reflections:
     // they replace the dome (or probe) where they hit something; where the
@@ -1405,7 +1457,9 @@ void main()
         domeKept *= 1.0 - ssrWeight;  // ponytail: the denoised rays' misses aren't in the splits
     } else if (ssrWeight > 0.0) {
         vec4 hit;
-        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), a, hit);  // the lobe's width
+        // The lobe's width: reflected directions spread about twice its
+        // half-vectors' alpha (roughness 0.2 was sharper than Karma's).
+        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), 2.0 * a, hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
         domeKept *= 1.0 - ssrWeight * hit.a;
     }
