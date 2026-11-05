@@ -1170,6 +1170,13 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     if (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos, 1.0), r) > 1e-3) {
         hit.rgb *= frame.screenTrace.y;
     }
+    // Inside an object the hidden side it hits faces away from the front
+    // that stands in (a ball's underside, the floor beneath it): as
+    // occluded as the front's ambient occlusion says, not lit like it.
+    if (under) {
+        ivec2 size = textureSize(ambientOcclusion, 0);
+        hit.rgb *= texelFetch(ambientOcclusion, clamp(ivec2((ndc * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
+    }
     // Fade towards the screen edges, beyond which the ray is blind.
     vec2 edge = 1.0 - abs(ndc);
     return smoothstep(0.0, 0.1, min(edge.x, edge.y)) * prevEdge;
