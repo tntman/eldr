@@ -1017,7 +1017,11 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         if (behind) {
             float stepLength = length(Unproject(s) - Unproject(sPrev));
             if (!wasBehind) {
-                for (int k = 0; k < 5; ++k) {
+                // To within a pixel (at most 12 halvings): wider, a grazing
+                // floor's depth changes too much across the bracket to read
+                // as one continuous surface (misses on a chrome ball's
+                // lower half).
+                for (int k = 0; k < 12 && (hi - lo) * pixels > uEnd; ++k) {
                     float mid = 0.5 * (lo + hi);
                     vec3 m = mix(s0, s1, mid);
                     if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
@@ -1040,15 +1044,27 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             // the ray may pass behind a separate object: only the footprint
             // counts, so a ray from the floor beside a ball doesn't take
             // the ball's colour (columns hanging from its sides).
-            vec3 ahead = Unproject(vec3(c.xy + pixelNdc, SceneDepth(c.xy + pixelNdc) * 2.0 - 1.0));
-            vec3 back = Unproject(vec3(c.xy - pixelNdc, SceneDepth(c.xy - pixelNdc) * 2.0 - 1.0));
-            float footprint = min(length(ahead - surface), length(back - surface));
+            // Sampled a pixel and a half away: a diagonal pixel's step
+            // can stay in the same texel (no footprint: a grazing floor's
+            // crossings read as jumps, misses on a chrome ball's lower half).
+            vec2 o = 1.5 * pixelNdc;
+            vec3 ahead = Unproject(vec3(c.xy + o, SceneDepth(c.xy + o) * 2.0 - 1.0));
+            vec3 back = Unproject(vec3(c.xy - o, SceneDepth(c.xy - o) * 2.0 - 1.0));
+            float footprint = min(length(ahead - surface), length(back - surface)) / 1.5;
             vec3 l = mix(s0, s1, lo);
             vec3 before = Unproject(vec3(l.xy, SceneDepth(l.xy) * 2.0 - 1.0));
             bool continuous = !wasBehind && length(before - surface) <= 2.0 * footprint + 1e-6 * length(surface - frame.cameraPos.xyz);
             float behindBy = length(ray - surface);
             crossed = estimator ? continuous || behindBy <= footprint
                                 : continuous && behindBy <= max(2.0 * stepLength, 0.05 * length(surface - frame.cameraPos.xyz));
+            // Across a silhouette the hit is hidden where the ray meets it:
+            // like inside an object, the front a pixel on stands in, not
+            // the edge's antialiased pixel (specks on a chrome ball's lower
+            // half, which reflects the floor at its contact).
+            if (estimator && crossed && !continuous) {
+                under = true;
+                lo = min(hi + uEnd / pixels, u);
+            }
             // Inside an object (Frame::ssrBackfaceDepth): between the
             // depth of its front and of its back (the nearest back face)
             // at a pixel. A ray that goes behind a silhouette into an
@@ -1064,8 +1080,17 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                 for (int k = 0; k <= n; ++k) {
                     float uk = n == 0 ? from : mix(from, u, float(k) / float(n));
                     vec3 sk = mix(s0, s1, uk);
-                    float zk = sk.z * 0.5 + 0.5, back = BackDepth(sk.xy);
-                    if (back < 1.0 && zk <= back && Behind(zk, SceneDepth(sk.xy))) {
+                    float zk = sk.z * 0.5 + 0.5, back = BackDepth(sk.xy), fk = SceneDepth(sk.xy);
+                    if (back < 1.0 && zk <= back && Behind(zk, fk)) {
+                        // More than two pixels' width behind the front: a
+                        // ray grazing its own surface dips behind a pixel's
+                        // depth within the pixel (bright specks on a chrome
+                        // ball's lower half).
+                        vec3 sf = Unproject(vec3(sk.xy, fk * 2.0 - 1.0));
+                        float pixel = length(Unproject(vec3(sk.xy + 1.5 * pixelNdc, fk * 2.0 - 1.0)) - sf) / 1.5;
+                        if (length(Unproject(sk) - sf) <= 2.0 * pixel) {
+                            continue;
+                        }
                         lo = uk;
                         under = true;
                         break;
@@ -1087,7 +1112,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         float a = 1.0 - lastScene, b = 1.0 - scene;  // ~ 1 / distance
         bool jump = (lastScene >= 1.0) != (scene >= 1.0) || abs(a - b) > 0.1 * max(a, b);
         if (estimator && wasBehind && !crossed && passed && behind && jump && scene < 1.0 && !Thick(s.xy, scene)) {
-            crossed = true;  // lo = hi = u: this pixel's surface
+            crossed = under = true;  // lo = hi = u: this pixel's surface
             break;
         }
         wasBehind = behind;
