@@ -9,6 +9,7 @@ Houdini finds by the renderer's name through HOUDINI_SOHO_PATH:
 
 - Global: the "Eldr" tab of the Render Settings LOP (loputils.addRendererParmFolders)
 - Geometry: the "Eldr" tab of the Render Geometry Settings LOP
+- Light: the "Eldr" tab of the light LOPs (Light, Dome Light, Distant Light...)
 - Viewport: the Eldr section of the viewport's Display Options (uiscope viewport)
 
 Attribute parms are named hou.text.encodeParm(<attribute>), each with a
@@ -104,6 +105,24 @@ SECTIONS = [
         ("primvars:eldr:object:volumevblurscale", "Volume Velocity Blur Scale", "float", 1.0,
          "Multiplies the blur along the vel field of a volume with Velocity Blur on. Eldr's wins over Karma's "
          "primvars:karma:object:volumevblurscale.", None),
+    ]),
+]
+
+# The Eldr tab of the light LOPs: every eldr: attribute Eldr reads on a light
+# (hydra/light.cpp), laid out as SECTIONS. Each has a Karma twin,
+# inputs:karma:light:* (the Karma tab's), read when Eldr's is not set.
+LIGHT_SECTIONS = [
+    ("Light", True, [
+        ("inputs:eldr:light:renderlightgeo", "Render Light Geometry", "bool", False,
+         "Shows the light's shape to the camera: a sphere, rect, disk or cylinder light only when on; a dome unless "
+         "off (it still lights and reflects). Distant lights have no shape. Eldr's wins over Karma's Render Light "
+         "Geometry.", None),
+        ("inputs:eldr:light:lpetag", "LPE Tag", "string", "",
+         "The light's group: an AOV with lpe:C.*<L.'tag'> holds the direct light of the lights with this tag (up "
+         "to 8 tags). Eldr's wins over Karma's LPE Tag, so an empty tag here untags the light for Eldr.", None),
+        ("inputs:eldr:light:contributescaustics", "Contributes to Caustics", "bool", True,
+         "With Caustics on, distant, sphere, rect and disk lights send caustic photons; off leaves this light out. "
+         "Domes and cylinders send none. Eldr's wins over Karma's Contributes to Caustics.", None),
     ]),
 ]
 
@@ -282,18 +301,20 @@ def main(out, settings_py):
                            isOpen, "viewport" if kind == "Viewport" else None)
         write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_{kind}.ds", text + "}\n")
 
-    text = HEADER + f'''    parm {{
+    for kind, sections in (("Geometry", SECTIONS), ("Light", LIGHT_SECTIONS)):
+        text = HEADER + f'''    parm {{
         name    "eldr_order"
         label   "Precedence"
         type    label
         default {{ {q(ORDER)} }}
     }}
 '''
-    for i, (title, isOpen, parms) in enumerate(SECTIONS):
-        text += folder(title, i, "".join(entry(*p[:5], "None", menu=p[5]) for p in parms), isOpen)
-    write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_Geometry.ds", text + "}\n")
+        for i, (title, isOpen, parms) in enumerate(sections):
+            text += folder(title, i, "".join(entry(*p[:5], "None", menu=p[5]) for p in parms), isOpen)
+        write(f"{out}/soho/parameters/{hou.text.alphaNumeric(RENDERER)}_{kind}.ds", text + "}\n")
     stats = write_renderers(out, settings_py)
-    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {sum(len(g[2]) for g in SECTIONS)} primvars, {stats} stats -> {out}")
+    print(f"Eldr UI: {len(by_key)} settings in {len(grouped)} groups, {sum(len(g[2]) for g in SECTIONS)} primvars, "
+          f"{sum(len(g[2]) for g in LIGHT_SECTIONS)} light attributes, {stats} stats -> {out}")
 
 
 if __name__ == "__main__":
