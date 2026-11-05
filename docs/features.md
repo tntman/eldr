@@ -264,7 +264,7 @@ Mirror pixels take the planar reflection; others use the probe (if on) or the do
 
 ## Materials
 
-Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged.
+Eldr shades in linear Rec.709. Colour-space tags (`sourceColorSpace`, UsdColorSpaceAPI) convert from ACEScg, ACES2065-1, P3, Rec.2020, sRGB and gamma encodings; unknown names warn once and read as untagged. An untagged texture in a UsdUVTexture or a MaterialX colour `image` reads as Karma reads it: 8-bit as sRGB, half and float as linear; MaterialX float and vector images are linear data.
 
 | Surface | Notes |
 |---|---|
@@ -308,7 +308,7 @@ UsdPreviewSurface `opacityMode` "presence" (without a threshold) scales the whol
 
 | Topic | Support |
 |---|---|
-| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Imageworks; OpenPBR fuzz: Zeltner), thin film (Airy), anisotropic GGX (tangent from the uv u direction, `specular_rotation`), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation (`eldr:multiScatter`: standard_surface and OpenPBR; UsdPreviewSurface single-scatter, as Karma) |
+| Lobes (own pipelines; plain materials don't pay) | clearcoat (tints the base), sheen (Imageworks; OpenPBR fuzz: Zeltner), thin film (Airy), anisotropic GGX (tangent from the uv u direction, around the world up axis without uvs; `specular_rotation`; screen-space reflections along the bent normal), hair (Kajiya-Kay on BasisCurves), toon bands, multi-scattering energy compensation (`eldr:multiScatter`: standard_surface and OpenPBR; UsdPreviewSurface single-scatter, as Karma) |
 | Texturable inputs | base colour, roughness, metallic, emission, opacity, normal, displacement; with `eldr:texturedLobes` / `eldr:texturedTransmission`: specularColor, coat (colour, roughness), sheen, anisotropy, thin film, ior, transmission (colour, depth, thin walled), subsurface (colour, radius, scale) |
 | Texture reads | UsdUVTexture, MaterialX `image` / `tiledimage`, UDIM, wrap modes, uv transforms, several uv sets |
 | Texture compression (`eldr:textureCompression`, off by default: exact textures, as Karma never compresses) | 8-bit textures become BC7 (colour, sRGB stays sRGB; normal maps too: BC5 would be the same size and need a shader path), BC4 (gray) or BC5 (gray + alpha), with box-filtered mips (sRGB in linear), encoded on the CPU once and kept in `%LOCALAPPDATA%\Eldr\textures` (or `HDVK_PIPELINE_CACHE_DIR`), keyed by path, size, modification time and colour space. BC7 uses mode 6 only (one colour line per 4x4 block). No BC1 (block artefacts) and no BC6H: 16-bit and float textures (displacement, HDR) and light textures (the dome is read on the CPU) stay exact. The cache folder is never pruned. |

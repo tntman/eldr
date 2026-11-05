@@ -78,6 +78,8 @@ Where Karma and Storm agree, Eldr follows them. The graph compiler (`hydra/mater
 
 The TestSuite's `image_addressing` constant cases (`uborder_color`, `vborder_color`) show the `default` colour outside [0, 1], as the MaterialX spec says; Storm renders it black and Karma grey, so their dE against Eldr is 20+. The other addressing cases (clamp, mirror, decal) match Storm (dE 0.1-0.3); Karma is darker there.
 
+A colour `image` or `tiledimage` without a colour space reads its file as Karma does: 8-bit files as sRGB, half and float files as linear (Storm reads every file as linear). Float and vector images read linear data. A colour space on the file always wins.
+
 Where only Karma differs, Eldr follows MaterialX's genglsl: `round`, `dodge` and `color4` splits match Storm; `ramptb` and `splittb` follow the formula, `valueb` at v = 0 (Karma swaps top and bottom, though Houdini's own MaterialX library doesn't; Storm reads uv 0 there).
 
 ## Where Karma differs from MaterialX
@@ -90,7 +92,8 @@ Eldr matches Storm here.
 | smoothstep on vectors, `max_color4` | Karma returns 0 or wrong channels |
 | color4 `image` outputs, HDR images, place2d | Karma darker or offset |
 | OpenPBR `emission_luminance` | Karma scales nits down (10000 renders as about 20) |
-| negative values | Karma keeps negative radiance; Eldr clamps at 0 (the harness clamps both) |
+| anisotropy without uvs (implicit spheres) | Karma's tangent has a pole facing the camera (a pinwheel of sparkles there); Eldr's circles the world up axis, so the highlight stretches into a band around it |
+| negative values | Graphs keep negative values from node to node in both (`minus`, `subtract`, `power` of a negative base to a whole exponent). Karma also keeps negative radiance in the image; Eldr's image clamps at 0 (the harness clamps both) |
 
 ## How the compiler handles nodes
 

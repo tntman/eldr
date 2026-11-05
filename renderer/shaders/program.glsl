@@ -481,7 +481,14 @@ void RunProgram(uvec4 program, inout vec3 baseColor, inout vec3 emissive, inout 
         case kOpDivide: r = a / mix(b, vec4(1e-8), equal(b, vec4(0.0))); break;
         case kOpMin: r = min(a, b); break;
         case kOpMax: r = max(a, b); break;
-        case kOpPower: r = pow(max(a, vec4(0.0)), b); break;
+        case kOpPower: {
+            // A negative base to a whole exponent keeps its sign rule (as
+            // Karma); to a fractional one it is 0 (GLSL's pow is undefined).
+            bvec4 whole = equal(b, floor(b)), odd = notEqual(mod(b, 2.0), vec4(0.0));
+            vec4 s = mix(vec4(0.0), mix(vec4(1.0), vec4(-1.0), odd), whole);
+            r = pow(abs(a), b) * mix(s, vec4(1.0), greaterThanEqual(a, vec4(0.0)));
+            break;
+        }
         case kOpModulo: r = mod(a, b); break;
         case kOpAbs: r = abs(a); break;
         case kOpFloor: r = floor(a); break;
