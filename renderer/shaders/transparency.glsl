@@ -63,11 +63,101 @@ void TransmissionBegin(inout float alpha)
 // after `distance`: where that point lands on screen, blurred over mips and
 // frame.translucency.x rotated taps by the roughness spreading the rays
 // over `spread`.
+// With frame.rtRefraction.w (Frame::refractionMarch) the ray marches the
+// depth buffer instead, up to 4 x `distance` (at least half the camera's
+// distance): the first opaque surface it passes behind is where the light
+// comes from. Where a nearer surface hides the ray (the pool's edge over the
+// water's far side, the next ball over a lens's view) it keeps the last
+// point seen on screen (none: what lies straight behind), so it never picks
+// up a surface in front of the one it reaches. A ray in front of everything
+// when it ends or leaves the screen goes on to where its direction lands on
+// screen: behind a surface there it meets it, off screen it leaves the
+// scene (the dome, or nothing).
+// ponytail: 12 steps and 4 halvings; a thin object between two steps is missed.
+float RefractionDistance(vec2 uv, float z)
+{
+    vec4 p = frame.invViewProj * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+    return length(p.xyz / p.w - frame.cameraPos.xyz);
+}
+
+float RefractionDepth(vec2 uv)
+{
+    ivec2 size = textureSize(sceneDepth, 0);
+    return texelFetch(sceneDepth, clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1), 0).r;
+}
+
+// The screen point (xy) the ray's light comes from; z 1: found, 0: none
+// seen (read straight behind), -1: it leaves the scene.
+vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
+{
+    // At least half the camera's distance: the estimate is 0 where the
+    // straight-behind surface is nearer than the shape's far side.
+    float far = max(4.0 * distance, 0.5 * length(origin - frame.cameraPos.xyz)), before = 0.0;
+    vec3 last = vec3(0.0);
+    const int kSteps = 12;
+    for (int i = 1; i <= kSteps; ++i) {
+        float t = far * float(i * i) / float(kSteps * kSteps);
+        vec4 clip = frame.viewProj * vec4(origin + dir * t, 1.0);
+        vec3 ndc = clip.xyz / max(clip.w, 1e-8);
+        if (clip.w <= 0.0 || any(greaterThan(abs(ndc), vec3(1.0)))) {
+            break;  // off screen
+        }
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        float scene = RefractionDepth(uv);
+        float sceneDistance = scene < 1.0 ? RefractionDistance(uv, scene) : 1e30;
+        float ray = length(origin + dir * t - frame.cameraPos.xyz);
+        // In front of what's drawn there (within 1%: the depth's precision
+        // at grazing angles): seen.
+        if (ray <= sceneDistance * 1.01) {
+            last = vec3(uv, 1.0);
+            before = t;
+            continue;
+        }
+        // Behind the surface drawn there: the ray reached it if it lies past
+        // the step's nearer end (a hit), else it hides the ray.
+        float rayBefore = min(length(origin + dir * before - frame.cameraPos.xyz), ray);
+        if (sceneDistance < rayBefore * 0.98) {
+            before = t;
+            last.z = min(last.z, 0.5);  // hidden: not seen at the end
+            continue;
+        }
+        float lo = before, hi = t;
+        for (int j = 0; j < 4; ++j) {
+            float mid = 0.5 * (lo + hi);
+            vec4 c = frame.viewProj * vec4(origin + dir * mid, 1.0);
+            vec3 n = c.xyz / c.w;
+            if (RefractionDepth(n.xy * 0.5 + 0.5) < 1.0 && n.z * 0.5 + 0.5 > RefractionDepth(n.xy * 0.5 + 0.5)) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        vec4 c = frame.viewProj * vec4(origin + dir * hi, 1.0);
+        return vec3(c.xy / c.w * 0.5 + 0.5, 1.0);
+    }
+    if (last.z != 1.0) {
+        return vec3(last.xy, last.z > 0.0 ? 1.0 : 0.0);
+    }
+    vec4 clip = frame.viewProj * vec4(dir, 0.0);  // the direction's vanishing point
+    vec2 ndc = clip.xy / max(clip.w, 1e-8);
+    if (clip.w <= 0.0 || any(greaterThan(abs(ndc), vec2(1.0)))) {
+        return vec3(0.0, 0.0, -1.0);
+    }
+    return vec3(ndc * 0.5 + 0.5, 1.0);  // a surface there (it passes behind it far off) or sky
+}
+
 vec4 RefractedBackground(vec3 origin, vec3 dir, float distance, float spread)
 {
     vec3 exitP = origin + dir * distance;
     vec4 clip = frame.viewProj * vec4(exitP, 1.0);
     vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;
+    if (frame.rtRefraction.w != 0u) {
+        vec3 found = RefractionMarch(origin, dir, distance);
+        if (found.z < 0.0) {
+            return vec4(0.0);  // leaves the scene: the dome along it
+        }
+        uv = found.z > 0.0 ? clamp(found.xy, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;
+    }
     vec3 v = ViewDirection(inWorldPos);
     vec3 side = normalize(cross(v, abs(v.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
     vec4 clipSide = frame.viewProj * vec4(exitP + side * spread, 1.0);
@@ -264,8 +354,10 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         // bounds (exact for a ball), not the bounds' diagonal. A back face
         // seen from outside adds none (its front face counted the path),
         // from inside the medium the way to the camera. Flat meshes (water
-        // sheets): the distance to what is behind, at most the mesh's size.
-        float path = thickness, pathInside = thickness;
+        // sheets): the distance to what is behind; with nothing behind the
+        // medium never ends and absorbs all its tint takes (as traced rays
+        // and Karma see an open sheet).
+        float path = solid ? thickness : min(behind, 1e6), pathInside = thickness;
         if (solid) {
             path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0)
                           : shaped ? across : min(behind, EllipsoidExit(o, toObject * r / extent));

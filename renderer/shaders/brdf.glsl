@@ -432,12 +432,19 @@ vec3 Iridescence(float cosTheta1, float thickness, float eta2, vec3 f0)
 }
 
 // The uv set's u direction on the surface (from screen-space derivatives,
-// the frame normal maps use), unit length; without uvs around the world's
-// up axis. Call in uniform control flow.
+// the frame normal maps use), unit length; without uvs around the object's
+// z axis, the axis USD's spheres, cylinders and cones sweep around (their
+// parametric u, as Karma brushes them: radial highlights on a sphere
+// facing the camera along z). Call in uniform control flow.
+// ponytail: an implicit prim authored with axis X or Y keeps object z
+// (the scene index bakes the axis into its points).
 vec3 UvTangent(vec3 n)
 {
     vec3 t = CotangentFrame(n, inWorldPos, inUv)[0];
     t -= n * dot(n, t);
+    if (dot(t, t) < 1e-12) {
+        t = cross(mat3(InstanceTransform(instances[inSlot]))[2], n);
+    }
     if (dot(t, t) < 1e-12) {
         t = cross(abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n);
     }
