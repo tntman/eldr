@@ -13,7 +13,7 @@ absolute difference to Karma (relative to Karma's mean luminance) as rendered an
 the image to Karma's mean luminance (exposure-matched). Existing EXRs are reused unless --force.
 Karma gets a layer that shows domes to its camera (Karma's default hides them; Eldr and EEVEE
 show them) unless the scene authors Render Light Geometry or --karma-dome-hidden is given.
-A scene without lights (lit by emissive surfaces alone, e.g. a Cornell box) renders Karma Path
+A scene without emitting lights (lit by emissive surfaces alone, e.g. a Cornell box) renders Karma Path
 Traced at EMISSIVE_SAMPLES samples (Variance sampling leaves it noisy), unless --karma-samples
 says otherwise.
 Run it with hython (it reads the stage with pxr); it needs only Houdini and Blender.
@@ -72,9 +72,14 @@ def settings_prims(stage):
 
 
 def has_lights(stage):
-    """Whether the stage has a UsdLux light (a dome, distant, rect, mesh light...)."""
+    """Whether the stage has a UsdLux light (a dome, distant, rect, mesh light...) that emits."""
     from pxr import UsdLux
-    return any(p.HasAPI(UsdLux.LightAPI) for p in stage.Traverse())
+    for p in stage.Traverse():
+        if p.HasAPI(UsdLux.LightAPI):
+            light = UsdLux.LightAPI(p)
+            if (light.GetIntensityAttr().Get() or 0) > 0 and max(light.GetColorAttr().Get() or (1, 1, 1)) > 0:
+                return True
+    return False
 
 
 def karma_layer(stage, usd, path, show_domes, settings, samples):
