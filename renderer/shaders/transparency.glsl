@@ -264,8 +264,10 @@ float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
         // bounds (exact for a ball), not the bounds' diagonal. A back face
         // seen from outside adds none (its front face counted the path),
         // from inside the medium the way to the camera. Flat meshes (water
-        // sheets): the distance to what is behind, at most the mesh's size.
-        float path = thickness, pathInside = thickness;
+        // sheets): the distance to what is behind; with nothing behind the
+        // medium never ends and absorbs all its tint takes (as traced rays
+        // and Karma see an open sheet).
+        float path = solid ? thickness : min(behind, 1e6), pathInside = thickness;
         if (solid) {
             path = inside ? (dot(eye, eye) < 1.0 ? camera : 0.0)
                           : shaped ? across : min(behind, EllipsoidExit(o, toObject * r / extent));

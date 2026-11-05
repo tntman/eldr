@@ -11,6 +11,8 @@ One sphere per material type under a sun and an HDRI.
 - **toon**: every material is shaded in three flat bands.
 - **eldr_default / eldr_final / karma**: Eldr with nothing set, Eldr's final settings, Karma to compare.
 
+Against Karma: the amber-coated UsdPreviewSurface ball (third row) is white in Karma, which doesn't read `eldr:clearcoatColor`. Brushed balls without uvs brush around the sphere's z axis in both, so their highlights circle the point facing the camera.
+
 ## Open
 
 Houdini: `scene.hip`. usdview: `usdenv usdview --renderer Eldr showcase\2026-10-30_22_material_lobes\scene.usda`, then pick a settings prim. husk: `husk -R Eldr -s /Render/eldr_final showcase/2026-10-30_22_material_lobes/scene.usda`.
