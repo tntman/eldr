@@ -133,10 +133,11 @@ vec3 BrightnessClamp(vec3 c, float limit)
     return limit > 0.0 && peak > limit ? c * (limit / peak) : c;
 }
 
-// GGX visible normal (Heitz 2018), in the frame where n is +z.
-vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
+// GGX visible normal (Heitz 2018), in the frame where n is +z; a: the
+// alphas along x and y (stretched GGX for anisotropy).
+vec3 SampleGgxVndf(vec3 ve, vec2 a, vec2 u)
 {
-    vec3 vh = normalize(vec3(a * ve.x, a * ve.y, ve.z));
+    vec3 vh = normalize(vec3(a.x * ve.x, a.y * ve.y, ve.z));
     float lensq = vh.x * vh.x + vh.y * vh.y;
     vec3 t1 = lensq > 0.0 ? vec3(-vh.y, vh.x, 0.0) * inversesqrt(lensq) : vec3(1.0, 0.0, 0.0);
     vec3 t2 = cross(vh, t1);
@@ -145,7 +146,12 @@ vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
     float s = 0.5 * (1.0 + vh.z);
     p2 = (1.0 - s) * sqrt(max(1.0 - p1 * p1, 0.0)) + s * p2;
     vec3 nh = p1 * t1 + p2 * t2 + sqrt(max(1.0 - p1 * p1 - p2 * p2, 0.0)) * vh;
-    return normalize(vec3(a * nh.x, a * nh.y, max(nh.z, 0.0)));
+    return normalize(vec3(a.x * nh.x, a.y * nh.y, max(nh.z, 0.0)));
+}
+
+vec3 SampleGgxVndf(vec3 ve, float a, vec2 u)
+{
+    return SampleGgxVndf(ve, vec2(a), u);
 }
 
 // Whether this frame has `feature` (an optional frame.features.x bit) and

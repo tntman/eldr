@@ -64,6 +64,43 @@ struct DrawInfo {
     uint shape;            // 1: a ball, 2: a box (Scene's DrawInfo::shape; transparency.glsl)
 };
 
+// How far along e (object space, scaled so the ellipsoid is the unit ball;
+// the distance in e's units) o is from leaving the unit ball.
+float EllipsoidExit(vec3 o, vec3 e)
+{
+    float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
+    float disc = b * b - a * c;
+    return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
+}
+
+// How far along e (unit-box space, as EllipsoidExit) o is from leaving
+// the box [-1, 1]^3, and that side's outward normal there.
+float BoxExit(vec3 o, vec3 e, out vec3 side)
+{
+    vec3 safe = mix(vec3(1e-8), e, greaterThan(abs(e), vec3(1e-8)));
+    vec3 t = (sign(safe) - o) / safe;
+    float exit = min(t.x, min(t.y, t.z));
+    side = t.x == exit ? vec3(sign(safe.x), 0.0, 0.0) : t.y == exit ? vec3(0.0, sign(safe.y), 0.0) : vec3(0.0, 0.0, sign(safe.z));
+    return max(exit, 0.0);
+}
+
+// The path a light ray goes inside a translucent ball or box (DrawInfo::shape,
+// the shape on its bounds, as transparency.glsl refracts through it) from
+// object-space point p (on its surface) along `dir` (object space, per
+// world unit): the chord where the ray enters there, 0 where it leaves
+// (the entry counted it). -1: not a ball or box (or a flat one).
+float CasterPath(DrawInfo d, vec3 p, vec3 dir)
+{
+    vec3 extent = 0.5 * (d.boundsMax.xyz - d.boundsMin.xyz);
+    if (d.shape == 0u || min(extent.x, min(extent.y, extent.z)) <= 1e-3 * max(extent.x, max(extent.y, extent.z))) {
+        return -1.0;
+    }
+    vec3 o = (p - 0.5 * (d.boundsMax.xyz + d.boundsMin.xyz)) / extent, e = dir / extent, side;
+    float ahead = d.shape == 1u ? EllipsoidExit(o, e) : BoxExit(o, e, side);
+    float back = d.shape == 1u ? EllipsoidExit(o, -e) : BoxExit(o, -e, side);
+    return ahead > back ? ahead : 0.0;
+}
+
 // One per vertex, two with eight influences (mesh.vert's kWideSkin).
 struct SkinVertex {
     uvec4 influence;  // four 16-bit joints (x, y), four unorm16 weights (z, w)

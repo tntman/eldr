@@ -396,7 +396,15 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
     gHitSpecular = fss;
     if (dome) {
         float lod = specular ? hit.roughness * float(frame.counts.z - 1u) : 0.5 * float(frame.counts.z);
-        radiance += fss * Dome(reflect(dir, n), lod);
+        vec3 r = reflect(dir, n), reflected = Dome(r, lod);
+        if (!specular && (frame.features.x & kFeatureGi) != 0u) {
+            // A blurred reflection (gather and probe rays): the probes' light
+            // around it, so a metal ball's underside reflects the floor, not
+            // the dome below it (its shadow on the floor under it, as Karma).
+            vec4 gi = GiIrradiance(p, r, -dir);
+            reflected = mix(reflected, gi.rgb, gi.a);
+        }
+        radiance += fss * reflected;
     }
     radiance = BrightnessClamp(radiance, frame.lightClamp.y);
     return emission ? radiance + BrightnessClamp(hit.emissive, frame.lightClamp.y) : radiance;

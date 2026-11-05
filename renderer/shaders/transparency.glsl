@@ -72,8 +72,11 @@ void TransmissionBegin(inout float alpha)
 // up a surface in front of the one it reaches. A ray in front of everything
 // when it ends or leaves the screen goes on to where its direction lands on
 // screen: behind a surface there it meets it, off screen it leaves the
-// scene (the dome, or nothing).
-// ponytail: 12 steps and 4 halvings; a thin object between two steps is missed.
+// scene (the dome, or nothing). Steps: one per 32 pixels the march crosses
+// on screen (8 to 16), spaced quadratically from a per-pixel jittered start
+// (each film sample another: steps dither instead of banding), the hit
+// refined by 5 halvings.
+// ponytail: a thin object between two steps is missed.
 float RefractionDistance(vec2 uv, float z)
 {
     vec4 p = frame.invViewProj * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
@@ -94,9 +97,20 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
     // straight-behind surface is nearer than the shape's far side.
     float far = max(4.0 * distance, 0.5 * length(origin - frame.cameraPos.xyz)), before = 0.0;
     vec3 last = vec3(0.0);
-    const int kSteps = 12;
-    for (int i = 1; i <= kSteps; ++i) {
-        float t = far * float(i * i) / float(kSteps * kSteps);
+    // The march's length on screen (its end clamped in front of the camera).
+    vec4 c0 = frame.viewProj * vec4(origin, 1.0), c1 = frame.viewProj * vec4(origin + dir * far, 1.0);
+    if (c1.w < 1e-4) {
+        c1 = mix(c0, c1, (c0.w - 1e-4) / max(c0.w - c1.w, 1e-8));
+    }
+    float pixels = length((c1.xy / max(c1.w, 1e-8) - c0.xy / max(c0.w, 1e-8)) * 0.5 * frame.viewport.xy);
+    int steps = clamp(int(pixels / 32.0), 8, 16);
+    float jitter = SampleNoise(kDimRefraction, gl_FragCoord.xy + vec2(29.0, 17.0), float(frame.localLights.y));
+    for (int i = 1; i <= 16; ++i) {
+        if (i > steps) {
+            break;
+        }
+        float x = (float(i) - jitter) / float(steps);
+        float t = far * x * x;
         vec4 clip = frame.viewProj * vec4(origin + dir * t, 1.0);
         vec3 ndc = clip.xyz / max(clip.w, 1e-8);
         if (clip.w <= 0.0 || any(greaterThan(abs(ndc), vec3(1.0)))) {
@@ -122,7 +136,7 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
             continue;
         }
         float lo = before, hi = t;
-        for (int j = 0; j < 4; ++j) {
+        for (int j = 0; j < 5; ++j) {
             float mid = 0.5 * (lo + hi);
             vec4 c = frame.viewProj * vec4(origin + dir * mid, 1.0);
             vec3 n = c.xyz / c.w;
@@ -214,26 +228,7 @@ vec3 DomeAlong(vec3 dir, float lod)
 // inside, and reflect it totally at grazing angles: milky water).
 // ponytail: screen space: what isn't on screen isn't refracted; one
 // interface per layer (two for a ball or box), the thickness an estimate.
-// How far along e (object space, scaled so the ellipsoid is the unit ball;
-// the distance in e's units) o is from leaving the unit ball.
-float EllipsoidExit(vec3 o, vec3 e)
-{
-    float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
-    float disc = b * b - a * c;
-    return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
-}
-
-// How far along e (unit-box space, as EllipsoidExit) o is from leaving
-// the box [-1, 1]^3, and that side's outward normal there.
-float BoxExit(vec3 o, vec3 e, out vec3 side)
-{
-    vec3 safe = mix(vec3(1e-8), e, greaterThan(abs(e), vec3(1e-8)));
-    vec3 t = (sign(safe) - o) / safe;
-    float exit = min(t.x, min(t.y, t.z));
-    side = t.x == exit ? vec3(sign(safe.x), 0.0, 0.0) : t.y == exit ? vec3(0.0, sign(safe.y), 0.0) : vec3(0.0, 0.0, sign(safe.z));
-    return max(exit, 0.0);
-}
-
+// EllipsoidExit, BoxExit: scene.glsl.
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {

@@ -13,6 +13,9 @@ absolute difference to Karma (relative to Karma's mean luminance) as rendered an
 the image to Karma's mean luminance (exposure-matched). Existing EXRs are reused unless --force.
 Karma gets a layer that shows domes to its camera (Karma's default hides them; Eldr and EEVEE
 show them) unless the scene authors Render Light Geometry or --karma-dome-hidden is given.
+A scene without emitting lights (lit by emissive surfaces alone, e.g. a Cornell box) renders Karma Path
+Traced at EMISSIVE_SAMPLES samples (Variance sampling leaves it noisy), unless --karma-samples
+says otherwise.
 Run it with hython (it reads the stage with pxr); it needs only Houdini and Blender.
 """
 import argparse
@@ -28,6 +31,8 @@ HFS = os.environ.get("HFS", "C:/Program Files/Side Effects Software/Houdini 22.0
 BLENDER = os.environ.get("BLENDER", "C:/Program Files/Blender Foundation/Blender 5.2/blender.exe")
 HUSK = os.path.join(HFS, "bin", "husk.exe")
 HOIIO = os.path.join(HFS, "bin", "hoiiotool.exe")
+# Karma's path-traced samples for scenes lit only by emissive surfaces.
+EMISSIVE_SAMPLES = 2048
 
 
 def oiio(*args):
@@ -64,6 +69,17 @@ def stats(path, ref=None):
 def settings_prims(stage):
     """{name: path} of the stage's RenderSettings prims."""
     return {p.GetName(): str(p.GetPath()) for p in stage.Traverse() if p.GetTypeName() == "RenderSettings"}
+
+
+def has_lights(stage):
+    """Whether the stage has a UsdLux light (a dome, distant, rect, mesh light...) that emits."""
+    from pxr import UsdLux
+    for p in stage.Traverse():
+        if p.HasAPI(UsdLux.LightAPI):
+            light = UsdLux.LightAPI(p)
+            if (light.GetIntensityAttr().Get() or 0) > 0 and max(light.GetColorAttr().Get() or (1, 1, 1)) > 0:
+                return True
+    return False
 
 
 def karma_layer(stage, usd, path, show_domes, settings, samples):
@@ -112,7 +128,8 @@ def main():
     p.add_argument("--size")
     p.add_argument("--build", default=os.path.join(REPO, "build-h22l"))
     p.add_argument("--force", action="store_true")
-    p.add_argument("--karma-samples", type=int, help="Karma's path-traced samples (noisy emissive scenes)")
+    p.add_argument("--karma-samples", type=int,
+                   help="Karma's path-traced samples (default: %d without lights, else the scene's)" % EMISSIVE_SAMPLES)
     p.add_argument("--karma-dome-hidden", action="store_true", help="keep Karma's default: domes hidden from the camera")
     a = p.parse_args()
     usd = os.path.abspath(a.usd)
@@ -123,6 +140,9 @@ def main():
     if not prims:
         sys.exit("no RenderSettings prim in %s" % usd)
     karma = prims.get(a.karma) or next(iter(prims.values()))
+    if a.karma_samples is None and not has_lights(stage):
+        a.karma_samples = EMISSIVE_SAMPLES
+        print("no lights: Karma path traced at %d samples" % EMISSIVE_SAMPLES, flush=True)
     # The stage's start frame, as Houdini's ROPs render it.
     frame = "%g" % (stage.GetStartTimeCode() if stage.HasAuthoredTimeCodeRange() else 1)
     kusd = karma_layer(stage, usd, os.path.join(os.path.abspath(a.outdir), "karma_layer.usda"),

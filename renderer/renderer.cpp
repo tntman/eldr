@@ -83,6 +83,9 @@ const uint32_t kMeshVert[] =
 const uint32_t kMeshDepthVert[] =
 #include "mesh_depth.vert.inc"
 ;
+const uint32_t kMeshTintVert[] =
+#include "mesh_tint.vert.inc"
+;
 const uint32_t kMeshFrag[] =
 #include "mesh.frag.inc"
 ;
@@ -602,6 +605,7 @@ Renderer::Renderer(Device &device)
           {kMeshGraphLayersFrag, sizeof(kMeshGraphLayersFrag)}, {kMaskFrag, sizeof(kMaskFrag)},
           {kSkyFrag, sizeof(kSkyFrag)}, {kCullComp, sizeof(kCullComp)}, {kLightsComp, sizeof(kLightsComp)},
           {kSkinComp, sizeof(kSkinComp)}, {kShadowTintFrag, sizeof(kShadowTintFrag)},
+          {kMeshTintVert, sizeof(kMeshTintVert)},
           {kShadowMinComp, sizeof(kShadowMinComp)}}) {
         for (size_t i = 0; i < bytes / sizeof(uint32_t); ++i) {
             hash = (hash ^ words[i]) * 1099511628211ull;
@@ -981,6 +985,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
     }
     VkShaderModule meshVert = CreateShaderModule(device, kMeshVert, sizeof(kMeshVert));
     VkShaderModule depthVert = CreateShaderModule(device, kMeshDepthVert, sizeof(kMeshDepthVert));
+    VkShaderModule tintVert = CreateShaderModule(device, kMeshTintVert, sizeof(kMeshTintVert));
     VkShaderModule meshFrag = CreateShaderModule(device, kMeshFrag, sizeof(kMeshFrag));
     VkShaderModule graphVert = CreateShaderModule(device, kMeshGraphVert, sizeof(kMeshGraphVert));
     VkShaderModule graphFrag = CreateShaderModule(device, kMeshGraphFrag, sizeof(kMeshGraphFrag));
@@ -1276,7 +1281,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         // Translucent shadow casters (Transparency's tint maps): depth like
         // the shadows, colour masked; then no depth test, colour
         // multiplied.
-        const VkPipelineShaderStageCreateInfo tintStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, depthVert),
+        const VkPipelineShaderStageCreateInfo tintStages[2] = {stage(VK_SHADER_STAGE_VERTEX_BIT, tintVert),
                                                                stage(VK_SHADER_STAGE_FRAGMENT_BIT, tintFrag)};
         const VkFormat tintFormat = Transparency::kTintFormat;
         VkPipelineRenderingCreateInfo tintRendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
@@ -1365,7 +1370,7 @@ void Renderer::_CreatePipelines(bool displaced, uint32_t features, const Shading
         r = vkCreateGraphicsPipelines(device, cache, 1, &kci, nullptr, &_skyPipeline);
     }
 
-    for (VkShaderModule m : {meshVert, depthVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
+    for (VkShaderModule m : {meshVert, depthVert, tintVert, meshFrag, graphVert, graphFrag, layersFrag, graphLayersFrag,
                              maskFrag, skyVert, skyFrag, tintFrag, peelFrag, matteFrag, matteGraphFrag}) {
         vkDestroyShaderModule(device, m, nullptr);
     }

@@ -168,6 +168,56 @@ bool LightCulled(Light light, vec3 p, uint linkMask)
            acos(clamp(dot(fromLight / max(d, 1e-20), light.axis.xyz), -1.0, 1.0)) > light.shaping.y + 1e-3;
 }
 
+// The camera ray's hit's reflection lobe as mesh.frag shades it (brdf.glsl
+// PrepareLayers): with the material's anisotropy, the tangent along the uv
+// set's u direction (from the triangle's edges; without uvs around the
+// object's z axis, brdf.glsl's UvTangent) turned by its rotation, and the
+// stretched alphas. Otherwise t, b and alphas stay as given.
+// ponytail: a material graph's anisotropy (its program's lobe inputs)
+// samples isotropic; Evaluate would run the program here.
+void AnisotropicLobe(vec3 n, float a, inout vec3 t, inout vec3 b, inout vec2 alphas)
+{
+    uint material = draws[hit.slot].material;
+    if (material == kNoMaterial || (frame.features.x & kFeatureAnisotropy) == 0u) {
+        return;
+    }
+    Material m = materials[material];
+    if (m.anisotropy.x <= 0.0) {
+        return;
+    }
+    uint slot = hit.slot, triangle = hit.triangle;
+    uint v0 = RtVertex(slot, triangle, 0u), v1 = RtVertex(slot, triangle, 1u), v2 = RtVertex(slot, triangle, 2u);
+    bool skinned = hit.instance >= rt.skinned.x;
+    uint instance = skinned ? rtSkinned[hit.instance - rt.skinned.x].instance : hit.instance;
+    mat3 model = mat3(InstanceTransform(instances[instance]));
+    vec3 dp1, dp2;
+    if (skinned) {
+        uint posed = rtSkinned[hit.instance - rt.skinned.x].firstVertex - draws[slot].vertexBase;
+        vec3 p0 = RtSkinnedPosition(posed + v0);
+        dp1 = RtSkinnedPosition(posed + v1) - p0;
+        dp2 = RtSkinnedPosition(posed + v2) - p0;
+    } else {
+        vec3 p0 = RtPosition(v0);
+        dp1 = model * (RtPosition(v1) - p0);
+        dp2 = model * (RtPosition(v2) - p0);
+    }
+    vec2 e1 = RtUv(v1) - RtUv(v0), e2 = RtUv(v2) - RtUv(v0);
+    // mesh.frag's CotangentFrame's tangent, from the edges.
+    vec3 u = cross(dp2, n) * e1.x + cross(n, dp1) * e2.x;
+    u -= n * dot(n, u);
+    if (dot(u, u) < 1e-12 * max(dot(dp1, dp1), 1e-20)) {
+        u = cross(model[2], n);
+    }
+    if (dot(u, u) < 1e-12) {
+        u = cross(abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0), n);
+    }
+    u = normalize(u);
+    float angle = 2.0 * PI * m.anisotropy.y;
+    t = cos(angle) * u + sin(angle) * cross(n, u);
+    b = cross(n, t);
+    alphas = AnisotropicAlphas(a, clamp(m.anisotropy.x, 0.0, 1.0), int(m.anisotropy.z + 0.5));
+}
+
 void main()
 {
     ivec2 pixel = ivec2(gl_LaunchIDEXT.xy);
@@ -202,7 +252,8 @@ void main()
     vec3 baseColor = hit.baseColor;  // the shadow rays below overwrite hit
     uint slot = hit.slot;
     uint linkMask = ~0u;  // the receiver's light links (LightCulled), unknown on the prepass's surface
-    if (raster && (hit.t < 0.0 || abs(hit.t - rasterT) > 0.02 * rasterT)) {
+    bool onHit = !(raster && (hit.t < 0.0 || abs(hit.t - rasterT) > 0.02 * rasterT));
+    if (!onHit) {
         // Of the differences each way the smaller (less likely across an edge).
         vec3 dx = PrepassPoint(pixel + ivec2(1, 0)) - surface, dx2 = surface - PrepassPoint(pixel - ivec2(1, 0));
         vec3 dy = PrepassPoint(pixel + ivec2(0, 1)) - surface, dy2 = surface - PrepassPoint(pixel - ivec2(0, 1));
@@ -213,8 +264,16 @@ void main()
         p = surface;
         n = ng;
         perceptual = 1.0;  // no reflection
-    } else {
+    }
+    // The reflection lobe (before the shadow rays overwrite hit).
+    vec3 lobeT, lobeB;
+    Basis(n, lobeT, lobeB);
+    vec2 lobeAlphas = vec2(perceptual * perceptual);
+    if (onHit) {
         linkMask = RtLinkMask(hit.instance);
+        if ((frame.features.x & kFeatureRtReflections) != 0u && rt.params.z != 0u) {
+            AnisotropicLobe(n, perceptual * perceptual, lobeT, lobeB, lobeAlphas);
+        }
     }
     uvec3 seed = uvec3(pixel, rt.params.x);
 
@@ -285,13 +344,12 @@ void main()
         float keep = perceptual < kMaxRoughness ? ReflectionKeep(pixel, slot, baseColor, metallic, max(dot(v, n), 1e-4), perceptual) : 0.0;
         if (keep > 0.0) {
             float a = perceptual * perceptual;
-            vec3 t, b;
-            Basis(n, t, b);
+            vec3 t = lobeT, b = lobeB;
             vec3 ve = vec3(dot(v, t), dot(v, b), max(dot(v, n), 1e-4));
             vec3 reflectOrigin = OffsetRay(p, ng);
             uint samples = rt.params.z;
             for (uint s = 0u; s < samples; ++s) {
-                vec3 h = SampleGgxVndf(ve, a, Random2(seed + uvec3(0u, 0u, 7919u), s));
+                vec3 h = SampleGgxVndf(ve, lobeAlphas, Random2(seed + uvec3(0u, 0u, 7919u), s));
                 vec3 l = reflect(-v, t * h.x + b * h.y + n * h.z);
                 if (dot(l, ng) <= 0.0) {
                     l = reflect(-v, n);  // below the surface: the mirror direction
@@ -301,7 +359,7 @@ void main()
                 // kMaxRoughness) traces its own GGX sample, weighted by
                 // its specular albedo.
                 vec3 o = reflectOrigin, through = vec3(1.0);
-                float r = perceptual, cone = a;
+                float r = perceptual, cone = sqrt(lobeAlphas.x * lobeAlphas.y);
                 Surface glass;
                 vec3 glassWeight = vec3(0.0), glassPosition = vec3(0.0);  // a glass hit's, traced after the loop
                 for (uint bounce = 1u; bounce <= 16u; ++bounce) {
