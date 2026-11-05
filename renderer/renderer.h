@@ -507,6 +507,10 @@ public:
         // the inverted ior and total internal reflection, drawn before their
         // front faces; off: back faces are discarded.
         bool refractionBackFaces = true;
+        // Screen-space refraction marches the depth buffer to the surface the
+        // refracted ray reaches, skipping surfaces in front of it (needs
+        // refraction); off: it reads the point at the estimated thickness.
+        bool refractionMarch = true;
         // Refraction through several layers (needs refraction): refracting
         // meshes back to front, the opaque colour copied again after each
         // (glass behind glass, a ball's far side), up to this many copies.
