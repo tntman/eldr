@@ -12,7 +12,12 @@ import mtlx_corpus as corpus  # noqa: E402
 
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 
-FLAT = (51, 102, 153)  # the flat image, 0.2 0.4 0.6 (a MaterialX file is linear)
+FLAT = (51, 102, 153)  # the flat image, 0.2 0.4 0.6 as float and vector data
+
+
+def srgb(*c):
+    """8-bit sRGB to linear: a colour image without a colour space reads its 8-bit file as sRGB (as Karma)."""
+    return tuple(v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c)
 
 
 def value(typ, v, name="in"):
@@ -89,7 +94,7 @@ def cases(image, halves):
          [node("geompropvalue", "p", "vector2", value("string", "nothere", "geomprop"),
                value("vector2", f(0.3, 0.6), "default"))] + to_color("vector2", "p"), (0.3, 0.6, 0.0))
     # 8. address mode constant: the image's default outside [0, 1].
-    for u, expected in ((1.5, (1.0, 0.0, 0.0)), (0.5, (0.2, 0.4, 0.6))):
+    for u, expected in ((1.5, (1.0, 0.0, 0.0)), (0.5, srgb(0.2, 0.4, 0.6))):
         case("image address mode constant, u = %s" % u,
              [node("constant", "uv", "vector2", value("vector2", f(u, 0.5), "value")),
               node("image", "final", "color3", value("filename", image, "file"), value("color3", f(1, 0, 0), "default"),
@@ -97,11 +102,11 @@ def cases(image, halves):
     case("image at a constant uv (right half)",
          [node("constant", "uv", "vector2", value("vector2", f(0.75, 0.5), "value")),
           node("image", "final", "color3", value("filename", halves, "file"), link("vector2", "uv", "texcoord"))],
-         (200 / 255, 100 / 255, 50 / 255))
+         srgb(200 / 255, 100 / 255, 50 / 255))
     case("image address mode periodic, u = 1.5",
          [node("constant", "uv", "vector2", value("vector2", f(1.5, 0.5), "value")),
           node("image", "final", "color3", value("filename", image, "file"), value("color3", f(1, 0, 0), "default"),
-               link("vector2", "uv", "texcoord"))], (0.2, 0.4, 0.6))
+               link("vector2", "uv", "texcoord"))], srgb(0.2, 0.4, 0.6))
     # 9. a normalmap used as a colour is MaterialX's world-space normal. A flat map on the sphere seen
     # from +z: the mean of max(N, 0) over the disk of radius 0.8 the cells average.
     case("normalmap as a colour (world-space normal)",
