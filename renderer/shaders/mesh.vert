@@ -57,6 +57,11 @@ layout(std430, set = 0, binding = 32) readonly buffer PrimvarVertices { vec4 pri
 #if defined(GRAPH) && !defined(DEPTH_ONLY)
 layout(location = 5) out vec4 outPrimvars;
 #endif
+#ifdef TINT_RAY
+// The tint maps' casters (shadow_tint.frag): where, and the light's ray there.
+layout(location = 6) out vec3 outWorldPos;
+layout(location = 7) out vec3 outLightRay;
+#endif
 
 #define DISPLACE_VERTEX
 #include "displace.glsl"
@@ -115,7 +120,8 @@ invariant gl_Position;
 // strand. Discs: inNormal the offset within the disc times the radius
 // (zero at the centre, whose normal faces the eye, the rim's points out:
 // a sphere's shading).
-vec3 Facing(uint kind, vec3 p, mat3 m, out vec3 normal)
+// From world point p towards the eye of this pass's viewProj, unit length.
+vec3 ToEye(vec3 p)
 {
     // The eye: the point viewProj's rows x, y and w all vanish at (a
     // direction for orthographic views, then away from growing depth).
@@ -125,7 +131,13 @@ vec3 Facing(uint kind, vec3 p, mat3 m, out vec3 normal)
                     dot(a.xyw, cross(b.xyw, c.xyw)), -dot(a.xyz, cross(b.xyz, c.xyz)));
     vec3 e = abs(eye.w) > 1e-6 * length(eye.xyz) ? eye.xyz / eye.w - p
                                                   : eye.xyz * -sign(dot(eye.xyz, rows[2].xyz));
-    e = normalize(e);
+    return normalize(e);
+}
+
+vec3 Facing(uint kind, vec3 p, mat3 m, out vec3 normal)
+{
+    vec3 e = ToEye(p);
+    vec4 b = transpose(pc.viewProj)[1];
     float scale = pow(abs(determinant(m)), 1.0 / 3.0);
     if (kind == 1u) {
         vec3 t = m * inNormal;
@@ -234,5 +246,9 @@ void main()
 #else
     outMaterial = d.material;
     outEntry = entry;
+#endif
+#ifdef TINT_RAY
+    outWorldPos = world.xyz;
+    outLightRay = -ToEye(world.xyz);
 #endif
 }

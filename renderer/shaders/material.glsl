@@ -40,6 +40,33 @@ struct Material {
 layout(std430, set = 0, binding = 1) readonly buffer Materials { Material materials[]; };
 layout(std430, set = 0, binding = 25) readonly buffer UdimTiles { int udimTiles[]; };  // -1: missing tile
 
+// frame.features.x's anisotropy bit (renderer.cpp's Frame switches).
+const uint kFeatureAnisotropy = 128u;
+
+// The stretched GGX's alphas along the tangent and across it, at
+// roughness `a`, by the material's anisotropy and its roughness mapping
+// (Material::anisotropy.xz).
+vec2 AnisotropicAlphas(float a, float anisotropy, int mapping)
+{
+    float at, ab;
+    if (mapping == 2) {
+        // glTF (KHR_materials_anisotropy, MaterialX's gltf_pbr): alpha_t = mix(a, 1, anisotropy^2), alpha_b = a.
+        at = mix(a, 1.0, anisotropy * anisotropy);
+        ab = max(a, 1e-4);
+    } else if (mapping == 1) {
+        // OpenPBR: alpha_t = a sqrt(2 / (1 + (1 - anisotropy)^2)), alpha_b = (1 - anisotropy) alpha_t.
+        float k = 1.0 - anisotropy;
+        at = a * sqrt(2.0 / (1.0 + k * k));
+        ab = max(k * at, 1e-4);
+    } else {
+        // standard_surface (mx_roughness_anisotropy).
+        float aspect = sqrt(1.0 - min(anisotropy, 0.98));
+        at = min(a / aspect, 1.0);
+        ab = a * aspect;
+    }
+    return vec2(at, ab);
+}
+
 #if defined(RAY_TRACING) || defined(UV_FOOTPRINT)
 // Ray tracing and vertex stages have no derivatives: hit shaders set the
 // ray cone's footprint in uv here (rt.glsl), the vertex stage the mesh's
@@ -96,15 +123,22 @@ vec4 Fetch(TexRef r, vec4 constant, vec2 uv)
 // What a translucent shadow caster lets through (shadow_tint.frag's tint
 // maps, rt_shadow.rahit's traced shadows): what transmits through a
 // refracting surface loses its two interfaces' reflections at normal
-// incidence.
-// ponytail: constants and textures only (material programs are skipped),
-// no absorption over the path inside.
-vec3 ShadowTransmission(Material m, vec2 uv)
+// incidence. With a transmission depth the colour absorbs over `path`,
+// the light's way inside from this surface (scene.glsl CasterPath:
+// Beer-Lambert, the colour at the depth's distance); path < 0 (not a ball
+// or box) or no depth: each surface tints by the colour.
+// ponytail: constants and textures only (material programs are skipped);
+// other closed meshes tint per surface.
+vec3 ShadowTransmission(Material m, vec2 uv, float path)
 {
     float opacity = clamp(Fetch(m.tex[6], m.params.wwww, uv).r, 0.0, 1.0);
     float f0 = (m.refraction.x - 1.0) / (m.refraction.x + 1.0);
     float interfaces = (1.0 - f0 * f0) * (1.0 - f0 * f0);
-    vec3 transmitted = opacity * m.transmission.w * m.transmission.rgb * interfaces;
+    vec3 tint = m.transmission.rgb;
+    if (path >= 0.0 && m.refraction.z > 0.0 && m.refraction.y <= 0.0) {
+        tint = pow(max(tint, vec3(1e-4)), vec3(path / m.refraction.z));
+    }
+    vec3 transmitted = opacity * m.transmission.w * tint * interfaces;
     // A thin-walled subsurface surface (a leaf) lets its subsurface colour
     // through diffusely: kThinTranslucency of it reaches what lies in its
     // shadow (measured in Karma: a back-lit leaf's shadow gains about 5% of

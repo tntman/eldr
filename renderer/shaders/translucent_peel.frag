@@ -33,7 +33,7 @@ void main()
     }
     vec3 t = vec3(1.0);
     if (inMaterial != kNoMaterial) {
-        t = ShadowTransmission(materials[inMaterial], inUv);
+        t = ShadowTransmission(materials[inMaterial], inUv, -1.0);
     }
     if (all(greaterThanEqual(t, vec3(0.999)))) {
         discard;  // lets everything through: not a layer

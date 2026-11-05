@@ -12,8 +12,8 @@
 // it and its FrameData.features.x flag is on.
 
 // frame.features.x bits (renderer.cpp's Frame switches).
-const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u,
-           kFeatureAnisotropy = 128u;
+// kFeatureAnisotropy (128u): material.glsl.
+const uint kFeatureSpecularWorkflow = 8u, kFeatureClearcoat = 16u, kFeatureSheen = 32u, kFeatureThinFilm = 64u;
 const uint kFeatureToon = 512u;  // toon bands for every material (frame.styles.y), an optional feature
 // frame.styles.x bits.
 const uint kStyleToon = 1u, kStyleHair = 2u, kStyleTexturedLobes = 4u, kStyleTexturedTransmission = 8u;
@@ -574,27 +574,10 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
     }
 }
 
-// The stretched GGX's alphas along the tangent and across it, at
-// roughness `a`, by the material's mapping.
+// The stretched GGX's alphas (material.glsl) with this pixel's anisotropy.
 vec2 AnisotropicAlphas(float a)
 {
-    float at, ab;
-    if (layers.anisotropyMapping == 2) {
-        // glTF (KHR_materials_anisotropy, MaterialX's gltf_pbr): alpha_t = mix(a, 1, anisotropy^2), alpha_b = a.
-        at = mix(a, 1.0, layers.anisotropy * layers.anisotropy);
-        ab = max(a, 1e-4);
-    } else if (layers.anisotropyMapping == 1) {
-        // OpenPBR: alpha_t = a sqrt(2 / (1 + (1 - anisotropy)^2)), alpha_b = (1 - anisotropy) alpha_t.
-        float k = 1.0 - layers.anisotropy;
-        at = a * sqrt(2.0 / (1.0 + k * k));
-        ab = max(k * at, 1e-4);
-    } else {
-        // standard_surface (mx_roughness_anisotropy).
-        float aspect = sqrt(1.0 - min(layers.anisotropy, 0.98));
-        at = min(a / aspect, 1.0);
-        ab = a * aspect;
-    }
-    return vec2(at, ab);
+    return AnisotropicAlphas(a, layers.anisotropy, layers.anisotropyMapping);
 }
 
 // The base's GGX with roughness `a` stretched along the tangent (Heitz

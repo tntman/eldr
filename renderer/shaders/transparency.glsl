@@ -214,26 +214,7 @@ vec3 DomeAlong(vec3 dir, float lod)
 // inside, and reflect it totally at grazing angles: milky water).
 // ponytail: screen space: what isn't on screen isn't refracted; one
 // interface per layer (two for a ball or box), the thickness an estimate.
-// How far along e (object space, scaled so the ellipsoid is the unit ball;
-// the distance in e's units) o is from leaving the unit ball.
-float EllipsoidExit(vec3 o, vec3 e)
-{
-    float a = max(dot(e, e), 1e-12), b = dot(o, e), c = dot(o, o) - 1.0;
-    float disc = b * b - a * c;
-    return disc > 0.0 ? max((-b + sqrt(disc)) / a, 0.0) : 0.0;
-}
-
-// How far along e (unit-box space, as EllipsoidExit) o is from leaving
-// the box [-1, 1]^3, and that side's outward normal there.
-float BoxExit(vec3 o, vec3 e, out vec3 side)
-{
-    vec3 safe = mix(vec3(1e-8), e, greaterThan(abs(e), vec3(1e-8)));
-    vec3 t = (sign(safe) - o) / safe;
-    float exit = min(t.x, min(t.y, t.z));
-    side = t.x == exit ? vec3(sign(safe.x), 0.0, 0.0) : t.y == exit ? vec3(0.0, sign(safe.y), 0.0) : vec3(0.0, 0.0, sign(safe.z));
-    return max(exit, 0.0);
-}
-
+// EllipsoidExit, BoxExit: scene.glsl.
 float TransmissionEnd(inout vec3 color, vec3 n, vec3 v, float perceptual)
 {
     if (gRefracted <= 0.0) {

@@ -14,7 +14,8 @@
 // as its tint map would (ShadowTransmission), and the ray goes on; a cutout
 // blocks it where it has a surface (rt.rahit's test). Translucent BLASes
 // have no duplicate any-hit calls, so each surface counts once; a closed
-// mesh counts its two sides, as the tint maps do. A caustic caster's glass
+// mesh counts its two sides, as the tint maps do (an absorbing ball or box
+// absorbs over its path inside where the ray enters). A caustic caster's glass
 // blocks them (shadow_tint.frag): under caustics its light arrives as
 // photons (caustics.glsl).
 hitAttributeEXT vec2 barycentrics;
@@ -58,7 +59,11 @@ void main()
     }
     // A thin-walled subsurface leaf tints shadow rays that tint, else blocks.
     if (translucent || ((rtSlots[slot].flags & kRtSlotTints) != 0u && (rt.shadowInfo.w & 2u) != 0u)) {
-        shadowRay.rgb *= clamp(ShadowTransmission(materials[material], uv), 0.0, 1.0);
+        float path = uint(gl_InstanceID) < rt.skinned.x
+                         ? CasterPath(draws[slot], gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT,
+                                      gl_ObjectRayDirectionEXT / length(gl_WorldRayDirectionEXT))
+                         : -1.0;
+        shadowRay.rgb *= clamp(ShadowTransmission(materials[material], uv, path), 0.0, 1.0);
         ignoreIntersectionEXT;
     }
     if (!Present(materials[material], uv)) {  // finest mip: no ray cone here
