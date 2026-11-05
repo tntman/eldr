@@ -1123,18 +1123,22 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
         // the footprint reaches past it.
         vec2 e = 1.0 - abs(prevUv * 2.0 - 1.0);
         prevEdge = smoothstep(0.0, 0.1, min(e.x, e.y));
-        if (lod > 1.0) {
-            // A coarse mip's texel is a square: a bright hit (the sun's
-            // highlight on a ball) showed as a block. A point jittered over
-            // the footprint's disc at a mip four times finer instead: the
-            // samples average to a round blur.
-            float angle = 6.2831853 * SampleNoise(kDimSsrDenoise, gl_FragCoord.xy, frame.ssr.y);
-            float radius = sqrt(SampleNoise(kDimSsgiJitter, gl_FragCoord.xy, frame.ssr.y)) * exp2(lod - 1.0);
-            prevUv += vec2(cos(angle), sin(angle)) * radius / vec2(textureSize(previousColor, 0));
-            lod = max(lod - 2.0, 0.0);
-        }
     }
-    hit = textureLod(previousColor, prevUv, lod);
+    if (lod > 1.0) {
+        // A coarse mip's texel is a square: a bright hit (the sun's
+        // highlight on a ball) showed as a block. Four taps a mip finer on
+        // a rotated grid over the footprint round it off.
+        vec2 texel = exp2(lod - 1.0) / vec2(textureSize(previousColor, 0));
+        hit = vec4(0.0);
+        for (int k = 0; k < 4; ++k) {
+            vec2 o = vec2(k == 0 ? 0.25 : k == 1 ? -0.25 : k == 2 ? 0.75 : -0.75,
+                          k == 0 ? 0.75 : k == 1 ? -0.75 : k == 2 ? -0.25 : 0.25);
+            hit += textureLod(previousColor, prevUv + o * texel, lod - 1.0);
+        }
+        hit *= 0.25;
+    } else {
+        hit = textureLod(previousColor, prevUv, lod);
+    }
     if (frame.ssr.w > 0.0) {
         // Last frame's colour carries the light path intensities; its
         // splits take them out, so the reflection is scaled once (as
@@ -1154,11 +1158,10 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     // (Frame::screenBackface).
     // A small tolerance: grazing hits (normal from depth across
     // the ray, rounding either way) count as front faces.
-    // Both scale the coverage: the probe or dome shows through, a guess at
-    // the light on the hidden side (a metal ball's back in a mirror behind
-    // it reflects the surroundings, not black).
-    if (lost || (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3)) {
-        hit *= frame.screenTrace.y;
+    if (lost) {
+        hit *= frame.screenTrace.y;  // its coverage too: the probe or dome shows through
+    } else if (!under && frame.screenTrace.y < 1.0 && dot(DepthNormal(ndc, hitPos), r) > 1e-3) {
+        hit.rgb *= frame.screenTrace.y;
     }
     // Fade towards the screen edges, beyond which the ray is blind.
     vec2 edge = 1.0 - abs(ndc);
