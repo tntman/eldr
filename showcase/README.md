@@ -51,7 +51,7 @@ Without Houdini: `usdenv usdview --renderer Eldr showcase\<folder>\scene.usda` a
 | `2026-10-29_13_caustics` | Light focused through glass lands as a bright patch on other surfaces. | `caustics`, `noCaustics`, `caustics8`, `causticsFewPhotons` |
 | `2026-10-30_11_screen_space_reflections` | Reflections of what is on screen, blurrier on rougher surfaces. | `ssr`, `ssrOff` |
 | `2026-10-30_23_reflection_probe` | A captured view of the surroundings supplies reflections where the screen has none. | `probe`, `probeOff` |
-| `2026-11-04_01_reflections` | A ball on a mirror-like floor reflects as a ball, with its highlights, and reflections reflect again up to a limit. | `rtOff`, `rtOn`, `reflectLimit1`, `reflectLimit4`, `karmaReflectLimit1`, `planar` |
+| `2026-11-04_01_reflections` | A ball on a mirror-like floor reflects as a ball, with its highlights, and reflections reflect again up to a limit. | `rtOff`, `backfaceOff`, `rtOn`, `reflectLimit1`, `reflectLimit4`, `karmaReflectLimit1`, `planar` |
 
 ## Volumes
 
