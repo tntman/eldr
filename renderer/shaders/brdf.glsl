@@ -567,10 +567,9 @@ void PrepareLayers(vec3 n, float NoV, inout vec3 diffuseColor, inout vec3 emissi
     }
 }
 
-// The base's GGX with roughness `a` stretched along the tangent (Heitz
-// 2014's anisotropic distribution and height-correlated visibility, in
-// Filament's form), times cos, for light from direction l.
-vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
+// The stretched GGX's alphas along the tangent and across it, at
+// roughness `a`, by the material's mapping.
+vec2 AnisotropicAlphas(float a)
 {
     float at, ab;
     if (layers.anisotropyMapping == 2) {
@@ -588,6 +587,16 @@ vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
         at = min(a / aspect, 1.0);
         ab = a * aspect;
     }
+    return vec2(at, ab);
+}
+
+// The base's GGX with roughness `a` stretched along the tangent (Heitz
+// 2014's anisotropic distribution and height-correlated visibility, in
+// Filament's form), times cos, for light from direction l.
+vec3 AnisotropicSpecular(vec3 n, vec3 v, vec3 l, float a, vec3 f0, float NoV)
+{
+    vec2 alphas = AnisotropicAlphas(a);
+    float at = alphas.x, ab = alphas.y;
     vec3 t = layers.tangent, b = layers.bitangent, h = normalize(v + l);
     float NoL = clamp(dot(n, l), 0.0, 1.0);
     float a2 = at * ab;

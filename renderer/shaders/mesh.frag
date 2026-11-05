@@ -1412,8 +1412,18 @@ void main()
     // so no ray (the crowd's agents: SSR was most of the shading pass).
     const bool reflects = max(max(FssEss.r, FssEss.g), FssEss.b) > 1e-4;
     float ssrWeight = frame.ssr.x > 0.0 && !mirror && kShadingPass != 2u && reflects ? 1.0 - smoothstep(0.3, 0.6, perceptual) : 0.0;
+    // The single ray's direction and width: anisotropic surfaces reflect
+    // along their bent normal, as wide as the stretched lobe's mean alpha.
+    vec3 ssrDir = reflect(-v, n);
+    float ssrWidth = 2.0 * a;
 #ifdef LAYERS
-    ssrWeight *= 1.0 - layers.anisotropy;  // mirror rays can't follow a stretched highlight (brdf.glsl)
+    if (layers.hair) {
+        ssrWeight = 0.0;  // strand highlights: no mirror direction
+    } else if (layers.anisotropy > 0.0) {
+        vec2 alphas = AnisotropicAlphas(a);
+        ssrDir = reflect(-v, BentNormal(n, v, perceptual));
+        ssrWidth = 2.0 * sqrt(alphas.x * alphas.y);
+    }
 #endif
     if (frame.ssr.z > 0.0 && ssrWeight > 0.0 && RtOpaque()) {
         // Denoised: one GGX-sampled ray (glossy up to roughness 0.8), its
@@ -1459,7 +1469,7 @@ void main()
         vec4 hit;
         // The lobe's width: reflected directions spread about twice its
         // half-vectors' alpha (roughness 0.2 was sharper than Karma's).
-        ssrWeight *= TraceReflection(inWorldPos, reflect(-v, n), 2.0 * a, hit);
+        ssrWeight *= TraceReflection(inWorldPos, ssrDir, ssrWidth, hit);
         specular = mix(specular, hit.rgb + (1.0 - hit.a) * specular, ssrWeight);
         domeKept *= 1.0 - ssrWeight * hit.a;
     }
