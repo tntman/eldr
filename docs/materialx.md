@@ -16,7 +16,7 @@ Colour distance (CIEDE2000, dE) of each sphere's mean colour against Karma CPU (
 | Examples glTF PBR | 6 | 0.6 | worst `Default` 1.2 |
 | Examples Disney principled | 5 | 2.4 | car paint 2.9 (coat), plastic 2.4 (Burley vs Lambert) |
 | TestSuite pbrlib BSDF and EDF graphs | 51 | 2.8 | 22 under 2, 31 under 5 (graphs of library nodes; the 10 with document-defined nodedefs or hair left out: Karma renders most of those black or grey). The worst: subsurface with a large radius (radius 5: 31, Eldr keeps the colour, Karma washes it towards white), translucent (18, about 2x bright: translucent maps to subsurface), thin film under a tinted coat (22: the coat's own tint isn't read), dielectric in RT mode (7-9, about 1.4x bright), energy-compensated Oren-Nayar at roughness 0.75-1 (6-7.5, about 0.75x: standard_surface's Oren-Nayar is uncompensated) |
-| TestSuite Lama (`lama_*` BSDFs) | 16 | 0.7 | 13 under 2. LamaLayer of a dielectric over a conductor 17: Karma lets the top's transmission leave the surface (a glass ball), Eldr layers it over the metal as MaterialX's `layer` does; LamaTranslucent 18 (translucent, above); LamaMix of conductor and glass 5 |
+| TestSuite Lama (`lama_*` BSDFs) | 16 | 0.7 | 13 under 2. LamaLayer of a dielectric over a conductor renders as glass in both; LamaTranslucent 18 (translucent, above); LamaMix of conductor and glass 5 |
 | TestSuite stdlib compositing | 45 | 0.0 | |
 | TestSuite stdlib shader (unlit) | 4 | 0.4 | `unlit_mtrl2` 15: Karma ignores unlit `opacity`; Eldr follows genglsl (Storm differs from both) |
 
@@ -33,13 +33,13 @@ A MaterialX `surface` of pbrlib BSDFs and EDFs renders as one standard_surface w
 | Node | Becomes |
 |---|---|
 | `oren_nayar_diffuse_bsdf`, `burley_diffuse_bsdf` | base colour (the leaves' weighted sum), `diffuse_roughness` |
-| `dielectric_bsdf` | specular (`tint`, `ior`, roughness, thin film). On top of a layer whose base reflects (a dielectric or metal): the coat. In `T` or `RT` mode, not on top of a layer: transmission tinted by `tint`; `T` on top of a layer passes light to the base, as MaterialX's layer does |
+| `dielectric_bsdf` | specular (`tint`, `ior`, roughness, thin film). On top of a layer whose base reflects (a dielectric or metal): the coat. In `T` or `RT` mode: transmission tinted by `tint`; on top of a layer it refracts into the surface and the layer's base isn't seen, as in Karma (a LamaLayer of a LamaDielectric over a LamaConductor renders as glass) |
 | `conductor_bsdf` | metal: its F0 from `ior` and `extinction` (or `artistic_ior`'s reflectivity and edge colour, as in Lama's conductor), the edge colour from the same inputs |
 | `generalized_schlick_bsdf` | alone: a metal of `color0` and `color82`; on top of a layer: a dielectric of `color0`'s mean F0 |
 | `sheen_bsdf`, `subsurface_bsdf`, `translucent_bsdf` | sheen; subsurface (translucent as subsurface with its colour) |
 | `uniform_edf`, `conical_edf`, `measured_edf`, `generalized_schlick_edf` | emission colour (the cone and profile aren't read; Schlick's `color0` tints) |
 | `mix`, `add`, `multiply` (BSDF, EDF) | weights and tints of the leaves under them; a connected mix weight or tint runs as a graph |
-| `layer` | top over base, as above; a VDF base (interior absorption) isn't read |
+| `layer` (and Lama's `LamaLayer`) | top over base, as above: an `R` dielectric on top shows the base under its reflection, a `T` or `RT` one hides it, as in Karma; a VDF base (interior absorption) isn't read |
 | `roughness_anisotropy` feeding a roughness | `specular_roughness` and `specular_anisotropy`; other roughness graphs: the square root of the first component |
 
 With a constant metal weight, the dielectric's specular, transmission and subsurface weights count within the rest (1 - metalness), as standard_surface's do. Where the graph has both diffuse and metal leaves, they share one base colour (their weighted sum) and `metalness` is the metal's weight: exact where the mix weight is 0 or 1 (masks), between the two colours elsewhere. Roughness, IORs and lobe colours come from the first leaf that sets them. `chiang_hair_bsdf` and unknown BSDF nodes are left out with a warning and counted in the render stats; a graph with no lobe Eldr maps, or a mix of surface shaders, renders the default grey.
