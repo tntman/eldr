@@ -63,8 +63,69 @@ void TransmissionBegin(inout float alpha)
 // after `distance`: where that point lands on screen, blurred over mips and
 // frame.translucency.x rotated taps by the roughness spreading the rays
 // over `spread`.
+// With frame.rtRefraction.w (Frame::refractionMarch) the ray marches the
+// depth buffer instead, up to 4 x `distance`: the first opaque surface it
+// passes behind is where the light comes from. Where a nearer surface hides
+// the ray (the pool's edge over the water's far side, the next ball over a
+// lens's view) or it leaves the screen, it keeps the last point seen on
+// screen, so it never picks up a surface in front of the one it reaches.
+// ponytail: 12 steps and 4 halvings; a thin object between two steps is missed.
+float RefractionDistance(vec2 uv, float z)
+{
+    vec4 p = frame.invViewProj * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+    return length(p.xyz / p.w - frame.cameraPos.xyz);
+}
+
+float RefractionMarch(vec3 origin, vec3 dir, float distance)
+{
+    ivec2 size = textureSize(sceneDepth, 0);
+    float far = 4.0 * distance, last = 0.0, before = 0.0;
+    const int kSteps = 12;
+    for (int i = 1; i <= kSteps; ++i) {
+        float t = far * float(i * i) / float(kSteps * kSteps);
+        vec4 clip = frame.viewProj * vec4(origin + dir * t, 1.0);
+        vec3 ndc = clip.xyz / max(clip.w, 1e-8);
+        if (clip.w <= 0.0 || any(greaterThan(abs(ndc), vec3(1.0)))) {
+            return last;  // off screen
+        }
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        float scene = texelFetch(sceneDepth, clamp(ivec2(uv * vec2(size)), ivec2(0), size - 1), 0).r;
+        float z = ndc.z * 0.5 + 0.5;
+        if (scene >= 1.0 || z <= scene) {
+            last = t;  // in front of what's drawn there: seen
+            before = t;
+            continue;
+        }
+        // Behind the surface drawn there: the ray reached it if it lies past
+        // the step's nearer end (a hit), else it hides the ray.
+        float rayBefore = min(length(origin + dir * before - frame.cameraPos.xyz),
+                              length(origin + dir * t - frame.cameraPos.xyz));
+        if (RefractionDistance(uv, scene) < rayBefore * 0.98) {
+            before = t;
+            continue;
+        }
+        float lo = before, hi = t;
+        for (int j = 0; j < 4; ++j) {
+            float mid = 0.5 * (lo + hi);
+            vec4 c = frame.viewProj * vec4(origin + dir * mid, 1.0);
+            vec3 n = c.xyz / c.w;
+            float s = texelFetch(sceneDepth, clamp(ivec2((n.xy * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1), 0).r;
+            if (s < 1.0 && n.z * 0.5 + 0.5 > s) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        return hi;
+    }
+    return far;
+}
+
 vec4 RefractedBackground(vec3 origin, vec3 dir, float distance, float spread)
 {
+    if (frame.rtRefraction.w != 0u) {
+        distance = RefractionMarch(origin, dir, distance);
+    }
     vec3 exitP = origin + dir * distance;
     vec4 clip = frame.viewProj * vec4(exitP, 1.0);
     vec2 uv = clip.w > 0.0 ? clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 1.0) : gl_FragCoord.xy / frame.viewport.xy;

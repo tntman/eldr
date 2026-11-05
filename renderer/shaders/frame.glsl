@@ -63,7 +63,8 @@ layout(std140, set = 0, binding = 3) uniform FrameData {
                          // z: 1 = a time sample (motion vectors from the shutter's capture),
                          // w: its capture holds joints (+1) and blend shape weights (+2)
     uvec4 rtRefraction;  // x 1: refracting front faces read rtRefractionImage (transparency.glsl), y 1: opacity presence on
-                         // z 1: refracting meshes draw their back faces first (TransmissionEnd's kShadingPass 3)
+                         // z 1: refracting meshes draw their back faces first (TransmissionEnd's kShadingPass 3),
+                         // w 1: RefractedBackground marches the depth buffer
     vec4 scene;          // x: the scene's frame, y: in seconds (program.glsl's kOpTime)
     uvec4 tiles;         // tile-based adaptive sampling (tiles.glsl): x the stamp a tile needs, 0 off; y, z tiles
 } frame;
