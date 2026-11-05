@@ -945,7 +945,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     int budget = 4 * steps;
     vec2 pixelNdc = 2.0 * normalize(d * frame.viewport.xy) / frame.viewport.xy;  // one pixel along the ray
     float lo = 0.0, hi = 0.0;  // the crossing's bracket
-    float lostLo = -1.0, lostHi = 0.0;  // the last surface the ray went behind and wasn't judged to hit
+    float lostLo = -1.0;  // the last surface the ray went behind and wasn't judged to hit
     vec3 lostSurface = vec3(0.0);       // where
     bool lostLate = false;              // that surface isn't the ray's own: in front of the depth before, or nearer than its start
     bool under = false;                 // it went through that surface's object, hidden behind its front
@@ -1045,7 +1045,8 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
                 int n = min(int((u - uPrev) * pixels / uEnd), budget);
                 budget -= n;
                 for (int k = 1; k <= n + 1 && !under; ++k) {
-                    vec3 sk = mix(s0, s1, mix(uPrev, u, float(k) / float(n + 1)));
+                    lo = mix(uPrev, u, float(k) / float(n + 1));
+                    vec3 sk = mix(s0, s1, lo);
                     vec3 sf = Unproject(vec3(sk.xy, SceneDepth(sk.xy) * 2.0 - 1.0));
                     under = length(Unproject(sk) - sf) <= 2.0 * (lostDistance - length(sf - frame.cameraPos.xyz));
                 }
@@ -1058,7 +1059,6 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             }
             if (!crossed && !wasBehind) {
                 lostLo = lo;
-                lostHi = hi;
                 lostSurface = surface;
                 float o = 1.0 - (s0.z * 0.5 + 0.5), e = 1.0 - SceneDepth(c.xy);  // ~ 1 / distance
                 lostLate = i > 0 || abs(o - e) > 0.1 * max(o, e);
@@ -1079,16 +1079,14 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
     }
     // Rays that end behind something they didn't hit are misses: the
     // probe or dome shows, never a guessed surface (a column of it).
-    // Inside an object (under), it stands in where the ray went in, lit
-    // like its front.
+    // Inside an object (under), its front where the ray is found inside
+    // stands in, lit like its front: not the silhouette's pixel where the
+    // ray went in, whose antialiased colour is part background (streaks
+    // of floor along the sides of a ball's reflection).
     if (!crossed && !under) {
         return 0.0;
     }
-    if (under) {
-        lo = lostLo;
-        hi = lostHi;
-    }
-    for (int k = 0; k < 5; ++k) {
+    for (int k = 0; k < 5 && !under; ++k) {
         float mid = 0.5 * (lo + hi);
         vec3 m = mix(s0, s1, mid);
         if (Behind(m.z * 0.5 + 0.5, SceneDepth(m.xy))) {
@@ -1097,7 +1095,7 @@ float TraceReflection(vec3 p, vec3 r, float cone, out vec4 hit)
             lo = mid;
         }
     }
-    vec2 ndc = mix(s0.xy, s1.xy, hi);
+    vec2 ndc = mix(s0.xy, s1.xy, under ? lo : hi);
     vec3 hitPos = Unproject(vec3(ndc, SceneDepth(ndc) * 2.0 - 1.0));
     ssrHitDistance = length(hitPos - p);
     vec4 prev = frame.prevViewProj * vec4(hitPos, 1.0);
