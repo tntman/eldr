@@ -446,11 +446,10 @@ float EllipseInset(float A, float B, vec2 s, out float mu)
 // Against brute-force GGX integrals: peaks, totals and spreads within ~5%
 // (docs/features.md: lights.usda's floor, light_reflections.usda's sun and
 // tube).
-// regionArea: the region's half-vector area / pi, for the coat (LayerLight).
 // ponytail: small-angle half-vector mapping around the representative
 // point; LTC (Heitz 2016) would be exact for polygons of any size.
 float LightRegion(vec3 n, vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 a2, inout vec2 uv, bool box,
-                  float omega, out vec3 l, out float regionArea)
+                  float omega, out vec3 l)
 {
     vec2 c0 = box ? clamp(uv, -1.0, 1.0) : uv / max(length(uv), 1.0);
     vec3 l0 = normalize(toLight + mat2x3(a1, a2) * c0);
@@ -467,7 +466,6 @@ float LightRegion(vec3 n, vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 
     float g = box ? 4.0 : PI;
     float cr = abs(determinant(m));
     float s2 = cr > 1e-12 ? min(omega / (4.0 * VoH * g * cr), 4.0) : 1.0;
-    regionArea = g * cr * s2 / PI;
     m *= sqrt(s2) / a;
     float norm;
     if (box) {
@@ -535,8 +533,7 @@ float LightRegion(vec3 n, vec3 v, float a, vec3 toLight, float d, vec3 a1, vec3 
 // space are already principal (R / (2 d) in the plane of v, R / (2 d VoH)
 // across it), so it needs no eigenvectors (and keeps the sun's path in
 // every shader light).
-float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float R, float omega, out vec3 l,
-                   out float regionArea)
+float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float R, float omega, out vec3 l)
 {
     vec3 w = toLight / d, e = v - dot(v, w) * w;
     e = dot(e, e) > 1e-10 ? normalize(e)
@@ -550,7 +547,6 @@ float SphereRegion(vec3 n, vec3 v, vec3 r, float a, vec3 toLight, float d, float
     // axis across (f), the minor in the plane of v (e).
     float s = R > 0.0 ? sqrt(min(omega * d * d / (PI * R * R), 4.0)) : 1.0;
     float B = max(s * R / (2.0 * d * a), 1e-3), A = max(B / VoH, 1e-3);
-    regionArea = A * B * a * a;
     vec2 st = RegionStretch(A, B, false);
     vec3 across = f - dot(f, n) * n;
     regionStretch = st;
@@ -589,14 +585,19 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                                                    : 1.0 - smoothstep(light.shaping.x, light.shaping.y, theta);
 
     vec3 r = reflect(-v, n);
-    float diffuseE, specularE, norm, regionArea;
+    float diffuseE, specularE, norm;
     vec3 l;
     vec3 diffuseTint = vec3(1.0), specularTint = vec3(1.0);  // a rect or disk light's texture
+    // The region as LightRegion got it (half axes, where the reflection ray
+    // passes, box), for the coat's own representative point.
+    vec3 regionA1 = vec3(0.0), regionA2 = vec3(0.0);
+    vec2 regionUv = vec2(0.0);
+    bool regionBox = false;
     if (uint(light.position.w) == kLightSphere) {
         float sinSigmaSqr = min(light.axis.w * light.axis.w / (d * d), 1.0);
         diffuseE = SphereIlluminance(dot(n, toLight / d), sinSigmaSqr);
         specularE = PI * sinSigmaSqr;
-        norm = SphereRegion(n, v, r, a, toLight, d, light.halfWidth.w, specularE, l, regionArea);
+        norm = SphereRegion(n, v, r, a, toLight, d, light.halfWidth.w, specularE, l);
     } else if (uint(light.position.w) == kLightCylinder) {
         // Diffuse: the form factor of its side facing p (the caps don't
         // emit). Specular: its silhouette as a box, the axis by the side
@@ -614,7 +615,11 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         vec3 closest = toLight + axis * clamp(t, -1.0, 1.0);
         vec3 centerToRay = dot(closest, r) * r - closest;
         vec2 uv = vec2(t, dot(centerToRay, side) / max(dot(side, side), 1e-12));
-        norm = LightRegion(n, v, a, toLight, d, axis, side, uv, true, specularE, l, regionArea);
+        regionA1 = axis;
+        regionA2 = side;
+        regionUv = uv;
+        regionBox = true;
+        norm = LightRegion(n, v, a, toLight, d, axis, side, uv, true, specularE, l);
     } else {
         if (dot(toLight, light.axis.xyz) >= 0.0) {
             return vec3(0.0);  // behind the emitting side
@@ -637,7 +642,11 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
         float rDotAxis = dot(r, light.axis.xyz);
         vec3 q = rDotAxis < -1e-4 ? r * (dot(toLight, light.axis.xyz) / rDotAxis) - toLight : vec3(0.0);
         vec2 uv = vec2(dot(q, hw) / dot(hw, hw), dot(q, hh) / dot(hh, hh));
-        norm = LightRegion(n, v, a, toLight, d, hw, hh, uv, rect, specularE, l, regionArea);
+        regionA1 = hw;
+        regionA2 = hh;
+        regionUv = uv;
+        regionBox = rect;
+        norm = LightRegion(n, v, a, toLight, d, hw, hh, uv, rect, specularE, l);
         int tex = int(light.focusTint.w);
         if (tex >= 0 && (frame.reflections.z & kLightTextures) != 0u) {
             // The texture (s = 0 at +X as UsdLux says; the image's top row
@@ -663,7 +672,18 @@ vec3 LocalLight(uint index, vec3 p, vec3 n, vec3 ng, vec3 v, vec3 diffuseColor, 
                    light.halfHeight.w * diffuseTint;
     vec3 specular = Specular(n, v, l, a, f0, NoV) * StretchRatio(n, v, l, a) * specularE * norm *
                     light.shaping.w;
-    specular += LayerLight(n, v, l, NoV, regionArea) * specularE * light.shaping.w;
+    // The coat's own representative point at its roughness: a smooth coat
+    // over a rough base reflects the light's sharp shape.
+    // ponytail: the coat takes the base's texture tap.
+    vec3 lCoat = l;
+    float coatNorm = 1.0, ca = CoatAlpha();
+    if (ca > 0.0) {
+        coatNorm = uint(light.position.w) == kLightSphere
+            ? SphereRegion(n, v, r, ca, toLight, d, light.halfWidth.w, specularE, lCoat)
+            : LightRegion(n, v, ca, toLight, d, regionA1, regionA2, regionUv, regionBox, specularE, lCoat);
+        coatNorm *= StretchRatio(n, v, lCoat, ca);
+    }
+    specular += LayerLight(n, v, l, NoV, lCoat, coatNorm) * specularE * light.shaping.w;
     specular *= specularTint;
     vec3 shadow = LocalShadow(index, light, p, ng) * LocalShadowTint(index, light, p, ng);
     if (LightSplits()) {
@@ -1280,16 +1300,24 @@ void main()
         // The sun's disc (angular radius axis.w) as a sphere at distance 1,
         // unless its half-vector area (~ tan^2 / (4 NoV)) is under 0.1% of
         // the lobe's a^2 (then N > 0.999 and l the centre: most surfaces).
-        float tanHalf = tan(light.axis.w), sunNorm = 1.0, sunArea = 0.0;
+        float tanHalf = tan(light.axis.w), sunNorm = 1.0;
         vec3 ls = l;
         regionStretch = vec2(1.0);
         if (Feature(kFeatureSunRegion) && tanHalf * tanHalf > 4e-3 * NoV * a * a) {
-            sunNorm = SphereRegion(n, v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls, sunArea);
+            sunNorm = SphereRegion(n, v, reflect(-v, n), a, l, 1.0, tanHalf, PI * tanHalf * tanHalf, ls);
         }
         vec3 sunDiffuse = DiffuseLobe(diffuseColor, NoL, NoV, dot(l, v));
+        vec3 baseSpecular = Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * sunNorm;
+        // The coat's own point on the disc, at its roughness.
+        vec3 lc = l;
+        float coatNorm = 1.0, ca = CoatAlpha();
+        regionStretch = vec2(1.0);
+        if (ca > 0.0 && Feature(kFeatureSunRegion) && tanHalf * tanHalf > 4e-3 * NoV * ca * ca) {
+            coatNorm = SphereRegion(n, v, reflect(-v, n), ca, l, 1.0, tanHalf, PI * tanHalf * tanHalf, lc);
+            coatNorm *= StretchRatio(n, v, lc, ca);
+        }
         vec3 radiance = (sunDiffuse / PI * NoL * light.halfHeight.w +
-                         (Specular(n, v, ls, a, f0, NoV) * StretchRatio(n, v, ls, a) * sunNorm +
-                          LayerLight(n, v, ls, NoV, sunArea)) * light.shaping.w) *
+                         (baseSpecular + LayerLight(n, v, ls, NoV, lc, coatNorm)) * light.shaping.w) *
                         light.color.rgb;
         vec3 shadow = vec3(1.0);
         if (i == frame.counts.y) {

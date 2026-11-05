@@ -105,6 +105,16 @@ vec3 ShadowTransmission(Material m, vec2 uv)
     float f0 = (m.refraction.x - 1.0) / (m.refraction.x + 1.0);
     float interfaces = (1.0 - f0 * f0) * (1.0 - f0 * f0);
     vec3 transmitted = opacity * m.transmission.w * m.transmission.rgb * interfaces;
+    // A thin-walled subsurface surface (a leaf) lets its subsurface colour
+    // through diffusely: kThinTranslucency of it reaches what lies in its
+    // shadow (measured in Karma: a back-lit leaf's shadow gains about 5% of
+    // the sun times its colour, the rest scatters away).
+    // ponytail: one constant for the re-emitted light's spread; a receiver
+    // right behind the leaf gets more of it, a far one less.
+    const float kThinTranslucency = 0.05;
+    if (m.refraction.y > 0.0) {
+        transmitted += opacity * m.subsurface.w * m.subsurface.rgb * kThinTranslucency;
+    }
     return m.refraction.w > 0.0 ? vec3((1.0 - opacity) * interfaces) : vec3(1.0 - opacity) + transmitted;
 }
 

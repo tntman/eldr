@@ -28,7 +28,9 @@ public:
     // previous frame's clip space (row-vector order); upscaling, unjittered
     // NDC, and `offset` is where this frame's samples are from their input
     // pixels' centres (input pixels).
-    void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2]);
+    // colorLimit: each sample's peak channel cap (Karma's colour limit; 0 = off).
+    void Record(VkCommandBuffer cmd, const float reprojection[16], float alpha, const float offset[2],
+                float colorLimit);
 
     // Film accumulation instead (shaders/film.comp), same layouts: adds
     // this sample, its pixels' samples `offset` pixels from their centres,
@@ -39,8 +41,10 @@ public:
     // times `exposure`, compressed) fell under it after `minSamples` take
     // no more samples; ActivePixels() counts the others. `tileStamp` > 0:
     // the 16 x 16 tiles with a pixel that took this sample get it in Tiles().
+    // `colorLimit` > 0: each sample's peak channel cap (Karma's colour limit).
     void RecordFilm(VkCommandBuffer cmd, const float offset[2], float radius, uint32_t mode, float seed,
-                    float threshold = 0.0f, uint32_t minSamples = 0, float exposure = 1.0f, uint32_t tileStamp = 0);
+                    float threshold = 0.0f, uint32_t minSamples = 0, float exposure = 1.0f, uint32_t tileStamp = 0,
+                    float colorLimit = 0.0f);
     // After the frame's fence: pixels the last adaptive film still sampled.
     uint32_t ActivePixels() const { return *static_cast<const uint32_t *>(_active.mapped); }
 

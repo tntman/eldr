@@ -142,6 +142,11 @@ public:
         VkImageView filmWeights = VK_NULL_HANDLE;  // the film's (TemporalAA::FilmWeights), GENERAL
         uint8_t filters[kCount] = {};     // Filter per target (film samples only)
         float filterRadius[kCount] = {};  // its radius (pixels, 0: the filter's default)
+        // The beauty's sample (SHADER_READ_ONLY_OPTIMAL) and its colour limit:
+        // the light AOVs are scaled per sample as the film limits the beauty,
+        // so they still add up to it. Null: not limited.
+        VkImageView beauty = VK_NULL_HANDLE;
+        float colorLimit = 0;
     };
     // `depth` and `primId` are the frame's (TRANSFER_SRC_OPTIMAL, left so).
     // `drawGeometry` records the opaque draws (Pipelines(), the scene's set

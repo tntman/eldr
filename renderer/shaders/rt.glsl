@@ -23,6 +23,9 @@ const uint kRtSlotEmitter = 1u;
 const uint kRtSlotCutout = 2u;
 // A translucent mesh: only shadow rays that tint see it (rt_shadow.rahit).
 const uint kRtSlotTranslucent = 4u;
+// Opaque, but shadow rays that tint take its colour (Scene::Gpu::kTints:
+// a thin-walled subsurface leaf; rt_shadow.rahit).
+const uint kRtSlotTints = 8u;
 
 // Skinned instances (rt_skin.comp): the TLAS's instances from
 // rt.skinned.x on, one per entry here, each with a BLAS of its own over its

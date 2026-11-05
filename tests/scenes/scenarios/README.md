@@ -42,6 +42,4 @@ To compare with Karma and EEVEE: `hython tests/compare_renderers.py tests/scenes
 
 Compared with Karma (husk, 640x360). Fix lanes remove an item when it's fixed.
 
-- Karma clamps each camera sample, highlights included, at its colour limit (20); Eldr clamps only emitters seen directly, so sharp sun highlights on chrome reach thousands and raise the image mean.
-- A clear coat shows a rect light as a blurred streak where Karma shows the sharp softbox (`car_paint`).
 - Without ray tracing: refraction doesn't invert or bend the background through a glass ball, and water reads milky at grazing angles; screen-space reflections leave a grainy cone in the lower half of chrome balls.

@@ -2290,6 +2290,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     _gpu.translucentVariant.clear();
     _gpu.translucentFlags.clear();
     _gpu.translucentCenters.clear();
+    _gpu.tintCasters.clear();
+    _gpu.tintCasterVariant.clear();
     _gpu.slotGeometry.resize(slots);
     _gpu.refraction = false;
     _gpu.holdouts = false;
@@ -2393,6 +2395,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
                 r2 += 0.25f * (m._worldMax[k] - m._worldMin[k]) * (m._worldMax[k] - m._worldMin[k]);
             }
             _gpu.translucentCenters.push_back(std::sqrt(r2));
+        } else if (mat && mat->thinWalled && mat->subsurface > 0) {
+            kind[slot] = Gpu::kTints;  // a leaf: its shadow lets its colour through
+            _gpu.tintCasters.push_back(uint32_t(slot));
+            _gpu.tintCasterVariant.push_back(variant >> 2);
         }
         if (kind[slot] != Gpu::kTranslucent && mat && mat->Scatters()) {
             _gpu.subsurface.push_back(uint32_t(slot));
@@ -2437,7 +2443,8 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         const uint8_t blend = kind[slot] & (Gpu::kWide - 1);
         _gpu.slotGeometry[slot] = {m._vertexOffset, m._vertexCount, m._firstIndex, m._indexCount,
                                    drawable ? m._geometryVersion : 0, blend == Gpu::kCutout, false, m._skinCount > 0,
-                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase};
+                                   (variant & Gpu::kDisplaced) != 0, blend == Gpu::kTranslucent, m._instanceBase,
+                                   blend == Gpu::kTints};
         drawn[slot] = drawable ? m._instanceCount : 0;
         rays[slot] = drawable ? m.rays : 0;
         if (drawable) {
@@ -2483,6 +2490,10 @@ void Scene::Commit(bool keepMotion, bool unchanged)
             const Mesh::Lod &lod = m._lods[k];
             commands[next] = {lod.indexCount, 0, lod.firstIndex, int32_t(m._vertexOffset), firsts[k]};
             kind[next] = kind[slot];
+            if ((kind[slot] & (Gpu::kWide - 1)) == Gpu::kTints) {  // its levels shadow as tints too
+                _gpu.tintCasters.push_back(uint32_t(next));
+                _gpu.tintCasterVariant.push_back(kind[slot] >> 2);
+            }
             weight[next] = double(drawn[slot]) * double(lod.indexCount / 3);
             g.errors[k] = lod.error;
         }
@@ -2512,6 +2523,9 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         }
     }
     for (uint32_t &s : _gpu.translucent) {
+        s = commandOf[s];
+    }
+    for (uint32_t &s : _gpu.tintCasters) {
         s = commandOf[s];
     }
     for (uint32_t &s : _gpu.subsurface) {

@@ -841,6 +841,7 @@ private:
     uint32_t _taaFrames = 0, _haltonIndex = 0;
     float _prevViewProj[16] = {};  // camera of the frame in the TAA history
     bool _taaValid = false;
+    bool _shadowTints = false;  // the kTints meshes shadow in the tint maps (Scene::Gpu::kTints)
     bool _historyValid = false;    // the TAA history holds last frame's image
     // Last frame stored the light splits; this one keeps them for SSR (Aovs::ClearSplits).
     bool _splitsStored = false, _keepSplits = false;
