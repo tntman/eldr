@@ -4440,10 +4440,13 @@ int main()
                 upper->transforms = {3, 0, 0, 0, 0, 3, 0, 0, 0, 0, 3, 0, 0, 2, 0, 1};
                 above.AddDome();
                 above.Commit();
+                // Without the sky behind: only the volumes' scattered light.
+                frame.showEnvironment = false;
                 const Image both = Render(renderer, above, frame);
                 frame.volume.mutualShadows = false;
                 const Image apart = Render(renderer, above, frame);
                 frame.volume.mutualShadows = true;
+                frame.showEnvironment = true;
                 const float domeExpected = expected;
                 const float ratio = both.At(32, 40, 0) / apart.At(32, 40, 0);
                 std::printf("mutual volume shadows (dome): top %.4f / %.4f = %.3f (expected %.3f)\n", both.At(32, 40, 0),
