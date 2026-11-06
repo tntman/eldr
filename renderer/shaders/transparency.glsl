@@ -69,7 +69,9 @@ void TransmissionBegin(inout float alpha)
 // comes from. Where a nearer surface hides the ray (the pool's edge over the
 // water's far side, the next ball over a lens's view) it keeps the last
 // point seen on screen (none: what lies straight behind), so it never picks
-// up a surface in front of the one it reaches. A ray in front of everything
+// up a surface in front of the one it reaches. A ray that leaves the screen
+// in front of a drawn surface takes that surface (it goes on past the edge:
+// a wall reflected from under water). A ray in front of everything else
 // when it ends or leaves the screen goes on to where its direction lands on
 // screen: behind a surface there it meets it, off screen it leaves the
 // scene (the dome, or nothing). Steps: one per 32 pixels the march crosses
@@ -105,6 +107,7 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
     float pixels = length((c1.xy / max(c1.w, 1e-8) - c0.xy / max(c0.w, 1e-8)) * 0.5 * frame.viewport.xy);
     int steps = clamp(int(pixels / 32.0), 8, 16);
     float jitter = SampleNoise(kDimRefraction, gl_FragCoord.xy + vec2(29.0, 17.0), float(frame.localLights.y));
+    bool overSurface = false;  // the last point seen lies in front of a drawn surface (not sky)
     for (int i = 1; i <= 16; ++i) {
         if (i > steps) {
             break;
@@ -114,6 +117,9 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
         vec4 clip = frame.viewProj * vec4(origin + dir * t, 1.0);
         vec3 ndc = clip.xyz / max(clip.w, 1e-8);
         if (clip.w <= 0.0 || any(greaterThan(abs(ndc), vec3(1.0)))) {
+            if (last.z == 1.0 && overSurface) {
+                return last;  // leaves the screen in front of a surface: it goes on past the edge
+            }
             break;  // off screen
         }
         vec2 uv = ndc.xy * 0.5 + 0.5;
@@ -124,6 +130,7 @@ vec3 RefractionMarch(vec3 origin, vec3 dir, float distance)
         // at grazing angles): seen.
         if (ray <= sceneDistance * 1.01) {
             last = vec3(uv, 1.0);
+            overSurface = scene < 1.0;
             before = t;
             continue;
         }

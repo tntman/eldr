@@ -398,11 +398,16 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
         float lod = specular ? hit.roughness * float(frame.counts.z - 1u) : 0.5 * float(frame.counts.z);
         vec3 r = reflect(dir, n), reflected = Dome(r, lod);
         if (!specular && (frame.features.x & kFeatureGi) != 0u) {
-            // A blurred reflection (gather and probe rays): the probes' light
-            // around it, so a metal ball's underside reflects the floor, not
-            // the dome below it (its shadow on the floor under it, as Karma).
+            // A blurred reflection (gather and probe rays): the dome, no
+            // brighter than the probes' light around it, so a metal ball's
+            // underside reflects the floor, not the dome below it (its
+            // shadow on the floor under it, as Karma). The probes only
+            // darken: their light is a whole hemisphere's, so as a mirror's
+            // it would light the ball's contact shadow and add light a
+            // closed room doesn't have (Cornell box 9% over Karma).
+            // ponytail: open dome only; a ray-traced bounce if interiors need it.
             vec4 gi = GiIrradiance(p, r, -dir);
-            reflected = mix(reflected, gi.rgb, gi.a);
+            reflected = mix(reflected, min(gi.rgb, reflected), gi.a);
         }
         radiance += fss * reflected;
     }
