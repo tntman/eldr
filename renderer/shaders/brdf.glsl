@@ -677,11 +677,9 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
     return c;
 }
 
-// The lobes' share of the dome's light (mesh.frag's IBL, Lavg its average
-// radiance over the normal's hemisphere): the coat reflects the
-// prefiltered environment at its own roughness, sheen the average.
-// ponytail: no screen-space reflections in the coat (only the base traces
-// them); a second trace for smooth coats over rough bases would add them.
+// The lobes' ambient light (mesh.frag's IBL, Lavg its average radiance
+// over the normal's hemisphere): the coat reflects `coatReflection` (its
+// surroundings at its own roughness), sheen the dome's average.
 vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO, vec3 coatReflection)
 {
     // The coat: its reflection of the surroundings (mesh.frag CoatReflection).
