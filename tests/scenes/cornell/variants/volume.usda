@@ -1,0 +1,28 @@
+#usda 1.0
+(
+    doc = "A fog sphere (OpenVDB, density field) in the middle of the box."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def Volume "fog"
+    {
+        rel field:density = </cornell_box/fog/density>
+        double3 xformOp:translate = (2.78, 3.4, 2.6)
+        double3 xformOp:scale = (1.1, 1.1, 1.1)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:scale"]
+        def OpenVDBAsset "density"
+        {
+            asset filePath = @../fog.vdb@
+            token fieldName = "density"
+        }
+    }
+}

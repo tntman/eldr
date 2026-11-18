@@ -38,7 +38,7 @@ DOCS = [
     ("goals.md", "Goals", "Reference"),
     ("testing.md", "Testing", "Reference"),
 ]
-MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml"}
 CHIPS = {"[RT]": ("rt", "Needs ray tracing"), "[film]": ("film", "Still camera and finals"),
          "[interactive]": ("interactive", "While moving only"), "[prepass]": ("prepass", "Needs Depth Prepass")}
 ROW = re.compile(r"\| (.*?)<br>`(eldr:[\w:]+)` \| (.*?) \| (.*?) \|(.*)\|\s*$")
