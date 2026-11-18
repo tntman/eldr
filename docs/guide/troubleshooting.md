@@ -2,15 +2,7 @@
 
 Common problems and what to check first.
 
-## Eldr isn't in the renderer menu
-
-- Check that `eldr.json` is in `Documents/houdini22.0/packages/` (or that `HOUDINI_PACKAGE_DIR` points at its folder) and that its paths point at your build.
-- Eldr must be built against Houdini's own USD (the Houdini build, `build-h22`). A plugin built for USD 26.08 doesn't load in Houdini.
-- husk: `husk --list-renderers` should show `HdVkRendererPlugin (Eldr)`.
-
-## The Render Settings LOP has no Eldr tab
-
-The node was made before Eldr was installed. Right-click it and choose **Rebuild Renderer-Specific Parameters**.
+Install problems (Eldr missing from the menu, no Eldr tab, husk licence, usdrecord brighter than husk) are in [Getting started](getting-started.md#troubleshooting-the-install).
 
 ## The image never stops changing
 
@@ -53,10 +45,6 @@ Eldr compiles its GPU programs on the first frame with a new feature set (second
 ## husk renders crowds slowly or runs out of memory
 
 Use `$ELDR_HUSK` as the USD Render ROP's Render Command (deferred skinning): see [Crowds and performance](performance.md#crowds-deferred-skinning).
-
-## usdrecord renders are brighter than husk's
-
-usdrecord adds a camera headlight. Pass `--disableCameraLight`.
 
 ## Where to ask for more detail
 

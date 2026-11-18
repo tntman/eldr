@@ -210,6 +210,33 @@ NOTE = ("Times are husk wall clock at 512 x 512, including startup and scene loa
         "mean luminance.")
 
 
+METHODOLOGY = ["## Methodology", "",
+               "| | |", "|---|---|",
+               "| Machine | Windows, NVIDIA GTX 1080 Ti (Eldr); Karma CPU on the same machine |",
+               "| Resolution | 512 x 512, every scene |",
+               "| Eldr default | The scene's `/Render/Settings` as authored, `husk -R HdVkRendererPlugin` |",
+               "| Eldr final | The same with `tests/scenes/cornell/eldr_final.usda` sublayered over it |",
+               "| Karma | `BRAY_HdKarma`, the scene's settings: 512 path-traced samples, 8 diffuse bounces |",
+               "| Time | husk wall clock per run, startup and scene load included. In brackets (Eldr): time in its "
+               "render pass and GPU time of one film sample, from `HDVK_TIMING=2` |",
+               "| Brightness | Mean luminance against Karma's (x1.00: as bright as Karma) |",
+               "| Difference | Mean absolute difference, % of Karma's mean luminance, as rendered and exposure-matched |",
+               "| Regenerate | `python tests/render_gallery.py [outdir] [--only base,glossy] [--force]` "
+               "(renders, pictures, this page and README.md's gallery) |", ""]
+
+
+def caption(r):
+    """Under each picture: every renderer's time, and Eldr's brightness against Karma."""
+    out = []
+    for k, label in RENDERERS:
+        t = "%s %s" % (label, "%.1f s" % r[k] if r[k] is not None else "-")
+        st = r.get(k + "_stats")
+        if k != "karma" and st and st[1] is not None:
+            t += ", brightness x%.2f" % st[1]
+        out.append(t)
+    return "; ".join(out)
+
+
 def write_docs(rows):
     md = ["# Gallery", "",
           "Every scene is the CC0 Cornell box (`tests/scenes/cornell`) plus one small variant layer, rendered with "
@@ -219,11 +246,11 @@ def write_docs(rows):
           "(512 path-traced samples, 8 diffuse bounces). `python tests/render_gallery.py` renders them again.", "",
           "![Render time per scene](images/gallery/times_light.svg)", "",
           "![Difference to Karma per scene](images/gallery/difference_light.svg)", "",
-          table(rows, lambda n: "[%s](#%s)" % (n, n)), "", NOTE, ""]
+          table(rows, lambda n: "[%s](#%s)" % (n, n)), "", NOTE, ""] + METHODOLOGY
     for r in rows:
         md += ["## %s" % r["name"], "", r["doc"], ""] + (["*In Eldr:* " + NOTES[r["name"]], ""] if r["name"] in NOTES else [])
-        md += [
-               "![%s: Eldr default, Eldr final and Karma side by side](images/gallery/%s.jpg)" % (r["name"], r["name"]), ""]
+        md += ["![%s, left to right Eldr default, Eldr final, Karma. %s](images/gallery/%s.jpg)"
+               % (r["name"], caption(r), r["name"]), ""]
     with open(os.path.join(REPO, "docs", "gallery.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(md))
     readme = os.path.join(REPO, "README.md")

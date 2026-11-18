@@ -3,7 +3,7 @@ name: Docs
 on:
   push:
     branches: [step1-plugin-skeleton]
-    paths: ["docs/**", "showcase/**/README.md", ".github/workflows/docs.yml"]
+    paths: ["docs/**", "hydra/renderSettings.def", "showcase/**/README.md", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
 permissions:

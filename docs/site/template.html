@@ -1,3 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Eldr Documentation</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -92,17 +95,78 @@ blockquote.tip { border-left-color: #1f7a3a; } blockquote.note { border-left-col
 blockquote.warning { border-left-color: #b45309; background: var(--accent-soft); }
 blockquote.houdini { border-left-color: var(--accent); }
 blockquote.houdini strong:first-child::before { content: "\25B8  "; color: var(--accent); }
+blockquote.tip, blockquote.note, blockquote.warning, blockquote.houdini { border-left-width: 4px; }
+blockquote.tip { background: color-mix(in srgb, #1f7a3a 9%, var(--bg)); } blockquote.note { background: color-mix(in srgb, #3b6fb6 9%, var(--bg)); }
+blockquote.tip > p:first-child > strong:first-child { color: #1f7a3a; } blockquote.note > p:first-child > strong:first-child { color: #3b6fb6; }
+blockquote.warning > p:first-child > strong:first-child { color: #b45309; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) blockquote.tip > p:first-child > strong:first-child { color: #7ddc98; } :root:not([data-theme="light"]) blockquote.note > p:first-child > strong:first-child { color: #8fb4ec; } :root:not([data-theme="light"]) blockquote.warning > p:first-child > strong:first-child { color: #f0a868; } }
+:root[data-theme="dark"] blockquote.tip > p:first-child > strong:first-child { color: #7ddc98; } :root[data-theme="dark"] blockquote.note > p:first-child > strong:first-child { color: #8fb4ec; } :root[data-theme="dark"] blockquote.warning > p:first-child > strong:first-child { color: #f0a868; }
+/* Code blocks get a copy button. */
+pre { position: relative; }
+pre .copy { position: absolute; top: 6px; right: 6px; font: inherit; font-size: 12px; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; cursor: pointer; opacity: 0.75; }
+pre .copy:hover, pre .copy:focus-visible { opacity: 1; color: var(--accent); border-color: var(--accent); }
+/* Home: "Where to start" cards. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; margin: 14px 0 28px; }
+.card { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--fg); text-decoration: none; }
+.card:hover { border-color: var(--accent); }
+.card strong { color: var(--accent); font-size: 15.5px; }
+.card span { color: var(--muted); font-size: 13.5px; line-height: 1.45; }
+/* Settings reference: a card per setting, groups folded as in the UIs. */
+details.sgroup { margin: 10px 0 24px; }
+details.sgroup > summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+.setting { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 10px 0; scroll-margin-top: 16px; }
+.setting.target { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.setting h4 { margin: 0 0 8px; font-size: 15.5px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.setting h4 .anchor { color: var(--fg); text-decoration: none; margin-right: 4px; }
+.setting h4 .anchor:hover { color: var(--accent); }
+.chip { font-size: 11px; font-weight: 600; letter-spacing: 0.03em; padding: 1px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.rt { color: #7c3aed; } .chip.film { color: #0f766e; } .chip.interactive { color: #b45309; } .chip.prepass { color: #2563eb; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .chip.rt { color: #b69cf7; } :root:not([data-theme="light"]) .chip.film { color: #5eead4; } :root:not([data-theme="light"]) .chip.interactive { color: #f0a868; } :root:not([data-theme="light"]) .chip.prepass { color: #8fb4ec; } }
+:root[data-theme="dark"] .chip.rt { color: #b69cf7; } :root[data-theme="dark"] .chip.film { color: #5eead4; } :root[data-theme="dark"] .chip.interactive { color: #f0a868; } :root[data-theme="dark"] .chip.prepass { color: #8fb4ec; }
+dl.meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; margin: 0 0 8px; font-size: 13px; }
+dl.meta dt { color: var(--muted); } dl.meta dd { margin: 0; overflow-wrap: anywhere; }
+.twin { color: var(--muted); margin-left: 6px; }
+.setting .what { max-width: 74ch; }
+.setting .cost { margin-top: 6px; font-size: 13px; color: var(--muted); }
+.setting .cost span { font-weight: 600; color: var(--fg); margin-right: 4px; }
+/* "On this page", right of the text on wide screens. */
+#otp { display: none; }
+@media (min-width: 1280px) {
+  .layout { grid-template-columns: var(--nav-w) minmax(0, 1fr) 230px; }
+  #otp { display: block; position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 32px 16px 40px 0; font-size: 13px; }
+  #otp .h { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  #otp a { display: block; color: var(--muted); text-decoration: none; padding: 2px 0 2px 10px; border-left: 2px solid var(--line); }
+  #otp a.h3 { padding-left: 22px; }
+  #otp a:hover { color: var(--fg); }
+  #otp a.active { color: var(--accent); border-left-color: var(--accent); }
+  body.searching #otp { visibility: hidden; }
+}
+/* Search jumps, theme toggle, back to top. */
+.jumps { display: flex; flex-direction: column; gap: 1px; }
+.jumps a { display: block; font-size: 13px; color: var(--fg); text-decoration: none; padding: 3px 8px; border-radius: 5px; }
+.jumps a:hover, .jumps a:focus-visible { background: var(--accent-soft); }
+.jumps a small { color: var(--muted); margin-left: 6px; }
+.brandrow { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+#theme { font: inherit; font-size: 12px; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+#theme:hover { color: var(--accent); border-color: var(--accent); }
+#top { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); z-index: 5; font: inherit; font-size: 13px; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+#top:hover { border-color: var(--accent); color: var(--accent); }
+@media (max-width: 860px) { #top { bottom: max(64px, env(safe-area-inset-bottom, 0px)); } }
 </style>
 
 <div class="layout">
   <nav id="nav" aria-label="Contents">
-    <div class="brand"><span>Eldr</span> documentation<small>Hydra/Vulkan renderer for VFX</small></div>
+    <div class="brandrow"><div class="brand"><span>Eldr</span> documentation<small>Hydra/Vulkan renderer for VFX</small></div>
+      <button id="theme" type="button" aria-label="Switch between light and dark">Dark</button></div>
     <input id="q" type="search" placeholder="Search settings and text" aria-label="Search">
     <div class="hits" id="hits" aria-live="polite"></div>
+    <div class="jumps" id="jumps"></div>
     <div class="toc" id="toc"></div>
   </nav>
   <main><article id="content">Loading…</article></main>
+  <aside id="otp" aria-label="On this page"></aside>
 </div>
+<button id="top" type="button" class="hidden">Back to top</button>
 <button id="menu" type="button" aria-controls="nav" aria-expanded="false">Contents</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
@@ -123,7 +187,22 @@ for (const [i, d] of DOCS.entries()) {
   sec.querySelectorAll("h1,h2,h3").forEach(h => { h.id = h.tagName === "H1" ? d.id : d.id + "-" + slug(h.textContent); });
   sec.querySelectorAll("a[href]").forEach(a => {
     const m = a.getAttribute("href").match(/^(?:\.\.\/|guide\/)?([\w-]+)\.md(?:#(.*))?$/) || a.getAttribute("href").match(/^()#(.*)$/);
-    if (m) a.setAttribute("href", "#" + (m[1] || d.id) + (m[2] ? "-" + m[2] : ""));
+    // Setting cards keep their own ids (#eldr-<name>) wherever they are linked from.
+    if (m) a.setAttribute("href", "#" + (m[2] && m[2].startsWith("eldr-") && (!m[1] || m[1] === "settings") ? m[2] : (m[1] || d.id) + (m[2] ? "-" + m[2] : "")));
+  });
+  // Code blocks: a copy button.
+  sec.querySelectorAll("pre").forEach(pre => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "copy"; b.textContent = "Copy";
+    b.addEventListener("click", () => {
+      const text = pre.querySelector("code")?.textContent ?? pre.textContent;
+      const done = () => { b.textContent = "Copied"; setTimeout(() => b.textContent = "Copy", 1500); };
+      (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(done, () => {
+        const r = document.createRange(); r.selectNodeContents(pre.querySelector("code") || pre);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+        try { document.execCommand("copy"); done(); } catch (err) { b.textContent = "Press Ctrl+C"; }
+      });
+    });
+    pre.append(b);
   });
   // Pictures: the alt text becomes the caption; a paragraph of pictures only becomes a grid.
   sec.querySelectorAll("p").forEach(p => {
@@ -173,6 +252,7 @@ for (const [i, d] of DOCS.entries()) {
 }
 
 // Show the chapter that holds the hash's target, then scroll to it.
+const otp = document.getElementById("otp");
 function show(id = decodeURIComponent(location.hash.slice(1))) {
   const target = (id && document.getElementById(id)) || content.querySelector("section.doc");
   const sec = target.closest("section.doc");
@@ -180,6 +260,14 @@ function show(id = decodeURIComponent(location.hash.slice(1))) {
     const on = c.sec === sec;
     c.sec.classList.toggle("current", on); c.link.classList.toggle("active", on); c.subs.classList.toggle("open", on);
   }
+  // On this page: the chapter's h2 and h3 headings.
+  const hs = [...sec.querySelectorAll("h2, h3")];
+  otp.innerHTML = hs.length ? '<div class="h">On this page</div>' : "";
+  for (const h of hs) { const a = document.createElement("a"); a.href = "#" + h.id; a.textContent = h.textContent; a.className = h.tagName.toLowerCase(); otp.append(a); }
+  // A folded settings group opens to show its card.
+  for (let p = target.closest("details"); p; p = p.parentElement.closest("details")) p.open = true;
+  content.querySelectorAll(".setting.target").forEach(s => s.classList.remove("target"));
+  if (target.classList.contains("setting")) target.classList.add("target");
   if (target === sec) window.scrollTo(0, 0); else target.scrollIntoView();
 }
 window.addEventListener("hashchange", () => show());
@@ -199,14 +287,56 @@ const spy = new IntersectionObserver(es => {
   for (const e of es) if (e.isIntersecting) {
     toc.querySelectorAll(".subs a.active").forEach(a => a.classList.remove("active"));
     const a = links.get(e.target.id); if (a) { a.classList.add("active"); a.scrollIntoView({ block: "nearest" }); }
+    const o = otp.querySelector(`a[href="#${CSS.escape(e.target.id)}"]`);
+    if (o) { otp.querySelectorAll("a.active").forEach(x => x.classList.remove("active")); o.classList.add("active"); }
   }
 }, { rootMargin: "0px 0px -75% 0px" });
-content.querySelectorAll("h2").forEach(h => spy.observe(h));
+content.querySelectorAll("h2, h3").forEach(h => spy.observe(h));
+
+// Back to top, once the page is scrolled.
+const topBtn = document.getElementById("top");
+addEventListener("scroll", () => topBtn.classList.toggle("hidden", scrollY < 600), { passive: true });
+topBtn.addEventListener("click", () => window.scrollTo({ top: 0, behavior: "smooth" }));
+
+// Light / dark: follows the system until toggled; the choice is remembered in this browser.
+const themeBtn = document.getElementById("theme");
+const dark = () => document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+const label = () => themeBtn.textContent = dark() ? "Light" : "Dark";
+try { const t = localStorage.getItem("eldr-theme"); if (t) document.documentElement.dataset.theme = t; } catch (err) {}
+label();
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", label);
+themeBtn.addEventListener("click", () => {
+  const t = dark() ? "light" : "dark";
+  document.documentElement.dataset.theme = t; label();
+  try { localStorage.setItem("eldr-theme", t); } catch (err) {}
+});
 
 // Search runs over every chapter: blocks that don't match are hidden, parts with no match collapse,
 // and the nav dims them.
 const q = document.getElementById("q"), hits = document.getElementById("hits");
-const blocks = [...content.querySelectorAll("tbody tr, li, p, pre, h3, figure")];
+const BLOCKS = "tbody tr, li, p, pre, h3, figure, .setting, .card";
+const blocks = [...content.querySelectorAll(BLOCKS)];
+// Jump list: headings and settings whose title (or setting key) matches, best first; Enter opens the first.
+const jumps = document.getElementById("jumps");
+const targets = [...content.querySelectorAll("h1, h2, h3, .setting")].map(el => {
+  const title = el.classList.contains("setting") ? el.querySelector("h4 .anchor").textContent : el.textContent;
+  const key = el.classList.contains("setting") ? el.id.replace(/^eldr-/, "eldr:") : "";
+  return { el, title, key, hay: (title + " " + key).toLowerCase(), where: chapters.get(el.closest("section.doc").id).link.textContent };
+});
+function jumpList(t) {
+  jumps.textContent = "";
+  if (!t) return;
+  const found = targets.filter(x => x.hay.includes(t))
+    .sort((a, b) => (b.title.toLowerCase().startsWith(t) - a.title.toLowerCase().startsWith(t)) || a.title.length - b.title.length)
+    .slice(0, 10);
+  for (const x of found) {
+    const a = document.createElement("a"); a.href = "#" + x.el.id; a.textContent = x.title;
+    const s = document.createElement("small"); s.textContent = x.key || x.where; a.append(s); jumps.append(a);
+  }
+}
+function jump(a) { const h = a.getAttribute("href"); q.value = ""; search(); try { history.pushState(null, "", h); } catch (err) {} show(h.slice(1)); }
+jumps.addEventListener("click", e => { const a = e.target.closest("a"); if (!a) return; e.preventDefault(); e.stopPropagation(); jump(a); });
+q.addEventListener("keydown", e => { if (e.key === "Enter" && jumps.firstElementChild) { e.preventDefault(); jump(jumps.firstElementChild); } });
 const original = new Map();
 function search() {
   const t = q.value.trim().toLowerCase();
@@ -220,11 +350,14 @@ function search() {
     if (ok && t) { n++; mark(b, t); }
   }
   content.querySelectorAll(".part").forEach(p => {
-    const any = !t || p.querySelector("h2").textContent.toLowerCase().includes(t) || [...p.querySelectorAll("tbody tr, li, p, pre, h3, figure")].some(b => !b.classList.contains("hidden"));
+    const any = !t || p.querySelector("h2").textContent.toLowerCase().includes(t) || [...p.querySelectorAll(BLOCKS)].some(b => !b.classList.contains("hidden"));
     p.classList.toggle("hidden", !any);
     if (any && t) p.querySelectorAll("table").forEach(tb => tb.closest(".tw").classList.toggle("hidden", !tb.querySelector("tbody tr:not(.hidden)")));
     const a = links.get(p.querySelector("h2").id); if (a) a.classList.toggle("dim", !any);
   });
+  // Folded settings groups open while searching and fold back after.
+  content.querySelectorAll("details.sgroup").forEach(g => { if (t) { if (!g.open) { g.dataset.folded = "1"; g.open = true; } } else if (g.dataset.folded) { delete g.dataset.folded; g.open = false; } });
+  jumpList(t);
   if (!t) { content.querySelectorAll(".tw.hidden").forEach(w => w.classList.remove("hidden")); show(); }
   hits.textContent = t ? `${n} matching ${n === 1 ? "block" : "blocks"}` : "";
 }
