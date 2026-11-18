@@ -504,7 +504,10 @@ int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
         return 0;
     }
     const SdfPath &id = GetId();
-    const int limit = std::clamp(delegate->GetRenderSetting<int>(t.maxRefineLevel, kHdVkMaxRefineLevel), 0, 8);
+    // A diced polygon mesh (eldr:displacementDicing) has its own limit.
+    const int limit = std::clamp(_diced ? delegate->GetRenderSetting<int>(t.displacementDicing, kHdVkDisplacementDicing)
+                                        : delegate->GetRenderSetting<int>(t.maxRefineLevel, kHdVkMaxRefineLevel),
+                                 0, 8);
     static const TfToken own("eldr:refineLevel");
     int level = sceneDelegate->GetDisplayStyle(id).refineLevel;
     if (const std::optional<int> fixed = HdVkPrimvarIfSet<int>(sceneDelegate, id, own)) {
@@ -571,6 +574,13 @@ bool HdVkMesh::_FlattenRefined()
     for (const ProgramPrimvar &p : _programPrimvars) {
         add(p.values, p.components, p.interp);
     }
+    // A diced polygon mesh (_diced) keeps its authored normals, refined:
+    // displacement moves along them.
+    if (_diced) {
+        std::vector<float> f;
+        uint32_t components = 0;
+        add(HdVkToFloats(_normals, &f, &components) && components == 3 ? f : std::vector<float>(), 3, _normalsInterp);
+    }
     if (!_subdivision) {
         _subdivision = std::make_shared<HdVkSubdivision>();
     }
@@ -612,6 +622,29 @@ bool HdVkMesh::_FlattenRefined()
     }
     perVertex(inputs[0], &m.uvs);
     perVertex(inputs[1], &m.colors);
+    if (_diced) {
+        // Bilinear surfaces are faceted (no normals); a diced one needs them:
+        // its refined authored normals, else its triangles' (area weighted).
+        perVertex(inputs.back(), &m.normals);
+        if (m.normals.size() != vertices * 3) {
+            m.normals.assign(vertices * 3, 0.0f);
+            for (size_t t = 0; t + 2 < m.indices.size(); t += 3) {
+                const GfVec3f a(&m.points[m.indices[t] * 3]), b(&m.points[m.indices[t + 1] * 3]),
+                    c(&m.points[m.indices[t + 2] * 3]);
+                const GfVec3f n = GfCross(b - a, c - a);
+                for (int k = 0; k < 3; ++k) {
+                    for (int j = 0; j < 3; ++j) {
+                        m.normals[m.indices[t + k] * 3 + j] += n[j];
+                    }
+                }
+            }
+        }
+        for (size_t o = 0; o < vertices; ++o) {
+            GfVec3f n(&m.normals[o * 3]);
+            n.Normalize();
+            std::copy_n(n.data(), 3, &m.normals[o * 3]);
+        }
+    }
     // Velocities refine as the points do (limit stencils are linear).
     m.velocities.clear();
     VtVec3fArray velocities, unused;

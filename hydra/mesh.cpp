@@ -257,15 +257,34 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
         static const TfToken renderAsSubdivision("eldr:renderAsSubdivision");
         asSubdivision = HdVkPrimvar<bool>(sceneDelegate, id, renderAsSubdivision, false);
     }
-    if (topologyDirty || (*dirtyBits & HdChangeTracker::DirtySubdivTags) || asSubdivision != _asSubdivision) {
+    // eldr:displacementDicing: a displaced polygon mesh dices as a bilinear
+    // surface (flat, refined by size on screen) so displacement moves more
+    // than its corners, as Karma dices it.
+    // ponytail: the mesh's own material only (not its GeomSubsets'); a
+    // material that gains displacement dices with the mesh's next change.
+    bool diceDisplaced = _diceDisplaced;
+    if (topologyDirty || HdChangeTracker::IsAnyPrimvarDirty(*dirtyBits, id) ||
+        HdChangeTracker::IsDisplayStyleDirty(*dirtyBits, id) || (*dirtyBits & HdChangeTracker::DirtyMaterialId)) {
+        auto *delegate = static_cast<HdVkRenderDelegate *>(sceneDelegate->GetRenderIndex().GetRenderDelegate());
+        const auto *material = static_cast<const HdVkMaterial *>(sceneDelegate->GetRenderIndex().GetSprim(
+            HdPrimTypeTokens->material, sceneDelegate->GetMaterialId(id)));
+        diceDisplaced = material && material->Get() && material->Get()->displacementBound > 0 &&
+                        delegate->GetRenderSetting<bool>(HdVkRenderSettingsTokens->subdivision, kHdVkSubdivision) &&
+                        delegate->GetRenderSetting<int>(HdVkRenderSettingsTokens->displacementDicing,
+                                                        kHdVkDisplacementDicing) > 0;
+    }
+    if (topologyDirty || (*dirtyBits & HdChangeTracker::DirtySubdivTags) || asSubdivision != _asSubdivision ||
+        diceDisplaced != _diceDisplaced) {
         HdVkTimedCall part(HdVkCallTimes::kSyncTopology);
         HdMeshTopology topology(GetMeshTopology(sceneDelegate), 0);
-        if (asSubdivision && topology.GetScheme() == PxOsdOpenSubdivTokens->none) {
-            topology = HdMeshTopology(PxOsdOpenSubdivTokens->catmullClark, topology.GetOrientation(),
-                                      topology.GetFaceVertexCounts(), topology.GetFaceVertexIndices(),
-                                      topology.GetHoleIndices(), 0);
+        if ((asSubdivision || diceDisplaced) && topology.GetScheme() == PxOsdOpenSubdivTokens->none) {
+            topology = HdMeshTopology(asSubdivision ? PxOsdOpenSubdivTokens->catmullClark : PxOsdOpenSubdivTokens->bilinear,
+                                      topology.GetOrientation(), topology.GetFaceVertexCounts(),
+                                      topology.GetFaceVertexIndices(), topology.GetHoleIndices(), 0);
         }
+        _diced = diceDisplaced && !asSubdivision && topology.GetScheme() == PxOsdOpenSubdivTokens->bilinear;
         _asSubdivision = asSubdivision;
+        _diceDisplaced = diceDisplaced;
         topology.SetSubdivTags(GetSubdivTags(sceneDelegate));  // creases, corners, boundary rules
         if (!(topology == _topology)) {
             _topology = topology;

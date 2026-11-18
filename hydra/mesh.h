@@ -172,6 +172,8 @@ private:
     bool _FlattenRefined();
     int _refineLevel = 0;
     bool _asSubdivision = false;  // primvars:eldr:renderAsSubdivision
+    bool _diceDisplaced = false;  // its material displaces (and eldr:displacementDicing is on)
+    bool _diced = false;          // so its polygons dice as a bilinear surface
     bool _subdivisionCounted = false;  // in HdVkSubdivisionMeshes
     std::shared_ptr<HdVkSubdivision> _subdivision;
     // The points changed after the first sync: keep _subdivision. A still

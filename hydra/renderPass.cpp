@@ -430,6 +430,7 @@ void HdVkRenderPass::_Execute(HdRenderPassStateSharedPtr const &state,
                 const auto &ts = *HdVkRenderSettingsTokens;
                 resync = resync || (typed != current && (token == ts.subdivision || token == ts.maxRefineLevel ||
                                                          token == HdVkRenderSettingsTokens->screenDicing ||
+                                                         token == HdVkRenderSettingsTokens->displacementDicing ||
                                                          token == HdVkRenderSettingsTokens->textureCompression));
             }
         }

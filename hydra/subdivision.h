@@ -26,6 +26,9 @@ constexpr int kHdVkMaxRefineLevel = 3;
 // eldr:screenDicing: a subdivision surface's level comes from its size
 // on screen (Karma's dicing quality).
 constexpr bool kHdVkScreenDicing = true;
+// eldr:displacementDicing: polygon meshes (scheme none) with displacement
+// dice as bilinear surfaces up to this level (0: off, displaced at the cage).
+constexpr int kHdVkDisplacementDicing = 5;
 
 // The view subdivision surfaces dice for (eldr:screenDicing): world to clip,
 // the eye, the focal length in pixels (an orthographic view: pixels per
