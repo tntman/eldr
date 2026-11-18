@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    doc = "Thin-lens depth of field focused on the tall box (USD lens units: tenths of a scene unit)."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "camera"
+    {
+        float fStop = 2
+        float focusDistance = 10.6
+    }
+}

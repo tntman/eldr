@@ -1,0 +1,30 @@
+#usda 1.0
+(
+    doc = "The ceiling light replaced by a point light with an IES profile."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "ceiling_light" (active = false)
+    {
+    }
+    def SphereLight "ies_light" (prepend apiSchemas = ["ShapingAPI"])
+    {
+        float inputs:radius = 0.05
+        float inputs:intensity = 1
+        float inputs:exposure = 8.644
+        color3f inputs:color = (1, 0.85, 0.7)
+        asset inputs:shaping:ies:file = @../beam.ies@
+        double3 xformOp:translate = (2.78, 5.3, 2.795)
+        float3 xformOp:rotateXYZ = (-90, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}

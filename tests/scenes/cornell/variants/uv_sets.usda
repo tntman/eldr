@@ -1,0 +1,97 @@
+#usda 1.0
+(
+    doc = "Two UV sets: a checker reads st1 (four times st, so 32 x 32 cells) while a left-to-right metallic ramp reads st."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def Material "two_sets"
+    {
+        token outputs:surface.connect = </cornell_box/two_sets/S.outputs:surface>
+        def Shader "S"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor.connect = </cornell_box/two_sets/checker.outputs:rgb>
+            float inputs:metallic.connect = </cornell_box/two_sets/ramp.outputs:r>
+            float inputs:roughness = 0.4
+            token outputs:surface
+        }
+        def Shader "checker"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../checker.png@
+            float2 inputs:st.connect = </cornell_box/two_sets/detail_uv.outputs:result>
+            token inputs:wrapS = "repeat"
+            token inputs:wrapT = "repeat"
+            float3 outputs:rgb
+        }
+        def Shader "ramp"
+        {
+            uniform token info:id = "UsdUVTexture"
+            asset inputs:file = @../ramp.png@
+            token inputs:sourceColorSpace = "raw"
+            float2 inputs:st.connect = </cornell_box/two_sets/base_uv.outputs:result>
+            float outputs:r
+        }
+        def Shader "base_uv"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st"
+            float2 outputs:result
+        }
+        def Shader "detail_uv"
+        {
+            uniform token info:id = "UsdPrimvarReader_float2"
+            string inputs:varname = "st1"
+            float2 outputs:result
+        }
+    }
+    over "tall_box_front" (active = false)
+    {
+    }
+    over "tall_box_right" (active = false)
+    {
+    }
+    over "tall_box_back" (active = false)
+    {
+    }
+    over "tall_box_left" (active = false)
+    {
+    }
+    over "tall_box_top" (active = false)
+    {
+    }
+    over "short_box_back" (active = false)
+    {
+    }
+    over "short_box_right" (active = false)
+    {
+    }
+    over "short_box_front" (active = false)
+    {
+    }
+    over "short_box_left" (active = false)
+    {
+    }
+    over "short_box_top" (active = false)
+    {
+    }
+    def Mesh "panel" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4]
+        int[] faceVertexIndices = [0, 1, 2, 3]
+        point3f[] points = [(4.5, 0.5, 4), (1, 0.5, 4), (1, 4, 4), (4.5, 4, 4)]
+        texCoord2f[] primvars:st = [(0, 0), (1, 0), (1, 1), (0, 1)] (interpolation = "vertex")
+        texCoord2f[] primvars:st1 = [(0, 0), (4, 0), (4, 4), (0, 4)] (interpolation = "vertex")
+        uniform token subdivisionScheme = "none"
+        rel material:binding = </cornell_box/two_sets>
+    }
+}

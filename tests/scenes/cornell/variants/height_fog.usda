@@ -1,0 +1,26 @@
+#usda 1.0
+(
+    doc = "UE's Exponential Height Fog with Volumetric Fog filling the box, lit by the ceiling light (hdUE only: Karma has no height fog)."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+}
+
+over "Render"
+{
+    over "Settings"
+    {
+        bool unreal:heightFog = 1
+        float unreal:heightFog:FogDensity = 0.5
+        bool unreal:heightFog:bEnableVolumetricFog = 1
+    }
+}

@@ -1,0 +1,44 @@
+#usda 1.0
+(
+    doc = "A ball crossing the box during a half-frame shutter."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def Material "blue"
+    {
+        token outputs:surface.connect = </cornell_box/blue/S.outputs:surface>
+        def Shader "S"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.25, 0.8)
+            float inputs:roughness = 1.0
+            float inputs:metallic = 0.0
+            token outputs:surface
+        }
+    }
+    over "camera"
+    {
+        double shutter:open = -0.25
+        double shutter:close = 0.25
+    }
+    def Sphere "ball" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        double radius = 0.55
+        rel material:binding = </cornell_box/blue>
+        double3 xformOp:translate.timeSamples = {
+            0: (5.2, 0.55, 1.0),
+            1: (4.0, 0.55, 1.0),
+            2: (2.8, 0.55, 1.0),
+        }
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
+}

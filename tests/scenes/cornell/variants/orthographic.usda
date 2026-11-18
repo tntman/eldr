@@ -1,0 +1,22 @@
+#usda 1.0
+(
+    doc = "Orthographic projection with a 6.2 m window."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "camera"
+    {
+        token projection = "orthographic"
+        float horizontalAperture = 62
+        float verticalAperture = 62
+    }
+}

@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    doc = "A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the 512 x 512 frame, as husk tiles do."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "Render"
+{
+    over "Settings"
+    {
+        uniform float4 dataWindowNDC = (0.25, 0.15, 0.75, 0.65)
+    }
+}
