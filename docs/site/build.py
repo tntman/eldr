@@ -30,11 +30,12 @@ DOCS = [
     ("features.md", "How Eldr works", "Reference"),
     ("houdini.md", "Houdini", "Reference"),
     ("materialx.md", "MaterialX coverage", "Reference"),
+    ("gallery.md", "Gallery: Eldr vs Karma", "Reference"),
     ("comparison.md", "Eldr vs EEVEE and Unreal", "Reference"),
     ("goals.md", "Goals", "Reference"),
     ("testing.md", "Testing", "Reference"),
 ]
-MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".svg": "image/svg+xml"}
 
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 

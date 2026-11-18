@@ -1,0 +1,32 @@
+#usda 1.0
+(
+    doc = "UE's tonemapper (+2.5 stops), bloom, vignette, chromatic aberration, lens flares, film grain and a warm grade on the hdUE beauty; Karma renders the linear image."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+}
+
+over "Render"
+{
+    over "Settings"
+    {
+        bool unreal:tonemapper = 1
+        float unreal:postProcess:BloomIntensity = 1.5
+        float unreal:postProcess:VignetteIntensity = 0.5
+        float unreal:postProcess:AutoExposureBias = 2.5
+        float unreal:postProcess:SceneFringeIntensity = 4
+        float unreal:postProcess:FilmGrainIntensity = 0.35
+        float unreal:postProcess:LensFlareIntensity = 2
+        float unreal:postProcess:WhiteTemp = 5200
+        float4 unreal:postProcess:ColorSaturation = (1, 1, 1, 1.15)
+    }
+}

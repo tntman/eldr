@@ -1,0 +1,20 @@
+#usda 1.0
+(
+    doc = "Camera exposure of +1 stop."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    over "camera"
+    {
+        float exposure = 1
+    }
+}

@@ -1,0 +1,66 @@
+#usda 1.0
+(
+    doc = "A Catmull-Clark cube (USD default scheme) with a red GeomSubset on two faces, refined to level 3 in hdUE."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def Material "blue"
+    {
+        token outputs:surface.connect = </cornell_box/blue/S.outputs:surface>
+        def Shader "S"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.1, 0.25, 0.8)
+            float inputs:roughness = 1.0
+            float inputs:metallic = 0.0
+            token outputs:surface
+        }
+    }
+    def Material "accent"
+    {
+        token outputs:surface.connect = </cornell_box/accent/S.outputs:surface>
+        def Shader "S"
+        {
+            uniform token info:id = "UsdPreviewSurface"
+            color3f inputs:diffuseColor = (0.8, 0.1, 0.05)
+            float inputs:roughness = 1.0
+            float inputs:metallic = 0.0
+            token outputs:surface
+        }
+    }
+    def Mesh "subd_cube" (prepend apiSchemas = ["MaterialBindingAPI"])
+    {
+        int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
+        int[] faceVertexIndices = [0, 1, 3, 2, 2, 3, 5, 4, 4, 5, 7, 6, 6, 7, 1, 0, 1, 7, 5, 3, 6, 0, 2, 4]
+        point3f[] points = [(-0.5, -0.5, 0.5), (0.5, -0.5, 0.5), (-0.5, 0.5, 0.5), (0.5, 0.5, 0.5), (-0.5, 0.5, -0.5), (0.5, 0.5, -0.5), (-0.5, -0.5, -0.5), (0.5, -0.5, -0.5)]
+        rel material:binding = </cornell_box/blue>
+        double3 xformOp:translate = (4.0, 0.75, 1.1)
+        double3 xformOp:scale = (1.4, 1.4, 1.4)
+        float3 xformOp:rotateXYZ = (0, 30, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ", "xformOp:scale"]
+        def GeomSubset "top" (prepend apiSchemas = ["MaterialBindingAPI"])
+        {
+            uniform token elementType = "face"
+            uniform token familyName = "materialBind"
+            int[] indices = [1, 4]
+            rel material:binding = </cornell_box/accent>
+        }
+    }
+}
+
+over "Render"
+{
+    over "Settings"
+    {
+        int unreal:subdivisionLevel = 3
+    }
+}
