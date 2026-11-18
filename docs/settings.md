@@ -232,7 +232,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 | Ray-Traced Shadow Rays per Light<br>`eldr:rtShadowSamples` | int 4 | Ray-traced shadow rays per light, pixel and sample (1-16). More: smoother soft shadows per sample. 1 is enough for finals, as the samples average out. [RT] | Linear |
 | Ray-Traced Shadow Lights<br>`eldr:rtShadowLights` | int 4 | How many lights Ray-Traced Shadows traces (1-16): the sun and the most important local lights. The others keep shadow maps. [RT] | Up to a ray per light and pixel |
 | Ray-Traced Shadow Denoise<br>`eldr:rtShadowDenoise` | on | Blurs ray-traced shadows across their soft edges only, so hard contact shadows stay hard; fades out over Effect Denoise Fade samples. Off: raw, noisier shadows. [RT] | One extra ray per light on shadowed pixels while active; no bias on the Kitchen |
-| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | Ray-traced shadows pass through glass, taking its colour, and through volumes. Off: those objects cast no ray-traced shadow. [RT] | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
+| Ray-Traced Shadows through Glass and Volumes<br>`eldr:rtTranslucentShadows` | on | Ray-traced shadows pass through glass, taking its colour, and through volumes; so does the final gather's sky light. Off: those objects cast no ray-traced shadow. [RT] | Glass 1.08 vs 1.01 ms; volume 0.62 vs 0.49 ms |
 | Ray-Traced Shadows of Further Suns<br>`eldr:rtExtraSunShadows` | on | While ray tracing runs for another effect, distant lights after the first, such as a dome's extracted sun, cast ray-traced shadows. Never starts ray tracing by itself. Off: they use Further Sun Shadow Maps. [RT] | volume.usda 720p: 3.4 ms on a GTX 1080 Ti |
 
 ### Reflections
