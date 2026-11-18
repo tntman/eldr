@@ -265,7 +265,7 @@ A final render is a Render Settings prim with the expensive settings ticked one 
 <!-- DEVELOPMENT -->
 ## Development
 
-Building needs Visual Studio 2022 (x64), CMake with Ninja, the Vulkan SDK (glslc), and Houdini 22.0.466 or OpenUSD 26.08 built with OpenVDB. Intel OIDN 2.x is optional (for `eldr:denoise`); sccache is used when found.
+Building needs Visual Studio 2022 (x64), CMake with Ninja, the Vulkan SDK (glslc), and Houdini 22.0.466 or OpenUSD 26.08 built with OpenVDB. Intel OIDN 2.x is optional (for `eldr:denoise`); `-DHDVK_SCCACHE=ON` uses sccache.
 
 ```powershell
 # Houdini build (Solaris, husk)
