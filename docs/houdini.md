@@ -12,7 +12,7 @@ cmake -S . -B build-h22 -G Ninja -DCMAKE_BUILD_TYPE=Release -DHDVK_HOUDINI=ON ^
 cmake --build build-h22 --target hdVk
 ```
 
-If `sccache` is on `PATH` (or in `C:/dev/sccache`), CMake uses it as the compiler launcher and builds with `/Z7` so rebuilds hit the cache; `-DHDVK_SCCACHE=OFF` turns it off.
+With `-DHDVK_SCCACHE=ON` and `sccache` on `PATH` (or in `C:/dev/sccache`), CMake uses it as the compiler launcher and builds with `/Z7` so rebuilds hit the cache. It is off by default: sccache can hand back the include list of another build tree with the same sources (git worktrees), and ninja then misses header edits.
 
 | Difference from the normal build | Detail |
 |---|---|

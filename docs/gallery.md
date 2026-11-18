@@ -29,13 +29,27 @@ Every scene is the CC0 Cornell box (`tests/scenes/cornell`) plus one small varia
 
 Times are husk wall clock at 512 x 512, including startup and scene load; in brackets Eldr's time in its render pass and the GPU time of one film sample. *vs Karma* is the mean luminance ratio, then the mean absolute difference as rendered and, in brackets, after scaling the image to Karma's mean luminance (exposure-matched), both as a percentage of Karma's mean luminance.
 
+## Methodology
+
+| | |
+|---|---|
+| Machine | Windows, NVIDIA GTX 1080 Ti (Eldr); Karma CPU on the same machine |
+| Resolution | 512 x 512, every scene |
+| Eldr default | The scene's `/Render/Settings` as authored, `husk -R HdVkRendererPlugin` |
+| Eldr final | The same with `tests/scenes/cornell/eldr_final.usda` sublayered over it |
+| Karma | `BRAY_HdKarma`, the scene's settings: 512 path-traced samples, 8 diffuse bounces |
+| Time | husk wall clock per run, startup and scene load included. In brackets (Eldr): time in its render pass and GPU time of one film sample, from `HDVK_TIMING=2` |
+| Brightness | Mean luminance against Karma's (x1.00: as bright as Karma) |
+| Difference | Mean absolute difference, % of Karma's mean luminance, as rendered and exposure-matched |
+| Regenerate | `python tests/render_gallery.py [outdir] [--only base,glossy] [--force]` (renders, pictures, this page and README.md's gallery) |
+
 ## base
 
 Gallery base scene: the CC0 Cornell box (cornell-box.usda, unchanged) with the canonical Cornell camera, its ceiling light as a UsdLux RectLight of the same size and radiance, and render settings shared by hdUE and Karma.
 
 *In Eldr:* the default settings have no bounced light (GI is off unless asked for), so the ceiling and shadowed sides are black; the final settings add GI and final gather.
 
-![base: Eldr default, Eldr final and Karma side by side](images/gallery/base.jpg)
+![base, left to right Eldr default, Eldr final, Karma. Eldr default 3.0 s, brightness x0.52; Eldr final 6.1 s, brightness x1.07; Karma 61.6 s](images/gallery/base.jpg)
 
 ## clearcoat
 
@@ -43,13 +57,13 @@ Preview Surface clearcoat: red lacquer (clearcoat 1 over a rough red base, left)
 
 *In Eldr:* the coat shows the light's highlight but not the room's reflection Karma's coat shows.
 
-![clearcoat: Eldr default, Eldr final and Karma side by side](images/gallery/clearcoat.jpg)
+![clearcoat, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.63; Eldr final 6.6 s, brightness x1.04; Karma 47.4 s](images/gallery/clearcoat.jpg)
 
 ## depth_of_field
 
 Thin-lens depth of field focused on the tall box (USD lens units: tenths of a scene unit).
 
-![depth_of_field: Eldr default, Eldr final and Karma side by side](images/gallery/depth_of_field.jpg)
+![depth_of_field, left to right Eldr default, Eldr final, Karma. Eldr default 3.0 s, brightness x0.52; Eldr final 6.0 s, brightness x1.06; Karma 68.4 s](images/gallery/depth_of_field.jpg)
 
 ## displacement
 
@@ -57,19 +71,19 @@ Preview Surface displacement on a single quad: blurred checker bumps, 0.6 m high
 
 *In Eldr:* displacement moves the mesh's vertices and Eldr doesn't dice meshes, so this four-vertex quad shows only the bumped shading, not the bumps Karma dices.
 
-![displacement: Eldr default, Eldr final and Karma side by side](images/gallery/displacement.jpg)
+![displacement, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.63; Eldr final 5.9 s, brightness x1.09; Karma 48.1 s](images/gallery/displacement.jpg)
 
 ## exposure
 
 Camera exposure of +1 stop.
 
-![exposure: Eldr default, Eldr final and Karma side by side](images/gallery/exposure.jpg)
+![exposure, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.52; Eldr final 6.0 s, brightness x1.07; Karma 68.7 s](images/gallery/exposure.jpg)
 
 ## glossy
 
 Glossy metal on the tall box and a glossy dielectric ball.
 
-![glossy: Eldr default, Eldr final and Karma side by side](images/gallery/glossy.jpg)
+![glossy, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.65; Eldr final 6.7 s, brightness x1.16; Karma 35.4 s](images/gallery/glossy.jpg)
 
 ## height_fog
 
@@ -77,13 +91,13 @@ UE's Exponential Height Fog with Volumetric Fog filling the box, lit by the ceil
 
 *In Eldr:* Eldr and Karma ignore the `unreal:` fog settings: the image is the base scene.
 
-![height_fog: Eldr default, Eldr final and Karma side by side](images/gallery/height_fog.jpg)
+![height_fog, left to right Eldr default, Eldr final, Karma. Eldr default 3.0 s, brightness x0.52; Eldr final 6.0 s, brightness x1.07; Karma 54.3 s](images/gallery/height_fog.jpg)
 
 ## ies
 
 The ceiling light replaced by a point light with an IES profile.
 
-![ies: Eldr default, Eldr final and Karma side by side](images/gallery/ies.jpg)
+![ies, left to right Eldr default, Eldr final, Karma. Eldr default 2.9 s, brightness x0.35; Eldr final 6.0 s, brightness x0.98; Karma 71.0 s](images/gallery/ies.jpg)
 
 ## instances
 
@@ -91,31 +105,31 @@ A PointInstancer, Points and a cubic BasisCurves helix, with per-instance and pe
 
 *In Eldr:* the cubes have no material and Eldr doesn't read the instancer's per-instance displayColor, so they render grey.
 
-![instances: Eldr default, Eldr final and Karma side by side](images/gallery/instances.jpg)
+![instances, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.52; Eldr final 6.7 s, brightness x1.08; Karma 53.5 s](images/gallery/instances.jpg)
 
 ## lens_shift
 
 Horizontal and vertical aperture offsets (lens shift).
 
-![lens_shift: Eldr default, Eldr final and Karma side by side](images/gallery/lens_shift.jpg)
+![lens_shift, left to right Eldr default, Eldr final, Karma. Eldr default 2.9 s, brightness x0.49; Eldr final 5.6 s, brightness x1.07; Karma 38.5 s](images/gallery/lens_shift.jpg)
 
 ## light_linking
 
 A warm light linked only to the tall box and a cool one only to the short box; the ceiling light lights everything. Lumen still bounces the linked lights onto every surface: UE’s lighting channels only restrict direct light.
 
-![light_linking: Eldr default, Eldr final and Karma side by side](images/gallery/light_linking.jpg)
+![light_linking, left to right Eldr default, Eldr final, Karma. Eldr default 3.0 s, brightness x0.60; Eldr final 6.2 s, brightness x1.05; Karma 71.3 s](images/gallery/light_linking.jpg)
 
 ## motion_blur
 
 A ball crossing the box during a half-frame shutter.
 
-![motion_blur: Eldr default, Eldr final and Karma side by side](images/gallery/motion_blur.jpg)
+![motion_blur, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.52; Eldr final 6.4 s, brightness x1.07; Karma 56.6 s](images/gallery/motion_blur.jpg)
 
 ## orthographic
 
 Orthographic projection with a 6.2 m window.
 
-![orthographic: Eldr default, Eldr final and Karma side by side](images/gallery/orthographic.jpg)
+![orthographic, left to right Eldr default, Eldr final, Karma. Eldr default 2.9 s, brightness x0.58; Eldr final 5.8 s, brightness x1.07; Karma 51.0 s](images/gallery/orthographic.jpg)
 
 ## post_processing
 
@@ -123,13 +137,13 @@ UE's tonemapper (+2.5 stops), bloom, vignette, chromatic aberration, lens flares
 
 *In Eldr:* Eldr and Karma ignore the `unreal:` post-processing settings and render the linear image.
 
-![post_processing: Eldr default, Eldr final and Karma side by side](images/gallery/post_processing.jpg)
+![post_processing, left to right Eldr default, Eldr final, Karma. Eldr default 2.9 s, brightness x0.52; Eldr final 6.0 s, brightness x1.07; Karma 53.4 s](images/gallery/post_processing.jpg)
 
 ## render_region
 
 A render region: dataWindowNDC (0.25, 0.15)-(0.75, 0.65) renders only that part of the 512 x 512 frame, as husk tiles do.
 
-![render_region: Eldr default, Eldr final and Karma side by side](images/gallery/render_region.jpg)
+![render_region, left to right Eldr default, Eldr final, Karma. Eldr default 2.9 s, brightness x0.57; Eldr final 4.3 s, brightness x1.06; Karma 17.9 s](images/gallery/render_region.jpg)
 
 ## subdivision
 
@@ -137,16 +151,16 @@ A Catmull-Clark cube (USD default scheme) with a red GeomSubset on two faces, re
 
 *In Eldr:* Eldr refines the Catmull-Clark cube with OpenSubdiv; `unreal:subdivisionLevel` is hdUE's own.
 
-![subdivision: Eldr default, Eldr final and Karma side by side](images/gallery/subdivision.jpg)
+![subdivision, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.52; Eldr final 6.3 s, brightness x1.07; Karma 53.2 s](images/gallery/subdivision.jpg)
 
 ## uv_sets
 
 Two UV sets: a checker reads st1 (four times st, so 32 x 32 cells) while a left-to-right metallic ramp reads st.
 
-![uv_sets: Eldr default, Eldr final and Karma side by side](images/gallery/uv_sets.jpg)
+![uv_sets, left to right Eldr default, Eldr final, Karma. Eldr default 3.2 s, brightness x0.66; Eldr final 6.1 s, brightness x1.10; Karma 40.1 s](images/gallery/uv_sets.jpg)
 
 ## volume
 
 A fog sphere (OpenVDB, density field) in the middle of the box.
 
-![volume: Eldr default, Eldr final and Karma side by side](images/gallery/volume.jpg)
+![volume, left to right Eldr default, Eldr final, Karma. Eldr default 3.1 s, brightness x0.53; Eldr final 7.6 s, brightness x1.01; Karma 67.2 s](images/gallery/volume.jpg)

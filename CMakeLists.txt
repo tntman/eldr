@@ -3,7 +3,7 @@ project(hdvk LANGUAGES CXX)
 
 # Compiler cache: used when found (HDVK_SCCACHE=OFF disables). MSVC needs /Z7 instead of /Zi so
 # the debug info lives in the object file and can be cached.
-option(HDVK_SCCACHE "Use sccache as compiler launcher when found" ON)
+option(HDVK_SCCACHE "Use sccache as compiler launcher when found (off: its cached include lists can name another build tree, so header edits miss rebuilds)" OFF)
 if(HDVK_SCCACHE)
     find_program(HDVK_SCCACHE_EXE sccache HINTS C:/dev/sccache/sccache-v0.10.0-x86_64-pc-windows-msvc)
     if(HDVK_SCCACHE_EXE)
