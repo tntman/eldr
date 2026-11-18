@@ -1,0 +1,45 @@
+#usda 1.0
+(
+    doc = "A PointInstancer, Points and a cubic BasisCurves helix, with per-instance and per-curve colours."
+    defaultPrim = "cornell_box"
+    metersPerUnit = 1
+    upAxis = "Z"
+    startTimeCode = 1
+    endTimeCode = 1
+    timeCodesPerSecond = 24
+    renderSettingsPrimPath = "/Render/Settings"
+    subLayers = [@../cornell.usda@]
+)
+
+over "cornell_box"
+{
+    def PointInstancer "ring"
+    {
+        point3f[] positions = [(4.5, 0.15, 1.15), (4.379, 0.15, 1.425), (4.05, 0.15, 1.626), (3.6, 0.15, 1.7), (3.15, 0.15, 1.626), (2.821, 0.15, 1.425), (2.7, 0.15, 1.15), (2.821, 0.15, 0.875), (3.15, 0.15, 0.674), (3.6, 0.15, 0.6), (4.05, 0.15, 0.674), (4.379, 0.15, 0.875)]
+        int[] protoIndices = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        color3f[] primvars:displayColor = [(1.0, 0.248, 0.255), (0.77, 0.0, 0.734), (0.292, 0.213, 0.998), (0.005, 0.689, 0.804), (0.173, 0.992, 0.33), (0.642, 0.842, 0.013), (0.98, 0.378, 0.143), (0.877, 0.026, 0.602), (0.427, 0.11, 0.967), (0.044, 0.552, 0.903), (0.08, 0.947, 0.469), (0.502, 0.93, 0.063)] (interpolation = "vertex")
+        rel prototypes = </cornell_box/ring/P/box>
+        def Scope "P"
+        {
+            def Cube "box"
+            {
+                double size = 0.3
+            }
+        }
+    }
+    def Points "dots"
+    {
+        point3f[] points = [(0.9, 0.15, 0.3), (1.3, 0.3, 0.3), (1.7, 0.45, 0.3), (2.1, 0.6, 0.3), (2.5, 0.75, 0.3)]
+        float[] widths = [0.3, 0.3, 0.3, 0.3, 0.3] (interpolation = "vertex")
+        color3f[] primvars:displayColor = [(0.9, 0.8, 0.2)]
+    }
+    def BasisCurves "helix"
+    {
+        uniform token type = "cubic"
+        uniform token basis = "catmullRom"
+        int[] curveVertexCounts = [30]
+        point3f[] points = [(5.25, 0.2, 2.2), (5.213, 0.26, 2.344), (5.112, 0.32, 2.452), (4.971, 0.38, 2.499), (4.825, 0.44, 2.473), (4.71, 0.5, 2.38), (4.653, 0.56, 2.242), (4.669, 0.62, 2.095), (4.754, 0.68, 1.973), (4.887, 0.74, 1.907), (5.035, 0.8, 1.912), (5.163, 0.86, 1.988), (5.238, 0.92, 2.116), (5.243, 0.98, 2.265), (5.176, 1.04, 2.397), (5.054, 1.1, 2.481), (4.906, 1.16, 2.497), (4.769, 1.22, 2.44), (4.677, 1.28, 2.324), (4.651, 1.34, 2.177), (4.698, 1.4, 2.037), (4.807, 1.46, 1.936), (4.951, 1.52, 1.9), (5.095, 1.58, 1.937), (5.203, 1.64, 2.039), (5.249, 1.7, 2.18), (5.222, 1.76, 2.326), (5.128, 1.82, 2.441), (4.991, 1.88, 2.497), (4.844, 1.94, 2.48)]
+        float[] widths = [0.08] (interpolation = "constant")
+        color3f[] primvars:displayColor = [(0.2, 0.7, 0.9)]
+    }
+}

@@ -51,8 +51,9 @@ foreach(shader mesh.vert mesh.frag mask.frag fullscreen.vert sky.frag cull.comp 
                shutter.comp light_shapes.frag background_unscale.comp)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/post.glsl
                 renderer/shaders/scene.glsl renderer/shaders/lights.glsl renderer/shaders/material.glsl
                 renderer/shaders/lens.glsl renderer/shaders/program.glsl renderer/shaders/noise.glsl
@@ -67,8 +68,9 @@ foreach(shader rt_pixels.rgen rt_probes.rgen rt_refraction.rgen rt.rmiss rt_shad
         rt_shadow.rahit)
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${shader}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb
                 -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
                 renderer/shaders/rt_shade.glsl renderer/shaders/rt_evaluate.glsl renderer/shaders/displace.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl renderer/shaders/volume.glsl
@@ -79,8 +81,9 @@ endforeach()
 # Caustic photons: rt_refraction.rgen with PHOTONS (rt_photons.glsl).
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/rt_photons.rgen.inc)
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DPHOTONS
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DPHOTONS
             -fshader-stage=rgen -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/rt_refraction.rgen
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/rt_refraction.rgen renderer/shaders/rt_photons.glsl renderer/shaders/caustics.glsl
             renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
             renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/rt.glsl
@@ -96,31 +99,35 @@ foreach(shader gtao.frag gtao_denoise.frag)
     string(REPLACE "gtao" "ssgi" variant ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${variant}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -o ${spv}
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DSSGI -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/${shader})
     list(APPEND shader_incs ${spv})
 endforeach()
 foreach(pass 0 1 2)  # denoised SSR (ssr.cpp): its three passes
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssr_denoise${pass}.frag.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DPASS=${pass} -o ${spv}
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DPASS=${pass} -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/ssr_denoise.frag
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/ssr_denoise.frag)
     list(APPEND shader_incs ${spv})
 endforeach()
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/ssgi_bitmask.frag.inc)  # SSGI with a visibility bitmask
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DSSGI -DBITMASK -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/gtao.frag
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/gtao.frag)
 list(APPEND shader_incs ${spv})
 foreach(shader mesh.vert mesh.frag aov.frag matte.frag)
     string(REGEX REPLACE "^([a-z]+)\\." "\\1_graph." graph ${shader})
     set(spv ${CMAKE_CURRENT_BINARY_DIR}/${graph}.inc)
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DGRAPH -o ${spv}
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DGRAPH -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/${shader}
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/${shader} renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl
@@ -138,8 +145,9 @@ foreach(variant layers graph_layers)
         list(APPEND defines -DGRAPH)
     endif()
     add_custom_command(OUTPUT ${spv}
-        COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
+        COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c ${defines} -o ${spv}
                 ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.frag
+        DEPFILE ${spv}.d
         DEPENDS renderer/shaders/mesh.frag renderer/shaders/frame.glsl renderer/shaders/tiles.glsl renderer/shaders/scene.glsl
                 renderer/shaders/lights.glsl renderer/shaders/material.glsl renderer/shaders/program.glsl
                 renderer/shaders/noise.glsl renderer/shaders/brdf.glsl renderer/shaders/gi.glsl renderer/shaders/caustics.glsl
@@ -150,8 +158,9 @@ endforeach()
 # Half resolution volumes: volume.frag packing radiance and coloured transmittance (HALF).
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/volume_half.frag.inc)
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DHALF
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -I ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanovdb -DHALF
             -o ${spv} ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/volume.frag
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/volume.frag renderer/shaders/frame.glsl renderer/shaders/lights.glsl
             renderer/shaders/fog.glsl renderer/shaders/noise.glsl renderer/shaders/volume.glsl
             third_party/nanovdb/PNanoVDB.h)
@@ -159,15 +168,17 @@ list(APPEND shader_incs ${spv})
 # Upscaling (TAAU): taa.frag reconstructing a larger history (UPSCALE).
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/taa_upscale.frag.inc)
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DUPSCALE -o ${spv}
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DUPSCALE -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/taa.frag
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/taa.frag)
 list(APPEND shader_incs ${spv})
 # The depth passes' vertex stage: mesh.vert exporting only what mask.frag reads.
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_depth.vert.inc)
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
             renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/material.glsl
             renderer/shaders/program.glsl renderer/shaders/noise.glsl)
@@ -175,8 +186,9 @@ list(APPEND shader_incs ${spv})
 # The tint maps' vertex stage (shadow_tint.frag): DEPTH_ONLY plus the light's ray.
 set(spv ${CMAKE_CURRENT_BINARY_DIR}/mesh_tint.vert.inc)
 add_custom_command(OUTPUT ${spv}
-    COMMAND Vulkan::glslc --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -DTINT_RAY -o ${spv}
+    COMMAND Vulkan::glslc -MD -MF ${spv}.d --target-env=vulkan1.3 -O -mfmt=c -DDEPTH_ONLY -DTINT_RAY -o ${spv}
             ${CMAKE_CURRENT_SOURCE_DIR}/renderer/shaders/mesh.vert
+    DEPFILE ${spv}.d
     DEPENDS renderer/shaders/mesh.vert renderer/shaders/scene.glsl renderer/shaders/frame.glsl
             renderer/shaders/displace.glsl renderer/shaders/skinning.glsl renderer/shaders/material.glsl
             renderer/shaders/program.glsl renderer/shaders/noise.glsl)
