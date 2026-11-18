@@ -1932,7 +1932,7 @@ void Scene::Commit(bool keepMotion, bool unchanged)
     }
     static std::atomic<int> commits{0};
     const int commitNumber = ++commits;
-    CommitLaps lap{commitNumber <= 4 && std::getenv("HDVK_TIMING") != nullptr, commitNumber};
+    CommitLaps lap{(commitNumber <= 4 || TimingLevel() >= 3) && std::getenv("HDVK_TIMING") != nullptr, commitNumber};
     _device->WaitFrame();  // the pools are host memory the frame in flight reads
     lap("wait");
     // First commit: create the pools so every descriptor has a buffer.

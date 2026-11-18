@@ -3133,7 +3133,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     static int renders = 0;
     char lapScope[32];
     std::snprintf(lapScope, sizeof lapScope, "frame %d", ++renders);
-    StartupLaps lap{renders <= 3 && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
+    StartupLaps lap{(renders <= 3 || TimingLevel() >= 3) && std::getenv("HDVK_TIMING") != nullptr, lapScope, cpuStart};
     _frameColor = _linearColor = VK_NULL_HANDLE;
     if (frame.width != _outWidth || frame.height != _outHeight) {
         _Resize(frame.width, frame.height);

@@ -8,6 +8,7 @@
 #include <future>
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <map>
 #include <memory>
@@ -17,6 +18,13 @@
 #include <vector>
 
 namespace vkr {
+
+// HDVK_TIMING=3: the slow parts of every frame and commit (edits), not only the first few.
+inline int TimingLevel()
+{
+    static const int level = std::getenv("HDVK_TIMING") ? std::atoi(std::getenv("HDVK_TIMING")) : 0;
+    return level;
+}
 
 class Scene;
 
