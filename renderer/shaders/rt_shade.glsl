@@ -256,6 +256,9 @@ vec3 DomeDiffuse(vec3 n)
 // counted 1 / p: every light shadowed, no cap, the same on average.
 const uint kMaxHitShadows = 16u;
 vec3 gHitSpecular = vec3(0.0);
+// Who traced the ray ShadeHit shades, for the diffuse limit (gi.glsl
+// GiFeedback): 0 a reflection or refraction, 1 a GI probe, 2 final gather.
+uint gGiRole = 0u;
 
 // One step of ShadeHit's light pick: light i of weight w (its unshadowed
 // light) and radiance `lit` joins; it replaces the pick with probability
@@ -385,9 +388,11 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
                   LightVisibility(picked, p, hit.geometric, Random2(seed + uvec3(0u, 0u, picked * 64u), 0u), 1u);
     }
     vec3 indirect = DomeDiffuse(n);
+    float bounced = gGiRole == 1u ? GiFeedback(dot(diffuse, vec3(0.2126, 0.7152, 0.0722)))
+                  : gGiRole == 2u ? GiGatherShare(dot(diffuse, vec3(0.2126, 0.7152, 0.0722))) : 1.0;
     if ((frame.features.x & kFeatureGi) != 0u) {
         vec4 gi = GiIrradiance(p, n, -dir);
-        indirect = mix(indirect, gi.rgb, gi.a);
+        indirect = mix(indirect, GiLimit(gi.rgb, indirect, bounced), gi.a);
     }
     if (Feature(kFeatureCaustics) && (draws[hit.slot].caustics & kCausticsReceive) != 0u) {
         indirect += CausticDiffuse(p, n);  // seen in reflections, through glass (a pool's floor), by GI
@@ -402,7 +407,7 @@ vec3 ShadeHit(vec3 dir, uvec3 seed, bool emission, bool shadows, bool specular, 
             // around it, so a metal ball's underside reflects the floor, not
             // the dome below it (its shadow on the floor under it, as Karma).
             vec4 gi = GiIrradiance(p, r, -dir);
-            reflected = mix(reflected, gi.rgb, gi.a);
+            reflected = mix(reflected, GiLimit(gi.rgb, reflected, bounced), gi.a);
         }
         radiance += fss * reflected;
     }

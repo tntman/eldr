@@ -3676,6 +3676,7 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
     // Final gather, on top of the probes.
     rt.gather = rt.gi && frame.depthPrepass && frame.finalGather;
     rt.gatherDistance = frame.finalGatherDistance;
+    rt.diffuseLimit = frame.diffuseLimit;
     // Its rays: this sample's next points of one scrambled Sobol sequence
     // (rays per sample in a row), so the film's directions stratify.
     rt.gatherRays = SampleRays(double(std::clamp(frame.finalGatherRays, 1u, kMaxGatherRays)) * frame.diffuseQuality, spread,

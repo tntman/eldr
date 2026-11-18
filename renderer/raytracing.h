@@ -111,6 +111,7 @@ public:
         // diffuse indirect light instead of the probes and AO.
         bool gather = false;
         float gatherDistance = 0.0f;
+        uint32_t diffuseLimit = 1;  // Frame::diffuseLimit (gi.glsl GiBounces)
         // Rays per pixel (1..kMaxGatherRays), their points in [0, 1)^2 (each
         // pixel turns them by blue noise), and the denoise strength
         // (gather_denoise.comp; 0: off).

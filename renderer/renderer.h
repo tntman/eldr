@@ -290,6 +290,9 @@ public:
         // of the probes', AO and SSGI.
         bool finalGather = false;
         float finalGatherDistance = 0.0f;
+        // Diffuse bounces GI's light takes (Karma's Diffuse Limit; 0: none
+        // beyond the dome's direct light), > 16: unlimited.
+        uint32_t diffuseLimit = 1;
         // Gather rays per pixel and sample (1..16): each film sample's
         // directions are the next points of a scrambled Sobol sequence,
         // turned per pixel by blue noise.

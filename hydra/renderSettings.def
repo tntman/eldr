@@ -44,6 +44,7 @@ HDVK_SETTING(caustics, "Caustics", frame.caustics)
 
 HDVK_GROUP("Global Illumination", true)
 HDVK_SETTING(gi, "Global Illumination", frame.gi)
+HDVK_SETTING(diffuseLimit, "Diffuse Limit", -1)
 HDVK_SETTING(ssgi, "Screen-Space GI", frame.ssgi)
 HDVK_SETTING(ambientOcclusion, "Ambient Occlusion", frame.ambientOcclusion)
 HDVK_SETTING(imageBasedLighting, "Dome Lighting", frame.imageBasedLighting)
