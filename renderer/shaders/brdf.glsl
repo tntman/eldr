@@ -682,17 +682,13 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
 // prefiltered environment at its own roughness, sheen the average.
 // ponytail: no screen-space reflections in the coat (only the base traces
 // them); a second trace for smooth coats over rough bases would add them.
-vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
+vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO, vec3 coatReflection)
 {
-    vec3 c = vec3(0.0);
+    // The coat: its reflection of the surroundings (mesh.frag CoatReflection).
+    gCoatAmbient = layers.coat * layers.coatAlbedo * coatReflection * specularAO;
+    vec3 c = gCoatAmbient;
     if (frame.envRadiance.w <= 0.0) {
         return c;
-    }
-    if (layers.coat > 0.0) {
-        vec3 r = normalize(mat3(frame.envWorldToLocal) * reflect(-v, n));
-        float lod = layers.coatPerceptual * float(frame.counts.z - 1u);
-        gCoatAmbient = layers.coat * layers.coatAlbedo * textureLod(envCube, r, lod).rgb * frame.envRadiance.rgb * specularAO;
-        c += gCoatAmbient;
     }
     c += layers.sheen * layers.sheenAlbedo * Lavg * diffuseAO;
     if (layers.hair) {
@@ -730,7 +726,7 @@ vec3 LayerLight(vec3 n, vec3 v, vec3 l, float NoV, vec3 lc, float coatNorm)
     return vec3(0.0);
 }
 
-vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO)
+vec3 LayerAmbient(vec3 n, vec3 v, vec3 Lavg, float diffuseAO, float specularAO, vec3 coatReflection)
 {
     return vec3(0.0);
 }

@@ -265,6 +265,15 @@ void main()
         n = ng;
         perceptual = 1.0;  // no reflection
     }
+    // A clearcoat (brdf.glsl kFeatureClearcoat) reflects its surroundings
+    // sharper than its base: the traced reflection is the coat's, at its
+    // roughness (mesh.frag's CoatReflection); the base keeps probes or dome.
+    if (onHit && draws[slot].material != kNoMaterial && (frame.features.x & 16u) != 0u &&
+        materials[draws[slot].material].coat.x > 0.0) {
+        perceptual = clamp(materials[draws[slot].material].coat.y, 0.045, 1.0);
+        metallic = 0.0;
+        baseColor = vec3(0.0);
+    }
     // The reflection lobe (before the shadow rays overwrite hit).
     vec3 lobeT, lobeB;
     Basis(n, lobeT, lobeB);
