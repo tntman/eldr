@@ -22,7 +22,7 @@ Eldr is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08, for fast raster re
 | User-visible feature | A short plain-language section in the matching `guide/` chapter: what it does, the setting's label, "Where in Houdini", and a before/after picture (add the showcase prims to `site/render_images.py`, run `usdenv.cmd python docs\site\render_images.py <names>`; 480 px JPEGs in `images/`, keep the set under 8 MB). Houdini GUI screenshots go in `images/houdini/`; until one exists, its `![Houdini: ...]` link shows as a placeholder box. |
 | Code shortcut (`ponytail:` comment) | Add a row to "Known limitations". Searching the code for `ponytail:` finds them. |
 
-The published page: `python docs/site/build.py docs <out.html>` (one file, pictures embedded; one chapter at a time with a sidebar).
+The published page: `python docs/site/build.py docs <out.html>` (one file, pictures embedded; one chapter at a time with a sidebar). `index.md` is its home page. The settings reference shows a card per setting (`#eldr-<name>`), made from `settings.md`'s rows and `hydra/renderSettings.def`'s labels and groups: edit those, not the page.
 
 Numbers are GPU milliseconds on a GTX 1080 Ti unless stated.
 
