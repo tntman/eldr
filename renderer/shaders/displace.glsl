@@ -70,7 +70,7 @@ float DisplacementOffset(Displacement d, DrawInfo draw, uint slot, mat4 model, v
 #ifndef DISPLACE_VERTEX
         inUv = uv;  // mesh.vert's is its input, the same
 #endif
-        inColor = draw.vertexColors != 0u ? vertexColor : draw.color.rgb;
+        inColor = DISPLAY_COLOR(draw, instances[slot].index, vertexColor);
         inSlot = slot;
         inPrimvars = draw.primvarVertices == kFreeSlot ? vec4(0.0)
                                                        : primvarVertices[draw.primvarVertices + vertex - draw.vertexBase];

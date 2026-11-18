@@ -488,7 +488,27 @@ void HdVkMesh::Sync(HdSceneDelegate *sceneDelegate, HdRenderParam *,
                     _instancePrimvars.push_back(std::move(p));
                 }
             }
+            // displayColor per instance colours the default material and
+            // displayColor readers (Scene: DrawInfo::vertexColors).
+            vkr::Primvar c{HdTokens->displayColor.GetString(), vkr::Primvar::Rate::Instance};
+            if (std::find(_programPrimvarNames.begin(), _programPrimvarNames.end(), HdTokens->displayColor) ==
+                    _programPrimvarNames.end() &&
+                instancer->ComputeInstancePrimvar(id, HdTokens->displayColor, &c.values, &c.components) &&
+                c.components == 3) {
+                _instancePrimvars.push_back(std::move(c));
+            }
+            // ponytail: displayOpacity per instance sets the default material's
+            // opacity from the first instance; varying opacity needs a material.
+            std::vector<float> opacity;
+            uint32_t components = 0;
+            if (instancer->ComputeInstancePrimvar(id, HdTokens->displayOpacity, &opacity, &components) &&
+                components == 1 && !opacity.empty()) {
+                m.opacity = opacity[0];
+            }
         }
+    }
+    for (const vkr::Primvar &p : _instancePrimvars) {
+        m.colorAuthored = m.colorAuthored || p.name == HdTokens->displayColor.GetString();
     }
     _ApplyInstancePrimvars(m);
     if (jointsDirty || geometryDirty) {
