@@ -9,7 +9,7 @@ Eldr is a Hydra 2.0 Vulkan render delegate for OpenUSD 26.08, for fast raster re
 | goals | What Eldr is for and the ground rules |
 | features | How Eldr works: pipeline, film, lighting, GI, reflections, transparency, volumes, materials, geometry, camera, output, authoring conventions, limitations |
 | settings | Every `eldr:` render setting: type, default, effect, cost |
-| gallery | The Cornell box scenes rendered with Eldr default, Eldr final and Karma: pictures, times, difference to Karma (`tests/render_gallery.py`) |
+| gallery | The Cornell box and feature scenes rendered with Eldr default, Eldr final, Karma XPU and Karma CPU: cards, times, brightness against Karma CPU (`tests/render_gallery.py`) |
 | comparison | Feature table: Eldr vs EEVEE and Unreal |
 | houdini | Houdini 22 build, install and use |
 | testing | ctest, and the Karma golden references (`tests/karma_refs.py`) |
