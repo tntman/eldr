@@ -125,7 +125,9 @@ def resolution(layer):
 
 def samples(layer, r):
     if r.startswith("eldr"):
-        return "256 film samples"
+        # A view's own `over "<prim>"` may set fewer film samples.
+        m = re.search(r'over "%s"\s*\{[^}]*eldr:filmSamples = (\d+)' % r, open(layer, encoding="utf-8").read())
+        return "%s film samples" % (m.group(1) if m else 256)
     t = open(os.path.join(SCENES, "settings.usda"), encoding="utf-8").read()
     return "%s spp" % re.search(r'"%s".*?pathtracedsamples = (\d+)' % r, t, re.S).group(1)
 
