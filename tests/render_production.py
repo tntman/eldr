@@ -169,7 +169,8 @@ def render(view, outdir, build, force):
             rows = list(csvfile.DictReader(open(csv))) if os.path.exists(csv) else []
             sec = sum(float(x["execute_ms"]) for x in rows) / 1000 if rows else karma_seconds(log)
             known[r] = dict(ok=os.path.exists(exr), wall=wall, sec=sec if sec is not None else wall,
-                            mem=mem if plugin == "HdVkRendererPlugin" else None)
+                            mem=mem if plugin == "HdVkRendererPlugin" else None,
+                            limited="Run time %d exceeded" % KARMA_LIMIT in open(log, errors="replace").read())
             print("%-16s %-13s %s render %.1f s, wall %.1f s, %s MB" % (
                 view, r, "ok" if known[r]["ok"] else "FAILED (%d)" % code, known[r]["sec"], wall, mem), flush=True)
             json.dump(known, open(times, "w"))
@@ -181,7 +182,7 @@ def render(view, outdir, build, force):
 def info(x, r, layer):
     """A card's lines under its name: resolution, samples, times; brightness and GPU memory."""
     spp = samples(layer, r)
-    if r.startswith("karma") and x["sec"] >= KARMA_LIMIT - 5:
+    if x.get("limited"):
         spp = "≤ " + spp + ", time-limited"
     line1 = "%d × %d · %s · %s render · %s load" % (*resolution(layer), spp, duration(x["sec"]),
                                                    duration(max(0, x["wall"] - x["sec"])))
