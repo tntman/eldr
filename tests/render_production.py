@@ -51,7 +51,11 @@ VIEWS = [
      "About 170 million instanced triangles of plants around a pyramid, lit by the sky dome alone."),
     ("jungle_close", "Jungle Ruins, closer",
      "The same camera zoomed in 2.4 times onto the plants and stones."),
+    ("crowd", "Crowd: 9,324 skinned agents",
+     "9,324 UsdSkel agents (20.7 million triangles) skinned on the GPU, at 1280 x 720. Eldr only."),
 ]
+# Views that render with some renderers only, and the environment they need.
+ONLY = {"crowd": (("eldr_default", "eldr_final"), {"HD_ENABLE_DEFERRED_SKINNING": "1"})}
 RENDERERS = [("eldr_default", "Eldr default", "HdVkRendererPlugin"), ("eldr_final", "Eldr final", "HdVkRendererPlugin"),
              ("karma_xpu", "Karma XPU", "BRAY_HdKarmaXPU"), ("karma_cpu", "Karma CPU", "BRAY_HdKarma")]
 CREDIT = ("Intel Sponza (Frank Meinl, Anton Kaplanyan, Intel Sample Library, 2022) and add-ons by the Sponza Add-on "
@@ -111,7 +115,11 @@ def render(view, outdir, build, force):
     times = os.path.join(d, "times.json")
     known = json.load(open(times)) if os.path.exists(times) else {}
     layer = os.path.join(SCENES, view + ".usda")
+    names, extra = ONLY.get(view, ([r for r, _, _ in RENDERERS], {}))
+    env.update(extra)
     for r, _, plugin in RENDERERS:
+        if r not in names:
+            continue
         exr, log, csv = (os.path.join(d, r + ext) for ext in (".exr", ".log", ".csv"))
         if force or not os.path.exists(exr) or r not in known:
             if os.path.exists(csv):
@@ -125,12 +133,12 @@ def render(view, outdir, build, force):
                                                     sec, mem), flush=True)
             json.dump(known, open(times, "w"))
         known[r]["exr"] = exr
-    return known
+    return {r: known[r] for r in names}
 
 
 def card(exr, jpg):
     """A 960 x 540 sRGB JPEG of a render."""
-    oiio(exr, "--ch", "R,G,B", "--croptofull", "--resize", "960x540", "--clamp:min=0", "--colorconvert", "linear",
+    oiio(exr, "--ch", "R,G,B", "--croptofull", "--resize", "960x0", "--clamp:min=0", "--colorconvert", "linear",
          "sRGB", "--clamp:min=0:max=1", "-d", "uint8", "--attrib", "Compression", "jpeg:85", "-o", jpg)
 
 
@@ -148,8 +156,8 @@ def section(results=None):
           "Karma XPU (256 path-traced samples) and Karma CPU (128), both with 4 diffuse bounces and OIDN. The "
           "layers are in `tests/scenes/production`; the packages come from the Intel Sample Library. "
           "`python tests/render_production.py` renders them again. Times are husk wall clock, scene load included; "
-          "for Eldr, in brackets, its time in the render pass and the GPU memory the render took. Brightness is the "
-          "mean luminance against Karma CPU's.", ""]
+          "for Eldr, in brackets, its time in the render pass, the rest (husk startup, scene load and sync) and "
+          "the GPU memory the render took. Brightness is the mean luminance against Karma CPU's.", ""]
     for view, heading, what in VIEWS:
         r = results.get(view)
         if not r:
@@ -161,7 +169,8 @@ def section(results=None):
                 continue
             t = "%s: %.0f s" % (label, x["sec"])
             if x.get("ex") is not None:
-                t += " (%.1f s%s)" % (x["ex"], ", %.1f GB" % (x["mem"] / 1024) if x.get("mem") else "")
+                t += " (%.1f s in the render pass, %.0f s loading%s)" % (
+                    x["ex"], x["sec"] - x["ex"], ", %.1f GB GPU" % (x["mem"] / 1024) if x.get("mem") else "")
             if k != "karma_cpu" and x.get("ratio") is not None:
                 t += ", brightness x%.2f" % x["ratio"]
             md.append("![%s](images/gallery/production/%s)" % (t, x["jpg"]))
@@ -196,9 +205,9 @@ def main():
             print("%s: skipped, missing %s" % (view, missing[0]))
             continue
         rs = render(view, a.outdir, a.build, a.force)
-        ref = rs["karma_cpu"]["exr"]
+        ref = rs["karma_cpu"]["exr"] if "karma_cpu" in rs else None
         out = {}
-        for k, _, _ in RENDERERS:
+        for k in rs:
             x = dict(rs[k])
             if os.path.exists(x["exr"]):
                 x["jpg"] = "%s_%s.jpg" % (view, k)
