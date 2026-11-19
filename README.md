@@ -1,9 +1,5 @@
 <div align="center">
 
-<p align="center">
-  <img src="docs/images/hero.jpg" alt="Eldr: a Vulkan Hydra render delegate for OpenUSD and Houdini Solaris" width="100%">
-</p>
-
 <h1>Eldr</h1>
 
 <p><b>A GPU raster renderer for OpenUSD and MaterialX. Final VFX frames to EXR in seconds, with Karma as the look it aims for.</b></p>
