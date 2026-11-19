@@ -471,6 +471,16 @@ void main()
             hit.t = 0.5;  // cone
             traceRayEXT(tlas, gl_RayFlagsNoneEXT, kRtMaskSurfaces, 0, 0, 0, o, 0.0, l, reach, 0);
             vec3 through = VolumeThrough(o, l, hit.t < 0.0 ? reach : hit.t, -1);
+            // Escaped (gather rays don't see translucent meshes): the dome
+            // through glass takes its colour, as a shadow ray that tints
+            // (rt_shadow.rahit; payload a 2: caustic casters tint too, their
+            // photons carry no dome light). One bare trace: no shading
+            // inlined again (glslc's optimizer runs out of ids).
+            if (hit.t < 0.0 && (rt.shadowInfo.x & kRtMaskTranslucent) != 0u) {
+                shadowRay = vec4(1.0, 1.0, 1.0, 2.0);
+                traceRayEXT(tlas, gl_RayFlagsSkipClosestHitShaderEXT, kRtMaskTranslucent, 1, 0, 1, o, 0.0, l, reach, 1);
+                through *= shadowRay.a == 1.0 ? shadowRay.rgb : vec3(0.0);  // rt_shadow.rmiss sets a to 1
+            }
             if (hit.t < 0.0 && rt.gather.x <= 0.0) {
                 radiance += through * Dome(l, 0.5 * float(frame.counts.z));  // escaped: as the probes see the dome
             } else if (hit.t < 0.0) {

@@ -353,6 +353,12 @@ public:
         // shadow maps' resolution (1..4).
         bool translucentShadows = true;
         uint32_t translucentShadowDivisor = 2;
+        // With translucentShadows: the dome's diffuse light under the
+        // translucent balls and boxes nearest the camera (8, one instance
+        // each) takes their colour, by the share of the sky each hides
+        // (the AO doesn't see them). Not with the final gather (it traces
+        // them). Off: the sky passes untinted.
+        bool translucentSkyShadows = true;
         // Subsurface scattering (needs depthPrepass): the diffuse light of
         // subsurface materials blurred over this many taps per direction
         // (1..64), and the sun shining through their thin parts.
