@@ -24,8 +24,7 @@ def Xform "lights"
         float inputs:intensity = 1
         asset inputs:texture:file = @E:/usd-testscenes/sponza/main_sponza/textures/kloppenheim_05_4k.hdr@
         bool inputs:karma:light:renderlightgeo = 1
-        # Y pole turned to Z (Eldr reads domes Y up).
-        token poleAxis = "Y"
+        # A DomeLight's pole is +Y: turned to the stage's +Z.
         float xformOp:rotateX = 90
         uniform token[] xformOpOrder = ["xformOp:rotateX"]
     }
