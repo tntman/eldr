@@ -4,10 +4,12 @@
 The packages are not in the repository: download them from the Intel Sample Library and
 unpack them under E:/usd-testscenes/sponza (main_sponza, pkg_a_curtains, pkg_b_ivy,
 pkg_c_trees), or edit the paths. The cypress is authored in metres: scaled to centimetres
-in the middle of the courtyard."""
+in the middle of the courtyard. binding_api.usda applies MaterialBindingAPI to the add-ons'
+meshes, which their files leave out (Hydra ignores their materials without it)."""
     metersPerUnit = 0.01
     upAxis = "Z"
     subLayers = [
+        @binding_api.usda@,
         @sponza_lights.usda@,
         @E:/usd-testscenes/sponza/pkg_a_curtains/NewSponza_Curtains_USD_ZUp.usda@,
         @E:/usd-testscenes/sponza/pkg_b_ivy/NewSponza_IvyGrowth_USD_ZUp.usda@,

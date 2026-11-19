@@ -2,11 +2,8 @@
 (
     doc = """Render settings of the production scenes (tests/scenes/production), one prim per gallery
 renderer, all on the camera /cam at 960 x 540:
-  eldr_default  every effect that runs without ray tracing: SSGI, ambient occlusion, SSR with
-                back-face depth, screen-space refraction with its march, subsurface, soft shadows,
-                denoising, 256 film samples
-  eldr_final    ray traced: tests/scenes/final_settings.usda plus GI, ray-traced shadows,
-                denoising, 256 film samples
+  eldr_default  every effect that runs without ray tracing (tests/scenes/cornell/eldr_default.usda)
+  eldr_final    ray traced (tests/scenes/cornell/eldr_final.usda)
   karma_xpu     Karma XPU (husk -R BRAY_HdKarmaXPU), path traced, denoised
   karma_cpu     Karma CPU (husk -R BRAY_HdKarma), path traced, denoised
 Each view layer sublayers this one and defines /cam."""
@@ -14,34 +11,23 @@ Each view layer sublayers this one and defines /cam."""
 
 def Scope "Render"
 {
-    def RenderSettings "eldr_default"
-    {
-        rel camera = </cam>
-        uniform int2 resolution = (960, 540)
-        rel products = </Render/Product>
-        custom bool eldr:ssgi = 1
-        custom bool eldr:ambientOcclusion = 1
-        custom bool eldr:ssr = 1
-        custom bool eldr:ssrBackfaceDepth = 1
-        custom bool eldr:refraction = 1
-        custom bool eldr:refractionMarch = 1
-        custom bool eldr:subsurface = 1
-        custom bool eldr:softShadows = 1
-        custom bool eldr:denoise = 1
-        custom int eldr:filmSamples = 256
-    }
-
-    def RenderSettings "eldr_final" (
-        prepend references = @../final_settings.usda@</Render/final>
+    # The gallery's Eldr settings (tests/scenes/cornell): every effect without ray tracing, and ray traced.
+    def RenderSettings "eldr_default" (
+        prepend references = @../cornell/eldr_default.usda@</Render/Settings>
     )
     {
         rel camera = </cam>
         uniform int2 resolution = (960, 540)
         rel products = </Render/Product>
-        custom bool eldr:gi = 1
-        custom bool eldr:rtShadows = 1
-        custom bool eldr:denoise = 1
-        custom int eldr:filmSamples = 256
+    }
+
+    def RenderSettings "eldr_final" (
+        prepend references = @../cornell/eldr_final.usda@</Render/Settings>
+    )
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
     }
 
     # Karma: path traced, 4 diffuse bounces, OIDN. Samples keep Karma CPU under about 10 minutes

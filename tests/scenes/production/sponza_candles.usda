@@ -9,6 +9,7 @@ pkg_d_10k_candles."""
     upAxis = "Z"
     subLayers = [
         @settings.usda@,
+        @binding_api.usda@,
         @E:/usd-testscenes/sponza/pkg_d_10k_candles/NewSponza_4_Combined_USDA_ZUp.usda@,
         @E:/usd-testscenes/sponza/main_sponza/NewSponza_Main_USD_Zup_003.usda@
     ]
@@ -29,6 +30,16 @@ def DomeLight "night_sky"
     color3f inputs:color = (0.2, 0.3, 0.6)
     float inputs:intensity = 0.02
     bool inputs:karma:light:renderlightgeo = 1
+}
+
+# Eldr default re-renders every local light's shadow map for each film sample when it jitters the
+# light shapes: 10,000 maps took 14 s a sample. The default card keeps fixed light shapes here.
+over "Render"
+{
+    over "eldr_default"
+    {
+        custom bool eldr:shadowJitter = 0
+    }
 }
 
 def Camera "cam"

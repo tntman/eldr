@@ -1,11 +1,18 @@
 #usda 1.0
 (
     doc = """Sponza arcade: the ground-floor arcade beside the courtyard, lit by sun bounced off the
-floor and through the curtains. Camera: Sponza's PhysCamera003 (without its exposure)."""
+floor and through the curtains. Camera: Sponza's PhysCamera003 (without its exposure); the
+cypress, which stands in front of it, is off."""
     metersPerUnit = 0.01
     upAxis = "Z"
     subLayers = [@settings.usda@, @sponza_day.usda@]
 )
+
+over "Italian_Cypress_Dense_Custom_05b" (
+    active = false
+)
+{
+}
 
 def Camera "cam"
 {
