@@ -112,7 +112,7 @@ public:
         float sceneTime[2] = {0.0f, 0.0f};
         // Residual DOF (eldr:dofResidualBlur): with dofJitter the post DOF
         // still runs on each film sample, its circle of confusion scaled
-        // by sqrt(pi / filmSamples) (the samples' spacing), to fill the gaps between lens samples
+        // by sqrt(1.5 / filmSamples), to fill the gaps between lens samples
         // (EEVEE's).
         bool dofResidualBlur = true;
         // Residual motion blur (eldr:motionBlurResidual): with time samples

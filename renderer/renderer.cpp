@@ -4812,9 +4812,10 @@ void Renderer::Render(const Scene &scene, const Frame &appFrame, const Targets &
                                           (frame.fStop * (frame.focusDistance - frame.focalLength)) *
                                           float(frame.width) / frame.sensorWidth
                                     : 0.0f;
-    // The lens samples' spacing on the circle (its area over the samples):
-    // a residual circle that wide joins neighbouring copies without ripples.
-    const float residualScale = std::sqrt(3.14159265f / float(std::max(frame.filmSamples, 1u)));
+    // A residual circle sqrt(1.5 / samples) of the lens's: joins neighbouring
+    // lens copies without ripples (1 / sqrt left faint lines in the Cornell
+    // box at 64), and still converges to lens jitter's blur within 8%.
+    const float residualScale = std::sqrt(1.5f / float(std::max(frame.filmSamples, 1u)));
     const bool dof = dofLens && (!lensJitter || (frame.dofResidualBlur && cocPixels * residualScale >= 1.5f));
     // Residual motion blur: time samples render whole copies of the scene,
     // as many as the film has samples, about shutter / filmSamples apart;
