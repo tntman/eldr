@@ -84,7 +84,7 @@ float DisplacementOffset(Displacement d, DrawInfo draw, uint slot, mat4 model, v
         RunProgram(d.program, c3, e3, f0, f1, f2, t3, b, f3);
         return programDisplacement;
     }
-    return Fetch(d.tex, d.params.xxxx, uv).r;
+    return FetchSmooth(d.tex, d.params.xxxx, uv, UV_DX(uv), UV_DY(uv)).r;
 }
 #endif
 
@@ -147,7 +147,15 @@ vec3 DisplacedNormal(vec3 n, uint slot, vec3 p, vec2 uv)
         return n;
     }
     float scale = pow(abs(determinant(mat3(InstanceTransform(inst)))), 1.0 / 3.0);
-    float h = Fetch(d.tex, d.params.xxxx, uv).r * frame.geometry.x * scale;
-    return BumpedNormal(n, dFdx(p), dFdy(p), dFdx(h), dFdy(h));
+    // The height's slope in uv by central differences a pixel's footprint
+    // wide, through uv's screen derivatives: on finely diced meshes a 2 x 2
+    // quad spans several displaced triangles, and dFdx(h) there is noise.
+    vec2 dx = dFdx(uv), dy = dFdy(uv);
+    float e = max(max(length(dx), length(dy)), 1e-5), k = frame.geometry.x * scale / (2.0 * e);
+    float hu = (FetchSmooth(d.tex, d.params.xxxx, uv + vec2(e, 0.0), dx, dy).r -
+                FetchSmooth(d.tex, d.params.xxxx, uv - vec2(e, 0.0), dx, dy).r) * k;
+    float hv = (FetchSmooth(d.tex, d.params.xxxx, uv + vec2(0.0, e), dx, dy).r -
+                FetchSmooth(d.tex, d.params.xxxx, uv - vec2(0.0, e), dx, dy).r) * k;
+    return BumpedNormal(n, dFdx(p), dFdy(p), hu * dx.x + hv * dx.y, hu * dy.x + hv * dy.y);
 }
 #endif

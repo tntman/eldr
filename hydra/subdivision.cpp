@@ -529,6 +529,10 @@ int HdVkMesh::_RefineLevel(HdSceneDelegate *sceneDelegate) const
     if (karmaMax >= 0) {
         level = std::min(level, karmaMax);
     }
+    if (_diced) {  // each level 4x the polygons, within the budget
+        const double faces = double(std::max<size_t>(_topology.GetFaceVertexCounts().size(), 1));
+        level = std::min(level, int(std::floor(0.5 * std::log2(kHdVkDicedPolygons / faces))));
+    }
     return std::clamp(level, 0, limit);
 }
 

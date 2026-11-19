@@ -32,11 +32,6 @@ IMAGES = os.path.join(REPO, "docs", "images", "gallery")
 NOTES = {
     "base": "the default settings have no bounced light (GI is off unless asked for), so the ceiling and shadowed "
             "sides are black; the final settings add GI and final gather.",
-    "displacement": "displacement moves the mesh's vertices and Eldr doesn't dice meshes, so this four-vertex "
-                    "quad shows only the bumped shading, not the bumps Karma dices.",
-    "clearcoat": "the coat shows the light's highlight but not the room's reflection Karma's coat shows.",
-    "instances": "the cubes have no material and Eldr doesn't read the instancer's per-instance displayColor, so "
-                 "they render grey.",
     "height_fog": "Eldr and Karma ignore the `unreal:` fog settings: the image is the base scene.",
     "post_processing": "Eldr and Karma ignore the `unreal:` post-processing settings and render the linear image.",
     "subdivision": "Eldr refines the Catmull-Clark cube with OpenSubdiv; `unreal:subdivisionLevel` is hdUE's own.",
