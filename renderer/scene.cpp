@@ -2495,9 +2495,12 @@ void Scene::Commit(bool keepMotion, bool unchanged)
         weight[slot] = double(drawn[slot]) * double(m._indexCount / 3);
         GpuLod &g = lods[slot];
         g.slots[0] = uint32_t(next);
-        // Translucent meshes draw per slot, without levels; displaced ones
-        // keep their density (the levels' errors don't see displacement).
-        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent || (kind[slot] & Gpu::kDisplaced) ||
+        // Translucent meshes draw per slot, without levels; displaced and
+        // cutout ones keep their density (the levels' errors see neither
+        // displacement nor the opacity texture: simplified foliage cards
+        // lose their leaves).
+        g.slots[1] = (kind[slot] & (Gpu::kWide - 1)) == Gpu::kTranslucent ||
+                             (kind[slot] & (Gpu::kWide - 1)) == Gpu::kCutout || (kind[slot] & Gpu::kDisplaced) ||
                              m._lodInstanceCount == 0
                          ? 0
                          : uint32_t(m._lods.size());

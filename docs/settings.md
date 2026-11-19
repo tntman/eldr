@@ -301,7 +301,7 @@ Quality controls (steps, radii, resolutions, thresholds) and the remaining on/of
 
 | Setting | Default | What it does | Cost |
 |---|---|---|---|
-| Levels of Detail<br>`eldr:lod` | on | Meshes of 1000+ triangles get up to 3 simpler versions, and each copy draws the simplest one that looks the same (under about 1 pixel of error): faster crowds. Translucent and displaced meshes keep full detail. Off: full detail, for pixel-exact comparisons. | Crowd 68 to 28-34 ms; Kitchen at Very High 30 to 10.5 ms |
+| Levels of Detail<br>`eldr:lod` | on | Meshes of 1000+ triangles get up to 3 simpler versions, and each copy draws the simplest that looks the same (under about 1 pixel of error): faster crowds. Translucent, cutout and displaced meshes keep full detail. Off: full detail, for exact comparisons. | Crowd 68 to 28-34 ms; Kitchen at Very High 30 to 10.5 ms |
 | Level of Detail Bias<br>`eldr:lodBias` | float 0 | Shifts which detail level Levels of Detail picks: +1 allows twice the error (faster), -1 half (more detail). Use negative values for finals. | -1: crowd 13.6M instead of 9.6M triangles |
 | Level of Detail Crossfade<br>`eldr:lodFade` | on | Blends between detail levels over 8 frames instead of popping. Without TAA the blend shows as a dither pattern. | Crowd +0.05 ms |
 | Subdivision Surfaces<br>`eldr:subdivision` | on | Smooths subdivision meshes (catmullClark, loop, bilinear) to Hydra's refine level (usdview's Complexity, Houdini's Level of Detail) or the mesh's `primvars:eldr:refineLevel`. Off: the coarse control cage. | 4x memory per level; Kitchen at Very High: 35M triangles, 5.5 s load |
