@@ -173,7 +173,10 @@ expect(selfHits == 0, "SSR: rays towards the camera don't hit their own surface"
 # under a uniform dome. Light that SSGI takes for a hidden share of the
 # sky comes from surfaces as bright as the sky, so no pixel may end up
 # brighter than with the sky unoccluded (no AO, no SSGI); a 5% floor on
-# the slices' weights made grazing surfaces up to 2.3% too bright.
+# the slices' weights made grazing surfaces up to 2.3% too bright. The
+# bounces build up over frames from last frame's image (white walls: many
+# frames), and back-face hits keep only part of their light by design, so
+# they are off here.
 stage = Usd.Stage.CreateInMemory()
 white = UsdShade.Material.Define(stage, "/white")
 pbr = UsdShade.Shader.Define(stage, "/white/pbr")
@@ -202,7 +205,8 @@ linear = {"eldr:taa": True, "eldr:tonemapper": "none", "eldr:exposureCompensatio
           "eldr:bloomIntensity": 0.0, "eldr:adaptiveThreshold": 0.0}
 sky = render(stage, {**linear, "eldr:ambientOcclusion": False}, frames=70)
 for bitmask in (False, True):
-    gi = render(stage, {**linear, "eldr:ssgi": True, "eldr:ssgiBitmask": bitmask}, frames=70)
+    gi = render(stage, {**linear, "eldr:ssgi": True, "eldr:ssgiBitmask": bitmask, "eldr:screenBackface": False},
+                frames=250)
     brighter = darker = lit = 0
     for y in range(0, SIZE, 2):
         for x in range(0, SIZE, 2):
