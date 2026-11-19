@@ -59,6 +59,7 @@ TITLES = {"base": "Global illumination", "glossy": "Glossy materials", "depth_of
           "orthographic": "Orthographic camera", "exposure": "Camera exposure",
           "post_processing": "Unreal post-processing settings", "displacement": "Displacement",
           "height_fog": "Unreal height fog settings", "uv_sets": "UV sets", "glass": "Glass and caustics",
+          "complex_caustics": "Complex caustics",
           "subsurface": "Subsurface scattering", "light_texture": "Textured area light", "hair": "Hair",
           "lobes": "Sheen, thin film, anisotropy", "emissive": "Emissive surface lighting", "holdout": "Holdout",
           "light_groups": "Light groups"}
