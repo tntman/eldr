@@ -1,0 +1,13 @@
+#usda 1.0
+(
+    doc = """Intel Jungle Ruins, closer: the default camera's position zoomed in 2.4 times (focal
+length 1.2 for 0.5) onto the plants and ruins in the middle of its view."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [@jungle.usda@]
+)
+
+over "cam"
+{
+    float focalLength = 1.2
+}

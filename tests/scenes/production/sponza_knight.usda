@@ -1,0 +1,61 @@
+#usda 1.0
+(
+    doc = """The animated knight add-on in the Sponza courtyard at frame 220 of its animation (render
+frame 1), mid-lunge: deforming meshes (point time samples) blurred over a 180 degree shutter.
+The knight is authored Y up in centimetres: turned to Z up here. Needs
+E:/usd-testscenes/sponza/main_sponza and pkg_e_knight_anim."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [
+        @settings.usda@,
+        @sponza_lights.usda@,
+        @E:/usd-testscenes/sponza/main_sponza/NewSponza_Main_USD_Zup_003.usda@
+    ]
+)
+
+def Xform "knight"
+{
+    float xformOp:rotateX = 90
+    uniform token[] xformOpOrder = ["xformOp:rotateX"]
+
+    def "geo" (
+        references = @E:/usd-testscenes/sponza/pkg_e_knight_anim/knight_USD_PREVIEW_SURFACE_ANIM_002_1.usd@</knight_rig_Geometry> (offset = -219)
+    )
+    {
+    }
+}
+
+def Camera "cam"
+{
+    float2 clippingRange = (1, 100000)
+    float focalLength = 35
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    double shutter:open = -0.25
+    double shutter:close = 0.25
+    matrix4d xformOp:transform = ( (0.997692, 0.0679057, 0, 0), (-0.00354224, 0.0520436, 0.998639, 0), (0.0678133, -0.996333, 0.0521641, 0), (-60, -370, 120, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}
+
+over "Render"
+{
+    over "eldr_default"
+    {
+        custom bool eldr:motionBlur = 1
+    }
+
+    over "eldr_final"
+    {
+        custom bool eldr:motionBlur = 1
+    }
+
+    over "karma_xpu"
+    {
+        int karma:object:geosamples = 2
+    }
+
+    over "karma_cpu"
+    {
+        int karma:object:geosamples = 2
+    }
+}

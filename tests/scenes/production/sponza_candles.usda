@@ -1,0 +1,42 @@
+#usda 1.0
+(
+    doc = """Sponza at night with the 10,000 candles add-on: 10,000 sphere lights (one per flame) and
+a faint blue night sky, seen along the courtyard from the east gallery (Sponza's
+PhysCamera002, without its exposure). The candles file is authored in metres although it
+says centimetres: scaled by 100 here. Needs E:/usd-testscenes/sponza/main_sponza and
+pkg_d_10k_candles."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+    subLayers = [
+        @settings.usda@,
+        @E:/usd-testscenes/sponza/pkg_d_10k_candles/NewSponza_4_Combined_USDA_ZUp.usda@,
+        @E:/usd-testscenes/sponza/main_sponza/NewSponza_Main_USD_Zup_003.usda@
+    ]
+)
+
+over "Candles"
+{
+    matrix4d xformOp:transform = ( (100, 0, 0, 0), (0, 100, 0, 0), (0, 0, 100, 0), (0, 0, 0, 1) )
+}
+
+over "PointLightInstances"
+{
+    matrix4d xformOp:transform = ( (100, 0, 0, 0), (0, 0, 100, 0), (0, -100, 0, 0), (0, 0, 0, 1) )
+}
+
+def DomeLight "night_sky"
+{
+    color3f inputs:color = (0.2, 0.3, 0.6)
+    float inputs:intensity = 0.02
+    bool inputs:karma:light:renderlightgeo = 1
+}
+
+def Camera "cam"
+{
+    float2 clippingRange = (1, 100000)
+    float focalLength = 25.045364
+    float horizontalAperture = 36
+    float verticalAperture = 20.25
+    matrix4d xformOp:transform = ( (0.12519, 0.99213, 0, 0), (0.02229, -0.00281, 0.99975, 0), (0.99188, -0.12515, -0.02246, 0), (1053.11, -152.825, 735.299, 1) )
+    uniform token[] xformOpOrder = ["xformOp:transform"]
+}

@@ -1,0 +1,88 @@
+#usda 1.0
+(
+    doc = """Render settings of the production scenes (tests/scenes/production), one prim per gallery
+renderer, all on the camera /cam at 960 x 540:
+  eldr_default  every effect that runs without ray tracing: SSGI, ambient occlusion, SSR with
+                back-face depth, screen-space refraction with its march, subsurface, soft shadows,
+                denoising, 256 film samples
+  eldr_final    ray traced: tests/scenes/final_settings.usda plus GI, ray-traced shadows,
+                denoising, 256 film samples
+  karma_xpu     Karma XPU (husk -R BRAY_HdKarmaXPU), path traced, denoised
+  karma_cpu     Karma CPU (husk -R BRAY_HdKarma), path traced, denoised
+Each view layer sublayers this one and defines /cam."""
+)
+
+def Scope "Render"
+{
+    def RenderSettings "eldr_default"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        custom bool eldr:ssgi = 1
+        custom bool eldr:ambientOcclusion = 1
+        custom bool eldr:ssr = 1
+        custom bool eldr:ssrBackfaceDepth = 1
+        custom bool eldr:refraction = 1
+        custom bool eldr:refractionMarch = 1
+        custom bool eldr:subsurface = 1
+        custom bool eldr:softShadows = 1
+        custom bool eldr:denoise = 1
+        custom int eldr:filmSamples = 256
+    }
+
+    def RenderSettings "eldr_final" (
+        prepend references = @../final_settings.usda@</Render/final>
+    )
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        custom bool eldr:gi = 1
+        custom bool eldr:rtShadows = 1
+        custom bool eldr:denoise = 1
+        custom int eldr:filmSamples = 256
+    }
+
+    # Karma: path traced, 4 diffuse bounces, OIDN. Samples keep Karma CPU under about 10 minutes
+    # per view at 960 x 540 on the gallery machine (32 threads).
+    def RenderSettings "karma_xpu"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        token karma:global:convergence_mode = "Path Traced"
+        int karma:global:pathtracedsamples = 256
+        float karma:object:diffuselimit = 4
+        string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"aovs\": [\"C\"]}]]"
+    }
+
+    def RenderSettings "karma_cpu"
+    {
+        rel camera = </cam>
+        uniform int2 resolution = (960, 540)
+        rel products = </Render/Product>
+        token karma:global:convergence_mode = "Path Traced"
+        int karma:global:pathtracedsamples = 128
+        float karma:object:diffuselimit = 4
+        string karma:global:imagefilter = "[[\"denoise\", {\"engine\": \"oidn\", \"use_albedo_input\": true, \"use_n_input\": true, \"aovs\": [\"C\"]}]]"
+    }
+
+    def RenderProduct "Product"
+    {
+        token productName = "production.exr"
+        rel orderedVars = [</Render/Vars/color>]
+    }
+
+    def Scope "Vars"
+    {
+        def RenderVar "color"
+        {
+            uniform token dataType = "color4f"
+            uniform string sourceName = "C.*[LO]"
+            uniform token sourceType = "lpe"
+            string driver:parameters:aov:name = "C"
+            token driver:parameters:aov:format = "color4f"
+        }
+    }
+}

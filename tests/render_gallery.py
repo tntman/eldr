@@ -251,6 +251,8 @@ def write_docs(rows):
         md += ["## %s" % r["name"], "", r["doc"], ""] + (["*In Eldr:* " + NOTES[r["name"]], ""] if r["name"] in NOTES else [])
         md += ["![%s, left to right Eldr default, Eldr final, Karma. %s](images/gallery/%s.jpg)"
                % (r["name"], caption(r), r["name"]), ""]
+    from render_production import section  # the Production scenes section, last rendered by render_production.py
+    md += section()
     with open(os.path.join(REPO, "docs", "gallery.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(md))
     readme = os.path.join(REPO, "README.md")

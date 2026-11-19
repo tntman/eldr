@@ -1,0 +1,32 @@
+#usda 1.0
+(
+    doc = """Daylight for the Intel Sponza views (Z up, centimetres; the packages have no lights): a sun
+down the courtyard at about 60 degrees elevation and the sky dome Sponza ships with
+(main_sponza/textures/kloppenheim_05_4k.hdr), shown to Karma's camera too."""
+    metersPerUnit = 0.01
+    upAxis = "Z"
+)
+
+def Xform "lights"
+{
+    def DistantLight "sun"
+    {
+        float inputs:angle = 0.53
+        color3f inputs:color = (1, 0.95, 0.88)
+        float inputs:intensity = 5
+        bool inputs:normalize = 1
+        float3 xformOp:rotateXYZ = (14.5, -27.7, 0)
+        uniform token[] xformOpOrder = ["xformOp:rotateXYZ"]
+    }
+
+    def DomeLight "sky"
+    {
+        float inputs:intensity = 1
+        asset inputs:texture:file = @E:/usd-testscenes/sponza/main_sponza/textures/kloppenheim_05_4k.hdr@
+        bool inputs:karma:light:renderlightgeo = 1
+        # Y pole turned to Z (Eldr reads domes Y up).
+        token poleAxis = "Y"
+        float xformOp:rotateX = 90
+        uniform token[] xformOpOrder = ["xformOp:rotateX"]
+    }
+}
