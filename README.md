@@ -50,6 +50,7 @@
 - [Usage](#usage)
 - [Environment Variables](#environment-variables)
 - [Development](#development)
+- [Credits](#credits)
 - [License](#license)
 
 <!-- ABOUT -->
@@ -573,6 +574,7 @@ A final render is a Render Settings prim with the expensive settings ticked one 
 | Topic | Page |
 |---|---|
 | First render, install, husk, usdview | [Getting started](docs/guide/getting-started.md) |
+| A scene from empty to a final EXR, step by step | [Tutorial](docs/guide/tutorial.md) |
 | Draft vs final, the Eldr tab | [Rendering in Solaris](docs/guide/solaris.md) |
 | Lights, shadows, dome | [Lights](docs/guide/lights.md) |
 | MaterialX, textures, Karma nodes | [Materials](docs/guide/materials.md), [MaterialX reference](docs/materialx.md) |
@@ -581,6 +583,7 @@ A final render is a Render Settings prim with the expensive settings ticked one 
 | Crowds, memory, large frames | [Performance](docs/guide/performance.md) |
 | Eldr next to Karma | [Eldr and Karma](docs/guide/karma.md) |
 | Every setting: default, effect, cost | [Settings](docs/settings.md) |
+| Something looks wrong | [Troubleshooting](docs/guide/troubleshooting.md), [FAQ](docs/guide/faq.md) |
 
 <!-- ENVIRONMENT VARIABLES -->
 ## Environment Variables
@@ -591,9 +594,13 @@ A final render is a Render Settings prim with the expensive settings ticked one 
 | `HDVK_PIPELINE_CACHE_DIR` | Moves the shader pipeline cache and the compressed-texture cache (default `%LOCALAPPDATA%\Eldr`) |
 | `HDVK_NO_RAY_TRACING` | `1` behaves as if the GPU had no ray tracing |
 | `HDVK_RT_EARLY_COMPILE` | `0` compiles ray tracing pipelines on first trace instead of on background threads |
+| `HDVK_OIDN_DEVICE` | Where Denoise runs: `cpu` (default), `cuda` or `default` |
+| `HDVK_DEBUG_AOVS` | `1` prints the AOVs the host binds, and every 60 frames what restarted the film |
 | `HDVK_NO_STATS` | `1` reports only the renderer name to the host's stats (for comparison) |
 | `HD_ENABLE_DEFERRED_SKINNING` | `1` lets Eldr pose UsdSkel crowds on the GPU (set by the husk wrapper `$ELDR_HUSK`) |
 | `USD_ROOT`, `USD_VENV`, `HDVK_BUILD` | Read by `usdenv.cmd` to find USD, its Python and the Eldr build |
+
+The full list, with what the Houdini package sets and the debug variables, is in [docs/environment.md](docs/environment.md).
 
 <!-- DEVELOPMENT -->
 ## Development
@@ -613,7 +620,12 @@ cmake --build build
 ctest --test-dir build -j1 -L fast
 ```
 
-The test suite has about 55 ctests: renderer unit checks (`vkrtest`), Hydra and USD round trips, Karma golden references, a reflection and refraction scenario suite (`tests/scenes/scenarios`) and the docs check that every setting is documented. `tests/compare_renderers.py` renders any scene with Eldr, Karma and Blender EEVEE side by side ([docs/testing.md](docs/testing.md)). The documentation site builds from `docs/` with `docs/site/build.py` and publishes to GitHub Pages on every push.
+The test suite has about 55 ctests: renderer unit checks (`vkrtest`), Hydra and USD round trips, Karma golden references, a reflection and refraction scenario suite (`tests/scenes/scenarios`) and the docs check that every setting is documented. `tests/compare_renderers.py` renders any scene with Eldr, Karma and Blender EEVEE side by side ([docs/testing.md](docs/testing.md)). The documentation site builds from `docs/` with `docs/site/build.py` and publishes to GitHub Pages on every push. The [developer guide](docs/developer.md) has the source layout and the rules for a change.
+
+<!-- CREDITS -->
+## Credits
+
+Eldr builds on [OpenUSD](https://openusd.org) and its Hydra framework, [MaterialX](https://materialx.org), [OpenSubdiv](https://github.com/PixarAnimationStudios/OpenSubdiv), [OpenVDB and NanoVDB](https://www.openvdb.org), [Intel Open Image Denoise](https://www.openimagedenoise.org) and the [Vulkan SDK](https://vulkan.lunarg.com). SideFX's Karma is the reference look, and the test suite compares against it and Blender's EEVEE.
 
 <!-- LICENSE -->
 ## License
