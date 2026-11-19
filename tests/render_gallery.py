@@ -411,6 +411,46 @@ def slug(title):
     return re.sub(r"[^\w\- ]", "", title.lower()).replace(" ", "-")
 
 
+HARDWARE = ("AMD Ryzen 9 3950X (16 cores, 32 threads), 48 GB RAM, NVIDIA GeForce GTX 1080 Ti 11 GB (driver 582.78; "
+            "no RT cores, so Eldr's ray tracing runs through its compute fallback), Windows 11 Pro, Houdini 22.0.466. "
+            "Karma CPU runs on the Ryzen, Karma XPU on the GTX 1080 Ti (with the CPU).")
+
+
+def hardware():
+    """The machine, read now (CPU from the registry, RAM, GPU and driver from nvidia-smi, Windows, Houdini
+    from husk's path); HARDWARE when any of it can't be read."""
+    import ctypes
+    import platform
+    import subprocess
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+            cpu = " ".join(winreg.QueryValueEx(k, "ProcessorNameString")[0].split())
+        cpu = re.sub(r" \d+-Core Processor$", "", cpu)
+
+        class Mem(ctypes.Structure):
+            _fields_ = [("length", ctypes.c_ulong), ("load", ctypes.c_ulong)] + [
+                (n, ctypes.c_ulonglong) for n in ("total", "avail", "pagetotal", "pageavail", "virt", "virtavail", "ext")]
+        m = Mem(length=ctypes.sizeof(Mem))
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+        gpu, mib, driver = [s.strip() for s in subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=30).stdout.splitlines()[0].split(",")]
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as k:
+            edition = winreg.QueryValueEx(k, "EditionID")[0]
+        houdini = re.search(r"Houdini (\d+\.\d+\.\d+)", HUSK).group(1)
+    except Exception:
+        return HARDWARE
+    cores = "16 cores, " if "3950X" in cpu else ""  # ponytail: physical cores only known for this CPU
+    rt = "" if "RTX" in gpu else "; no RT cores, so Eldr's ray tracing runs through its compute fallback"
+    win = "Windows %s %s" % ("11" if int(platform.version().split(".")[-1]) >= 22000 else "10",
+                             "Pro" if edition.startswith("Professional") else edition)
+    return ("%s (%s%d threads), %.0f GB RAM, %s %.0f GB (driver %s%s), %s, Houdini %s. Karma CPU runs on the "
+            "%s, Karma XPU on the %s (with the CPU)." % (
+                cpu, cores, os.cpu_count(), m.total / 2 ** 30, gpu, int(mib) / 1024, driver, rt, win, houdini,
+                cpu.split()[1] if " " in cpu else "CPU", gpu.replace("NVIDIA GeForce ", "")))
+
+
 INTRO = ("Every scene renders four ways with husk: "
          "● **Eldr default**, every effect that works without ray tracing (screen-space GI, reflections and "
          "refraction, planar mirrors, ambient occlusion, subsurface, soft shadow maps, denoising, 256 film samples: "
@@ -422,7 +462,7 @@ INTRO = ("Every scene renders four ways with husk: "
 
 METHODOLOGY = ["### Methodology", "",
                "| | |", "|---|---|",
-               "| Machine | Windows, NVIDIA GTX 1080 Ti; Karma CPU on the same machine |",
+               "| Hardware | %s |",
                "| Eldr default | `tests/scenes/cornell/eldr_default.usda` over the scene's settings (a showcase's "
                "`eldr_default` prim), `husk -R HdVkRendererPlugin`; no ray tracing starts |",
                "| Eldr final | `tests/scenes/cornell/eldr_final.usda` over `/Render/Settings`, or a showcase's "
@@ -472,10 +512,12 @@ def picture(stem, alt, prefix):
 
 
 def write_docs(rows):
-    md = ["# Gallery", "", INTRO, "",
+    hw = hardware()
+    md = ["# Gallery", "", "*Hardware: %s*" % hw, "", INTRO, "",
           "![Render time per scene](images/gallery/times_light.svg)", "",
           "![Brightness relative to Karma CPU per scene](images/gallery/brightness_light.svg)", "",
-          table(rows, lambda r: "[%s](#%s)" % (r["title"], slug(r["title"]))), ""] + METHODOLOGY
+          table(rows, lambda r: "[%s](#%s)" % (r["title"], slug(r["title"]))), ""] + [
+          line.replace("%s", hw) if line.startswith("| Hardware") else line for line in METHODOLOGY]
     md += sections(rows, "images/gallery/")
     with open(os.path.join(REPO, "docs", "gallery.md"), "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(md))
@@ -485,7 +527,7 @@ def write_docs(rows):
             "(`showcase/2026-10-30_22_material_lobes`).*", ""]
     readme = os.path.join(REPO, "README.md")
     text = open(readme, encoding="utf-8").read()
-    gallery = ["## Gallery", "", INTRO, "",
+    gallery = ["## Gallery", "", "*Hardware: %s*" % hw, "", INTRO, "",
                picture("times", "Render time per scene for each renderer", "docs/images/gallery/"), "",
                picture("brightness", "Mean brightness relative to Karma CPU per scene", "docs/images/gallery/"), "",
                table(rows, lambda r: "[%s](docs/gallery.md#%s)" % (r["title"], slug(r["title"]))), "",

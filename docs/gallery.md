@@ -1,5 +1,7 @@
 # Gallery
 
+*Hardware: AMD Ryzen 9 3950X (16 cores, 32 threads), 48 GB RAM, NVIDIA GeForce GTX 1080 Ti 11 GB (driver 582.78; no RT cores, so Eldr's ray tracing runs through its compute fallback), Windows 11 Pro, Houdini 22.0.466. Karma CPU runs on the Ryzen, Karma XPU on the GTX 1080 Ti (with the CPU).*
+
 Every scene renders four ways with husk: ● **Eldr default**, every effect that works without ray tracing (screen-space GI, reflections and refraction, planar mirrors, ambient occlusion, subsurface, soft shadow maps, denoising, 256 film samples: `tests/scenes/cornell/eldr_default.usda`); ◆ **Eldr final**, ray traced (reflections, refraction, shadows, GI, final gather, caustics, denoising, 256 film samples: `tests/scenes/cornell/eldr_final.usda`); ▲ **Karma XPU** and ■ **Karma CPU** with the scene's Karma settings. Karma CPU is the brightness reference.
 
 ![Render time per scene](images/gallery/times_light.svg)
@@ -48,7 +50,7 @@ Every scene renders four ways with husk: ● **Eldr default**, every effect that
 
 | | |
 |---|---|
-| Machine | Windows, NVIDIA GTX 1080 Ti; Karma CPU on the same machine |
+| Hardware | AMD Ryzen 9 3950X (16 cores, 32 threads), 48 GB RAM, NVIDIA GeForce GTX 1080 Ti 11 GB (driver 582.78; no RT cores, so Eldr's ray tracing runs through its compute fallback), Windows 11 Pro, Houdini 22.0.466. Karma CPU runs on the Ryzen, Karma XPU on the GTX 1080 Ti (with the CPU). |
 | Eldr default | `tests/scenes/cornell/eldr_default.usda` over the scene's settings (a showcase's `eldr_default` prim), `husk -R HdVkRendererPlugin`; no ray tracing starts |
 | Eldr final | `tests/scenes/cornell/eldr_final.usda` over `/Render/Settings`, or a showcase's `eldr_final` prim |
 | Karma | `BRAY_HdKarmaXPU` and `BRAY_HdKarma` with the scene's settings (Cornell box: 512 path-traced samples, 8 diffuse bounces; showcases: their `karma` prim, Path Traced, beauty only, domes visible to the camera as in Eldr) |
