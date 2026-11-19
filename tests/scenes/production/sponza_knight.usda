@@ -13,15 +13,15 @@ E:/usd-testscenes/sponza/main_sponza and pkg_e_knight_anim."""
     ]
 )
 
+# The knight's root resets the transform stack: the turn to Z up goes on it, after the reset.
 def Xform "knight"
 {
-    float xformOp:rotateX = 90
-    uniform token[] xformOpOrder = ["xformOp:rotateX"]
-
     def "geo" (
         references = @E:/usd-testscenes/sponza/pkg_e_knight_anim/knight_USD_PREVIEW_SURFACE_ANIM_002_1.usd@</knight_rig_Geometry> (offset = -219)
     )
     {
+        float xformOp:rotateX:up = 90
+        uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:rotateX:up"]
     }
 }
 
